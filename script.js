@@ -9,6 +9,7 @@ const app = {
     activeMatchId: null,
     activeSlot: null,
     activeFilter: 'all',
+    teamStatsExpanded: false,
     castSession: null,
     hlsPlayer: null,
     airplayAvailable: false,
@@ -106,6 +107,8 @@ const app = {
         this.activeMatchId = null;
         this.activeSlot = null;
         this.destroyHlsPlayer();
+        const gameEditBtn = document.getElementById('game-edit-btn');
+        if (gameEditBtn) gameEditBtn.style.display = 'none';
         const videoEl = document.getElementById('game-video');
         if (videoEl) {
             videoEl.pause();
@@ -163,6 +166,11 @@ const app = {
     goHome() {
         this.cancelEdit();
         this.showSeasonView({ replaceHistory: true });
+    },
+
+    editActiveMatch() {
+        if (!this.authToken || !this.activeMatchId) return;
+        this.editMatch(this.activeMatchId);
     },
 
     getDefaultAppSettings() {
@@ -243,11 +251,19 @@ const app = {
             ['game-back-label', settings.game_back_label],
             ['game-replay-label', settings.game_replay_label],
             ['game-video-status-label', settings.game_video_status_label],
+            ['team-stats-title', `${settings.main_team_name || 'Team'} Performance`],
         ];
         mappings.forEach(([id, value]) => {
             const el = document.getElementById(id);
             if (el && value != null) el.textContent = value;
         });
+
+        const teamStatsSubtitle = document.getElementById('team-stats-subtitle');
+        if (teamStatsSubtitle) {
+            teamStatsSubtitle.textContent = settings.main_team_name
+                ? `Results update automatically from recorded scores for ${settings.main_team_name}.`
+                : 'Set a main team name in Settings to see team results and scoring stats here.';
+        }
 
         const seasonLogo = document.getElementById('season-logo');
         if (seasonLogo && assets.logo_url) seasonLogo.src = assets.logo_url;
@@ -286,6 +302,11 @@ const app = {
         document.querySelectorAll('#season-filter-group .filter-btn').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.filter === filter);
         });
+        this.renderSeasonView();
+    },
+
+    toggleTeamStats(force) {
+        this.teamStatsExpanded = typeof force === 'boolean' ? force : !this.teamStatsExpanded;
         this.renderSeasonView();
     },
 
@@ -403,6 +424,8 @@ const app = {
         document.getElementById('nav-settings').style.display = '';
         document.getElementById('nav-login-btn').style.display = 'none';
         document.getElementById('nav-logout-btn').style.display = '';
+        const gameEditBtn = document.getElementById('game-edit-btn');
+        if (gameEditBtn && this.activeMatchId) gameEditBtn.style.display = 'inline-flex';
         this.setAdminPanelVisibility(true);
         this.refreshAdminDiagnostics();
     },
@@ -413,6 +436,8 @@ const app = {
         document.getElementById('nav-settings').style.display = 'none';
         document.getElementById('nav-login-btn').style.display = '';
         document.getElementById('nav-logout-btn').style.display = 'none';
+        const gameEditBtn = document.getElementById('game-edit-btn');
+        if (gameEditBtn) gameEditBtn.style.display = 'none';
         this.setAdminPanelVisibility(false);
         if (document.getElementById('add-match-view')?.classList.contains('active') || document.getElementById('settings-view')?.classList.contains('active')) {
             this.cancelEdit();
@@ -504,6 +529,10 @@ const app = {
             button.addEventListener('click', () => {
                 this.setSeasonFilter(button.dataset.filter || 'all');
             });
+        });
+
+        document.getElementById('team-stats-toggle')?.addEventListener('click', () => {
+            this.toggleTeamStats();
         });
 
         // Add match form
@@ -1396,13 +1425,11 @@ const app = {
 
         const visibleMatches = this.filteredMatches();
 
-        document.getElementById('stat-played').textContent = visibleMatches.length;
-        document.getElementById('stat-ready').textContent = visibleMatches.filter((match) => this.readySlotsCount(match) > 0).length;
-        document.getElementById('stat-processing').textContent = visibleMatches.filter((match) => this.matchTranscoding(match)).length;
-
         document.querySelectorAll('#season-filter-group .filter-btn').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.filter === this.activeFilter);
         });
+
+        this.renderSeasonTeamStats(visibleMatches);
 
         grid.innerHTML = '';
         if (visibleMatches.length === 0) {
@@ -1433,6 +1460,9 @@ const app = {
 
             const dateStr = this.formatDate(m.date);
             const timeStr = m.time ? ` \u00b7 ${m.time}` : '';
+            const locationHtml = m.location
+                ? `<span class="match-detail-pill location">${this.esc(m.location)}</span>`
+                : '';
 
             const formatLabel = m.format === 'two_halves' ? '2 HALVES' : 'FULL MATCH';
             const isTranscoding = this.matchTranscoding(m);
@@ -1467,8 +1497,10 @@ const app = {
                         </div>
                     </div>
                 </div>
-                <div class="match-date">${this.esc(dateStr)}${timeStr}</div>
-                ${m.location ? `<div class="match-location">${this.esc(m.location)}</div>` : ''}
+                <div class="match-detail-row">
+                    <span class="match-detail-pill">${this.esc(dateStr)}${timeStr}</span>
+                    ${locationHtml}
+                </div>
                 <div class="match-meta">
                     ${isTranscoding ? '<span class="badge processing">PROCESSING</span>' : ''}
                     <span class="badge mode">${formatLabel}</span>
@@ -1507,6 +1539,8 @@ const app = {
         if (!match) return;
 
         this.activeMatchId = matchId;
+        const gameEditBtn = document.getElementById('game-edit-btn');
+        if (gameEditBtn) gameEditBtn.style.display = this.authToken ? 'inline-flex' : 'none';
 
         // Date
         document.getElementById('active-game-date').textContent =
@@ -1514,7 +1548,6 @@ const app = {
 
         // Location
         document.getElementById('active-game-loc').textContent = match.location || '-';
-        document.getElementById('game-title').textContent = `${match.home_team} vs ${match.away_team}`;
         this.renderGameStatus(match);
 
         // Matchup layout
@@ -1734,18 +1767,118 @@ const app = {
         `).join('');
     },
 
+    renderSeasonTeamStats(visibleMatches) {
+        const section = document.getElementById('season-team-stats');
+        const grid = document.getElementById('team-stats-grid');
+        const empty = document.getElementById('team-stats-empty');
+        const title = document.getElementById('team-stats-title');
+        const toggle = document.getElementById('team-stats-toggle');
+        if (!section || !grid || !empty || !title) return;
+
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', this.teamStatsExpanded ? 'true' : 'false');
+        }
+        section.classList.toggle('is-collapsed', !this.teamStatsExpanded);
+        section.setAttribute('aria-hidden', this.teamStatsExpanded ? 'false' : 'true');
+
+        const settings = this.getAppSettings();
+        const mainTeamName = settings.main_team_name?.trim();
+        title.textContent = `${mainTeamName || 'Team'} Performance`;
+
+        if (!mainTeamName) {
+            grid.innerHTML = '';
+            empty.style.display = 'block';
+            empty.textContent = 'Set the main team name in Settings to unlock score-based season stats.';
+            return;
+        }
+
+        const teamMatches = visibleMatches.filter((match) => this.matchFilterCategory(match) !== 'other');
+        const scoredMatches = teamMatches.filter((match) => match.score_home != null && match.score_away != null);
+
+        if (!scoredMatches.length) {
+            grid.innerHTML = '';
+            empty.style.display = 'block';
+            empty.textContent = teamMatches.length
+                ? 'Scores have not been entered for the matches in this view yet.'
+                : `No ${mainTeamName} matches are currently visible for this filter.`;
+            return;
+        }
+
+        let wins = 0;
+        let draws = 0;
+        let losses = 0;
+        let goalsFor = 0;
+        let goalsAgainst = 0;
+        let cleanSheets = 0;
+
+        scoredMatches.forEach((match) => {
+            const category = this.matchFilterCategory(match);
+            const teamScore = category === 'home' ? Number(match.score_home || 0) : Number(match.score_away || 0);
+            const opponentScore = category === 'home' ? Number(match.score_away || 0) : Number(match.score_home || 0);
+            goalsFor += teamScore;
+            goalsAgainst += opponentScore;
+            if (teamScore > opponentScore) wins += 1;
+            else if (teamScore < opponentScore) losses += 1;
+            else draws += 1;
+            if (opponentScore === 0) cleanSheets += 1;
+        });
+
+        const points = wins * 3 + draws;
+        const gamesPlayed = scoredMatches.length;
+        const goalDiff = goalsFor - goalsAgainst;
+        const pointsPerGame = gamesPlayed ? (points / gamesPlayed).toFixed(2) : '0.00';
+        const avgGoals = gamesPlayed ? (goalsFor / gamesPlayed).toFixed(1) : '0.0';
+
+        const cards = [
+            {
+                accent: 'record',
+                label: 'Record',
+                value: `${wins}-${draws}-${losses}`,
+                note: `${gamesPlayed} scored matches`,
+            },
+            {
+                accent: 'points',
+                label: 'Points',
+                value: String(points),
+                note: `${pointsPerGame} per game`,
+            },
+            {
+                accent: 'goals',
+                label: 'Goals',
+                value: `${goalsFor}-${goalsAgainst}`,
+                note: `${avgGoals} scored per game`,
+            },
+            {
+                accent: 'difference',
+                label: 'Goal Diff',
+                value: goalDiff > 0 ? `+${goalDiff}` : String(goalDiff),
+                note: `${cleanSheets} clean sheet${cleanSheets === 1 ? '' : 's'}`,
+            },
+        ];
+        empty.style.display = 'none';
+        grid.innerHTML = cards.map((card) => `
+            <article class="team-stat-card ${card.accent}">
+                <span class="team-stat-label">${this.esc(card.label)}</span>
+                <strong class="team-stat-value">${this.esc(card.value)}</strong>
+                <span class="team-stat-note">${this.esc(card.note)}</span>
+            </article>
+        `).join('');
+    },
+
     renderGameStatus(match) {
         const pills = document.getElementById('game-status-pills');
         const slotList = document.getElementById('game-slot-status-list');
-        if (!pills || !slotList) return;
+        if (!slotList) return;
 
         const formatLabel = match.format === 'two_halves' ? 'Two Halves' : 'Full Match';
         const readySlots = this.readySlotsCount(match);
         const totalSlots = match.format === 'two_halves' ? 2 : 1;
-        pills.innerHTML = `
-            <span class="status-pill neutral">${this.esc(formatLabel)}</span>
-            <span class="status-pill ${this.matchTranscoding(match) ? 'processing' : 'ready'}">${readySlots}/${totalSlots} Ready</span>
-        `;
+        if (pills) {
+            pills.innerHTML = `
+                <span class="status-pill neutral">${this.esc(formatLabel)}</span>
+                <span class="status-pill ${this.matchTranscoding(match) ? 'processing' : 'ready'}">${readySlots}/${totalSlots} Ready</span>
+            `;
+        }
 
         const slots = match.format === 'two_halves'
             ? [['first_half', '1st Half'], ['second_half', '2nd Half']]

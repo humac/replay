@@ -62,12 +62,23 @@
                     <button class="filter-btn" data-filter="home" id="filter-home-btn">Home</button>
                     <button class="filter-btn" data-filter="away" id="filter-away-btn">Away</button>
                 </div>
-                <div class="stats-overview">
-                    <span class="stat"><span id="stat-played-label">Matches</span> <span id="stat-played">0</span></span>
-                    <span class="stat"><span id="stat-ready-label">Ready</span> <span id="stat-ready">0</span></span>
-                    <span class="stat"><span id="stat-processing-label">Processing</span> <span id="stat-processing">0</span></span>
-                </div>
+                <button type="button" class="team-stats-toggle" id="team-stats-toggle" aria-expanded="false">
+                    <span class="team-stats-toggle-label">See Team Performance</span>
+                    <span class="team-stats-toggle-icon" aria-hidden="true">▾</span>
+                </button>
             </div>
+
+            <section class="season-team-stats is-collapsed" id="season-team-stats" aria-hidden="true">
+                <div class="season-team-stats-head">
+                    <div>
+                        <span class="season-team-stats-kicker">Team Snapshot</span>
+                        <h2 id="team-stats-title">Season Performance</h2>
+                    </div>
+                    <p id="team-stats-subtitle">Results update automatically from the recorded match scores for your configured main team.</p>
+                </div>
+                <div class="team-stats-grid" id="team-stats-grid"></div>
+                <div class="team-stats-empty" id="team-stats-empty" style="display:none;"></div>
+            </section>
 
             <div class="matches-grid" id="matches-grid">
                 <!-- Matches dynamically populated -->
@@ -76,10 +87,13 @@
 
         <!-- Game View -->
         <section id="game-view" class="view">
-            <button class="back-btn" onclick="app.closeGame()">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                <span id="game-back-label">Back to Matches</span>
-            </button>
+            <div class="game-view-head">
+                <button class="back-btn" onclick="app.closeGame()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    <span id="game-back-label">Back to Matches</span>
+                </button>
+                <button type="button" id="game-edit-btn" class="game-edit-btn" style="display:none;" onclick="app.editActiveMatch()">Edit Match</button>
+            </div>
             <div class="game-layout">
                 <div class="video-container">
                     <div class="player-wrapper">
@@ -133,13 +147,6 @@
 
                 <div class="sidebar">
                     <div class="game-details">
-                        <div class="game-summary-card">
-                            <div class="game-summary-topline">
-                                <span class="game-summary-kicker" id="game-replay-label">Match Replay</span>
-                                <div class="game-status-pills" id="game-status-pills"></div>
-                            </div>
-                            <div class="game-title" id="game-title">Match</div>
-                        </div>
                         <div class="game-matchup" id="game-matchup">
                             <!-- Injected by JS: logo, name, score per team -->
                         </div>

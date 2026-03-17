@@ -62,6 +62,7 @@ button {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 1rem;
     padding: 1.5rem 3rem;
     border-bottom: 1px solid var(--border-light);
     background: rgba(7, 7, 9, 0.8);
@@ -186,8 +187,9 @@ button {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 2.5rem;
-    padding-bottom: 1.5rem;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    padding-bottom: 1.25rem;
     border-bottom: 1px solid var(--border-light);
 }
 
@@ -240,11 +242,188 @@ button {
     color: var(--text-muted);
 }
 
+.team-stats-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    padding: 0.72rem 1rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.04);
+    color: var(--text-main);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.team-stats-toggle:hover {
+    border-color: rgba(23, 113, 201, 0.6);
+    background: rgba(23, 113, 201, 0.1);
+    transform: translateY(-1px);
+}
+
+.team-stats-toggle[aria-expanded="true"] {
+    border-color: rgba(23, 113, 201, 0.75);
+    background: rgba(23, 113, 201, 0.16);
+}
+
+.team-stats-toggle-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    line-height: 1;
+    transform: rotate(0deg);
+    transition: transform 0.24s ease;
+}
+
+.team-stats-toggle[aria-expanded="true"] .team-stats-toggle-icon {
+    transform: rotate(180deg);
+}
+
+.season-team-stats {
+    margin-bottom: 2.5rem;
+    padding: 1.5rem 1.6rem 1.7rem;
+    border: 1px solid var(--border-light);
+    border-radius: 18px;
+    background:
+        radial-gradient(circle at top right, rgba(23, 113, 201, 0.12), transparent 32%),
+        linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    overflow: hidden;
+    transform-origin: top;
+    opacity: 1;
+    max-height: 900px;
+    transition: opacity 0.24s ease, transform 0.24s ease, max-height 0.3s ease, margin-bottom 0.24s ease, padding 0.24s ease, border-color 0.24s ease;
+}
+
+.season-team-stats.is-collapsed {
+    opacity: 0;
+    transform: translateY(-8px);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-color: transparent;
+    pointer-events: none;
+}
+
+.season-team-stats-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 1rem;
+    margin-bottom: 1.35rem;
+}
+
+.season-team-stats-kicker {
+    display: inline-block;
+    margin-bottom: 0.35rem;
+    color: var(--accent);
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+}
+
+.season-team-stats-head h2 {
+    font-size: 2rem;
+    line-height: 1;
+}
+
+.season-team-stats-head p {
+    max-width: 540px;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    text-align: right;
+}
+
+.team-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1rem;
+}
+
+.team-stat-card {
+    position: relative;
+    overflow: hidden;
+    min-height: 138px;
+    padding: 1.15rem 1.15rem 1.05rem;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(8, 8, 10, 0.62);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.team-stat-card::after {
+    content: '';
+    position: absolute;
+    inset: auto -12% -40% auto;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    opacity: 0.25;
+    filter: blur(10px);
+}
+
+.team-stat-card.record::after {
+    background: rgba(23, 113, 201, 0.65);
+}
+
+.team-stat-card.points::after {
+    background: rgba(34, 197, 94, 0.55);
+}
+
+.team-stat-card.goals::after {
+    background: rgba(244, 114, 182, 0.45);
+}
+
+.team-stat-card.difference::after {
+    background: rgba(250, 204, 21, 0.4);
+}
+
+.team-stat-label {
+    position: relative;
+    z-index: 1;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+}
+
+.team-stat-value {
+    position: relative;
+    z-index: 1;
+    font-family: var(--font-heading);
+    font-size: 2.75rem;
+    line-height: 0.95;
+    letter-spacing: 0.01em;
+}
+
+.team-stat-note {
+    position: relative;
+    z-index: 1;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+
+.team-stats-empty {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    padding: 0.4rem 0.15rem 0;
+}
+
 /* Matches Grid */
 .matches-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-    gap: 2rem;
+    gap: 1.5rem;
 }
 
 .match-card {
@@ -420,6 +599,34 @@ button {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.match-detail-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.55rem;
+    margin-bottom: 0.9rem;
+}
+
+.match-detail-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.38rem 0.72rem;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.05);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+
+.match-detail-pill.location {
+    max-width: 100%;
+    white-space: normal;
+    text-align: center;
+    color: var(--text-main);
 }
 
 .match-meta {
@@ -777,20 +984,20 @@ button {
 }
 
 /* Sidebar */
+.game-view-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
 .sidebar {
     display: flex;
     flex-direction: column;
     gap: 3rem;
 }
 
-.game-title {
-    font-size: 2.5rem;
-    margin-bottom: 1.5rem;
-    line-height: 1.1;
-    display: block;
-}
-
-.game-summary-card,
 .slot-status-card {
     padding: 1.35rem 1.45rem;
     border-radius: 14px;
@@ -799,27 +1006,29 @@ button {
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
-.game-summary-topline {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
-
-.game-summary-kicker {
+.game-edit-btn {
+    border: 1px solid rgba(11, 17, 32, 0.12);
+    background: rgba(255, 255, 255, 0.88);
+    color: #10203b;
+    border-radius: 999px;
+    padding: 8px 14px;
     font-size: 0.78rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--text-muted);
     font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.game-status-pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    justify-content: flex-end;
+.game-edit-btn:hover {
+    transform: translateY(-1px);
+    border-color: rgba(16, 32, 59, 0.24);
+    box-shadow: 0 10px 20px rgba(16, 32, 59, 0.12);
+}
+
+.game-edit-btn:focus-visible {
+    outline: 2px solid rgba(16, 32, 59, 0.35);
+    outline-offset: 2px;
 }
 
 .status-pill {
@@ -1012,6 +1221,11 @@ button {
 }
 
 @media (max-width: 1300px) {
+    .game-view-head {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
     .game-layout {
         grid-template-columns: 1fr;
     }
@@ -1604,6 +1818,36 @@ button {
     }
     .main-nav {
         padding: 1rem 1.5rem;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    .logo {
+        width: 100%;
+        text-align: center;
+    }
+    .nav-links,
+    .nav-actions {
+        width: 100%;
+        justify-content: center;
+    }
+    .nav-links {
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+    .nav-links a {
+        padding: 0.55rem 0.8rem;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 999px;
+        background: rgba(255,255,255,0.03);
+    }
+    .nav-links a.active::after {
+        display: none;
+    }
+    .nav-actions {
+        display: flex;
+    }
+    .nav-auth-btn {
+        width: 100%;
     }
     #app-container {
         padding: 1.5rem;
@@ -1618,16 +1862,27 @@ button {
     }
     .controls-bar {
         flex-direction: column;
+        align-items: stretch;
         gap: 1rem;
     }
-    .stats-overview {
-        flex-wrap: wrap;
-        justify-content: center;
+    .season-team-stats-head {
+        flex-direction: column;
+        align-items: flex-start;
     }
-    .game-summary-topline,
+    .season-team-stats-head p {
+        text-align: left;
+        max-width: none;
+    }
+    .team-stats-toggle {
+        width: 100%;
+    }
+    .game-view-head,
     .admin-panel-head,
     .diagnostics-columns,
-    .slot-status-row,
+    .slot-status-row {
+        width: 100%;
+        justify-content: flex-start;
+    }
     .session-item {
         grid-template-columns: 1fr;
         flex-direction: column;
@@ -1635,6 +1890,17 @@ button {
     }
     .matches-grid {
         grid-template-columns: 1fr;
+    }
+    .game-view-head {
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+    .game-matchup {
+        gap: 0.9rem;
+    }
+    .game-meta-row {
+        flex-direction: column;
+        gap: 1rem;
     }
     .player-controls {
         flex-wrap: wrap;
@@ -1653,6 +1919,10 @@ button {
     .team-name-score-row,
     .game-team-name-score-row {
         gap: 0.5rem;
+    }
+    .match-detail-row {
+        flex-direction: column;
+        align-items: stretch;
     }
     .form-row {
         flex-direction: column;
@@ -1681,6 +1951,12 @@ button {
     }
     .admin-panel-actions {
         width: 100%;
+    }
+}
+
+@media (max-width: 520px) {
+    .team-stats-grid {
+        grid-template-columns: 1fr;
     }
 }
 
