@@ -6,10 +6,12 @@ Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 80
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import json
 import logging
 import math
 import os
+import re
 import secrets
 import sqlite3
 import shutil
@@ -30,6 +32,7 @@ STATIC_DIR = Path(__file__).parent
 MATCHES_FILE = DATA_DIR / "matches.json"
 DB_FILE = DATA_DIR / "replay.db"
 VIDEOS_DIR = DATA_DIR / "videos"
+APP_ASSETS_DIR = DATA_DIR / "app_assets"
 
 app = FastAPI(title="Replay")
 
@@ -80,6 +83,121 @@ HLS_VARIANT_PRESETS = [
     },
 ]
 
+DEFAULT_APP_SETTINGS = {
+    "app_name": "Replay",
+    "nav_matches_label": "Matches",
+    "nav_add_match_label": "Add Match",
+    "nav_settings_label": "Settings",
+    "season_title": "U12 GIRLS STEEL",
+    "season_intro": "Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)",
+    "main_team_name": "OSU Steel",
+    "filter_all_label": "All Matches",
+    "filter_home_label": "Home",
+    "filter_away_label": "Away",
+    "stat_matches_label": "Matches",
+    "stat_ready_label": "Ready",
+    "stat_processing_label": "Processing",
+    "game_back_label": "Back to Matches",
+    "game_replay_label": "Match Replay",
+    "game_video_status_label": "Video Status",
+    "download_label": "Download",
+    "downloads_enabled": "1",
+    "app_logo_filename": "",
+    "favicon_filename": "",
+}
+
+EDITABLE_APP_SETTING_KEYS = {
+    key for key in DEFAULT_APP_SETTINGS.keys()
+    if key not in {"app_logo_filename", "favicon_filename"}
+}
+
+APP_ASSET_CONFIG = {
+    "logo": {
+        "setting_key": "app_logo_filename",
+        "allowed_exts": {".png", ".jpg", ".jpeg", ".svg", ".webp"},
+        "max_size": 20 * 1024 * 1024,
+    },
+    "favicon": {
+        "setting_key": "favicon_filename",
+        "allowed_exts": {".ico", ".png", ".svg"},
+        "max_size": 5 * 1024 * 1024,
+    },
+}
+
+
+def _load_settings_unlocked() -> dict[str, str]:
+    settings = DEFAULT_APP_SETTINGS.copy()
+    with _db_connect() as conn:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    for row in rows:
+        settings[row["key"]] = row["value"]
+    return settings
+
+
+def _save_settings_unlocked(updates: dict[str, str]) -> dict[str, str]:
+    if not updates:
+        return _load_settings_unlocked()
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with _db_connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            [(key, value, now) for key, value in updates.items()],
+        )
+        conn.commit()
+    return _load_settings_unlocked()
+
+
+def _load_settings() -> dict[str, str]:
+    with MATCHES_LOCK:
+        return _load_settings_unlocked()
+
+
+def _save_settings(updates: dict[str, str]) -> dict[str, str]:
+    with MATCHES_LOCK:
+        return _save_settings_unlocked(updates)
+
+
+def _versioned_static_path(filename: str) -> str:
+    return f"/static/{filename}?v={_asset_version(filename)}"
+
+
+def _app_asset_url(kind: str, settings: dict[str, str] | None = None) -> str:
+    settings = settings or _load_settings()
+    config = APP_ASSET_CONFIG[kind]
+    filename = settings.get(config["setting_key"], "")
+    if filename:
+        asset_path = APP_ASSETS_DIR / filename
+        if asset_path.is_file():
+            return f"/api/app-assets/{kind}?v={asset_path.stat().st_mtime_ns}"
+    if kind == "logo":
+        return _versioned_static_path("logo.png")
+    return _versioned_static_path("logo.png")
+
+
+def _public_settings_payload() -> dict:
+    settings = _load_settings()
+    return {
+        "settings": settings,
+        "assets": {
+            "logo_url": _app_asset_url("logo", settings),
+            "favicon_url": _app_asset_url("favicon", settings),
+        },
+    }
+
+
+def _normalize_setting_value(key: str, value) -> str:
+    if value is None:
+        return DEFAULT_APP_SETTINGS.get(key, "")
+    if key == "downloads_enabled":
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        return "1" if str(value).strip().lower() in {"1", "true", "yes", "on"} else "0"
+    return str(value).strip()
+
 
 def _asset_version(filename: str) -> str:
     path = STATIC_DIR / filename
@@ -91,13 +209,21 @@ def _asset_version(filename: str) -> str:
 
 def _render_index_html() -> str:
     html = (STATIC_DIR / "index.html").read_text()
-    replacements = {
-        '/static/styles.css': f'/static/styles.css?v={_asset_version("styles.css")}',
-        '/static/script.js': f'/static/script.js?v={_asset_version("script.js")}',
-        '/static/logo.png': f'/static/logo.png?v={_asset_version("logo.png")}',
-    }
-    for old, new in replacements.items():
-        html = html.replace(old, new)
+    settings_payload = _public_settings_payload()
+    app_name = html_lib.escape(settings_payload["settings"]["app_name"] or DEFAULT_APP_SETTINGS["app_name"])
+    favicon_url = html_lib.escape(settings_payload["assets"]["favicon_url"], quote=True)
+    html = re.sub(r'/static/styles\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles.css"), html)
+    html = re.sub(r'/static/script\.js(?:\?v=[^"\']*)?', _versioned_static_path("script.js"), html)
+    html = re.sub(r'/static/logo\.png(?:\?v=[^"\']*)?', _app_asset_url("logo", settings_payload["settings"]), html)
+    html = re.sub(r"<title>.*?</title>", f"<title>{app_name}</title>", html, count=1)
+    favicon_link = f'<link rel="icon" href="{favicon_url}">'
+    if 'rel="icon"' in html:
+        html = re.sub(r'<link rel="icon"[^>]*>', favicon_link, html, count=1)
+    else:
+        html = html.replace("</head>", f"    {favicon_link}\n</head>")
+    bootstrap = "<script>window.__APP_SETTINGS__ = " + json.dumps(settings_payload) + ";</script>"
+    if "window.__APP_SETTINGS__" not in html:
+        html = html.replace("</head>", f"    {bootstrap}\n</head>")
     return html
 
 
@@ -111,6 +237,7 @@ def _db_connect() -> sqlite3.Connection:
 
 def _init_db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    APP_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     with _db_connect() as conn:
         conn.execute(
             """
@@ -147,6 +274,15 @@ def _init_db():
                 status TEXT NOT NULL,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT
             )
             """
         )
@@ -827,6 +963,8 @@ async def static_file(filename: str):
         ".png": "image/png",
         ".jpg": "image/jpeg",
         ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".webp": "image/webp",
     }
     mt = media_types.get(path.suffix, "application/octet-stream")
     cache_header = "public, max-age=31536000, immutable"
@@ -844,6 +982,97 @@ async def static_file(filename: str):
 # ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/api/settings")
+async def get_public_settings():
+    return _public_settings_payload()
+
+
+@app.get("/api/admin/settings")
+async def get_admin_settings(request: Request):
+    _require_auth(request)
+    return _public_settings_payload()
+
+
+@app.put("/api/admin/settings")
+async def update_admin_settings(request: Request):
+    _require_auth(request)
+    body = await request.json()
+    updates = {
+        key: _normalize_setting_value(key, value)
+        for key, value in body.items()
+        if key in EDITABLE_APP_SETTING_KEYS
+    }
+    settings = _save_settings(updates)
+    return {
+        "ok": True,
+        "settings": settings,
+        "assets": {
+            "logo_url": _app_asset_url("logo", settings),
+            "favicon_url": _app_asset_url("favicon", settings),
+        },
+    }
+
+
+@app.post("/api/admin/settings/asset")
+async def upload_app_asset(file: UploadFile, request: Request):
+    _require_auth(request)
+    kind = request.query_params.get("kind", "logo")
+    if kind not in APP_ASSET_CONFIG:
+        raise HTTPException(400, "kind must be logo or favicon")
+
+    config = APP_ASSET_CONFIG[kind]
+    filename = file.filename or f"{kind}.png"
+    ext = Path(filename).suffix.lower()
+    if ext not in config["allowed_exts"]:
+        raise HTTPException(400, f"Unsupported {kind} format")
+
+    settings = _load_settings()
+    current_name = settings.get(config["setting_key"], "")
+    if current_name:
+        (APP_ASSETS_DIR / current_name).unlink(missing_ok=True)
+
+    dest_name = f"app_{kind}{ext}"
+    dest = APP_ASSETS_DIR / dest_name
+    await _save_upload_file(file, dest, max_size_bytes=config["max_size"])
+    settings = _save_settings({config["setting_key"]: dest_name})
+    return {
+        "ok": True,
+        "kind": kind,
+        "filename": dest_name,
+        "settings": settings,
+        "assets": {
+            "logo_url": _app_asset_url("logo", settings),
+            "favicon_url": _app_asset_url("favicon", settings),
+        },
+    }
+
+
+@app.get("/api/app-assets/{kind}")
+async def serve_app_asset(kind: str):
+    if kind not in APP_ASSET_CONFIG:
+        raise HTTPException(400, "Invalid asset kind")
+    settings = _load_settings()
+    filename = settings.get(APP_ASSET_CONFIG[kind]["setting_key"], "")
+    if not filename:
+        raise HTTPException(404, "Asset not configured")
+    asset_path = APP_ASSETS_DIR / filename
+    if not asset_path.is_file():
+        raise HTTPException(404, "Asset not found")
+    media_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+        ".webp": "image/webp",
+        ".ico": "image/x-icon",
+    }
+    mt = media_types.get(asset_path.suffix.lower(), "application/octet-stream")
+    return FileResponse(
+        str(asset_path),
+        media_type=mt,
+        headers={"Cache-Control": "public, max-age=3600, immutable"},
+    )
 
 @app.post("/api/login")
 async def login(request: Request):
@@ -1313,6 +1542,40 @@ async def stream_video(match_id: str, slot: str, request: Request):
     return _range_file_response(vid_path, "video/mp4", request)
 
 
+@app.get("/api/matches/{match_id}/download/{slot}")
+async def download_video(match_id: str, slot: str, request: Request):
+    if slot not in ("full", "first_half", "second_half"):
+        raise HTTPException(400, "Invalid slot")
+
+    matches = _load_matches()
+    match = _find_match(matches, match_id)
+    if not match:
+        raise HTTPException(404, "Match not found")
+
+    settings = _load_settings()
+    if settings.get("downloads_enabled", "1") != "1":
+        raise HTTPException(403, "Downloads are disabled")
+
+    status = _get_video_status(match, slot)
+    if status == "transcoding":
+        raise HTTPException(409, "Video is still processing")
+    if status == "error":
+        raise HTTPException(500, "Video processing failed")
+
+    vid_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+    if not vid_path.is_file():
+        raise HTTPException(404, "Video not found")
+
+    slug_parts = [match.get("home_team", "home"), "vs", match.get("away_team", "away"), slot]
+    safe_name = "_".join(re.sub(r"[^A-Za-z0-9]+", "_", part).strip("_") or "match" for part in slug_parts)
+    return _range_file_response(
+        vid_path,
+        "video/mp4",
+        request,
+        content_disposition=f'attachment; filename="{safe_name}.mp4"',
+    )
+
+
 @app.on_event("startup")
 async def startup_backfill_hls():
     asyncio.create_task(_backfill_hls_for_existing_videos())
@@ -1372,7 +1635,7 @@ async def stream_hls_asset(match_id: str, slot: str, asset_path: str):
     )
 
 
-def _range_file_response(file_path: Path, media_type: str, request: Request):
+def _range_file_response(file_path: Path, media_type: str, request: Request, content_disposition: str | None = None):
     """Serve a file with Range-request support for video seeking."""
     file_size = file_path.stat().st_size
     range_header = request.headers.get("range")
@@ -1380,6 +1643,8 @@ def _range_file_response(file_path: Path, media_type: str, request: Request):
         "Accept-Ranges": "bytes",
         "Cache-Control": "public, max-age=3600, immutable",
     }
+    if content_disposition:
+        common_headers["Content-Disposition"] = content_disposition
 
     if range_header:
         range_spec = range_header.replace("bytes=", "").strip()

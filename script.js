@@ -4,8 +4,11 @@ const app = {
     CHUNK_RETRY_COUNT: 3,
     UPLOAD_SESSION_STORAGE_KEY: 'replay_upload_sessions_v1',
     matches: [],
+    appSettings: null,
+    appAssets: null,
     activeMatchId: null,
     activeSlot: null,
+    activeFilter: 'all',
     castSession: null,
     hlsPlayer: null,
     airplayAvailable: false,
@@ -22,8 +25,10 @@ const app = {
 
     async init() {
         await this.checkAuth();
+        await this.loadAppSettings();
         await this.loadMatches();
         this.bindEvents();
+        this.applyAppSettings();
         this.renderSeasonView();
         this.initializeHistory();
         this.initAirPlay();
@@ -73,6 +78,15 @@ const app = {
             return;
         }
 
+        if (state.view === 'settings') {
+            if (!this.authToken) {
+                this.showSeasonView({ pushHistory: false, scrollTop });
+                return;
+            }
+            this.showSettingsView({ pushHistory: false, scrollTop });
+            return;
+        }
+
         this.showSeasonView({ pushHistory: false, scrollTop });
     },
 
@@ -102,6 +116,11 @@ const app = {
         if (overlay && !this.castSession) {
             overlay.style.display = 'none';
         }
+        const downloadActions = document.getElementById('download-actions');
+        if (downloadActions) {
+            downloadActions.style.display = 'none';
+            downloadActions.innerHTML = '';
+        }
         this.updateRemotePlaybackNote();
     },
 
@@ -129,9 +148,145 @@ const app = {
         }
     },
 
+    showSettingsView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
+        this.teardownGameView();
+        this.activateView('settings-view', 'settings');
+        this.renderSettingsForm();
+        if (pushHistory) {
+            this.pushHistoryState({ view: 'settings' }, { replace: replaceHistory });
+        }
+        if (scrollTop) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    },
+
     goHome() {
         this.cancelEdit();
         this.showSeasonView({ replaceHistory: true });
+    },
+
+    getDefaultAppSettings() {
+        return {
+            app_name: 'Replay',
+            nav_matches_label: 'Matches',
+            nav_add_match_label: 'Add Match',
+            nav_settings_label: 'Settings',
+            season_title: 'U12 GIRLS STEEL',
+            season_intro: 'Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)',
+            main_team_name: 'OSU Steel',
+            filter_all_label: 'All Matches',
+            filter_home_label: 'Home',
+            filter_away_label: 'Away',
+            stat_matches_label: 'Matches',
+            stat_ready_label: 'Ready',
+            stat_processing_label: 'Processing',
+            game_back_label: 'Back to Matches',
+            game_replay_label: 'Match Replay',
+            game_video_status_label: 'Video Status',
+            download_label: 'Download',
+            downloads_enabled: '1',
+            app_logo_filename: '',
+            favicon_filename: '',
+        };
+    },
+
+    getAppSettings() {
+        return this.appSettings || this.getDefaultAppSettings();
+    },
+
+    async loadAppSettings(force = false) {
+        if (!force && window.__APP_SETTINGS__) {
+            this.setAppSettingsPayload(window.__APP_SETTINGS__);
+            return;
+        }
+        try {
+            const resp = await fetch('/api/settings');
+            if (!resp.ok) throw new Error('Failed to load settings');
+            const payload = await resp.json();
+            this.setAppSettingsPayload(payload);
+        } catch (error) {
+            console.error('Failed to load app settings', error);
+            this.setAppSettingsPayload({ settings: this.getDefaultAppSettings(), assets: {} });
+        }
+    },
+
+    setAppSettingsPayload(payload) {
+        const defaults = this.getDefaultAppSettings();
+        this.appSettings = { ...defaults, ...(payload?.settings || {}) };
+        this.appAssets = {
+            logo_url: payload?.assets?.logo_url || '/static/logo.png',
+            favicon_url: payload?.assets?.favicon_url || '/static/logo.png',
+        };
+    },
+
+    applyAppSettings() {
+        const settings = this.getAppSettings();
+        const assets = this.appAssets || {};
+        document.title = settings.app_name || 'Replay';
+
+        const faviconEl = document.querySelector('link[rel="icon"]');
+        if (faviconEl && assets.favicon_url) faviconEl.href = assets.favicon_url;
+
+        const mappings = [
+            ['nav-app-name', settings.app_name],
+            ['nav-season-link', settings.nav_matches_label],
+            ['nav-add-match', settings.nav_add_match_label],
+            ['nav-settings', settings.nav_settings_label],
+            ['season-title', settings.season_title],
+            ['season-intro', settings.season_intro],
+            ['filter-all-btn', settings.filter_all_label],
+            ['filter-home-btn', settings.filter_home_label],
+            ['filter-away-btn', settings.filter_away_label],
+            ['stat-played-label', settings.stat_matches_label],
+            ['stat-ready-label', settings.stat_ready_label],
+            ['stat-processing-label', settings.stat_processing_label],
+            ['game-back-label', settings.game_back_label],
+            ['game-replay-label', settings.game_replay_label],
+            ['game-video-status-label', settings.game_video_status_label],
+        ];
+        mappings.forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el && value != null) el.textContent = value;
+        });
+
+        const seasonLogo = document.getElementById('season-logo');
+        if (seasonLogo && assets.logo_url) seasonLogo.src = assets.logo_url;
+
+        if (this.matches.length) this.renderSeasonView();
+        if (this.activeMatchId) {
+            const match = this.matches.find((item) => item.id === this.activeMatchId);
+            if (match) this.renderDownloadActions(match);
+        }
+    },
+
+    mainTeamNameNormalized() {
+        return (this.getAppSettings().main_team_name || '').trim().toLowerCase();
+    },
+
+    matchFilterCategory(match) {
+        const mainTeamName = this.mainTeamNameNormalized();
+        if (!mainTeamName) return 'all';
+        const home = (match.home_team || '').trim().toLowerCase();
+        const away = (match.away_team || '').trim().toLowerCase();
+        if (home === mainTeamName) return 'home';
+        if (away === mainTeamName) return 'away';
+        return 'other';
+    },
+
+    filteredMatches() {
+        if (!this.mainTeamNameNormalized()) {
+            return this.matches;
+        }
+        if (this.activeFilter === 'all') return this.matches;
+        return this.matches.filter((match) => this.matchFilterCategory(match) === this.activeFilter);
+    },
+
+    setSeasonFilter(filter) {
+        this.activeFilter = filter;
+        document.querySelectorAll('#season-filter-group .filter-btn').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.filter === filter);
+        });
+        this.renderSeasonView();
     },
 
     // ------------------------------------------------------------------
@@ -245,6 +400,7 @@ const app = {
 
     setLoggedIn() {
         document.getElementById('nav-add-match').style.display = '';
+        document.getElementById('nav-settings').style.display = '';
         document.getElementById('nav-login-btn').style.display = 'none';
         document.getElementById('nav-logout-btn').style.display = '';
         this.setAdminPanelVisibility(true);
@@ -254,11 +410,11 @@ const app = {
     setLoggedOut() {
         this.authToken = null;
         document.getElementById('nav-add-match').style.display = 'none';
+        document.getElementById('nav-settings').style.display = 'none';
         document.getElementById('nav-login-btn').style.display = '';
         document.getElementById('nav-logout-btn').style.display = 'none';
         this.setAdminPanelVisibility(false);
-        // If on add-match view, switch to season view
-        if (document.getElementById('add-match-view')?.classList.contains('active')) {
+        if (document.getElementById('add-match-view')?.classList.contains('active') || document.getElementById('settings-view')?.classList.contains('active')) {
             this.cancelEdit();
             this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
         }
@@ -337,7 +493,16 @@ const app = {
                 } else if (view === 'add-match') {
                     this.cancelEdit();
                     this.openAddMatchView();
+                } else if (view === 'settings') {
+                    this.cancelEdit();
+                    this.showSettingsView();
                 }
+            });
+        });
+
+        document.querySelectorAll('#season-filter-group .filter-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                this.setSeasonFilter(button.dataset.filter || 'all');
             });
         });
 
@@ -345,6 +510,11 @@ const app = {
         document.getElementById('add-match-form')?.addEventListener('submit', (e) => {
             e.preventDefault();
             this.handleFormSubmit();
+        });
+
+        document.getElementById('settings-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.handleSettingsSubmit();
         });
 
         document.getElementById('refresh-diagnostics-btn')?.addEventListener('click', () => {
@@ -358,13 +528,17 @@ const app = {
         });
 
         // File input labels
-        ['f-home-logo', 'f-away-logo', 'f-video-full', 'f-video-first', 'f-video-second'].forEach(id => {
+        ['f-home-logo', 'f-away-logo', 'f-video-full', 'f-video-first', 'f-video-second', 'settings-app-logo', 'settings-favicon'].forEach(id => {
             const input = document.getElementById(id);
             const label = document.getElementById(id + '-label');
             if (input && label) {
                 input.addEventListener('change', () => {
                     label.textContent = input.files[0] ? input.files[0].name : 'No file chosen';
-                    this.updatePendingUploadState(id, input.files[0] || null);
+                    if (id.startsWith('settings-')) {
+                        this.updateSettingsPendingState(id, input.files[0] || null);
+                    } else {
+                        this.updatePendingUploadState(id, input.files[0] || null);
+                    }
                 });
             }
         });
@@ -385,6 +559,161 @@ const app = {
             if (diagnosticsGrid) diagnosticsGrid.innerHTML = '';
             if (serverList) serverList.innerHTML = '';
             if (localList) localList.innerHTML = '';
+        }
+    },
+
+    renderSettingsForm() {
+        const settings = this.getAppSettings();
+        const fieldMap = {
+            'settings-app-name': settings.app_name,
+            'settings-main-team-name': settings.main_team_name,
+            'settings-season-title': settings.season_title,
+            'settings-season-intro': settings.season_intro,
+            'settings-nav-matches-label': settings.nav_matches_label,
+            'settings-nav-add-match-label': settings.nav_add_match_label,
+            'settings-nav-settings-label': settings.nav_settings_label,
+            'settings-filter-all-label': settings.filter_all_label,
+            'settings-filter-home-label': settings.filter_home_label,
+            'settings-filter-away-label': settings.filter_away_label,
+            'settings-stat-matches-label': settings.stat_matches_label,
+            'settings-stat-ready-label': settings.stat_ready_label,
+            'settings-stat-processing-label': settings.stat_processing_label,
+            'settings-game-back-label': settings.game_back_label,
+            'settings-game-replay-label': settings.game_replay_label,
+            'settings-game-video-status-label': settings.game_video_status_label,
+            'settings-download-label': settings.download_label,
+        };
+        Object.entries(fieldMap).forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el) el.value = value || '';
+        });
+        const downloadsEnabled = document.getElementById('settings-downloads-enabled');
+        if (downloadsEnabled) downloadsEnabled.checked = settings.downloads_enabled === '1';
+        this.renderSettingsAssetStates();
+    },
+
+    renderSettingsAssetStates() {
+        const settings = this.getAppSettings();
+        const logoState = document.getElementById('settings-app-logo-state');
+        const faviconState = document.getElementById('settings-favicon-state');
+        if (logoState) {
+            logoState.textContent = settings.app_logo_filename
+                ? `Current app logo: ${settings.app_logo_filename}`
+                : 'No custom app logo uploaded.';
+            logoState.className = `uploaded-state ${settings.app_logo_filename ? 'ready' : ''}`.trim();
+        }
+        if (faviconState) {
+            faviconState.textContent = settings.favicon_filename
+                ? `Current favicon: ${settings.favicon_filename}`
+                : 'No custom favicon uploaded.';
+            faviconState.className = `uploaded-state ${settings.favicon_filename ? 'ready' : ''}`.trim();
+        }
+    },
+
+    updateSettingsPendingState(inputId, file) {
+        const stateMap = {
+            'settings-app-logo': 'settings-app-logo-state',
+            'settings-favicon': 'settings-favicon-state',
+        };
+        const stateEl = document.getElementById(stateMap[inputId]);
+        if (!stateEl) return;
+        if (file) {
+            stateEl.textContent = `Selected for upload: ${file.name}`;
+            stateEl.className = 'uploaded-state pending';
+            return;
+        }
+        this.renderSettingsAssetStates();
+    },
+
+    resetSettingsFileLabels() {
+        ['settings-app-logo', 'settings-favicon'].forEach((id) => {
+            const input = document.getElementById(id);
+            const label = document.getElementById(id + '-label');
+            if (input) input.value = '';
+            if (label) label.textContent = 'No file chosen';
+        });
+        this.renderSettingsAssetStates();
+    },
+
+    async uploadSettingsAsset(inputId, kind) {
+        const input = document.getElementById(inputId);
+        if (!input || !input.files[0]) return;
+        const form = new FormData();
+        form.append('file', input.files[0]);
+        const resp = await fetch(`/api/admin/settings/asset?kind=${kind}`, {
+            method: 'POST',
+            headers: this.getAuthHeaders(),
+            body: form,
+        });
+        if (resp.status === 401) {
+            this.setLoggedOut();
+            sessionStorage.removeItem('replay_admin_token');
+            this.showLoginModal();
+            throw new Error('Session expired. Please log in again.');
+        }
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `Failed to upload ${kind}`);
+        }
+        this.setAppSettingsPayload(await resp.json());
+        this.applyAppSettings();
+    },
+
+    async handleSettingsSubmit() {
+        const submitBtn = document.getElementById('settings-submit-btn');
+        const body = {
+            app_name: document.getElementById('settings-app-name').value.trim(),
+            main_team_name: document.getElementById('settings-main-team-name').value.trim(),
+            season_title: document.getElementById('settings-season-title').value.trim(),
+            season_intro: document.getElementById('settings-season-intro').value.trim(),
+            nav_matches_label: document.getElementById('settings-nav-matches-label').value.trim(),
+            nav_add_match_label: document.getElementById('settings-nav-add-match-label').value.trim(),
+            nav_settings_label: document.getElementById('settings-nav-settings-label').value.trim(),
+            filter_all_label: document.getElementById('settings-filter-all-label').value.trim(),
+            filter_home_label: document.getElementById('settings-filter-home-label').value.trim(),
+            filter_away_label: document.getElementById('settings-filter-away-label').value.trim(),
+            stat_matches_label: document.getElementById('settings-stat-matches-label').value.trim(),
+            stat_ready_label: document.getElementById('settings-stat-ready-label').value.trim(),
+            stat_processing_label: document.getElementById('settings-stat-processing-label').value.trim(),
+            game_back_label: document.getElementById('settings-game-back-label').value.trim(),
+            game_replay_label: document.getElementById('settings-game-replay-label').value.trim(),
+            game_video_status_label: document.getElementById('settings-game-video-status-label').value.trim(),
+            download_label: document.getElementById('settings-download-label').value.trim(),
+            downloads_enabled: document.getElementById('settings-downloads-enabled').checked,
+        };
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Saving...';
+        try {
+            const resp = await fetch('/api/admin/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify(body),
+            });
+            if (resp.status === 401) {
+                this.setLoggedOut();
+                sessionStorage.removeItem('replay_admin_token');
+                this.showLoginModal();
+                throw new Error('Session expired. Please log in again.');
+            }
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Failed to save settings');
+            }
+            this.setAppSettingsPayload(await resp.json());
+            await this.uploadSettingsAsset('settings-app-logo', 'logo');
+            await this.uploadSettingsAsset('settings-favicon', 'favicon');
+            await this.loadAppSettings(true);
+            this.applyAppSettings();
+            this.renderSettingsForm();
+            this.renderSeasonView();
+            alert('Settings saved.');
+        } catch (error) {
+            alert('Error: ' + error.message);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Save Settings';
+            this.resetSettingsFileLabels();
         }
     },
 
@@ -1065,18 +1394,27 @@ const app = {
         const grid = document.getElementById('matches-grid');
         if (!grid) return;
 
-        document.getElementById('stat-played').textContent = this.matches.length;
-        document.getElementById('stat-ready').textContent = this.matches.filter((match) => this.readySlotsCount(match) > 0).length;
-        document.getElementById('stat-processing').textContent = this.matches.filter((match) => this.matchTranscoding(match)).length;
+        const visibleMatches = this.filteredMatches();
+
+        document.getElementById('stat-played').textContent = visibleMatches.length;
+        document.getElementById('stat-ready').textContent = visibleMatches.filter((match) => this.readySlotsCount(match) > 0).length;
+        document.getElementById('stat-processing').textContent = visibleMatches.filter((match) => this.matchTranscoding(match)).length;
+
+        document.querySelectorAll('#season-filter-group .filter-btn').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.filter === this.activeFilter);
+        });
 
         grid.innerHTML = '';
-        if (this.matches.length === 0) {
-            grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 2rem;">No matches yet. Click "Add Match" to get started.</p>';
+        if (visibleMatches.length === 0) {
+            const emptyMessage = this.matches.length === 0
+                ? 'No matches yet. Click "Add Match" to get started.'
+                : 'No matches found for the current filter.';
+            grid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 2rem;">${emptyMessage}</p>`;
             return;
         }
 
         // Sort by date descending
-        const sorted = [...this.matches].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        const sorted = [...visibleMatches].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         sorted.forEach(m => {
             const card = document.createElement('div');
@@ -1215,6 +1553,7 @@ const app = {
         }
 
         this.setupVideoSlots(match);
+        this.renderDownloadActions(match);
         if (scrollTop) {
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
@@ -1273,6 +1612,7 @@ const app = {
         // Only refresh if we're on the game view for this match
         if (!document.getElementById('game-view').classList.contains('active')) return;
         this.renderGameStatus(match);
+        this.renderDownloadActions(match);
 
         // If the active slot just became ready, try playing it
         if (this.activeSlot) {
@@ -1364,6 +1704,34 @@ const app = {
 
     closeGame() {
         this.showSeasonView({ replaceHistory: true });
+    },
+
+    renderDownloadActions(match) {
+        const container = document.getElementById('download-actions');
+        if (!container) return;
+        const settings = this.getAppSettings();
+        if (settings.downloads_enabled !== '1') {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            return;
+        }
+
+        const slots = match.format === 'two_halves'
+            ? [['first_half', this.slotLabel('first_half')], ['second_half', this.slotLabel('second_half')]]
+            : [['full', this.slotLabel('full')]];
+        const readySlots = slots.filter(([slot]) => this.slotStatus(match, slot) === 'ready');
+        if (!readySlots.length) {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            return;
+        }
+
+        container.style.display = 'flex';
+        container.innerHTML = readySlots.map(([slot, label]) => `
+            <a class="download-btn" href="/api/matches/${match.id}/download/${slot}" download>
+                ${this.esc(settings.download_label)} ${this.esc(label)}
+            </a>
+        `).join('');
     },
 
     renderGameStatus(match) {

@@ -13,6 +13,9 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **HLS backfill for existing uploads** — already processed MP4 files can generate HLS assets later without re-uploading
 - **AirPlay 2** — explicit AirPlay picker button on supported Safari/WebKit devices for Apple TV and AirPlay 2 displays
 - **Chromecast** — Google Cast SDK integration with a dedicated cast button, metadata, and remote playback resume support
+- **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
+- **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
+- **Public downloads** — optional direct MP4 download buttons for ready games with normal browser resume support for large files
 - **Dark theme** — polished dark UI with Oswald/Manrope typography, smooth animations, and a noise overlay
 - **Edit & delete** — update match details or remove matches (and their videos) from the UI
 - **Admin diagnostics** — inspect upload sessions, cleanup stale partial uploads, and check disk headroom
@@ -47,6 +50,12 @@ docker compose up --build
 
 Then open [http://localhost:8090](http://localhost:8090).
 
+Copy the example environment file before first run if you want to override defaults:
+
+```bash
+cp .env.example .env.local
+```
+
 Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the container.
 
 Build/run with plain Docker:
@@ -70,6 +79,30 @@ docker run --rm -p 8090:8090 -v replay_data:/data replay
 | `MIN_FREE_DISK_BYTES` | `21474836480` | Minimum free disk threshold before accepting new uploads |
 | `UPLOAD_DISK_HEADROOM_MULTIPLIER` | `2.2` | Required free-space multiplier for new uploads |
 | `STALE_UPLOAD_SESSION_SECONDS` | `21600` | Idle upload session age before cleanup |
+
+## System Settings
+
+After logging in as admin, open the `Settings` page from the main navigation to configure:
+
+- app name shown in the main nav and browser title
+- season header title and intro copy
+- custom app logo and favicon
+- main team name used for `All`, `Home`, and `Away` filters
+- navigation labels, filter labels, and stats labels
+- replay page labels such as the back button and video status heading
+- whether public downloads are enabled
+
+These settings are stored in SQLite and applied across the SPA without changing match records.
+
+## Downloads
+
+When downloads are enabled in system settings, ready MP4 files expose public download buttons in the replay view.
+
+This implementation is intentionally direct:
+
+- it downloads the processed MP4, not HLS playlists or segments
+- it reuses the same range-capable streaming path as playback, so browsers can resume interrupted transfers
+- it is suitable for large files such as 8 GB match recordings without buffering the full file in server memory
 
 Data is stored in SQLite (`replay.db`) and video/logo files on disk under the data directory:
 

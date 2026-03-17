@@ -31,10 +31,11 @@
 <body>
     <div class="noise-overlay"></div>
     <nav class="main-nav">
-        <a href="/" class="logo" onclick="event.preventDefault(); app.goHome()">RE<span>PLAY</span></a>
+        <a href="/" class="logo" id="nav-app-name" onclick="event.preventDefault(); app.goHome()">Replay</a>
         <div class="nav-links">
-            <a href="#" class="active" data-view="season">Matches</a>
+            <a href="#" class="active" data-view="season" id="nav-season-link">Matches</a>
             <a href="#" data-view="add-match" id="nav-add-match" style="display:none;">Add Match</a>
+            <a href="#" data-view="settings" id="nav-settings" style="display:none;">Settings</a>
         </div>
         <div class="nav-actions">
             <button id="nav-login-btn" class="nav-auth-btn" onclick="app.showLoginModal()">Admin Login</button>
@@ -47,22 +48,24 @@
         <section id="season-view" class="view active">
             <header class="season-header">
                 <div class="team-badge">
-                    <img src="/static/logo.png?v=20260317b" alt="Logo" class="badge-logo">
+                    <img src="/static/logo.png" alt="Logo" class="badge-logo" id="season-logo">
                 </div>
                 <div class="season-info">
-                    <h1>U12 GIRLS STEEL</h1>
-                    <p>Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)</p>
+                    <h1 id="season-title">U12 GIRLS STEEL</h1>
+                    <p id="season-intro">Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)</p>
                 </div>
             </header>
 
             <div class="controls-bar">
-                <div class="filter-group">
-                    <button class="filter-btn active">All Matches</button>
+                <div class="filter-group" id="season-filter-group">
+                    <button class="filter-btn active" data-filter="all" id="filter-all-btn">All Matches</button>
+                    <button class="filter-btn" data-filter="home" id="filter-home-btn">Home</button>
+                    <button class="filter-btn" data-filter="away" id="filter-away-btn">Away</button>
                 </div>
                 <div class="stats-overview">
-                    <span class="stat"><span>Matches</span> <span id="stat-played">0</span></span>
-                    <span class="stat"><span>Ready</span> <span id="stat-ready">0</span></span>
-                    <span class="stat"><span>Processing</span> <span id="stat-processing">0</span></span>
+                    <span class="stat"><span id="stat-played-label">Matches</span> <span id="stat-played">0</span></span>
+                    <span class="stat"><span id="stat-ready-label">Ready</span> <span id="stat-ready">0</span></span>
+                    <span class="stat"><span id="stat-processing-label">Processing</span> <span id="stat-processing">0</span></span>
                 </div>
             </div>
 
@@ -75,7 +78,7 @@
         <section id="game-view" class="view">
             <button class="back-btn" onclick="app.closeGame()">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                Back to Matches
+                <span id="game-back-label">Back to Matches</span>
             </button>
             <div class="game-layout">
                 <div class="video-container">
@@ -125,13 +128,14 @@
                         </div>
                     </div>
                     <div class="remote-playback-note" id="remote-playback-note">Adaptive HLS playback is used when available, with direct MP4 fallback for simple playback and casting.</div>
+                    <div id="download-actions" class="download-actions" style="display:none;"></div>
                 </div>
 
                 <div class="sidebar">
                     <div class="game-details">
                         <div class="game-summary-card">
                             <div class="game-summary-topline">
-                                <span class="game-summary-kicker">Match Replay</span>
+                                <span class="game-summary-kicker" id="game-replay-label">Match Replay</span>
                                 <div class="game-status-pills" id="game-status-pills"></div>
                             </div>
                             <div class="game-title" id="game-title">Match</div>
@@ -144,7 +148,7 @@
                             <div class="g-meta"><span class="label">LOCATION</span><span id="active-game-loc">-</span></div>
                         </div>
                         <div class="slot-status-card">
-                            <h3>Video Status</h3>
+                            <h3 id="game-video-status-label">Video Status</h3>
                             <div id="game-slot-status-list" class="game-slot-status-list"></div>
                         </div>
                     </div>
@@ -311,6 +315,139 @@
                                 <div id="local-upload-sessions-list" class="session-list"></div>
                             </div>
                         </div>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <section id="settings-view" class="view">
+            <div class="options-container">
+                <h2>System Settings</h2>
+                <p>Manage app branding, public labels, filter behavior, and visitor download availability.</p>
+
+                <form id="settings-form">
+                    <div class="options-card">
+                        <h3>Branding</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>App Name</label>
+                                <input type="text" id="settings-app-name" maxlength="80" placeholder="Replay">
+                            </div>
+                            <div class="form-group">
+                                <label>Main Team Name</label>
+                                <input type="text" id="settings-main-team-name" maxlength="120" placeholder="OSU Steel">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Season Title</label>
+                                <input type="text" id="settings-season-title" maxlength="120" placeholder="U12 GIRLS STEEL">
+                            </div>
+                            <div class="form-group">
+                                <label>Intro Copy</label>
+                                <textarea id="settings-season-intro" rows="4" maxlength="300" placeholder="Season intro text"></textarea>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>App Logo</label>
+                                <div class="file-upload-row">
+                                    <label for="settings-app-logo" class="file-picker-button">Choose File</label>
+                                    <input type="file" id="settings-app-logo" accept="image/png,image/jpeg,image/svg+xml,image/webp" class="file-input file-input-hidden">
+                                    <span class="file-label" id="settings-app-logo-label">No file chosen</span>
+                                </div>
+                                <div class="uploaded-state" id="settings-app-logo-state">No custom app logo uploaded.</div>
+                            </div>
+                            <div class="form-group">
+                                <label>Favicon</label>
+                                <div class="file-upload-row">
+                                    <label for="settings-favicon" class="file-picker-button">Choose File</label>
+                                    <input type="file" id="settings-favicon" accept="image/png,image/svg+xml,image/x-icon,.ico" class="file-input file-input-hidden">
+                                    <span class="file-label" id="settings-favicon-label">No file chosen</span>
+                                </div>
+                                <div class="uploaded-state" id="settings-favicon-state">No custom favicon uploaded.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="options-card mt-4">
+                        <h3>Navigation & Season Labels</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Matches Nav Label</label>
+                                <input type="text" id="settings-nav-matches-label" maxlength="40">
+                            </div>
+                            <div class="form-group">
+                                <label>Add Match Nav Label</label>
+                                <input type="text" id="settings-nav-add-match-label" maxlength="40">
+                            </div>
+                            <div class="form-group">
+                                <label>Settings Nav Label</label>
+                                <input type="text" id="settings-nav-settings-label" maxlength="40">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>All Filter Label</label>
+                                <input type="text" id="settings-filter-all-label" maxlength="40">
+                            </div>
+                            <div class="form-group">
+                                <label>Home Filter Label</label>
+                                <input type="text" id="settings-filter-home-label" maxlength="40">
+                            </div>
+                            <div class="form-group">
+                                <label>Away Filter Label</label>
+                                <input type="text" id="settings-filter-away-label" maxlength="40">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Matches Stat Label</label>
+                                <input type="text" id="settings-stat-matches-label" maxlength="40">
+                            </div>
+                            <div class="form-group">
+                                <label>Ready Stat Label</label>
+                                <input type="text" id="settings-stat-ready-label" maxlength="40">
+                            </div>
+                            <div class="form-group">
+                                <label>Processing Stat Label</label>
+                                <input type="text" id="settings-stat-processing-label" maxlength="40">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="options-card mt-4">
+                        <h3>Replay Labels & Downloads</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Back Button Label</label>
+                                <input type="text" id="settings-game-back-label" maxlength="60">
+                            </div>
+                            <div class="form-group">
+                                <label>Replay Header Label</label>
+                                <input type="text" id="settings-game-replay-label" maxlength="60">
+                            </div>
+                            <div class="form-group">
+                                <label>Video Status Label</label>
+                                <input type="text" id="settings-game-video-status-label" maxlength="60">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Download Button Label</label>
+                                <input type="text" id="settings-download-label" maxlength="40">
+                            </div>
+                            <div class="form-group settings-checkbox-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="settings-downloads-enabled">
+                                    Allow visitors to download ready game MP4 files
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-actions mt-4">
+                        <button type="submit" id="settings-submit-btn" class="btn-primary">Save Settings</button>
                     </div>
                 </form>
             </div>
