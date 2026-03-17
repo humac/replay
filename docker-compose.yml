@@ -1,0 +1,37 @@
+services:
+  replay:
+    build: .
+    container_name: replay
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env.local
+    environment:
+      REPLAY_PORT: 8090
+      REPLAY_DATA_DIR: /data
+      TMPDIR: /tmp/ffmpeg
+      MAX_UPLOAD_SIZE_BYTES: 12884901888
+      TRANSCODE_CONCURRENCY: 2
+      NVIDIA_VISIBLE_DEVICES: GPU-26ddab77-c658-9829-0ace-90674c97dc87
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    volumes:
+      - replay_data:/data
+    tmpfs:
+      - /tmp/ffmpeg:size=20g,exec
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/auth/check', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
+              capabilities: [gpu, video]
+
+volumes:
+  replay_data:
