@@ -221,7 +221,7 @@ def _render_index_html() -> str:
         html = re.sub(r'<link rel="icon"[^>]*>', favicon_link, html, count=1)
     else:
         html = html.replace("</head>", f"    {favicon_link}\n</head>")
-    bootstrap = "<script>window.__APP_SETTINGS__ = " + json.dumps(settings_payload) + ";</script>"
+    bootstrap = "<script>window.__APP_SETTINGS__ = " + json.dumps(settings_payload).replace("</", "<\\/") + ";</script>"
     if "window.__APP_SETTINGS__" not in html:
         html = html.replace("</head>", f"    {bootstrap}\n</head>")
     return html
@@ -255,7 +255,8 @@ def _init_db():
                 video_status_json TEXT NOT NULL,
                 home_logo TEXT,
                 away_logo TEXT,
-                created_at TEXT
+                created_at TEXT,
+                slug TEXT
             )
             """
         )
@@ -286,7 +287,34 @@ def _init_db():
             )
             """
         )
+        # Add slug column if missing (migration for existing DBs)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(matches)").fetchall()}
+        if "slug" not in cols:
+            conn.execute("ALTER TABLE matches ADD COLUMN slug TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_slug ON matches(slug)")
         conn.commit()
+
+
+def _generate_slug(home_team: str, away_team: str, date: str) -> str:
+    """Generate a URL-friendly slug from team names and date."""
+    parts = [home_team or "home", "vs", away_team or "away"]
+    if date:
+        parts.append(date)
+    raw = "-".join(parts)
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", raw).strip("-").lower()
+    return slug or "match"
+
+
+def _ensure_unique_slug(conn: sqlite3.Connection, slug: str, exclude_id: str | None = None) -> str:
+    """Return a unique slug, appending -2, -3, etc. if needed."""
+    candidate = slug
+    counter = 2
+    while True:
+        row = conn.execute("SELECT id FROM matches WHERE slug = ?", (candidate,)).fetchone()
+        if row is None or (exclude_id and row["id"] == exclude_id):
+            return candidate
+        candidate = f"{slug}-{counter}"
+        counter += 1
 
 
 def _row_to_match(row: sqlite3.Row) -> dict:
@@ -305,6 +333,7 @@ def _row_to_match(row: sqlite3.Row) -> dict:
         "home_logo": row["home_logo"],
         "away_logo": row["away_logo"],
         "created_at": row["created_at"] or "",
+        "slug": row["slug"] or "",
     }
 
 
@@ -313,8 +342,8 @@ def _upsert_match_unlocked(conn: sqlite3.Connection, match: dict):
         """
         INSERT INTO matches (
             id, home_team, away_team, date, time, location, score_home, score_away,
-            format, videos_json, video_status_json, home_logo, away_logo, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            format, videos_json, video_status_json, home_logo, away_logo, created_at, slug
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             home_team=excluded.home_team,
             away_team=excluded.away_team,
@@ -328,7 +357,8 @@ def _upsert_match_unlocked(conn: sqlite3.Connection, match: dict):
             video_status_json=excluded.video_status_json,
             home_logo=excluded.home_logo,
             away_logo=excluded.away_logo,
-            created_at=excluded.created_at
+            created_at=excluded.created_at,
+            slug=excluded.slug
         """,
         (
             match["id"],
@@ -345,6 +375,7 @@ def _upsert_match_unlocked(conn: sqlite3.Connection, match: dict):
             match.get("home_logo"),
             match.get("away_logo"),
             match.get("created_at", ""),
+            match.get("slug", ""),
         ),
     )
 
@@ -385,6 +416,22 @@ def _migrate_json_to_sqlite_if_needed():
 
 _init_db()
 _migrate_json_to_sqlite_if_needed()
+
+
+def _backfill_slugs():
+    """Generate slugs for any matches that don't have one yet."""
+    with _db_connect() as conn:
+        rows = conn.execute("SELECT id, home_team, away_team, date FROM matches WHERE slug IS NULL OR slug = ''").fetchall()
+        for row in rows:
+            slug_base = _generate_slug(row["home_team"], row["away_team"], row["date"] or "")
+            slug = _ensure_unique_slug(conn, slug_base, exclude_id=row["id"])
+            conn.execute("UPDATE matches SET slug = ? WHERE id = ?", (slug, row["id"]))
+        if rows:
+            conn.commit()
+            logger.info("Backfilled slugs for %d matches", len(rows))
+
+
+_backfill_slugs()
 
 # In-memory token store: {token_string: creation_timestamp}
 _active_tokens: dict[str, float] = {}
@@ -939,14 +986,21 @@ async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse(
-        _render_index_html(),
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+    return HTMLResponse(_render_index_html(), headers=_SPA_NO_CACHE)
+
+
+_SPA_NO_CACHE = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+@app.get("/match/{slug}")
+@app.get("/match/{slug}/{slot}")
+async def match_deep_link(slug: str, slot: str | None = None):
+    """Serve the SPA shell for direct match links."""
+    return HTMLResponse(_render_index_html(), headers=_SPA_NO_CACHE)
 
 
 @app.get("/static/{filename}")
@@ -1068,10 +1122,14 @@ async def serve_app_asset(kind: str):
         ".ico": "image/x-icon",
     }
     mt = media_types.get(asset_path.suffix.lower(), "application/octet-stream")
+    headers = {"Cache-Control": "public, max-age=3600, immutable"}
+    if asset_path.suffix.lower() == ".svg":
+        headers["Content-Security-Policy"] = "script-src 'none'"
+        headers["Content-Disposition"] = f"inline; filename=\"{asset_path.name}\""
     return FileResponse(
         str(asset_path),
         media_type=mt,
-        headers={"Cache-Control": "public, max-age=3600, immutable"},
+        headers=headers,
     )
 
 @app.post("/api/login")
@@ -1170,11 +1228,19 @@ async def create_match(request: Request):
     _require_auth(request)
     body = await request.json()
     match_id = f"match-{int(time.time() * 1000)}"
+    home_team = body.get("home_team", "").strip()
+    away_team = body.get("away_team", "").strip()
+    match_date = body.get("date", "")
+    if not home_team or not away_team:
+        raise HTTPException(400, "home_team and away_team are required")
+
+    slug_base = _generate_slug(home_team, away_team, match_date)
+
     match = {
         "id": match_id,
-        "home_team": body.get("home_team", "").strip(),
-        "away_team": body.get("away_team", "").strip(),
-        "date": body.get("date", ""),
+        "home_team": home_team,
+        "away_team": away_team,
+        "date": match_date,
         "time": body.get("time", ""),
         "location": body.get("location", ""),
         "score_home": body.get("score_home"),
@@ -1185,13 +1251,14 @@ async def create_match(request: Request):
         "home_logo": None,
         "away_logo": None,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "slug": "",
     }
-    if not match["home_team"] or not match["away_team"]:
-        raise HTTPException(400, "home_team and away_team are required")
 
     (VIDEOS_DIR / match_id).mkdir(parents=True, exist_ok=True)
 
     with MATCHES_LOCK:
+        with _db_connect() as conn:
+            match["slug"] = _ensure_unique_slug(conn, slug_base)
         matches = _load_matches_unlocked()
         matches.append(match)
         _save_matches_unlocked(matches)
@@ -1210,9 +1277,17 @@ async def update_match(match_id: str, request: Request):
 
         updatable = ["home_team", "away_team", "date", "time", "location",
                      "score_home", "score_away", "format"]
+        slug_fields_changed = False
         for key in updatable:
             if key in body:
+                if key in ("home_team", "away_team", "date") and body[key] != match.get(key):
+                    slug_fields_changed = True
                 match[key] = body[key]
+
+        if slug_fields_changed or not match.get("slug"):
+            slug_base = _generate_slug(match["home_team"], match["away_team"], match.get("date", ""))
+            with _db_connect() as conn:
+                match["slug"] = _ensure_unique_slug(conn, slug_base, exclude_id=match["id"])
 
         _save_matches_unlocked(matches)
         return match
@@ -1751,7 +1826,11 @@ async def serve_logo(match_id: str, team: str):
     media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                    ".svg": "image/svg+xml", ".webp": "image/webp"}
     mt = media_types.get(logo_path.suffix.lower(), "image/png")
-    return FileResponse(str(logo_path), media_type=mt)
+    headers = {}
+    if logo_path.suffix.lower() == ".svg":
+        headers["Content-Security-Policy"] = "script-src 'none'"
+        headers["Content-Disposition"] = f"inline; filename=\"{logo_path.name}\""
+    return FileResponse(str(logo_path), media_type=mt, headers=headers)
 
 
 # ---------------------------------------------------------------------------

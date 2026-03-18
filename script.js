@@ -38,20 +38,36 @@ const app = {
     },
 
     initializeHistory() {
+        // Deep-link: parse /match/{slug} or /match/{slug}/{slot} from the URL
+        const path = window.location.pathname;
+        const matchRoute = path.match(/^\/match\/([^/]+)(?:\/([^/]+))?$/);
+        if (matchRoute) {
+            const slug = matchRoute[1];
+            const slot = matchRoute[2] ? matchRoute[2].replace(/-/g, '_') : null;
+            const match = this.matches.find(m => m.slug === slug);
+            if (match) {
+                const state = { view: 'game', matchId: match.id, slug, slot };
+                window.history.replaceState(state, '', path);
+                this.openMatch(match.id, { pushHistory: false, scrollTop: false, initialSlot: slot });
+                return;
+            }
+        }
+
         const current = window.history.state;
         if (!current || !current.view) {
-            window.history.replaceState({ view: 'season' }, '', window.location.href);
+            window.history.replaceState({ view: 'season' }, '', '/');
             return;
         }
         this.restoreHistoryState(current, { scrollTop: false });
     },
 
-    pushHistoryState(state, { replace = false } = {}) {
+    pushHistoryState(state, { replace = false, url = null } = {}) {
+        const href = url || window.location.href;
         if (replace) {
-            window.history.replaceState(state, '', window.location.href);
+            window.history.replaceState(state, '', href);
             return;
         }
-        window.history.pushState(state, '', window.location.href);
+        window.history.pushState(state, '', href);
     },
 
     restoreHistoryState(state, { scrollTop = false } = {}) {
@@ -61,7 +77,7 @@ const app = {
         }
 
         if (state.view === 'game' && state.matchId) {
-            this.openMatch(state.matchId, { pushHistory: false, scrollTop });
+            this.openMatch(state.matchId, { pushHistory: false, scrollTop, initialSlot: state.slot || null });
             return;
         }
 
@@ -132,7 +148,7 @@ const app = {
         this.activateView('season-view', 'season');
         this.renderSeasonView();
         if (pushHistory) {
-            this.pushHistoryState({ view: 'season' }, { replace: replaceHistory });
+            this.pushHistoryState({ view: 'season' }, { replace: replaceHistory, url: '/' });
         }
         if (scrollTop) {
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1464,18 +1480,10 @@ const app = {
                 ? `<span class="match-detail-pill location">${this.esc(m.location)}</span>`
                 : '';
 
-            const formatLabel = m.format === 'two_halves' ? '2 HALVES' : 'FULL MATCH';
             const isTranscoding = this.matchTranscoding(m);
-            const readySlots = this.readySlotsCount(m);
-            const totalSlots = m.format === 'two_halves' ? 2 : 1;
-            const availabilityLabel = `${readySlots}/${totalSlots} READY`;
 
             card.innerHTML = `
                 <div class="card-bg"></div>
-                <div class="card-topline">
-                    <span class="card-topline-label">${availabilityLabel}</span>
-                    ${m.date ? `<span class="card-topline-date">${this.esc(dateStr)}</span>` : ''}
-                </div>
                 <div class="card-matchup">
                     <div class="card-team-col">
                         ${homeLogo}
@@ -1503,8 +1511,6 @@ const app = {
                 </div>
                 <div class="match-meta">
                     ${isTranscoding ? '<span class="badge processing">PROCESSING</span>' : ''}
-                    <span class="badge mode">${formatLabel}</span>
-                    <span class="badge">${availabilityLabel}</span>
                 </div>
                 <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
                 ${this.authToken ? `
@@ -1534,9 +1540,10 @@ const app = {
     // Game View
     // ------------------------------------------------------------------
 
-    openMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
+    openMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true, initialSlot = null } = {}) {
         const match = this.matches.find(m => m.id === matchId);
         if (!match) return;
+        this._pendingInitialSlot = initialSlot;
 
         this.activeMatchId = matchId;
         const gameEditBtn = document.getElementById('game-edit-btn');
@@ -1582,7 +1589,8 @@ const app = {
 
         this.activateView('game-view');
         if (pushHistory) {
-            this.pushHistoryState({ view: 'game', matchId }, { replace: replaceHistory });
+            const matchUrl = match.slug ? `/match/${match.slug}` : null;
+            this.pushHistoryState({ view: 'game', matchId, slug: match.slug }, { replace: replaceHistory, url: matchUrl });
         }
 
         this.setupVideoSlots(match);
@@ -1621,7 +1629,10 @@ const app = {
             });
 
             if (readySlots.length > 0) {
-                this.playSlot(match.id, readySlots[0]);
+                const preferred = this._pendingInitialSlot && readySlots.includes(this._pendingInitialSlot)
+                    ? this._pendingInitialSlot : readySlots[0];
+                this._pendingInitialSlot = null;
+                this.playSlot(match.id, preferred);
             } else if (this.matchTranscoding(match)) {
                 this.showProcessingState();
             } else {
@@ -1705,6 +1716,16 @@ const app = {
 
     playSlot(matchId, slot) {
         this.activeSlot = slot;
+        // Update URL to reflect active slot
+        const match = this.matches.find(m => m.id === matchId);
+        if (match && match.slug) {
+            const slotSuffix = slot === 'full' ? '' : `/${slot.replace('_', '-')}`;
+            const url = `/match/${match.slug}${slotSuffix}`;
+            window.history.replaceState(
+                { view: 'game', matchId, slug: match.slug, slot },
+                '', url,
+            );
+        }
         const playRequestToken = ++this._playRequestToken;
         const videoEl = document.getElementById('game-video');
         const placeholder = document.getElementById('video-placeholder');
