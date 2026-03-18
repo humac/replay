@@ -1,3 +1,4 @@
+// ===== STATE & CONFIG =====
 const app = {
     MAX_VIDEO_SIZE_BYTES: 12 * 1024 * 1024 * 1024,
     UPLOAD_TIMEOUT_MS: 4 * 60 * 60 * 1000,
@@ -24,6 +25,7 @@ const app = {
     authToken: null,
     diagnostics: null,
 
+    // ===== INIT & LIFECYCLE =====
     async init() {
         await this.checkAuth();
         await this.loadAppSettings();
@@ -37,6 +39,7 @@ const app = {
         this.checkTranscodePolling();
     },
 
+    // ===== NAVIGATION & HISTORY =====
     initializeHistory() {
         // Deep-link: parse /match/{slug} or /match/{slug}/{slot} from the URL
         const path = window.location.pathname;
@@ -189,6 +192,7 @@ const app = {
         this.editMatch(this.activeMatchId);
     },
 
+    // ===== SETTINGS =====
     getDefaultAppSettings() {
         return {
             app_name: 'Replay',
@@ -291,6 +295,7 @@ const app = {
         }
     },
 
+    // ===== DATA LOADING =====
     mainTeamNameNormalized() {
         return (this.getAppSettings().main_team_name || '').trim().toLowerCase();
     },
@@ -364,10 +369,7 @@ const app = {
         return Object.values(vs).some(s => s === 'transcoding');
     },
 
-    // ------------------------------------------------------------------
-    // Transcode polling
-    // ------------------------------------------------------------------
-
+    // ===== TRANSCODE POLLING =====
     checkTranscodePolling() {
         if (this.anyTranscoding()) {
             this.startTranscodePolling();
@@ -400,10 +402,7 @@ const app = {
         }
     },
 
-    // ------------------------------------------------------------------
-    // Auth
-    // ------------------------------------------------------------------
-
+    // ===== AUTH =====
     getAuthHeaders() {
         const headers = {};
         if (this.authToken) {
@@ -514,10 +513,7 @@ const app = {
         this.renderSeasonView();
     },
 
-    // ------------------------------------------------------------------
-    // Events
-    // ------------------------------------------------------------------
-
+    // ===== EVENTS =====
     bindEvents() {
         window.addEventListener('popstate', (event) => {
             this.restoreHistoryState(event.state, { scrollTop: false });
@@ -589,10 +585,7 @@ const app = {
         });
     },
 
-    // ------------------------------------------------------------------
-    // Form
-    // ------------------------------------------------------------------
-
+    // ===== ADMIN PANEL =====
     setAdminPanelVisibility(visible) {
         const panel = document.getElementById('admin-ops-card');
         if (!panel) return;
@@ -607,6 +600,7 @@ const app = {
         }
     },
 
+    // ===== SETTINGS FORM =====
     renderSettingsForm() {
         const settings = this.getAppSettings();
         const fieldMap = {
@@ -762,6 +756,7 @@ const app = {
         }
     },
 
+    // ===== ADMIN DIAGNOSTICS =====
     async refreshAdminDiagnostics() {
         if (!this.authToken) return;
 
@@ -939,6 +934,7 @@ const app = {
         localStorage.setItem(this.UPLOAD_SESSION_STORAGE_KEY, JSON.stringify(sessions));
     },
 
+    // ===== MATCH FORM =====
     toggleFormatFields() {
         const format = document.querySelector('input[name="format"]:checked').value;
         document.getElementById('video-full-group').style.display = format === 'full' ? 'block' : 'none';
@@ -1136,6 +1132,7 @@ const app = {
         }
     },
 
+    // ===== UPLOADS =====
     async uploadFileIfSelected(inputId, matchId, type, param) {
         const input = document.getElementById(inputId);
         if (!input || !input.files[0]) return;
@@ -1431,10 +1428,7 @@ const app = {
         }
     },
 
-    // ------------------------------------------------------------------
-    // Season View
-    // ------------------------------------------------------------------
-
+    // ===== SEASON VIEW =====
     renderSeasonView() {
         const grid = document.getElementById('matches-grid');
         if (!grid) return;
@@ -1536,10 +1530,7 @@ const app = {
         this.deleteMatch(matchId);
     },
 
-    // ------------------------------------------------------------------
-    // Game View
-    // ------------------------------------------------------------------
-
+    // ===== GAME VIEW =====
     openMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true, initialSlot = null } = {}) {
         const match = this.matches.find(m => m.id === matchId);
         if (!match) return;
@@ -1788,6 +1779,7 @@ const app = {
         `).join('');
     },
 
+    // ===== SEASON TEAM STATS =====
     renderSeasonTeamStats(visibleMatches) {
         const section = document.getElementById('season-team-stats');
         const grid = document.getElementById('team-stats-grid');
@@ -1886,6 +1878,7 @@ const app = {
         `).join('');
     },
 
+    // ===== GAME STATUS =====
     renderGameStatus(match) {
         const pills = document.getElementById('game-status-pills');
         const slotList = document.getElementById('game-slot-status-list');
@@ -1915,10 +1908,7 @@ const app = {
         }).join('');
     },
 
-    // ------------------------------------------------------------------
-    // Remote Playback
-    // ------------------------------------------------------------------
-
+    // ===== AIRPLAY =====
     initAirPlay() {
         const videoEl = document.getElementById('game-video');
         const airplayBtn = document.getElementById('airplay-btn');
@@ -1954,6 +1944,7 @@ const app = {
         }
     },
 
+    // ===== CHROMECAST =====
     initCast() {
         const castBtn = document.getElementById('cast-btn');
         this.castSupportedBrowser = this.isCastSupportedBrowser();
@@ -2186,6 +2177,7 @@ const app = {
         note.textContent = 'Adaptive HLS playback is used when available, with direct MP4 fallback for simple playback and casting.';
     },
 
+    // ===== PLAYBACK =====
     getStreamUrls(matchId, slot) {
         return {
             hlsUrl: `/api/matches/${matchId}/hls/${slot}/master.m3u8`,
@@ -2246,10 +2238,7 @@ const app = {
         this.hlsPlayer = null;
     },
 
-    // ------------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------------
-
+    // ===== UTILITIES =====
     esc(str) {
         const d = document.createElement('div');
         d.textContent = str || '';

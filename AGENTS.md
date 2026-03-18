@@ -12,7 +12,8 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 
 ## Key Files
 
-- `server.py`: API, auth, uploads, video processing, HLS generation, static file serving
+- `server.py`: API, auth, uploads, HLS generation, static file serving
+- `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU), HLS variant generation
 - `script.js`: SPA state, uploads, playback, Cast/AirPlay, browser history navigation
 - `index.html`: single-page app shell
 - `styles.css`: full UI styling
@@ -24,7 +25,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 ```bash
 pip install -r requirements.txt
 python server.py
-python3 -m py_compile server.py
+python3 -m py_compile server.py && python3 -m py_compile media.py
 docker compose up --build
 ```
 

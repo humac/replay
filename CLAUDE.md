@@ -12,5 +12,5 @@ Additional guidance for Claude in this repo:
 Primary validation:
 
 ```bash
-python3 -m py_compile server.py
+python3 -m py_compile server.py && python3 -m py_compile media.py
 ```

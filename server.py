@@ -24,6 +24,12 @@ import aiofiles
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
+import media as _media
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("replay")
 
@@ -124,6 +130,10 @@ APP_ASSET_CONFIG = {
     },
 }
 
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
 
 def _load_settings_unlocked() -> dict[str, str]:
     settings = DEFAULT_APP_SETTINGS.copy()
@@ -226,6 +236,10 @@ def _render_index_html() -> str:
         html = html.replace("</head>", f"    {bootstrap}\n</head>")
     return html
 
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
 
 def _db_connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_FILE, timeout=30, check_same_thread=False)
@@ -497,6 +511,10 @@ def _find_match(matches: list[dict], match_id: str) -> dict | None:
     return next((m for m in matches if m["id"] == match_id), None)
 
 
+# ---------------------------------------------------------------------------
+# Video status
+# ---------------------------------------------------------------------------
+
 def _get_video_status(match: dict, slot: str) -> str:
     """Get status for a video slot.  Backward-compatible with old data."""
     statuses = match.get("video_status") or {}
@@ -580,12 +598,16 @@ def _upload_session_payload(row: sqlite3.Row) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# HLS path helpers
+# ---------------------------------------------------------------------------
+
 def _slot_hls_dir(match_id: str, slot: str) -> Path:
-    return VIDEOS_DIR / match_id / "hls" / slot
+    return _media.slot_hls_dir(VIDEOS_DIR, match_id, slot)
 
 
 def _slot_hls_master_path(match_id: str, slot: str) -> Path:
-    return _slot_hls_dir(match_id, slot) / "master.m3u8"
+    return _media.slot_hls_master_path(VIDEOS_DIR, match_id, slot)
 
 
 def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
@@ -603,6 +625,10 @@ def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
             missing.append((match["id"], slot))
     return missing
 
+
+# ---------------------------------------------------------------------------
+# Disk space
+# ---------------------------------------------------------------------------
 
 def _required_free_bytes(size_bytes: int) -> int:
     return max(MIN_FREE_DISK_BYTES, int(math.ceil(size_bytes * UPLOAD_DISK_HEADROOM_MULTIPLIER)))
@@ -728,256 +754,37 @@ def _cancel_conflicting_upload_sessions(match_id: str, slot: str):
 
 
 # ---------------------------------------------------------------------------
-# Helpers — Transcoding (GPU-first, CPU fallback)
+# Helpers — Media pipeline (delegated to media.py)
 # ---------------------------------------------------------------------------
 
-async def _probe_codecs(src: Path) -> tuple[str | None, str | None]:
-    """Return (video_codec, audio_codec) of *src*."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_streams", str(src),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if proc.returncode != 0:
-            return None, None
-        data = json.loads(stdout)
-        v_codec = a_codec = None
-        for s in data.get("streams", []):
-            if s.get("codec_type") == "video" and not v_codec:
-                v_codec = s.get("codec_name")
-            elif s.get("codec_type") == "audio" and not a_codec:
-                a_codec = s.get("codec_name")
-        return v_codec, a_codec
-    except Exception:
-        return None, None
-
-
-async def _probe_video_dimensions(src: Path) -> tuple[int | None, int | None]:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_streams", str(src),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if proc.returncode != 0:
-            return None, None
-        data = json.loads(stdout)
-        for stream in data.get("streams", []):
-            if stream.get("codec_type") == "video":
-                width = stream.get("width")
-                height = stream.get("height")
-                return int(width) if width else None, int(height) if height else None
-        return None, None
-    except Exception:
-        return None, None
-
-
-async def _run_ffmpeg(cmd: list[str]) -> tuple[bool, str]:
-    """Run an ffmpeg command; return (success, stderr_tail)."""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    tail = stderr[-500:].decode(errors="replace") if stderr else ""
-    return proc.returncode == 0, tail
-
-
-def _build_hls_variants(width: int | None, height: int | None) -> list[dict]:
-    selected = []
-    source_height = height or 0
-    source_width = width or 0
-
-    for preset in HLS_VARIANT_PRESETS:
-        if source_height >= preset["height"] or source_width >= preset["width"]:
-            selected.append(dict(preset))
-
-    if selected:
-        return selected
-
-    fallback_height = max(240, source_height or 480)
-    if fallback_height % 2:
-        fallback_height -= 1
-    return [{
-        "name": f"{fallback_height}p",
-        "height": fallback_height,
-        "width": source_width or 854,
-        "video_bitrate": "1400k",
-        "maxrate": "1600k",
-        "bufsize": "3200k",
-        "audio_bitrate": "128k",
-        "bandwidth": 1800000,
-    }]
+_MEDIA_KWARGS = dict(
+    videos_dir=VIDEOS_DIR,
+    hls_segment_duration=HLS_SEGMENT_DURATION,
+    hls_variant_presets=HLS_VARIANT_PRESETS,
+)
 
 
 async def _build_hls_assets(source_mp4: Path, match_id: str, slot: str) -> bool:
-    width, height = await _probe_video_dimensions(source_mp4)
-    variants = _build_hls_variants(width, height)
-    hls_dir = _slot_hls_dir(match_id, slot)
-    shutil.rmtree(hls_dir, ignore_errors=True)
-    hls_dir.mkdir(parents=True, exist_ok=True)
-
-    generated_variants = []
-    for variant in variants:
-        variant_dir = hls_dir / variant["name"]
-        variant_dir.mkdir(parents=True, exist_ok=True)
-        playlist_path = variant_dir / "index.m3u8"
-        segment_pattern = variant_dir / "segment_%03d.ts"
-
-        ok, err = await _run_ffmpeg([
-            "ffmpeg", "-y",
-            "-i", str(source_mp4),
-            "-vf", f"scale=-2:{variant['height']}",
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-profile:v", "main",
-            "-crf", "20",
-            "-g", "48",
-            "-keyint_min", "48",
-            "-sc_threshold", "0",
-            "-b:v", variant["video_bitrate"],
-            "-maxrate", variant["maxrate"],
-            "-bufsize", variant["bufsize"],
-            "-c:a", "aac",
-            "-b:a", variant["audio_bitrate"],
-            "-ac", "2",
-            "-ar", "48000",
-            "-f", "hls",
-            "-hls_time", str(HLS_SEGMENT_DURATION),
-            "-hls_playlist_type", "vod",
-            "-hls_flags", "independent_segments",
-            "-hls_segment_filename", str(segment_pattern),
-            str(playlist_path),
-        ])
-        if not ok:
-            logger.warning("HLS variant generation failed %s/%s/%s: %s", match_id, slot, variant['name'], err)
-            continue
-        generated_variants.append(variant)
-
-    if not generated_variants:
-        shutil.rmtree(hls_dir, ignore_errors=True)
-        return False
-
-    master_lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
-    for variant in generated_variants:
-        master_lines.append(
-            f"#EXT-X-STREAM-INF:BANDWIDTH={variant['bandwidth']},RESOLUTION={variant['width']}x{variant['height']}"
-        )
-        master_lines.append(f"{variant['name']}/index.m3u8")
-
-    _slot_hls_master_path(match_id, slot).write_text("\n".join(master_lines) + "\n")
-    return True
-
-
-async def _backfill_hls_for_existing_videos() -> dict:
-    if HLS_BACKFILL_LOCK.locked():
-        return {"started": False, "reason": "already-running", "processed": 0, "generated": 0}
-
-    async with HLS_BACKFILL_LOCK:
-        matches = _load_matches()
-        candidates = _ready_slots_missing_hls(matches)
-        generated = 0
-
-        for match_id, slot in candidates:
-            mp4_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
-            try:
-                ok = await _build_hls_assets(mp4_path, match_id, slot)
-                if ok:
-                    generated += 1
-                    logger.info("Backfilled HLS assets for %s/%s", match_id, slot)
-            except Exception:
-                logger.exception("Failed to backfill HLS for %s/%s", match_id, slot)
-
-        return {
-            "started": True,
-            "processed": len(candidates),
-            "generated": generated,
-        }
+    return await _media.build_hls_assets(source_mp4, match_id, slot, **_MEDIA_KWARGS)
 
 
 async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
-    """Background task: transcode *src* → *dest* (H.264 / AAC, faststart).
+    await _media.transcode_video(
+        match_id, slot, src, dest,
+        **_MEDIA_KWARGS,
+        transcode_semaphore=TRANSCODE_SEMAPHORE,
+        transcode_concurrency=TRANSCODE_CONCURRENCY,
+        set_video_status=_set_video_status,
+    )
 
-    Strategy:
-      1. If input is already H.264 (+AAC), remux (stream-copy) — fastest.
-      2. Try GPU transcode with h264_nvenc.
-      3. Fall back to CPU libx264.
-    """
-    try:
-        async with TRANSCODE_SEMAPHORE:
-            logger.info("Transcode acquired for %s/%s (max concurrency=%d)", match_id, slot, TRANSCODE_CONCURRENCY)
-            v_codec, a_codec = await _probe_codecs(src)
-            logger.info("Probe %s/%s: video=%s audio=%s", match_id, slot, v_codec, a_codec)
-            shutil.rmtree(_slot_hls_dir(match_id, slot), ignore_errors=True)
-            dest.unlink(missing_ok=True)
 
-            # --- 1. Remux if already browser-friendly ---
-            if v_codec == "h264" and a_codec in ("aac", None):
-                logger.info("Remuxing (stream copy) %s/%s", match_id, slot)
-                ok, err = await _run_ffmpeg([
-                    "ffmpeg", "-y", "-i", str(src),
-                    "-c", "copy", "-movflags", "+faststart",
-                    str(dest),
-                ])
-                if ok:
-                    src.unlink(missing_ok=True)
-                    hls_ok = await _build_hls_assets(dest, match_id, slot)
-                    _set_video_status(match_id, slot, "ready", dest.name)
-                    logger.info("Remux done: %s/%s (hls=%s)", match_id, slot, hls_ok)
-                    return
-                logger.warning("Remux failed, will transcode: %s", err)
-
-            # --- 2. GPU transcode (NVENC) ---
-            logger.info("GPU transcode %s/%s", match_id, slot)
-            ok, err = await _run_ffmpeg([
-                "ffmpeg", "-y",
-                "-hwaccel", "cuda",
-                "-i", str(src),
-                "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
-                "-cq", "23", "-b:v", "0",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                str(dest),
-            ])
-            if ok:
-                src.unlink(missing_ok=True)
-                hls_ok = await _build_hls_assets(dest, match_id, slot)
-                _set_video_status(match_id, slot, "ready", dest.name)
-                logger.info("GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
-                return
-            logger.warning("GPU transcode failed, falling back to CPU: %s", err)
-
-            # --- 3. CPU fallback (libx264) ---
-            logger.info("CPU transcode %s/%s", match_id, slot)
-            ok, err = await _run_ffmpeg([
-                "ffmpeg", "-y",
-                "-i", str(src),
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                str(dest),
-            ])
-            if ok:
-                src.unlink(missing_ok=True)
-                hls_ok = await _build_hls_assets(dest, match_id, slot)
-                _set_video_status(match_id, slot, "ready", dest.name)
-                logger.info("CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
-                return
-
-            logger.error("All transcode methods failed %s/%s: %s", match_id, slot, err)
-            _set_video_status(match_id, slot, "error", None)
-            src.unlink(missing_ok=True)
-
-    except Exception as exc:
-        logger.exception("Transcode error %s/%s: %s", match_id, slot, exc)
-        _set_video_status(match_id, slot, "error", None)
-        src.unlink(missing_ok=True)
+async def _backfill_hls_for_existing_videos() -> dict:
+    return await _media.backfill_hls_for_existing_videos(
+        **_MEDIA_KWARGS,
+        hls_backfill_lock=HLS_BACKFILL_LOCK,
+        load_matches=_load_matches,
+        ready_slots_missing_hls=_ready_slots_missing_hls,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1034,7 +841,7 @@ async def static_file(filename: str):
 
 
 # ---------------------------------------------------------------------------
-# Auth endpoints
+# Settings & app asset endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/api/settings")
@@ -1132,6 +939,11 @@ async def serve_app_asset(kind: str):
         headers=headers,
     )
 
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
 @app.post("/api/login")
 async def login(request: Request):
     body = await request.json()
@@ -1161,6 +973,10 @@ async def auth_check(request: Request):
     except HTTPException:
         return {"authenticated": False}
 
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
 
 @app.get("/api/admin/diagnostics")
 async def admin_diagnostics(request: Request):
@@ -1655,6 +1471,10 @@ async def download_video(match_id: str, slot: str, request: Request):
 async def startup_backfill_hls():
     asyncio.create_task(_backfill_hls_for_existing_videos())
 
+
+# ---------------------------------------------------------------------------
+# HLS streaming
+# ---------------------------------------------------------------------------
 
 @app.get("/api/matches/{match_id}/hls/{slot}/master.m3u8")
 async def stream_hls_master(match_id: str, slot: str):
