@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 import media as _media
+from models import CreateMatchRequest, CreateUploadSessionRequest, LoginRequest, UpdateMatchRequest
 
 # ---------------------------------------------------------------------------
 # Config
@@ -241,72 +242,134 @@ def _render_index_html() -> str:
 # Database
 # ---------------------------------------------------------------------------
 
+import threading as _threading
+_thread_local = _threading.local()
+
+
 def _db_connect() -> sqlite3.Connection:
+    """Return a thread-local cached SQLite connection."""
+    conn = getattr(_thread_local, "db_conn", None)
+    if conn is not None:
+        try:
+            conn.execute("SELECT 1")
+            return conn
+        except sqlite3.Error:
+            pass
     conn = sqlite3.connect(DB_FILE, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    _thread_local.db_conn = conn
     return conn
+
+
+def _close_thread_db():
+    """Close the thread-local DB connection (used by tests)."""
+    conn = getattr(_thread_local, "db_conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _thread_local.db_conn = None
+
+
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    """Return current schema version, or -1 if the version table doesn't exist."""
+    try:
+        row = conn.execute("SELECT version FROM schema_version").fetchone()
+        return row["version"] if row else -1
+    except sqlite3.OperationalError:
+        return -1
+
+
+def _set_schema_version(conn: sqlite3.Connection, version: int):
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+
+
+# -- Migrations ---------------------------------------------------------------
+
+def _migrate_v0(conn: sqlite3.Connection):
+    """Initial schema: matches, upload_sessions, settings tables."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS matches (
+            id TEXT PRIMARY KEY,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            date TEXT,
+            time TEXT,
+            location TEXT,
+            score_home INTEGER,
+            score_away INTEGER,
+            format TEXT,
+            videos_json TEXT NOT NULL,
+            video_status_json TEXT NOT NULL,
+            home_logo TEXT,
+            away_logo TEXT,
+            created_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS upload_sessions (
+            id TEXT PRIMARY KEY,
+            match_id TEXT NOT NULL,
+            slot TEXT NOT NULL,
+            ext TEXT NOT NULL,
+            raw_path TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            chunk_size INTEGER NOT NULL,
+            total_chunks INTEGER NOT NULL,
+            next_index INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT
+        )
+        """
+    )
+
+
+def _migrate_v1(conn: sqlite3.Connection):
+    """Add slug column to matches."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(matches)").fetchall()}
+    if "slug" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN slug TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_slug ON matches(slug)")
+
+
+_MIGRATIONS = [_migrate_v0, _migrate_v1]
+
+
+def _run_migrations(conn: sqlite3.Connection):
+    """Apply any pending schema migrations."""
+    current = _get_schema_version(conn)
+    for version, migrate_fn in enumerate(_MIGRATIONS):
+        if version > current:
+            migrate_fn(conn)
+            logger.info("Applied schema migration v%d", version)
+    if len(_MIGRATIONS) - 1 > current:
+        _set_schema_version(conn, len(_MIGRATIONS) - 1)
+        conn.commit()
 
 
 def _init_db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     APP_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     with _db_connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS matches (
-                id TEXT PRIMARY KEY,
-                home_team TEXT NOT NULL,
-                away_team TEXT NOT NULL,
-                date TEXT,
-                time TEXT,
-                location TEXT,
-                score_home INTEGER,
-                score_away INTEGER,
-                format TEXT,
-                videos_json TEXT NOT NULL,
-                video_status_json TEXT NOT NULL,
-                home_logo TEXT,
-                away_logo TEXT,
-                created_at TEXT,
-                slug TEXT
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS upload_sessions (
-                id TEXT PRIMARY KEY,
-                match_id TEXT NOT NULL,
-                slot TEXT NOT NULL,
-                ext TEXT NOT NULL,
-                raw_path TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                chunk_size INTEGER NOT NULL,
-                total_chunks INTEGER NOT NULL,
-                next_index INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT
-            )
-            """
-        )
-        # Add slug column if missing (migration for existing DBs)
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(matches)").fetchall()}
-        if "slug" not in cols:
-            conn.execute("ALTER TABLE matches ADD COLUMN slug TEXT")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_slug ON matches(slug)")
-        conn.commit()
+        _run_migrations(conn)
 
 
 def _generate_slug(home_team: str, away_team: str, date: str) -> str:
@@ -450,14 +513,47 @@ _backfill_slugs()
 # In-memory token store: {token_string: creation_timestamp}
 _active_tokens: dict[str, float] = {}
 TOKEN_TTL = 86400  # 24 hours
+_MAX_ACTIVE_TOKENS = 100
+_last_token_sweep: float = 0.0
+_TOKEN_SWEEP_INTERVAL = 60.0  # seconds
+
+# Login rate limiting: {ip: [timestamps]}
+_login_attempts: dict[str, list[float]] = {}
+_LOGIN_RATE_LIMIT = 5
+_LOGIN_RATE_WINDOW = 60.0  # seconds
+
+# Origin validation (comma-separated hostnames, optional)
+_ALLOWED_ORIGINS_RAW = os.environ.get("ALLOWED_ORIGINS", "")
+_ALLOWED_ORIGINS: set[str] | None = (
+    {h.strip().lower() for h in _ALLOWED_ORIGINS_RAW.split(",") if h.strip()}
+    if _ALLOWED_ORIGINS_RAW.strip() else None
+)
 
 
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
+def _sweep_expired_tokens():
+    """Bulk-remove expired tokens at most once per sweep interval."""
+    global _last_token_sweep
+    now = time.time()
+    if now - _last_token_sweep < _TOKEN_SWEEP_INTERVAL:
+        return
+    _last_token_sweep = now
+    expired = [t for t, ts in _active_tokens.items() if now - ts > TOKEN_TTL]
+    for t in expired:
+        del _active_tokens[t]
+    # Also prune stale login-attempt entries
+    stale_ips = [ip for ip, timestamps in _login_attempts.items()
+                 if not any(now - ts < _LOGIN_RATE_WINDOW for ts in timestamps)]
+    for ip in stale_ips:
+        del _login_attempts[ip]
+
+
 def _require_auth(request: Request):
     """Validate Bearer token from Authorization header. Raises 401 if invalid."""
+    _sweep_expired_tokens()
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(401, "Authentication required")
@@ -468,6 +564,31 @@ def _require_auth(request: Request):
     if time.time() - created > TOKEN_TTL:
         del _active_tokens[token]
         raise HTTPException(401, "Token expired")
+
+
+def _check_login_rate_limit(request: Request):
+    """Raise 429 if too many login attempts from this IP."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    attempts = _login_attempts.get(ip, [])
+    attempts = [t for t in attempts if now - t < _LOGIN_RATE_WINDOW]
+    if len(attempts) >= _LOGIN_RATE_LIMIT:
+        raise HTTPException(429, "Too many login attempts. Try again later.")
+    attempts.append(now)
+    _login_attempts[ip] = attempts
+
+
+def _validate_login_origin(request: Request):
+    """Validate Origin header on login if ALLOWED_ORIGINS is configured."""
+    if _ALLOWED_ORIGINS is None:
+        return
+    origin = request.headers.get("origin") or ""
+    if not origin:
+        return  # Non-browser client, allow
+    # Extract hostname from origin (e.g. "https://example.com" -> "example.com")
+    host = origin.split("//", 1)[-1].split("/")[0].split(":")[0].lower()
+    if host not in _ALLOWED_ORIGINS:
+        raise HTTPException(403, "Origin not allowed")
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +630,13 @@ def _save_matches(matches: list[dict]):
 
 def _find_match(matches: list[dict], match_id: str) -> dict | None:
     return next((m for m in matches if m["id"] == match_id), None)
+
+
+def _get_match_by_id(match_id: str) -> dict | None:
+    """Single-match lookup — avoids loading all matches for read-only endpoints."""
+    with _db_connect() as conn:
+        row = conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+        return _row_to_match(row) if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -769,6 +897,22 @@ async def _build_hls_assets(source_mp4: Path, match_id: str, slot: str) -> bool:
 
 
 async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
+    # Check disk space before starting a potentially long transcode
+    try:
+        src_size = src.stat().st_size if src.exists() else 0
+        if src_size > 0:
+            required = _required_free_bytes(src_size)
+            stats = _disk_stats_payload(required)
+            if stats["free_bytes"] < required:
+                logger.error(
+                    "Insufficient disk space to transcode %s/%s: need %d, have %d",
+                    match_id, slot, required, stats["free_bytes"],
+                )
+                _set_video_status(match_id, slot, "error", None)
+                return
+    except Exception as exc:
+        logger.warning("Disk space check failed before transcode %s/%s: %s", match_id, slot, exc)
+
     await _media.transcode_video(
         match_id, slot, src, dest,
         **_MEDIA_KWARGS,
@@ -945,13 +1089,17 @@ async def serve_app_asset(kind: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/login")
-async def login(request: Request):
-    body = await request.json()
-    username = body.get("username", "")
-    password = body.get("password", "")
-    if not secrets.compare_digest(username, ADMIN_USER) or \
-       not secrets.compare_digest(password, ADMIN_PASS):
+async def login(request: Request, body: LoginRequest):
+    _check_login_rate_limit(request)
+    _validate_login_origin(request)
+    if not secrets.compare_digest(body.username, ADMIN_USER) or \
+       not secrets.compare_digest(body.password, ADMIN_PASS):
         raise HTTPException(401, "Invalid credentials")
+    # Enforce token cap
+    _sweep_expired_tokens()
+    if len(_active_tokens) >= _MAX_ACTIVE_TOKENS:
+        oldest_token = min(_active_tokens, key=_active_tokens.get)
+        del _active_tokens[oldest_token]
     token = secrets.token_hex(32)
     _active_tokens[token] = time.time()
     return {"token": token}
@@ -1040,28 +1188,22 @@ async def list_matches():
 
 
 @app.post("/api/matches")
-async def create_match(request: Request):
+async def create_match(request: Request, body: CreateMatchRequest):
     _require_auth(request)
-    body = await request.json()
     match_id = f"match-{int(time.time() * 1000)}"
-    home_team = body.get("home_team", "").strip()
-    away_team = body.get("away_team", "").strip()
-    match_date = body.get("date", "")
-    if not home_team or not away_team:
-        raise HTTPException(400, "home_team and away_team are required")
 
-    slug_base = _generate_slug(home_team, away_team, match_date)
+    slug_base = _generate_slug(body.home_team, body.away_team, body.date)
 
     match = {
         "id": match_id,
-        "home_team": home_team,
-        "away_team": away_team,
-        "date": match_date,
-        "time": body.get("time", ""),
-        "location": body.get("location", ""),
-        "score_home": body.get("score_home"),
-        "score_away": body.get("score_away"),
-        "format": body.get("format", "full"),
+        "home_team": body.home_team,
+        "away_team": body.away_team,
+        "date": body.date,
+        "time": body.time,
+        "location": body.location,
+        "score_home": body.score_home,
+        "score_away": body.score_away,
+        "format": body.format,
         "videos": {"full": None, "first_half": None, "second_half": None},
         "video_status": {"full": "none", "first_half": "none", "second_half": "none"},
         "home_logo": None,
@@ -1082,23 +1224,20 @@ async def create_match(request: Request):
 
 
 @app.put("/api/matches/{match_id}")
-async def update_match(match_id: str, request: Request):
+async def update_match(match_id: str, request: Request, body: UpdateMatchRequest):
     _require_auth(request)
-    body = await request.json()
+    updates = body.model_dump(exclude_unset=True)
     with MATCHES_LOCK:
         matches = _load_matches_unlocked()
         match = _find_match(matches, match_id)
         if not match:
             raise HTTPException(404, "Match not found")
 
-        updatable = ["home_team", "away_team", "date", "time", "location",
-                     "score_home", "score_away", "format"]
         slug_fields_changed = False
-        for key in updatable:
-            if key in body:
-                if key in ("home_team", "away_team", "date") and body[key] != match.get(key):
-                    slug_fields_changed = True
-                match[key] = body[key]
+        for key, value in updates.items():
+            if key in ("home_team", "away_team", "date") and value != match.get(key):
+                slug_fields_changed = True
+            match[key] = value
 
         if slug_fields_changed or not match.get("slug"):
             slug_base = _generate_slug(match["home_team"], match["away_team"], match.get("date", ""))
@@ -1134,18 +1273,15 @@ async def delete_match(match_id: str, request: Request):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/matches/{match_id}/upload-video/session")
-async def create_upload_session(match_id: str, request: Request):
+async def create_upload_session(match_id: str, request: Request, body: CreateUploadSessionRequest):
     _require_auth(request)
     _cleanup_stale_upload_sessions()
     slot = request.query_params.get("slot", "full")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "slot must be full, first_half, or second_half")
 
-    body = await request.json()
-    filename = (body.get("filename") or "video.mp4").strip()
-    size_bytes = int(body.get("size_bytes") or 0)
-    if size_bytes <= 0:
-        raise HTTPException(400, "size_bytes must be > 0")
+    filename = body.filename.strip()
+    size_bytes = body.size_bytes
     if size_bytes > MAX_UPLOAD_SIZE_BYTES:
         raise HTTPException(413, f"Uploaded file exceeds max size of {MAX_UPLOAD_SIZE_BYTES} bytes")
 
@@ -1153,8 +1289,7 @@ async def create_upload_session(match_id: str, request: Request):
     if ext not in (".mp4", ".mkv"):
         raise HTTPException(400, "Only .mp4 and .mkv files are supported")
 
-    matches = _load_matches()
-    match = _find_match(matches, match_id)
+    match = _get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1358,8 +1493,7 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "slot must be full, first_half, or second_half")
 
-    matches = _load_matches()
-    match = _find_match(matches, match_id)
+    match = _get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1412,8 +1546,7 @@ async def stream_video(match_id: str, slot: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
-    matches = _load_matches()
-    match = _find_match(matches, match_id)
+    match = _get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1438,8 +1571,7 @@ async def download_video(match_id: str, slot: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
-    matches = _load_matches()
-    match = _find_match(matches, match_id)
+    match = _get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1481,8 +1613,7 @@ async def stream_hls_master(match_id: str, slot: str):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
-    matches = _load_matches()
-    match = _find_match(matches, match_id)
+    match = _get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1599,8 +1730,7 @@ async def upload_logo(match_id: str, file: UploadFile, request: Request):
     if team not in ("home", "away"):
         raise HTTPException(400, "team must be home or away")
 
-    matches = _load_matches()
-    match = _find_match(matches, match_id)
+    match = _get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1630,8 +1760,7 @@ async def serve_logo(match_id: str, team: str):
     if team not in ("home", "away"):
         raise HTTPException(400, "Invalid team")
 
-    matches = _load_matches()
-    match = _find_match(matches, match_id)
+    match = _get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 

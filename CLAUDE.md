@@ -8,9 +8,12 @@ Additional guidance for Claude in this repo:
 - Check the current file contents before editing because this repo is often changed iteratively.
 - When fixing UI behavior, inspect both `index.html` and `script.js`; many issues here are caused by interaction between markup and SPA state.
 - When fixing public-domain behavior, consider cache and proxy behavior before assuming application logic is broken.
+- When adding or modifying API endpoints, update Pydantic models in `models.py` and add tests in `tests/`.
+- Match URLs use slug-based deep links (`/match/{slug}`, `/match/{slug}/first-half`).
 
 Primary validation:
 
 ```bash
-python3 -m py_compile server.py && python3 -m py_compile media.py
+python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py
+pytest tests/ -v
 ```
