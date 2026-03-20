@@ -14,6 +14,6 @@ Additional guidance for Claude in this repo:
 Primary validation:
 
 ```bash
-python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py
+python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py
 pytest tests/ -v
 ```

@@ -21,25 +21,30 @@ def data_dir(tmp_path):
 @pytest_asyncio.fixture()
 async def client(data_dir, monkeypatch):
     """Return an httpx AsyncClient wired to a fresh app instance."""
+    import db as _db
+    import auth as _auth
+    import settings as _settings
     import server
 
     # Close any cached DB connection before switching paths
-    server._close_thread_db()
+    _db.close_thread_connection()
 
     monkeypatch.setattr(server, "DATA_DIR", data_dir)
-    monkeypatch.setattr(server, "DB_FILE", data_dir / "replay.db")
     monkeypatch.setattr(server, "VIDEOS_DIR", data_dir / "videos")
     monkeypatch.setattr(server, "APP_ASSETS_DIR", data_dir / "app_assets")
-    server._init_db()
 
-    # Clear state between tests
-    server._active_tokens.clear()
-    server._login_attempts.clear()
+    # Re-init DB module with test paths
+    _db.init(data_dir, data_dir / "replay.db", data_dir / "app_assets")
+    _settings.init(data_dir / "app_assets", server.STATIC_DIR)
+
+    # Clear auth state between tests
+    _auth._active_tokens.clear()
+    _auth._login_attempts.clear()
 
     transport = ASGITransport(app=server.app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
-        server._close_thread_db()
+        _db.close_thread_connection()
 
 
 @pytest_asyncio.fixture()

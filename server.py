@@ -6,33 +6,32 @@ Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 80
 from __future__ import annotations
 
 import asyncio
-import html as html_lib
 import json
-import logging
 import math
 import os
 import re
-import secrets
-import sqlite3
 import shutil
 import time
 import uuid
 from pathlib import Path
-from threading import Lock
 
 import aiofiles
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
+import auth as _auth
+import db as _db
+import log as _log
 import media as _media
+import settings as _settings
+import uploads as _uploads
 from models import CreateMatchRequest, CreateUploadSessionRequest, LoginRequest, UpdateMatchRequest
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("replay")
+logger = _log.setup("replay")
 
 DATA_DIR = Path(os.environ.get("REPLAY_DATA_DIR", "/tank/replay"))
 STATIC_DIR = Path(__file__).parent
@@ -43,8 +42,6 @@ APP_ASSETS_DIR = DATA_DIR / "app_assets"
 
 app = FastAPI(title="Replay")
 
-ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
 MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", str(12 * 1024 * 1024 * 1024)))
 UPLOAD_CHUNK_SIZE_BYTES = int(os.environ.get("UPLOAD_CHUNK_SIZE_BYTES", str(16 * 1024 * 1024)))
 TRANSCODE_CONCURRENCY = max(1, int(os.environ.get("TRANSCODE_CONCURRENCY", "2")))
@@ -54,7 +51,7 @@ STALE_UPLOAD_SESSION_SECONDS = int(os.environ.get("STALE_UPLOAD_SESSION_SECONDS"
 VIDEO_STREAM_CHUNK_BYTES = int(os.environ.get("VIDEO_STREAM_CHUNK_BYTES", str(1024 * 1024)))
 HLS_SEGMENT_DURATION = int(os.environ.get("HLS_SEGMENT_DURATION", "6"))
 TRANSCODE_SEMAPHORE = asyncio.Semaphore(TRANSCODE_CONCURRENCY)
-MATCHES_LOCK = Lock()
+MATCHES_LOCK = asyncio.Lock()
 HLS_BACKFILL_LOCK = asyncio.Lock()
 
 HLS_VARIANT_PRESETS = [
@@ -90,575 +87,55 @@ HLS_VARIANT_PRESETS = [
     },
 ]
 
-DEFAULT_APP_SETTINGS = {
-    "app_name": "Replay",
-    "nav_matches_label": "Matches",
-    "nav_add_match_label": "Add Match",
-    "nav_settings_label": "Settings",
-    "season_title": "U12 GIRLS STEEL",
-    "season_intro": "Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)",
-    "main_team_name": "OSU Steel",
-    "filter_all_label": "All Matches",
-    "filter_home_label": "Home",
-    "filter_away_label": "Away",
-    "stat_matches_label": "Matches",
-    "stat_ready_label": "Ready",
-    "stat_processing_label": "Processing",
-    "game_back_label": "Back to Matches",
-    "game_replay_label": "Match Replay",
-    "game_video_status_label": "Video Status",
-    "download_label": "Download",
-    "downloads_enabled": "1",
-    "app_logo_filename": "",
-    "favicon_filename": "",
-}
-
-EDITABLE_APP_SETTING_KEYS = {
-    key for key in DEFAULT_APP_SETTINGS.keys()
-    if key not in {"app_logo_filename", "favicon_filename"}
-}
-
-APP_ASSET_CONFIG = {
-    "logo": {
-        "setting_key": "app_logo_filename",
-        "allowed_exts": {".png", ".jpg", ".jpeg", ".svg", ".webp"},
-        "max_size": 20 * 1024 * 1024,
-    },
-    "favicon": {
-        "setting_key": "favicon_filename",
-        "allowed_exts": {".ico", ".png", ".svg"},
-        "max_size": 5 * 1024 * 1024,
-    },
-}
-
-
 # ---------------------------------------------------------------------------
-# Settings
+# Module initialization
 # ---------------------------------------------------------------------------
 
-def _load_settings_unlocked() -> dict[str, str]:
-    settings = DEFAULT_APP_SETTINGS.copy()
-    with _db_connect() as conn:
-        rows = conn.execute("SELECT key, value FROM settings").fetchall()
-    for row in rows:
-        settings[row["key"]] = row["value"]
-    return settings
-
-
-def _save_settings_unlocked(updates: dict[str, str]) -> dict[str, str]:
-    if not updates:
-        return _load_settings_unlocked()
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with _db_connect() as conn:
-        conn.executemany(
-            """
-            INSERT INTO settings (key, value, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-            """,
-            [(key, value, now) for key, value in updates.items()],
-        )
-        conn.commit()
-    return _load_settings_unlocked()
-
-
-def _load_settings() -> dict[str, str]:
-    with MATCHES_LOCK:
-        return _load_settings_unlocked()
-
-
-def _save_settings(updates: dict[str, str]) -> dict[str, str]:
-    with MATCHES_LOCK:
-        return _save_settings_unlocked(updates)
-
-
-def _versioned_static_path(filename: str) -> str:
-    return f"/static/{filename}?v={_asset_version(filename)}"
-
-
-def _app_asset_url(kind: str, settings: dict[str, str] | None = None) -> str:
-    settings = settings or _load_settings()
-    config = APP_ASSET_CONFIG[kind]
-    filename = settings.get(config["setting_key"], "")
-    if filename:
-        asset_path = APP_ASSETS_DIR / filename
-        if asset_path.is_file():
-            return f"/api/app-assets/{kind}?v={asset_path.stat().st_mtime_ns}"
-    if kind == "logo":
-        return _versioned_static_path("logo.png")
-    return _versioned_static_path("logo.png")
-
-
-def _public_settings_payload() -> dict:
-    settings = _load_settings()
-    return {
-        "settings": settings,
-        "assets": {
-            "logo_url": _app_asset_url("logo", settings),
-            "favicon_url": _app_asset_url("favicon", settings),
-        },
-    }
-
-
-def _normalize_setting_value(key: str, value) -> str:
-    if value is None:
-        return DEFAULT_APP_SETTINGS.get(key, "")
-    if key == "downloads_enabled":
-        if isinstance(value, bool):
-            return "1" if value else "0"
-        return "1" if str(value).strip().lower() in {"1", "true", "yes", "on"} else "0"
-    return str(value).strip()
-
-
-def _asset_version(filename: str) -> str:
-    path = STATIC_DIR / filename
-    try:
-        return str(path.stat().st_mtime_ns)
-    except FileNotFoundError:
-        return "0"
-
-
-def _render_index_html() -> str:
-    html = (STATIC_DIR / "index.html").read_text()
-    settings_payload = _public_settings_payload()
-    app_name = html_lib.escape(settings_payload["settings"]["app_name"] or DEFAULT_APP_SETTINGS["app_name"])
-    favicon_url = html_lib.escape(settings_payload["assets"]["favicon_url"], quote=True)
-    html = re.sub(r'/static/styles\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles.css"), html)
-    html = re.sub(r'/static/script\.js(?:\?v=[^"\']*)?', _versioned_static_path("script.js"), html)
-    html = re.sub(r'/static/logo\.png(?:\?v=[^"\']*)?', _app_asset_url("logo", settings_payload["settings"]), html)
-    html = re.sub(r"<title>.*?</title>", f"<title>{app_name}</title>", html, count=1)
-    favicon_link = f'<link rel="icon" href="{favicon_url}">'
-    if 'rel="icon"' in html:
-        html = re.sub(r'<link rel="icon"[^>]*>', favicon_link, html, count=1)
-    else:
-        html = html.replace("</head>", f"    {favicon_link}\n</head>")
-    bootstrap = "<script>window.__APP_SETTINGS__ = " + json.dumps(settings_payload).replace("</", "<\\/") + ";</script>"
-    if "window.__APP_SETTINGS__" not in html:
-        html = html.replace("</head>", f"    {bootstrap}\n</head>")
-    return html
-
+_db.init(DATA_DIR, DB_FILE, APP_ASSETS_DIR)
+_db.migrate_json_to_sqlite(MATCHES_FILE)
+_db.backfill_slugs()
+_settings.init(APP_ASSETS_DIR, STATIC_DIR)
 
 # ---------------------------------------------------------------------------
-# Database
+# Async wrappers around module functions (lock-protected)
 # ---------------------------------------------------------------------------
 
-import threading as _threading
-_thread_local = _threading.local()
 
+async def _load_settings() -> dict[str, str]:
+    async with MATCHES_LOCK:
+        return _settings.load_unlocked()
 
-def _db_connect() -> sqlite3.Connection:
-    """Return a thread-local cached SQLite connection."""
-    conn = getattr(_thread_local, "db_conn", None)
-    if conn is not None:
-        try:
-            conn.execute("SELECT 1")
-            return conn
-        except sqlite3.Error:
-            pass
-    conn = sqlite3.connect(DB_FILE, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    _thread_local.db_conn = conn
-    return conn
 
+async def _save_settings(updates: dict[str, str]) -> dict[str, str]:
+    async with MATCHES_LOCK:
+        return _settings.save_unlocked(updates)
 
-def _close_thread_db():
-    """Close the thread-local DB connection (used by tests)."""
-    conn = getattr(_thread_local, "db_conn", None)
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:
-            pass
-        _thread_local.db_conn = None
 
+async def _public_settings_payload() -> dict:
+    settings = await _load_settings()
+    return _settings.public_payload(settings)
 
-def _get_schema_version(conn: sqlite3.Connection) -> int:
-    """Return current schema version, or -1 if the version table doesn't exist."""
-    try:
-        row = conn.execute("SELECT version FROM schema_version").fetchone()
-        return row["version"] if row else -1
-    except sqlite3.OperationalError:
-        return -1
 
+async def _render_index_html() -> str:
+    settings_payload = await _public_settings_payload()
+    return _settings.render_index_html(settings_payload)
 
-def _set_schema_version(conn: sqlite3.Connection, version: int):
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
-    conn.execute("DELETE FROM schema_version")
-    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
 
+async def _load_matches() -> list[dict]:
+    async with MATCHES_LOCK:
+        return _db.load_matches_unlocked()
 
-# -- Migrations ---------------------------------------------------------------
 
-def _migrate_v0(conn: sqlite3.Connection):
-    """Initial schema: matches, upload_sessions, settings tables."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS matches (
-            id TEXT PRIMARY KEY,
-            home_team TEXT NOT NULL,
-            away_team TEXT NOT NULL,
-            date TEXT,
-            time TEXT,
-            location TEXT,
-            score_home INTEGER,
-            score_away INTEGER,
-            format TEXT,
-            videos_json TEXT NOT NULL,
-            video_status_json TEXT NOT NULL,
-            home_logo TEXT,
-            away_logo TEXT,
-            created_at TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS upload_sessions (
-            id TEXT PRIMARY KEY,
-            match_id TEXT NOT NULL,
-            slot TEXT NOT NULL,
-            ext TEXT NOT NULL,
-            raw_path TEXT NOT NULL,
-            size_bytes INTEGER NOT NULL,
-            chunk_size INTEGER NOT NULL,
-            total_chunks INTEGER NOT NULL,
-            next_index INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            updated_at REAL NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT
-        )
-        """
-    )
+async def _save_matches(matches: list[dict]):
+    async with MATCHES_LOCK:
+        _db.save_matches_unlocked(matches)
 
 
-def _migrate_v1(conn: sqlite3.Connection):
-    """Add slug column to matches."""
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(matches)").fetchall()}
-    if "slug" not in cols:
-        conn.execute("ALTER TABLE matches ADD COLUMN slug TEXT")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_slug ON matches(slug)")
-
-
-_MIGRATIONS = [_migrate_v0, _migrate_v1]
-
-
-def _run_migrations(conn: sqlite3.Connection):
-    """Apply any pending schema migrations."""
-    current = _get_schema_version(conn)
-    for version, migrate_fn in enumerate(_MIGRATIONS):
-        if version > current:
-            migrate_fn(conn)
-            logger.info("Applied schema migration v%d", version)
-    if len(_MIGRATIONS) - 1 > current:
-        _set_schema_version(conn, len(_MIGRATIONS) - 1)
-        conn.commit()
-
-
-def _init_db():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    APP_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-    with _db_connect() as conn:
-        _run_migrations(conn)
-
-
-def _generate_slug(home_team: str, away_team: str, date: str) -> str:
-    """Generate a URL-friendly slug from team names and date."""
-    parts = [home_team or "home", "vs", away_team or "away"]
-    if date:
-        parts.append(date)
-    raw = "-".join(parts)
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", raw).strip("-").lower()
-    return slug or "match"
-
-
-def _ensure_unique_slug(conn: sqlite3.Connection, slug: str, exclude_id: str | None = None) -> str:
-    """Return a unique slug, appending -2, -3, etc. if needed."""
-    candidate = slug
-    counter = 2
-    while True:
-        row = conn.execute("SELECT id FROM matches WHERE slug = ?", (candidate,)).fetchone()
-        if row is None or (exclude_id and row["id"] == exclude_id):
-            return candidate
-        candidate = f"{slug}-{counter}"
-        counter += 1
-
-
-def _row_to_match(row: sqlite3.Row) -> dict:
-    return {
-        "id": row["id"],
-        "home_team": row["home_team"],
-        "away_team": row["away_team"],
-        "date": row["date"] or "",
-        "time": row["time"] or "",
-        "location": row["location"] or "",
-        "score_home": row["score_home"],
-        "score_away": row["score_away"],
-        "format": row["format"] or "full",
-        "videos": json.loads(row["videos_json"] or "{}"),
-        "video_status": json.loads(row["video_status_json"] or "{}"),
-        "home_logo": row["home_logo"],
-        "away_logo": row["away_logo"],
-        "created_at": row["created_at"] or "",
-        "slug": row["slug"] or "",
-    }
-
-
-def _upsert_match_unlocked(conn: sqlite3.Connection, match: dict):
-    conn.execute(
-        """
-        INSERT INTO matches (
-            id, home_team, away_team, date, time, location, score_home, score_away,
-            format, videos_json, video_status_json, home_logo, away_logo, created_at, slug
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            home_team=excluded.home_team,
-            away_team=excluded.away_team,
-            date=excluded.date,
-            time=excluded.time,
-            location=excluded.location,
-            score_home=excluded.score_home,
-            score_away=excluded.score_away,
-            format=excluded.format,
-            videos_json=excluded.videos_json,
-            video_status_json=excluded.video_status_json,
-            home_logo=excluded.home_logo,
-            away_logo=excluded.away_logo,
-            created_at=excluded.created_at,
-            slug=excluded.slug
-        """,
-        (
-            match["id"],
-            match.get("home_team", ""),
-            match.get("away_team", ""),
-            match.get("date", ""),
-            match.get("time", ""),
-            match.get("location", ""),
-            match.get("score_home"),
-            match.get("score_away"),
-            match.get("format", "full"),
-            json.dumps(match.get("videos", {})),
-            json.dumps(match.get("video_status", {})),
-            match.get("home_logo"),
-            match.get("away_logo"),
-            match.get("created_at", ""),
-            match.get("slug", ""),
-        ),
-    )
-
-
-def _migrate_json_to_sqlite_if_needed():
-    if not MATCHES_FILE.exists():
-        return
-    with _db_connect() as conn:
-        count = conn.execute("SELECT COUNT(*) AS c FROM matches").fetchone()["c"]
-        if count > 0:
-            return
-
-        try:
-            matches = json.loads(MATCHES_FILE.read_text())
-        except Exception:
-            logger.warning("Could not read matches.json for migration")
-            return
-
-        for match in matches:
-            if "videos" not in match:
-                match["videos"] = {"full": None, "first_half": None, "second_half": None}
-            if "video_status" not in match:
-                match["video_status"] = {
-                    "full": "ready" if match.get("videos", {}).get("full") else "none",
-                    "first_half": "ready" if match.get("videos", {}).get("first_half") else "none",
-                    "second_half": "ready" if match.get("videos", {}).get("second_half") else "none",
-                }
-            _upsert_match_unlocked(conn, match)
-
-        conn.commit()
-        backup = MATCHES_FILE.with_suffix(".json.migrated")
-        try:
-            MATCHES_FILE.rename(backup)
-            logger.info("Migrated matches.json to SQLite and moved source to %s", backup)
-        except Exception:
-            logger.info("Migrated matches.json to SQLite (source file left in place)")
-
-
-_init_db()
-_migrate_json_to_sqlite_if_needed()
-
-
-def _backfill_slugs():
-    """Generate slugs for any matches that don't have one yet."""
-    with _db_connect() as conn:
-        rows = conn.execute("SELECT id, home_team, away_team, date FROM matches WHERE slug IS NULL OR slug = ''").fetchall()
-        for row in rows:
-            slug_base = _generate_slug(row["home_team"], row["away_team"], row["date"] or "")
-            slug = _ensure_unique_slug(conn, slug_base, exclude_id=row["id"])
-            conn.execute("UPDATE matches SET slug = ? WHERE id = ?", (slug, row["id"]))
-        if rows:
-            conn.commit()
-            logger.info("Backfilled slugs for %d matches", len(rows))
-
-
-_backfill_slugs()
-
-# In-memory token store: {token_string: creation_timestamp}
-_active_tokens: dict[str, float] = {}
-TOKEN_TTL = 86400  # 24 hours
-_MAX_ACTIVE_TOKENS = 100
-_last_token_sweep: float = 0.0
-_TOKEN_SWEEP_INTERVAL = 60.0  # seconds
-
-# Login rate limiting: {ip: [timestamps]}
-_login_attempts: dict[str, list[float]] = {}
-_LOGIN_RATE_LIMIT = 5
-_LOGIN_RATE_WINDOW = 60.0  # seconds
-
-# Origin validation (comma-separated hostnames, optional)
-_ALLOWED_ORIGINS_RAW = os.environ.get("ALLOWED_ORIGINS", "")
-_ALLOWED_ORIGINS: set[str] | None = (
-    {h.strip().lower() for h in _ALLOWED_ORIGINS_RAW.split(",") if h.strip()}
-    if _ALLOWED_ORIGINS_RAW.strip() else None
-)
-
-
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
-
-def _sweep_expired_tokens():
-    """Bulk-remove expired tokens at most once per sweep interval."""
-    global _last_token_sweep
-    now = time.time()
-    if now - _last_token_sweep < _TOKEN_SWEEP_INTERVAL:
-        return
-    _last_token_sweep = now
-    expired = [t for t, ts in _active_tokens.items() if now - ts > TOKEN_TTL]
-    for t in expired:
-        del _active_tokens[t]
-    # Also prune stale login-attempt entries
-    stale_ips = [ip for ip, timestamps in _login_attempts.items()
-                 if not any(now - ts < _LOGIN_RATE_WINDOW for ts in timestamps)]
-    for ip in stale_ips:
-        del _login_attempts[ip]
-
-
-def _require_auth(request: Request):
-    """Validate Bearer token from Authorization header. Raises 401 if invalid."""
-    _sweep_expired_tokens()
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(401, "Authentication required")
-    token = auth_header[7:]
-    created = _active_tokens.get(token)
-    if created is None:
-        raise HTTPException(401, "Invalid or expired token")
-    if time.time() - created > TOKEN_TTL:
-        del _active_tokens[token]
-        raise HTTPException(401, "Token expired")
-
-
-def _check_login_rate_limit(request: Request):
-    """Raise 429 if too many login attempts from this IP."""
-    ip = request.client.host if request.client else "unknown"
-    now = time.time()
-    attempts = _login_attempts.get(ip, [])
-    attempts = [t for t in attempts if now - t < _LOGIN_RATE_WINDOW]
-    if len(attempts) >= _LOGIN_RATE_LIMIT:
-        raise HTTPException(429, "Too many login attempts. Try again later.")
-    attempts.append(now)
-    _login_attempts[ip] = attempts
-
-
-def _validate_login_origin(request: Request):
-    """Validate Origin header on login if ALLOWED_ORIGINS is configured."""
-    if _ALLOWED_ORIGINS is None:
-        return
-    origin = request.headers.get("origin") or ""
-    if not origin:
-        return  # Non-browser client, allow
-    # Extract hostname from origin (e.g. "https://example.com" -> "example.com")
-    host = origin.split("//", 1)[-1].split("/")[0].split(":")[0].lower()
-    if host not in _ALLOWED_ORIGINS:
-        raise HTTPException(403, "Origin not allowed")
-
-
-# ---------------------------------------------------------------------------
-# Helpers — JSON persistence
-# ---------------------------------------------------------------------------
-
-def _load_matches_unlocked() -> list[dict]:
-    with _db_connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM matches ORDER BY created_at DESC, id DESC"
-        ).fetchall()
-        return [_row_to_match(row) for row in rows]
-
-
-def _save_matches_unlocked(matches: list[dict]):
-    with _db_connect() as conn:
-        existing_ids = {row["id"] for row in conn.execute("SELECT id FROM matches").fetchall()}
-        next_ids = {m["id"] for m in matches}
-
-        for match in matches:
-            _upsert_match_unlocked(conn, match)
-
-        removed_ids = existing_ids - next_ids
-        if removed_ids:
-            conn.executemany("DELETE FROM matches WHERE id = ?", [(match_id,) for match_id in removed_ids])
-
-        conn.commit()
-
-
-def _load_matches() -> list[dict]:
-    with MATCHES_LOCK:
-        return _load_matches_unlocked()
-
-
-def _save_matches(matches: list[dict]):
-    with MATCHES_LOCK:
-        _save_matches_unlocked(matches)
-
-
-def _find_match(matches: list[dict], match_id: str) -> dict | None:
-    return next((m for m in matches if m["id"] == match_id), None)
-
-
-def _get_match_by_id(match_id: str) -> dict | None:
-    """Single-match lookup — avoids loading all matches for read-only endpoints."""
-    with _db_connect() as conn:
-        row = conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
-        return _row_to_match(row) if row else None
-
-
-# ---------------------------------------------------------------------------
-# Video status
-# ---------------------------------------------------------------------------
-
-def _get_video_status(match: dict, slot: str) -> str:
-    """Get status for a video slot.  Backward-compatible with old data."""
-    statuses = match.get("video_status") or {}
-    if slot in statuses:
-        return statuses[slot]
-    # Legacy: file present but no status → assume ready
-    if match.get("videos", {}).get(slot):
-        return "ready"
-    return "none"
-
-
-def _set_video_status(match_id: str, slot: str, status: str, filename: str | None):
-    """Persist video status + filename to matches.json."""
-    with MATCHES_LOCK:
-        matches = _load_matches_unlocked()
-        match = _find_match(matches, match_id)
+async def _set_video_status(match_id: str, slot: str, status: str, filename: str | None):
+    """Persist video status + filename to the database."""
+    async with MATCHES_LOCK:
+        matches = _db.load_matches_unlocked()
+        match = _db.find_match(matches, match_id)
         if not match:
             return
         if "video_status" not in match:
@@ -668,7 +145,21 @@ def _set_video_status(match_id: str, slot: str, status: str, filename: str | Non
             match["videos"][slot] = filename
         elif status == "error":
             match["videos"][slot] = None
-        _save_matches_unlocked(matches)
+        _db.save_matches_unlocked(matches)
+
+
+# ---------------------------------------------------------------------------
+# Video status helpers
+# ---------------------------------------------------------------------------
+
+def _get_video_status(match: dict, slot: str) -> str:
+    """Get status for a video slot.  Backward-compatible with old data."""
+    statuses = match.get("video_status") or {}
+    if slot in statuses:
+        return statuses[slot]
+    if match.get("videos", {}).get(slot):
+        return "ready"
+    return "none"
 
 
 # ---------------------------------------------------------------------------
@@ -676,14 +167,11 @@ def _set_video_status(match_id: str, slot: str, status: str, filename: str | Non
 # ---------------------------------------------------------------------------
 
 async def _save_upload_file(upload: UploadFile, dest: Path, max_size_bytes: int | None = None) -> int:
-    """Stream an upload to disk without blocking the event loop.
-
-    Returns bytes written. Raises HTTPException(413) if max_size_bytes is exceeded.
-    """
+    """Stream an upload to disk without blocking the event loop."""
     bytes_written = 0
     async with aiofiles.open(dest, "wb") as f:
         while True:
-            chunk = await upload.read(2 * 1024 * 1024)  # 2 MB
+            chunk = await upload.read(2 * 1024 * 1024)
             if not chunk:
                 break
             bytes_written += len(chunk)
@@ -701,29 +189,6 @@ async def _append_bytes_file(dest: Path, data: bytes):
             f.write(data)
 
     await asyncio.to_thread(_write)
-
-
-def _get_upload_session(session_id: str) -> sqlite3.Row | None:
-    with _db_connect() as conn:
-        return conn.execute(
-            "SELECT * FROM upload_sessions WHERE id = ?",
-            (session_id,),
-        ).fetchone()
-
-
-def _upload_session_payload(row: sqlite3.Row) -> dict:
-    return {
-        "session_id": row["id"],
-        "match_id": row["match_id"],
-        "slot": row["slot"],
-        "size_bytes": row["size_bytes"],
-        "chunk_size": row["chunk_size"],
-        "total_chunks": row["total_chunks"],
-        "next_index": row["next_index"],
-        "status": row["status"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -788,99 +253,6 @@ def _ensure_disk_space(size_bytes: int):
         )
 
 
-def _upload_session_view(row: sqlite3.Row) -> dict:
-    payload = _upload_session_payload(row)
-    raw_path = Path(row["raw_path"])
-    raw_exists = raw_path.exists()
-    uploaded_bytes = raw_path.stat().st_size if raw_exists else 0
-    now = time.time()
-    payload.update(
-        {
-            "uploaded_bytes": uploaded_bytes,
-            "progress_pct": round((uploaded_bytes / row["size_bytes"]) * 100, 1) if row["size_bytes"] else 0,
-            "raw_exists": raw_exists,
-            "raw_path": str(raw_path),
-            "age_seconds": round(max(0, now - row["created_at"]), 1),
-            "idle_seconds": round(max(0, now - row["updated_at"]), 1),
-            "stale": (now - row["updated_at"]) >= STALE_UPLOAD_SESSION_SECONDS,
-        }
-    )
-    return payload
-
-
-def _find_active_upload_session(match_id: str, slot: str, size_bytes: int, ext: str) -> sqlite3.Row | None:
-    with _db_connect() as conn:
-        return conn.execute(
-            """
-            SELECT * FROM upload_sessions
-            WHERE match_id = ? AND slot = ? AND size_bytes = ? AND ext = ? AND status = 'active'
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (match_id, slot, size_bytes, ext),
-        ).fetchone()
-
-
-def _list_upload_session_views(statuses: tuple[str, ...] | None = None) -> list[dict]:
-    with _db_connect() as conn:
-        if statuses:
-            placeholders = ", ".join("?" for _ in statuses)
-            rows = conn.execute(
-                f"SELECT * FROM upload_sessions WHERE status IN ({placeholders}) ORDER BY updated_at DESC",
-                statuses,
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM upload_sessions ORDER BY updated_at DESC"
-            ).fetchall()
-    return [_upload_session_view(row) for row in rows]
-
-
-def _mark_upload_session_status(session_id: str, status: str) -> sqlite3.Row | None:
-    row = _get_upload_session(session_id)
-    if not row:
-        return None
-
-    raw_path = Path(row["raw_path"])
-    raw_path.unlink(missing_ok=True)
-
-    with _db_connect() as conn:
-        conn.execute(
-            "UPDATE upload_sessions SET status = ?, updated_at = ? WHERE id = ?",
-            (status, time.time(), session_id),
-        )
-        conn.commit()
-
-    return _get_upload_session(session_id)
-
-
-def _cleanup_stale_upload_sessions() -> list[str]:
-    cutoff = time.time() - STALE_UPLOAD_SESSION_SECONDS
-    with _db_connect() as conn:
-        rows = conn.execute(
-            "SELECT id FROM upload_sessions WHERE status = 'active' AND updated_at < ?",
-            (cutoff,),
-        ).fetchall()
-
-    cleaned = []
-    for row in rows:
-        updated = _mark_upload_session_status(row["id"], "cancelled")
-        if updated:
-            cleaned.append(row["id"])
-    return cleaned
-
-
-def _cancel_conflicting_upload_sessions(match_id: str, slot: str):
-    with _db_connect() as conn:
-        rows = conn.execute(
-            "SELECT id FROM upload_sessions WHERE match_id = ? AND slot = ? AND status = 'active'",
-            (match_id, slot),
-        ).fetchall()
-
-    for row in rows:
-        _mark_upload_session_status(row["id"], "replaced")
-
-
 # ---------------------------------------------------------------------------
 # Helpers — Media pipeline (delegated to media.py)
 # ---------------------------------------------------------------------------
@@ -908,7 +280,7 @@ async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
                     "Insufficient disk space to transcode %s/%s: need %d, have %d",
                     match_id, slot, required, stats["free_bytes"],
                 )
-                _set_video_status(match_id, slot, "error", None)
+                await _set_video_status(match_id, slot, "error", None)
                 return
     except Exception as exc:
         logger.warning("Disk space check failed before transcode %s/%s: %s", match_id, slot, exc)
@@ -937,7 +309,7 @@ async def _backfill_hls_for_existing_videos() -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse(_render_index_html(), headers=_SPA_NO_CACHE)
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
 _SPA_NO_CACHE = {
@@ -951,7 +323,7 @@ _SPA_NO_CACHE = {
 @app.get("/match/{slug}/{slot}")
 async def match_deep_link(slug: str, slot: str | None = None):
     """Serve the SPA shell for direct match links."""
-    return HTMLResponse(_render_index_html(), headers=_SPA_NO_CACHE)
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
 @app.get("/static/{filename}")
@@ -990,49 +362,49 @@ async def static_file(filename: str):
 
 @app.get("/api/settings")
 async def get_public_settings():
-    return _public_settings_payload()
+    return await _public_settings_payload()
 
 
 @app.get("/api/admin/settings")
 async def get_admin_settings(request: Request):
-    _require_auth(request)
-    return _public_settings_payload()
+    _auth.require_auth(request)
+    return await _public_settings_payload()
 
 
 @app.put("/api/admin/settings")
 async def update_admin_settings(request: Request):
-    _require_auth(request)
+    _auth.require_auth(request)
     body = await request.json()
     updates = {
-        key: _normalize_setting_value(key, value)
+        key: _settings.normalize_value(key, value)
         for key, value in body.items()
-        if key in EDITABLE_APP_SETTING_KEYS
+        if key in _settings.EDITABLE_APP_SETTING_KEYS
     }
-    settings = _save_settings(updates)
+    settings = await _save_settings(updates)
     return {
         "ok": True,
         "settings": settings,
         "assets": {
-            "logo_url": _app_asset_url("logo", settings),
-            "favicon_url": _app_asset_url("favicon", settings),
+            "logo_url": _settings.app_asset_url("logo", settings),
+            "favicon_url": _settings.app_asset_url("favicon", settings),
         },
     }
 
 
 @app.post("/api/admin/settings/asset")
 async def upload_app_asset(file: UploadFile, request: Request):
-    _require_auth(request)
+    _auth.require_auth(request)
     kind = request.query_params.get("kind", "logo")
-    if kind not in APP_ASSET_CONFIG:
+    if kind not in _settings.APP_ASSET_CONFIG:
         raise HTTPException(400, "kind must be logo or favicon")
 
-    config = APP_ASSET_CONFIG[kind]
+    config = _settings.APP_ASSET_CONFIG[kind]
     filename = file.filename or f"{kind}.png"
     ext = Path(filename).suffix.lower()
     if ext not in config["allowed_exts"]:
         raise HTTPException(400, f"Unsupported {kind} format")
 
-    settings = _load_settings()
+    settings = await _load_settings()
     current_name = settings.get(config["setting_key"], "")
     if current_name:
         (APP_ASSETS_DIR / current_name).unlink(missing_ok=True)
@@ -1040,25 +412,25 @@ async def upload_app_asset(file: UploadFile, request: Request):
     dest_name = f"app_{kind}{ext}"
     dest = APP_ASSETS_DIR / dest_name
     await _save_upload_file(file, dest, max_size_bytes=config["max_size"])
-    settings = _save_settings({config["setting_key"]: dest_name})
+    settings = await _save_settings({config["setting_key"]: dest_name})
     return {
         "ok": True,
         "kind": kind,
         "filename": dest_name,
         "settings": settings,
         "assets": {
-            "logo_url": _app_asset_url("logo", settings),
-            "favicon_url": _app_asset_url("favicon", settings),
+            "logo_url": _settings.app_asset_url("logo", settings),
+            "favicon_url": _settings.app_asset_url("favicon", settings),
         },
     }
 
 
 @app.get("/api/app-assets/{kind}")
 async def serve_app_asset(kind: str):
-    if kind not in APP_ASSET_CONFIG:
+    if kind not in _settings.APP_ASSET_CONFIG:
         raise HTTPException(400, "Invalid asset kind")
-    settings = _load_settings()
-    filename = settings.get(APP_ASSET_CONFIG[kind]["setting_key"], "")
+    settings = await _load_settings()
+    filename = settings.get(_settings.APP_ASSET_CONFIG[kind]["setting_key"], "")
     if not filename:
         raise HTTPException(404, "Asset not configured")
     asset_path = APP_ASSETS_DIR / filename
@@ -1090,33 +462,26 @@ async def serve_app_asset(kind: str):
 
 @app.post("/api/login")
 async def login(request: Request, body: LoginRequest):
-    _check_login_rate_limit(request)
-    _validate_login_origin(request)
-    if not secrets.compare_digest(body.username, ADMIN_USER) or \
-       not secrets.compare_digest(body.password, ADMIN_PASS):
+    _auth.check_login_rate_limit(request)
+    _auth.validate_login_origin(request)
+    import secrets as _secrets
+    if not _secrets.compare_digest(body.username, _auth.ADMIN_USER) or \
+       not _secrets.compare_digest(body.password, _auth.ADMIN_PASS):
         raise HTTPException(401, "Invalid credentials")
-    # Enforce token cap
-    _sweep_expired_tokens()
-    if len(_active_tokens) >= _MAX_ACTIVE_TOKENS:
-        oldest_token = min(_active_tokens, key=_active_tokens.get)
-        del _active_tokens[oldest_token]
-    token = secrets.token_hex(32)
-    _active_tokens[token] = time.time()
+    token = _auth.create_token()
     return {"token": token}
 
 
 @app.post("/api/logout")
 async def logout(request: Request):
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        _active_tokens.pop(auth_header[7:], None)
+    _auth.revoke_token(request)
     return {"ok": True}
 
 
 @app.get("/api/auth/check")
 async def auth_check(request: Request):
     try:
-        _require_auth(request)
+        _auth.require_auth(request)
         return {"authenticated": True}
     except HTTPException:
         return {"authenticated": False}
@@ -1128,11 +493,11 @@ async def auth_check(request: Request):
 
 @app.get("/api/admin/diagnostics")
 async def admin_diagnostics(request: Request):
-    _require_auth(request)
-    _cleanup_stale_upload_sessions()
+    _auth.require_auth(request)
+    _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
 
-    matches = _load_matches()
-    upload_sessions = _list_upload_session_views(("active", "completed", "cancelled", "replaced"))[:12]
+    matches = await _load_matches()
+    upload_sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, ("active", "completed", "cancelled", "replaced"))[:12]
     hls_missing_slots = _ready_slots_missing_hls(matches)
     transcoding_count = sum(
         1
@@ -1153,7 +518,7 @@ async def admin_diagnostics(request: Request):
             "transcoding_slots": transcoding_count,
             "ready_slots": ready_count,
             "hls_missing_slots": len(hls_missing_slots),
-            "active_tokens": len(_active_tokens),
+            "active_tokens": _auth.active_token_count(),
         },
         "disk": _disk_stats_payload(),
         "upload_limits": {
@@ -1173,7 +538,7 @@ async def admin_diagnostics(request: Request):
 
 @app.post("/api/admin/backfill-hls")
 async def admin_backfill_hls(request: Request):
-    _require_auth(request)
+    _auth.require_auth(request)
     result = await _backfill_hls_for_existing_videos()
     return {"ok": True, **result}
 
@@ -1184,15 +549,15 @@ async def admin_backfill_hls(request: Request):
 
 @app.get("/api/matches")
 async def list_matches():
-    return _load_matches()
+    return await _load_matches()
 
 
 @app.post("/api/matches")
 async def create_match(request: Request, body: CreateMatchRequest):
-    _require_auth(request)
+    _auth.require_auth(request)
     match_id = f"match-{int(time.time() * 1000)}"
 
-    slug_base = _generate_slug(body.home_team, body.away_team, body.date)
+    slug_base = _db.generate_slug(body.home_team, body.away_team, body.date)
 
     match = {
         "id": match_id,
@@ -1214,22 +579,22 @@ async def create_match(request: Request, body: CreateMatchRequest):
 
     (VIDEOS_DIR / match_id).mkdir(parents=True, exist_ok=True)
 
-    with MATCHES_LOCK:
-        with _db_connect() as conn:
-            match["slug"] = _ensure_unique_slug(conn, slug_base)
-        matches = _load_matches_unlocked()
+    async with MATCHES_LOCK:
+        with _db.connect() as conn:
+            match["slug"] = _db.ensure_unique_slug(conn, slug_base)
+        matches = _db.load_matches_unlocked()
         matches.append(match)
-        _save_matches_unlocked(matches)
+        _db.save_matches_unlocked(matches)
     return match
 
 
 @app.put("/api/matches/{match_id}")
 async def update_match(match_id: str, request: Request, body: UpdateMatchRequest):
-    _require_auth(request)
+    _auth.require_auth(request)
     updates = body.model_dump(exclude_unset=True)
-    with MATCHES_LOCK:
-        matches = _load_matches_unlocked()
-        match = _find_match(matches, match_id)
+    async with MATCHES_LOCK:
+        matches = _db.load_matches_unlocked()
+        match = _db.find_match(matches, match_id)
         if not match:
             raise HTTPException(404, "Match not found")
 
@@ -1240,20 +605,20 @@ async def update_match(match_id: str, request: Request, body: UpdateMatchRequest
             match[key] = value
 
         if slug_fields_changed or not match.get("slug"):
-            slug_base = _generate_slug(match["home_team"], match["away_team"], match.get("date", ""))
-            with _db_connect() as conn:
-                match["slug"] = _ensure_unique_slug(conn, slug_base, exclude_id=match["id"])
+            slug_base = _db.generate_slug(match["home_team"], match["away_team"], match.get("date", ""))
+            with _db.connect() as conn:
+                match["slug"] = _db.ensure_unique_slug(conn, slug_base, exclude_id=match["id"])
 
-        _save_matches_unlocked(matches)
+        _db.save_matches_unlocked(matches)
         return match
 
 
 @app.delete("/api/matches/{match_id}")
 async def delete_match(match_id: str, request: Request):
-    _require_auth(request)
-    with MATCHES_LOCK:
-        matches = _load_matches_unlocked()
-        match = _find_match(matches, match_id)
+    _auth.require_auth(request)
+    async with MATCHES_LOCK:
+        matches = _db.load_matches_unlocked()
+        match = _db.find_match(matches, match_id)
         if not match:
             raise HTTPException(404, "Match not found")
 
@@ -1261,10 +626,10 @@ async def delete_match(match_id: str, request: Request):
     if vid_dir.exists():
         shutil.rmtree(str(vid_dir))
 
-    with MATCHES_LOCK:
-        matches = _load_matches_unlocked()
+    async with MATCHES_LOCK:
+        matches = _db.load_matches_unlocked()
         matches = [m for m in matches if m["id"] != match_id]
-        _save_matches_unlocked(matches)
+        _db.save_matches_unlocked(matches)
     return {"ok": True}
 
 
@@ -1274,8 +639,8 @@ async def delete_match(match_id: str, request: Request):
 
 @app.post("/api/matches/{match_id}/upload-video/session")
 async def create_upload_session(match_id: str, request: Request, body: CreateUploadSessionRequest):
-    _require_auth(request)
-    _cleanup_stale_upload_sessions()
+    _auth.require_auth(request)
+    _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
     slot = request.query_params.get("slot", "full")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "slot must be full, first_half, or second_half")
@@ -1289,11 +654,11 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
     if ext not in (".mp4", ".mkv"):
         raise HTTPException(400, "Only .mp4 and .mkv files are supported")
 
-    match = _get_match_by_id(match_id)
+    match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
-    existing = _find_active_upload_session(match_id, slot, size_bytes, ext)
+    existing = _uploads.find_active_session(match_id, slot, size_bytes, ext)
     if existing:
         logger.info(
             "Reusing active upload session: %s match=%s slot=%s next_index=%d",
@@ -1302,10 +667,10 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
             slot,
             existing["next_index"],
         )
-        return _upload_session_payload(existing)
+        return _uploads.session_payload(existing)
 
     _ensure_disk_space(size_bytes)
-    _cancel_conflicting_upload_sessions(match_id, slot)
+    _uploads.cancel_conflicting_sessions(match_id, slot)
 
     vid_dir = VIDEOS_DIR / match_id
     vid_dir.mkdir(parents=True, exist_ok=True)
@@ -1317,7 +682,7 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
     total_chunks = max(1, math.ceil(size_bytes / chunk_size))
     now = time.time()
 
-    with _db_connect() as conn:
+    with _db.connect() as conn:
         conn.execute(
             """
             INSERT INTO upload_sessions (
@@ -1358,25 +723,25 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
 
 @app.get("/api/uploads/sessions")
 async def list_upload_sessions(request: Request):
-    _require_auth(request)
+    _auth.require_auth(request)
     status_param = (request.query_params.get("status") or "active").strip().lower()
     if status_param == "all":
-        sessions = _list_upload_session_views(None)
+        sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, None)
     else:
         statuses = tuple(part.strip() for part in status_param.split(",") if part.strip())
-        sessions = _list_upload_session_views(statuses or ("active",))
+        sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, statuses or ("active",))
     return {"sessions": sessions}
 
 
 @app.put("/api/uploads/sessions/{session_id}/chunk")
 async def upload_session_chunk(session_id: str, request: Request):
-    _require_auth(request)
+    _auth.require_auth(request)
     try:
         index = int(request.query_params.get("index", "-1"))
     except ValueError:
         raise HTTPException(400, "index must be an integer")
 
-    row = _get_upload_session(session_id)
+    row = _uploads.get_session(session_id)
     if not row:
         raise HTTPException(404, "Upload session not found")
     if row["status"] != "active":
@@ -1400,7 +765,7 @@ async def upload_session_chunk(session_id: str, request: Request):
     raw_path = Path(row["raw_path"])
     await _append_bytes_file(raw_path, data)
 
-    with _db_connect() as conn:
+    with _db.connect() as conn:
         conn.execute(
             """
             UPDATE upload_sessions
@@ -1416,33 +781,33 @@ async def upload_session_chunk(session_id: str, request: Request):
 
 @app.get("/api/uploads/sessions/{session_id}")
 async def get_upload_session(session_id: str, request: Request):
-    _require_auth(request)
-    row = _get_upload_session(session_id)
+    _auth.require_auth(request)
+    row = _uploads.get_session(session_id)
     if not row:
         raise HTTPException(404, "Upload session not found")
-    return _upload_session_view(row)
+    return _uploads.session_view(row, STALE_UPLOAD_SESSION_SECONDS)
 
 
 @app.delete("/api/uploads/sessions/{session_id}")
 async def cancel_upload_session(session_id: str, request: Request):
-    _require_auth(request)
-    row = _mark_upload_session_status(session_id, "cancelled")
+    _auth.require_auth(request)
+    row = _uploads.mark_session_status(session_id, "cancelled")
     if not row:
         raise HTTPException(404, "Upload session not found")
-    return {"ok": True, "session": _upload_session_view(row)}
+    return {"ok": True, "session": _uploads.session_view(row, STALE_UPLOAD_SESSION_SECONDS)}
 
 
 @app.post("/api/uploads/sessions/cleanup")
 async def cleanup_upload_sessions(request: Request):
-    _require_auth(request)
-    cleaned = _cleanup_stale_upload_sessions()
+    _auth.require_auth(request)
+    cleaned = _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
     return {"ok": True, "cleaned_session_ids": cleaned, "count": len(cleaned)}
 
 
 @app.post("/api/uploads/sessions/{session_id}/complete")
 async def complete_upload_session(session_id: str, request: Request):
-    _require_auth(request)
-    row = _get_upload_session(session_id)
+    _auth.require_auth(request)
+    row = _uploads.get_session(session_id)
     if not row:
         raise HTTPException(404, "Upload session not found")
     if row["status"] != "active":
@@ -1461,9 +826,9 @@ async def complete_upload_session(session_id: str, request: Request):
     slot = row["slot"]
     final_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
 
-    _set_video_status(match_id, slot, "transcoding", None)
+    await _set_video_status(match_id, slot, "transcoding", None)
 
-    with _db_connect() as conn:
+    with _db.connect() as conn:
         conn.execute(
             "UPDATE upload_sessions SET status = 'completed', updated_at = ? WHERE id = ?",
             (time.time(), session_id),
@@ -1482,18 +847,13 @@ async def complete_upload_session(session_id: str, request: Request):
 
 @app.post("/api/matches/{match_id}/upload-video")
 async def upload_video(match_id: str, file: UploadFile, request: Request):
-    """Upload a video file (MP4 / MKV).  Query param: slot=full|first_half|second_half
-
-    The raw file is saved with async I/O, then transcoding starts in the
-    background (GPU → CPU fallback).  The endpoint returns immediately so
-    subsequent uploads are not blocked.
-    """
-    _require_auth(request)
+    """Upload a video file (MP4 / MKV).  Query param: slot=full|first_half|second_half"""
+    _auth.require_auth(request)
     slot = request.query_params.get("slot", "full")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "slot must be full, first_half, or second_half")
 
-    match = _get_match_by_id(match_id)
+    match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1505,7 +865,6 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     vid_dir = VIDEOS_DIR / match_id
     vid_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save raw upload (non-blocking async I/O)
     raw_path = vid_dir / f"{slot}_raw{ext}"
     logger.info(
         "Upload started: %s/%s filename=%s max_size_bytes=%d",
@@ -1531,10 +890,8 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
         elapsed,
     )
 
-    # Mark as transcoding
-    _set_video_status(match_id, slot, "transcoding", None)
+    await _set_video_status(match_id, slot, "transcoding", None)
 
-    # Kick off background transcoding
     final_path = vid_dir / f"{slot}.mp4"
     asyncio.create_task(_transcode_video(match_id, slot, raw_path, final_path))
 
@@ -1546,7 +903,7 @@ async def stream_video(match_id: str, slot: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
-    match = _get_match_by_id(match_id)
+    match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1571,11 +928,11 @@ async def download_video(match_id: str, slot: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
-    match = _get_match_by_id(match_id)
+    match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
-    settings = _load_settings()
+    settings = await _load_settings()
     if settings.get("downloads_enabled", "1") != "1":
         raise HTTPException(403, "Downloads are disabled")
 
@@ -1613,7 +970,7 @@ async def stream_hls_master(match_id: str, slot: str):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
-    match = _get_match_by_id(match_id)
+    match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1725,12 +1082,12 @@ def _range_file_response(file_path: Path, media_type: str, request: Request, con
 @app.post("/api/matches/{match_id}/upload-logo")
 async def upload_logo(match_id: str, file: UploadFile, request: Request):
     """Upload a team logo.  Query param: team=home|away"""
-    _require_auth(request)
+    _auth.require_auth(request)
     team = request.query_params.get("team", "home")
     if team not in ("home", "away"):
         raise HTTPException(400, "team must be home or away")
 
-    match = _get_match_by_id(match_id)
+    match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 
@@ -1745,13 +1102,13 @@ async def upload_logo(match_id: str, file: UploadFile, request: Request):
     dest = vid_dir / f"{team}_logo{ext}"
     await _save_upload_file(file, dest, max_size_bytes=20 * 1024 * 1024)
 
-    with MATCHES_LOCK:
-        matches = _load_matches_unlocked()
-        match = _find_match(matches, match_id)
+    async with MATCHES_LOCK:
+        matches = _db.load_matches_unlocked()
+        match = _db.find_match(matches, match_id)
         if not match:
             raise HTTPException(404, "Match not found")
         match[f"{team}_logo"] = dest.name
-        _save_matches_unlocked(matches)
+        _db.save_matches_unlocked(matches)
     return {"ok": True, "team": team, "filename": dest.name}
 
 
@@ -1760,7 +1117,7 @@ async def serve_logo(match_id: str, team: str):
     if team not in ("home", "away"):
         raise HTTPException(400, "Invalid team")
 
-    match = _get_match_by_id(match_id)
+    match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
 

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import shutil
 from pathlib import Path
 
-logger = logging.getLogger("replay")
+import log as _log
+
+logger = _log.setup("replay")
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +140,7 @@ async def build_hls_assets(
     shutil.rmtree(hls_dir, ignore_errors=True)
     hls_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_variants = []
-    for variant in variants:
+    async def _generate_variant(variant: dict) -> dict | None:
         variant_dir = hls_dir / variant["name"]
         variant_dir.mkdir(parents=True, exist_ok=True)
         playlist_path = variant_dir / "index.m3u8"
@@ -173,8 +173,11 @@ async def build_hls_assets(
         ])
         if not ok:
             logger.warning("HLS variant generation failed %s/%s/%s: %s", match_id, slot, variant['name'], err)
-            continue
-        generated_variants.append(variant)
+            return None
+        return variant
+
+    results = await asyncio.gather(*[_generate_variant(v) for v in variants])
+    generated_variants = [v for v in results if v is not None]
 
     if not generated_variants:
         shutil.rmtree(hls_dir, ignore_errors=True)
@@ -239,7 +242,7 @@ async def transcode_video(
                 if ok:
                     src.unlink(missing_ok=True)
                     hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
-                    set_video_status(match_id, slot, "ready", dest.name)
+                    await set_video_status(match_id, slot, "ready", dest.name)
                     logger.info("Remux done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                     return
                 logger.warning("Remux failed, will transcode: %s", err)
@@ -259,7 +262,7 @@ async def transcode_video(
             if ok:
                 src.unlink(missing_ok=True)
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
-                set_video_status(match_id, slot, "ready", dest.name)
+                await set_video_status(match_id, slot, "ready", dest.name)
                 logger.info("GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                 return
             logger.warning("GPU transcode failed, falling back to CPU: %s", err)
@@ -277,17 +280,17 @@ async def transcode_video(
             if ok:
                 src.unlink(missing_ok=True)
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
-                set_video_status(match_id, slot, "ready", dest.name)
+                await set_video_status(match_id, slot, "ready", dest.name)
                 logger.info("CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                 return
 
             logger.error("All transcode methods failed %s/%s: %s", match_id, slot, err)
-            set_video_status(match_id, slot, "error", None)
+            await set_video_status(match_id, slot, "error", None)
             src.unlink(missing_ok=True)
 
     except Exception as exc:
         logger.exception("Transcode error %s/%s: %s", match_id, slot, exc)
-        set_video_status(match_id, slot, "error", None)
+        await set_video_status(match_id, slot, "error", None)
         src.unlink(missing_ok=True)
 
 
@@ -303,9 +306,15 @@ async def backfill_hls_for_existing_videos(
     hls_backfill_lock: asyncio.Lock,
     load_matches,
     ready_slots_missing_hls,
+    startup_delay: float = 5.0,
+    inter_item_delay: float = 1.0,
 ) -> dict:
     if hls_backfill_lock.locked():
         return {"started": False, "reason": "already-running", "processed": 0, "generated": 0}
+
+    # Delay at startup so fresh uploads get priority on the transcode semaphore
+    if startup_delay > 0:
+        await asyncio.sleep(startup_delay)
 
     hls_kwargs = dict(
         videos_dir=videos_dir,
@@ -313,7 +322,7 @@ async def backfill_hls_for_existing_videos(
         hls_variant_presets=hls_variant_presets,
     )
     async with hls_backfill_lock:
-        matches = load_matches()
+        matches = await load_matches()
         candidates = ready_slots_missing_hls(matches)
         generated = 0
 
@@ -326,6 +335,9 @@ async def backfill_hls_for_existing_videos(
                     logger.info("Backfilled HLS assets for %s/%s", match_id, slot)
             except Exception:
                 logger.exception("Failed to backfill HLS for %s/%s", match_id, slot)
+            # Yield between items so new uploads aren't starved
+            if inter_item_delay > 0:
+                await asyncio.sleep(inter_item_delay)
 
         return {
             "started": True,

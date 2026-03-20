@@ -1,0 +1,109 @@
+"""Authentication — token management, login rate limiting, origin validation."""
+
+from __future__ import annotations
+
+import os
+import secrets
+import time
+
+from fastapi import HTTPException, Request
+
+# In-memory token store: {token_string: creation_timestamp}
+_active_tokens: dict[str, float] = {}
+TOKEN_TTL = 86400  # 24 hours
+_MAX_ACTIVE_TOKENS = 100
+_last_token_sweep: float = 0.0
+_TOKEN_SWEEP_INTERVAL = 60.0  # seconds
+
+# Login rate limiting: {ip: [timestamps]}
+_login_attempts: dict[str, list[float]] = {}
+_LOGIN_RATE_LIMIT = 5
+_LOGIN_RATE_WINDOW = 60.0  # seconds
+
+# Origin validation (comma-separated hostnames, optional)
+_ALLOWED_ORIGINS_RAW = os.environ.get("ALLOWED_ORIGINS", "")
+_ALLOWED_ORIGINS: set[str] | None = (
+    {h.strip().lower() for h in _ALLOWED_ORIGINS_RAW.split(",") if h.strip()}
+    if _ALLOWED_ORIGINS_RAW.strip() else None
+)
+
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
+
+
+def sweep_expired_tokens():
+    """Bulk-remove expired tokens at most once per sweep interval."""
+    global _last_token_sweep
+    now = time.time()
+    if now - _last_token_sweep < _TOKEN_SWEEP_INTERVAL:
+        return
+    _last_token_sweep = now
+    expired = [t for t, ts in _active_tokens.items() if now - ts > TOKEN_TTL]
+    for t in expired:
+        del _active_tokens[t]
+    # Also prune stale login-attempt entries
+    stale_ips = [ip for ip, timestamps in _login_attempts.items()
+                 if not any(now - ts < _LOGIN_RATE_WINDOW for ts in timestamps)]
+    for ip in stale_ips:
+        del _login_attempts[ip]
+
+
+def require_auth(request: Request):
+    """Validate Bearer token from Authorization header. Raises 401 if invalid."""
+    sweep_expired_tokens()
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(401, "Authentication required")
+    token = auth_header[7:]
+    created = _active_tokens.get(token)
+    if created is None:
+        raise HTTPException(401, "Invalid or expired token")
+    if time.time() - created > TOKEN_TTL:
+        del _active_tokens[token]
+        raise HTTPException(401, "Token expired")
+
+
+def check_login_rate_limit(request: Request):
+    """Raise 429 if too many login attempts from this IP."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    attempts = _login_attempts.get(ip, [])
+    attempts = [t for t in attempts if now - t < _LOGIN_RATE_WINDOW]
+    if len(attempts) >= _LOGIN_RATE_LIMIT:
+        raise HTTPException(429, "Too many login attempts. Try again later.")
+    attempts.append(now)
+    _login_attempts[ip] = attempts
+
+
+def validate_login_origin(request: Request):
+    """Validate Origin header on login if ALLOWED_ORIGINS is configured."""
+    if _ALLOWED_ORIGINS is None:
+        return
+    origin = request.headers.get("origin") or ""
+    if not origin:
+        return  # Non-browser client, allow
+    host = origin.split("//", 1)[-1].split("/")[0].split(":")[0].lower()
+    if host not in _ALLOWED_ORIGINS:
+        raise HTTPException(403, "Origin not allowed")
+
+
+def create_token() -> str:
+    """Create a new auth token after successful credential check."""
+    sweep_expired_tokens()
+    if len(_active_tokens) >= _MAX_ACTIVE_TOKENS:
+        oldest_token = min(_active_tokens, key=_active_tokens.get)
+        del _active_tokens[oldest_token]
+    token = secrets.token_hex(32)
+    _active_tokens[token] = time.time()
+    return token
+
+
+def revoke_token(request: Request):
+    """Remove the token from the active set."""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        _active_tokens.pop(auth_header[7:], None)
+
+
+def active_token_count() -> int:
+    return len(_active_tokens)

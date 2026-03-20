@@ -43,14 +43,14 @@ async def test_login_rate_limit(client):
 
 async def test_rate_limit_does_not_block_after_window(client, monkeypatch):
     """After the rate window expires, login should work again."""
-    import server
+    import auth as _auth
 
     for _ in range(5):
         await client.post("/api/login", json={"username": "admin", "password": "wrong"})
 
     # Fast-forward time past the rate window
     original_time = time.time
-    monkeypatch.setattr(time, "time", lambda: original_time() + server._LOGIN_RATE_WINDOW + 1)
+    monkeypatch.setattr(time, "time", lambda: original_time() + _auth._LOGIN_RATE_WINDOW + 1)
 
     resp = await client.post("/api/login", json={"username": "admin", "password": "admin"})
     assert resp.status_code == 200
@@ -77,7 +77,7 @@ async def test_auth_check_unauthenticated(client):
 
 async def test_token_expiry(client, monkeypatch):
     """Expired tokens should be rejected."""
-    import server
+    import auth as _auth
 
     resp = await client.post("/api/login", json={"username": "admin", "password": "admin"})
     token = resp.json()["token"]
@@ -85,7 +85,7 @@ async def test_token_expiry(client, monkeypatch):
 
     # Fast-forward past TTL
     original_time = time.time
-    monkeypatch.setattr(time, "time", lambda: original_time() + server.TOKEN_TTL + 1)
+    monkeypatch.setattr(time, "time", lambda: original_time() + _auth.TOKEN_TTL + 1)
 
     resp = await client.get("/api/auth/check", headers=headers)
     assert resp.json()["authenticated"] is False
@@ -93,32 +93,32 @@ async def test_token_expiry(client, monkeypatch):
 
 async def test_token_sweep(client, monkeypatch):
     """Sweep should remove expired tokens."""
-    import server
+    import auth as _auth
 
     # Create several tokens
     for _ in range(5):
         await client.post("/api/login", json={"username": "admin", "password": "admin"})
-    assert len(server._active_tokens) == 5
+    assert len(_auth._active_tokens) == 5
 
     # Fast-forward past TTL and force sweep
     original_time = time.time
-    monkeypatch.setattr(time, "time", lambda: original_time() + server.TOKEN_TTL + 1)
-    monkeypatch.setattr(server, "_last_token_sweep", 0.0)
-    server._sweep_expired_tokens()
+    monkeypatch.setattr(time, "time", lambda: original_time() + _auth.TOKEN_TTL + 1)
+    monkeypatch.setattr(_auth, "_last_token_sweep", 0.0)
+    _auth.sweep_expired_tokens()
 
-    assert len(server._active_tokens) == 0
+    assert len(_auth._active_tokens) == 0
 
 
 async def test_token_cap(client, monkeypatch):
     """When token cap is reached, oldest token is evicted."""
-    import server
+    import auth as _auth
 
-    monkeypatch.setattr(server, "_MAX_ACTIVE_TOKENS", 3)
+    monkeypatch.setattr(_auth, "_MAX_ACTIVE_TOKENS", 3)
     tokens = []
     for _ in range(4):
         resp = await client.post("/api/login", json={"username": "admin", "password": "admin"})
         tokens.append(resp.json()["token"])
 
-    assert len(server._active_tokens) <= 3
+    assert len(_auth._active_tokens) <= 3
     # The first token should have been evicted
-    assert tokens[0] not in server._active_tokens
+    assert tokens[0] not in _auth._active_tokens

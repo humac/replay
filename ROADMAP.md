@@ -53,57 +53,51 @@ GitHub Actions (`.github/workflows/ci.yml`): compile check for `server.py`, `med
 
 ---
 
-## Milestone 2 — Performance & Backend Structure
+## Milestone 2 — Performance & Backend Structure ✅ COMPLETE
 
 **Goal:** fix performance issues in hot paths and make `server.py` easier to change.
 
 ### Performance
 
-**2.1 Reduce redundant DB reads in hot paths**
-**Files:** `server.py:1519-1542`, `server.py:1584-1608`
-`stream_video`, `stream_hls_master`, and `download_video` all call `_load_matches()` which reads and deserializes every match from SQLite on every request. For video streaming, this is called per range request. Replace with a single-match lookup: `SELECT * FROM matches WHERE id = ?`.
+**2.1 Reduce redundant DB reads in hot paths** ✅
+Streaming endpoints (`stream_video`, `download_video`, `stream_hls_master`) use `_get_match_by_id()` — a single-row `SELECT * FROM matches WHERE id = ?` — instead of loading all matches.
 
-**2.2 Connection pooling for SQLite**
-**File:** `server.py` (`_db_connect`)
-Each database operation opens and closes a fresh SQLite connection. While SQLite handles this reasonably well with WAL mode, a simple connection pool or cached connection per-thread would reduce overhead on high-traffic deployments.
+**2.2 Connection pooling for SQLite** ✅
+Thread-local cached connections via `db.connect()`. Each thread reuses its connection across calls; connections are validated before reuse and recreated if stale.
 
-**2.3 Avoid synchronous threading lock in async context**
-**File:** `server.py:50`
-`MATCHES_LOCK = Lock()` is a threading lock used inside async endpoint handlers. This blocks the event loop while held. Replace with `asyncio.Lock()` or restructure to keep the lock hold time minimal. The current pattern risks starving other coroutines during heavy write operations.
+**2.3 Replace threading.Lock with asyncio.Lock** ✅
+`MATCHES_LOCK` is now `asyncio.Lock()`. All callers that hold it are async, preventing event-loop blocking during write operations.
 
-**2.4 HLS variant generation parallelism**
-**File:** `server.py:779-814`
-HLS variants (1080p, 720p, 480p) are generated sequentially within `_build_hls_assets`. These are independent ffmpeg processes and could run concurrently (respecting the transcode semaphore). This would cut HLS generation time to ~1/3 for multi-variant content.
+**2.4 HLS variant generation parallelism** ✅
+`build_hls_assets` in `media.py` now runs all variant ffmpeg processes concurrently via `asyncio.gather()`, cutting HLS generation time to ~1/N for N variants.
 
-**2.5 Startup backfill blocks readiness**
-**File:** `server.py:1579-1581`
-`startup_backfill_hls` fires on server start and may transcode many videos. While it runs as a background task, it competes for the transcode semaphore, potentially delaying new uploads. Consider adding a startup delay or lower-priority queue for backfill work.
+**2.5 Startup backfill priority management** ✅
+`backfill_hls_for_existing_videos` now takes a configurable startup delay (default 5s) and an inter-item delay (default 1s) so new uploads get priority on the transcode semaphore.
 
 ### Backend modularization
 
 **2.6 Extract media pipeline to separate module** ✅
-Already extracted to `media.py` (~335 lines): probing, transcoding (GPU/CPU fallback), HLS variant generation, and backfill logic. `server.py` delegates via thin async wrappers.
+Already extracted to `media.py` (~345 lines): probing, transcoding (GPU/CPU fallback), HLS variant generation, and backfill logic.
 
-**2.7 Extract service modules**
-Beyond media, extract standalone modules for:
-- Auth (token management, login logic)
-- DB access (connection helpers, query wrappers)
-- Upload session management
-- Settings persistence
+**2.7 Extract service modules** ✅
+`server.py` reduced from ~1800 to ~1150 lines. Extracted modules:
 
-Keep `server.py` as the entrypoint and route registration layer.
+- `db.py` (327 lines): connection pool, migrations, match CRUD helpers
+- `auth.py` (109 lines): token management, rate limiting, origin validation
+- `settings.py` (151 lines): app settings persistence, rendering helpers
+- `uploads.py` (128 lines): upload session lifecycle
 
-**2.8 Structured logging**
-**File:** `server.py:27-28`
-The app uses basic `logging.basicConfig` with string interpolation. Switching to structured logging (JSON format) would improve log parsing in production and make it easier to search/filter by match_id, slot, session_id, etc.
+**2.8 Structured logging** ✅
+`log.py` provides a `JSONFormatter` emitting one JSON object per log line. Controlled via `LOG_FORMAT` (json/text) and `LOG_LEVEL` env vars. All modules use `log.setup("replay")`.
 
-**2.9 Database migration mechanism**
-Startup schema creation is ad hoc SQL. Introduce a lightweight migration/versioning mechanism so schema changes are tracked and repeatable.
+**2.9 Database migration mechanism** ✅
+`db.py` contains a versioned migration system (`_MIGRATIONS` list, `schema_version` table). Each migration function is applied once; version is tracked and committed.
 
-### Exit criteria
-- Streaming endpoints no longer load all matches per request
-- `server.py` is substantially smaller with logic in focused modules
-- Schema changes go through versioned migrations
+### M2 exit criteria — all met
+
+- ✅ Streaming endpoints no longer load all matches per request
+- ✅ `server.py` is substantially smaller with logic in focused modules (1800 → 1150 lines)
+- ✅ Schema changes go through versioned migrations
 
 ---
 
@@ -216,7 +210,7 @@ Add an admin endpoint to export the SQLite database and match metadata as a down
 
 | Item | Effort | Impact | Status |
 | ---- | ------ | ------ | ------ |
-| Single-match DB lookup for streaming endpoints | ~30 min | High — reduces per-request DB load | Pending (M2) |
+| Single-match DB lookup for streaming endpoints | ~30 min | High — reduces per-request DB load | ✅ Done (M2) |
 | Token garbage collection sweep | ~20 min | Medium — prevents memory leak | ✅ Done (M1) |
 | Login rate limiting | ~45 min | High — closes brute-force vector | ✅ Done (M1) |
 | Pydantic models for match CRUD | ~1 hr | Medium — better validation + docs | ✅ Done (M1) |

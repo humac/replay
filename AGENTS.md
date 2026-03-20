@@ -4,7 +4,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 
 ## Stack
 
-- Backend: `server.py` using FastAPI with Pydantic request models (`models.py`)
+- Backend: `server.py` (route registration + entrypoint) with modular services
 - Frontend: `index.html`, `script.js`, `styles.css`
 - Storage: SQLite in `replay.db` plus filesystem media files
 - Media pipeline: `media.py` wrapping `ffmpeg` and `ffprobe`
@@ -14,9 +14,14 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 
 ## Key Files
 
-- `server.py`: API routes, auth (rate-limited), uploads, settings, SPA serving
-- `models.py`: Pydantic v2 request models for login, match CRUD, and upload sessions
+- `server.py`: API routes, SPA serving, async lock wrappers, entrypoint
+- `db.py`: SQLite connection pool, schema migrations, match CRUD helpers
+- `auth.py`: token management, login rate limiting, origin validation
+- `settings.py`: app settings persistence, rendering helpers
+- `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
 - `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU), HLS variant generation
+- `models.py`: Pydantic v2 request models for login, match CRUD, and upload sessions
+- `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: SPA state, uploads, playback, Cast/AirPlay, URL-based history navigation
 - `index.html`: single-page app shell
 - `styles.css`: full UI styling
@@ -30,7 +35,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # for testing
 python server.py
-python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py
+python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py
 pytest tests/ -v
 docker compose up --build
 ```
@@ -53,6 +58,8 @@ Most relevant variables:
 - `VIDEO_STREAM_CHUNK_BYTES`
 - `HLS_SEGMENT_DURATION`
 - `ALLOWED_ORIGINS` — optional comma-separated hostnames for login origin validation
+- `LOG_FORMAT` — `json` (default) or `text` for human-readable logs
+- `LOG_LEVEL` — `INFO` (default), `DEBUG`, `WARNING`, etc.
 
 ## Project Constraints
 
@@ -68,7 +75,7 @@ Most relevant variables:
 After backend changes, run:
 
 ```bash
-python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py
+python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py
 pytest tests/ -v
 ```
 
@@ -88,3 +95,5 @@ After frontend changes, sanity-check:
 - For caching behavior, be careful with `index.html`, `/static/*`, and Cloudflare-facing asset URLs.
 - When adding or modifying API endpoints, add or update Pydantic models in `models.py` and add corresponding tests in `tests/`.
 - Login is rate-limited (5 attempts/60s per IP). Token cleanup sweeps run automatically.
+- Backend logic is organized into focused modules (`db.py`, `auth.py`, `settings.py`, `uploads.py`, `media.py`). Keep `server.py` as the route registration layer; add business logic to the appropriate module.
+- The `MATCHES_LOCK` is an `asyncio.Lock` — all callers that hold it must be async.
