@@ -1,15 +1,18 @@
-"""Authentication — token management, login rate limiting, origin validation."""
+"""Authentication — token management, login rate limiting, origin validation, multi-user."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import time
 
 from fastapi import HTTPException, Request
 
-# In-memory token store: {token_string: creation_timestamp}
-_active_tokens: dict[str, float] = {}
+import db as _db
+
+# In-memory token store: {token_string: {created, user_id, role, username}}
+_active_tokens: dict[str, dict] = {}
 TOKEN_TTL = 86400  # 24 hours
 _MAX_ACTIVE_TOKENS = 100
 _last_token_sweep: float = 0.0
@@ -31,6 +34,35 @@ ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
 
 
+# ---------------------------------------------------------------------------
+# Password hashing (scrypt, stdlib only)
+# ---------------------------------------------------------------------------
+
+def hash_password(password: str) -> str:
+    """Hash a password using scrypt. Returns 'scrypt:<salt_hex>:<hash_hex>'."""
+    salt = os.urandom(16)
+    h = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=32)
+    return f"scrypt:{salt.hex()}:{h.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """Verify a password against a stored scrypt hash."""
+    try:
+        parts = stored_hash.split(":")
+        if len(parts) != 3 or parts[0] != "scrypt":
+            return False
+        salt = bytes.fromhex(parts[1])
+        expected = bytes.fromhex(parts[2])
+        h = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=32)
+        return secrets.compare_digest(h, expected)
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Token management
+# ---------------------------------------------------------------------------
+
 def sweep_expired_tokens():
     """Bulk-remove expired tokens at most once per sweep interval."""
     global _last_token_sweep
@@ -38,7 +70,7 @@ def sweep_expired_tokens():
     if now - _last_token_sweep < _TOKEN_SWEEP_INTERVAL:
         return
     _last_token_sweep = now
-    expired = [t for t, ts in _active_tokens.items() if now - ts > TOKEN_TTL]
+    expired = [t for t, info in _active_tokens.items() if now - info["created"] > TOKEN_TTL]
     for t in expired:
         del _active_tokens[t]
     # Also prune stale login-attempt entries
@@ -48,19 +80,28 @@ def sweep_expired_tokens():
         del _login_attempts[ip]
 
 
-def require_auth(request: Request):
-    """Validate Bearer token from Authorization header. Raises 401 if invalid."""
+def require_auth(request: Request) -> dict:
+    """Validate Bearer token. Returns user info dict. Raises 401 if invalid."""
     sweep_expired_tokens()
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(401, "Authentication required")
     token = auth_header[7:]
-    created = _active_tokens.get(token)
-    if created is None:
+    info = _active_tokens.get(token)
+    if info is None:
         raise HTTPException(401, "Invalid or expired token")
-    if time.time() - created > TOKEN_TTL:
+    if time.time() - info["created"] > TOKEN_TTL:
         del _active_tokens[token]
         raise HTTPException(401, "Token expired")
+    return {"user_id": info.get("user_id"), "role": info["role"], "username": info["username"]}
+
+
+def require_role(request: Request, *roles: str) -> dict:
+    """Validate token and check that the user has one of the given roles. Raises 403 if not."""
+    user = require_auth(request)
+    if user["role"] not in roles:
+        raise HTTPException(403, "Insufficient permissions")
+    return user
 
 
 def check_login_rate_limit(request: Request):
@@ -87,14 +128,19 @@ def validate_login_origin(request: Request):
         raise HTTPException(403, "Origin not allowed")
 
 
-def create_token() -> str:
-    """Create a new auth token after successful credential check."""
+def create_token(user_id: str | None, role: str, username: str) -> str:
+    """Create a new auth token with associated user info."""
     sweep_expired_tokens()
     if len(_active_tokens) >= _MAX_ACTIVE_TOKENS:
-        oldest_token = min(_active_tokens, key=_active_tokens.get)
+        oldest_token = min(_active_tokens, key=lambda t: _active_tokens[t]["created"])
         del _active_tokens[oldest_token]
     token = secrets.token_hex(32)
-    _active_tokens[token] = time.time()
+    _active_tokens[token] = {
+        "created": time.time(),
+        "user_id": user_id,
+        "role": role,
+        "username": username,
+    }
     return token
 
 
@@ -107,3 +153,25 @@ def revoke_token(request: Request):
 
 def active_token_count() -> int:
     return len(_active_tokens)
+
+
+# ---------------------------------------------------------------------------
+# Multi-user authentication
+# ---------------------------------------------------------------------------
+
+def authenticate_user(username: str, password: str) -> dict | None:
+    """Authenticate against env-var admin first, then DB users.
+
+    Returns user info dict on success, None on failure.
+    """
+    # Check env-var superadmin
+    if (secrets.compare_digest(username, ADMIN_USER) and
+            secrets.compare_digest(password, ADMIN_PASS)):
+        return {"user_id": None, "role": "admin", "username": ADMIN_USER}
+
+    # Check DB users
+    user = _db.get_user_by_username(username)
+    if user and user["enabled"] and verify_password(password, user["password_hash"]):
+        return {"user_id": user["id"], "role": user["role"], "username": user["username"]}
+
+    return None

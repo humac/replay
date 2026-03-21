@@ -34,6 +34,8 @@ const app = {
     _playRequestToken: 0,
     _pollTimer: null,
     authToken: null,
+    userRole: null,
+    userName: null,
     diagnostics: null,
     transcodeProgress: {},
 

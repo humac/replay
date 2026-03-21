@@ -16,11 +16,11 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 
 - `server.py`: API routes, SPA serving, async lock wrappers, entrypoint
 - `db.py`: SQLite connection pool, schema migrations, match CRUD helpers
-- `auth.py`: token management, login rate limiting, origin validation
+- `auth.py`: multi-user authentication, token management, password hashing (scrypt), role-based access, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
 - `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU) with real-time progress tracking, HLS variant generation, thumbnail extraction
-- `models.py`: Pydantic v2 request models for login, match CRUD, and upload sessions
+- `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, and user management
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
 - `js/utils.js`: pure utility functions (esc, formatDate, statusLabel, etc.)
@@ -102,6 +102,7 @@ After frontend changes, sanity-check:
 - For caching behavior, be careful with `index.html`, `/static/*`, and Cloudflare-facing asset URLs.
 - When adding or modifying API endpoints, add or update Pydantic models in `models.py` and add corresponding tests in `tests/`.
 - Login is rate-limited (5 attempts/60s per IP). Token cleanup sweeps run automatically.
+- Three user roles: `admin` (full access), `uploader` (match CRUD + uploads), `viewer` (read-only). Use `_auth.require_role(request, "admin", "uploader")` for role checks. The env-var admin (`ADMIN_USER`/`ADMIN_PASS`) is always a superadmin.
 - Backend logic is organized into focused modules (`db.py`, `auth.py`, `settings.py`, `uploads.py`, `media.py`). Keep `server.py` as the route registration layer; add business logic to the appropriate module.
 - The `MATCHES_LOCK` is an `asyncio.Lock` — all callers that hold it must be async.
 - For UI feedback, use the toast system in `js/ui.js` (`showSuccess`, `showError`, `showInfo`) instead of `alert()`. Use `btnLoading()` for button loading states.

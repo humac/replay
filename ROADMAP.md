@@ -101,7 +101,7 @@ Already extracted to `media.py` (~345 lines): probing, transcoding (GPU/CPU fall
 
 ---
 
-## Milestone 3 — UX & Frontend Structure
+## Milestone 3 — UX & Frontend Structure ✅ COMPLETE
 
 **Goal:** make the frontend easier to extend and improve the day-to-day user experience.
 
@@ -131,16 +131,15 @@ During transcoding, a JPEG thumbnail is extracted at 10% of video duration (scal
 - **Keyboard shortcuts**: Space/K (play/pause), J/Left (back 10s), L/Right (forward 10s), Shift+Left/Right (30s), F (fullscreen), M (mute), < > (speed), 0/Home/End (seek)
 - **Match navigation**: prev/next buttons in game view header, based on date-sorted match order
 
-**3.7 Multi-user support**
-The app currently supports a single admin account. For team use, consider adding:
-- Read-only user accounts for players/parents
-- Role-based access (admin vs. uploader vs. viewer)
-- Per-match access control for private/public content
+**3.7 Multi-user support** ✅
+Three roles: **admin** (full access + user management + settings), **uploader** (create/edit matches + upload), **viewer** (read-only). The env-var admin (`ADMIN_USER`/`ADMIN_PASS`) always works as superadmin. DB-stored users managed via admin UI in Settings. Password hashing uses `hashlib.scrypt` (no extra dependency). Login returns role, UI adapts visibility per role. 14 new tests cover CRUD, role enforcement, and disabled users.
 
-### Exit criteria
-- Major frontend features are separated by responsibility
-- Upload and playback failures are surfaced clearly
-- Finding a past match is materially easier
+### M3 exit criteria — all met
+
+- ✅ Major frontend features are separated by responsibility (6 ES modules)
+- ✅ Upload and playback failures are surfaced clearly (toast notifications)
+- ✅ Finding a past match is materially easier (search + thumbnails)
+- ✅ Multi-user support with role-based access (51 tests)
 
 ---
 

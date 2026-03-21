@@ -1683,6 +1683,71 @@ button {
     background: rgba(255, 74, 74, 0.1);
 }
 
+.btn-sm {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-sm:hover {
+    color: var(--text-main);
+    border-color: var(--accent);
+}
+
+.btn-sm.btn-danger {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.75rem;
+    border-radius: 6px;
+}
+
+.user-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.user-row:last-child {
+    border-bottom: none;
+}
+
+.user-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.user-name {
+    font-weight: 600;
+    display: block;
+}
+
+.user-username {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.user-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.user-add-form {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.user-add-form h4 {
+    margin-bottom: 1rem;
+    font-size: 1rem;
+}
+
 .form-actions {
     display: flex;
     gap: 0.5rem;

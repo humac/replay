@@ -22,6 +22,8 @@ export const apiMixin = {
             const data = await resp.json();
             if (data.authenticated) {
                 this.authToken = token;
+                this.userRole = data.role || 'viewer';
+                this.userName = data.username || '';
                 this.setLoggedIn();
             } else {
                 sessionStorage.removeItem('replay_admin_token');
@@ -32,19 +34,29 @@ export const apiMixin = {
         }
     },
 
+    isAdmin() {
+        return this.userRole === 'admin';
+    },
+
+    canEdit() {
+        return this.userRole === 'admin' || this.userRole === 'uploader';
+    },
+
     setLoggedIn() {
-        document.getElementById('nav-add-match').style.display = '';
-        document.getElementById('nav-settings').style.display = '';
+        document.getElementById('nav-add-match').style.display = this.canEdit() ? '' : 'none';
+        document.getElementById('nav-settings').style.display = this.isAdmin() ? '' : 'none';
         document.getElementById('nav-login-btn').style.display = 'none';
         document.getElementById('nav-logout-btn').style.display = '';
         const gameEditBtn = document.getElementById('game-edit-btn');
-        if (gameEditBtn && this.activeMatchId) gameEditBtn.style.display = 'inline-flex';
-        this.setAdminPanelVisibility(true);
-        this.refreshAdminDiagnostics();
+        if (gameEditBtn && this.activeMatchId) gameEditBtn.style.display = this.canEdit() ? 'inline-flex' : 'none';
+        this.setAdminPanelVisibility(this.isAdmin());
+        if (this.isAdmin()) this.refreshAdminDiagnostics();
     },
 
     setLoggedOut() {
         this.authToken = null;
+        this.userRole = null;
+        this.userName = null;
         document.getElementById('nav-add-match').style.display = 'none';
         document.getElementById('nav-settings').style.display = 'none';
         document.getElementById('nav-login-btn').style.display = '';
@@ -89,6 +101,8 @@ export const apiMixin = {
             }
             const data = await resp.json();
             this.authToken = data.token;
+            this.userRole = data.role || 'viewer';
+            this.userName = data.username || '';
             sessionStorage.setItem('replay_admin_token', data.token);
             this.setLoggedIn();
             this.hideLoginModal();
@@ -264,5 +278,49 @@ export const apiMixin = {
             clearInterval(this._pollTimer);
             this._pollTimer = null;
         }
+    },
+
+    // ===== USER MANAGEMENT =====
+    async loadUsers() {
+        try {
+            const resp = await fetch('/api/users', { headers: this.getAuthHeaders() });
+            if (!resp.ok) return [];
+            return await resp.json();
+        } catch { return []; }
+    },
+
+    async createUser(data) {
+        const resp = await fetch('/api/users', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to create user');
+        }
+        return resp.json();
+    },
+
+    async updateUser(userId, data) {
+        const resp = await fetch(`/api/users/${userId}`, {
+            method: 'PATCH',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to update user');
+        }
+        return resp.json();
+    },
+
+    async deleteUser(userId) {
+        const resp = await fetch(`/api/users/${userId}`, {
+            method: 'DELETE',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error('Failed to delete user');
+        return resp.json();
     },
 };

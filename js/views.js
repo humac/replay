@@ -107,6 +107,90 @@ export const viewsMixin = {
         const downloadsEnabled = document.getElementById('settings-downloads-enabled');
         if (downloadsEnabled) downloadsEnabled.checked = settings.downloads_enabled === '1';
         this.renderSettingsAssetStates();
+
+        // Show user management for admins
+        const userCard = document.getElementById('user-management-card');
+        if (userCard) {
+            userCard.style.display = this.isAdmin() ? 'block' : 'none';
+            if (this.isAdmin()) this.renderUsersList();
+        }
+    },
+
+    async renderUsersList() {
+        const container = document.getElementById('users-list');
+        if (!container) return;
+        const users = await this.loadUsers();
+        if (!users.length) {
+            container.innerHTML = '<p class="text-muted">No additional user accounts. Only the env-var admin is active.</p>';
+            return;
+        }
+        const rows = users.map(u => `
+            <div class="user-row" data-user-id="${u.id}">
+                <div class="user-info">
+                    <span class="user-name">${this.esc(u.display_name || u.username)}</span>
+                    <span class="user-username">@${this.esc(u.username)}</span>
+                </div>
+                <span class="badge ${u.role}">${u.role}</span>
+                <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
+                <div class="user-actions">
+                    <button class="btn-sm" onclick="app.toggleUserEnabled('${u.id}', ${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
+                    <button class="btn-sm btn-danger" onclick="app.handleDeleteUser('${u.id}', '${this.esc(u.username)}')">Delete</button>
+                </div>
+            </div>
+        `).join('');
+        container.innerHTML = rows;
+    },
+
+    async handleAddUser() {
+        const username = document.getElementById('new-user-username')?.value?.trim();
+        const password = document.getElementById('new-user-password')?.value;
+        const role = document.getElementById('new-user-role')?.value || 'viewer';
+        const displayName = document.getElementById('new-user-display-name')?.value?.trim() || '';
+
+        if (!username || !password) {
+            this.showError('Username and password are required.');
+            return;
+        }
+        if (password.length < 8) {
+            this.showError('Password must be at least 8 characters.');
+            return;
+        }
+
+        const btn = document.getElementById('add-user-btn');
+        const restore = this.btnLoading(btn, 'Adding...');
+        try {
+            await this.createUser({ username, password, role, display_name: displayName });
+            this.showSuccess(`User "${username}" created.`);
+            document.getElementById('new-user-username').value = '';
+            document.getElementById('new-user-password').value = '';
+            document.getElementById('new-user-display-name').value = '';
+            document.getElementById('new-user-role').value = 'viewer';
+            await this.renderUsersList();
+        } catch (err) {
+            this.showError(err.message);
+        } finally {
+            restore();
+        }
+    },
+
+    async toggleUserEnabled(userId, enabled) {
+        try {
+            await this.updateUser(userId, { enabled });
+            await this.renderUsersList();
+        } catch (err) {
+            this.showError(err.message);
+        }
+    },
+
+    async handleDeleteUser(userId, username) {
+        if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+        try {
+            await this.deleteUser(userId);
+            this.showSuccess(`User "${username}" deleted.`);
+            await this.renderUsersList();
+        } catch (err) {
+            this.showError(err.message);
+        }
     },
 
     renderSettingsAssetStates() {
@@ -741,13 +825,13 @@ export const viewsMixin = {
                 </div>
                 <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
                 ${bodyClose}
-                ${this.authToken ? `
+                ${this.canEdit() ? `
                 <button class="match-card-edit-btn" onclick="app.triggerEdit(event, '${m.id}')" title="Edit">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                 </button>
-                <button class="match-card-delete-btn" onclick="app.triggerDelete(event, '${m.id}')" title="Delete">
+                ${this.isAdmin() ? `<button class="match-card-delete-btn" onclick="app.triggerDelete(event, '${m.id}')" title="Delete">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                </button>
+                </button>` : ''}
                 ` : ''}
             `;
             grid.appendChild(card);
@@ -772,7 +856,7 @@ export const viewsMixin = {
 
         this.activeMatchId = matchId;
         const gameEditBtn = document.getElementById('game-edit-btn');
-        if (gameEditBtn) gameEditBtn.style.display = this.authToken ? 'inline-flex' : 'none';
+        if (gameEditBtn) gameEditBtn.style.display = this.canEdit() ? 'inline-flex' : 'none';
 
         // Update prev/next nav buttons
         const prevBtn = document.getElementById('prev-match-btn');

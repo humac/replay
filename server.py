@@ -25,7 +25,10 @@ import log as _log
 import media as _media
 import settings as _settings
 import uploads as _uploads
-from models import CreateMatchRequest, CreateUploadSessionRequest, LoginRequest, UpdateMatchRequest
+from models import (
+    CreateMatchRequest, CreateUploadSessionRequest, CreateUserRequest,
+    LoginRequest, UpdateMatchRequest, UpdateUserRequest,
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -375,13 +378,13 @@ async def get_public_settings():
 
 @app.get("/api/admin/settings")
 async def get_admin_settings(request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin")
     return await _public_settings_payload()
 
 
 @app.put("/api/admin/settings")
 async def update_admin_settings(request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin")
     body = await request.json()
     updates = {
         key: _settings.normalize_value(key, value)
@@ -401,7 +404,7 @@ async def update_admin_settings(request: Request):
 
 @app.post("/api/admin/settings/asset")
 async def upload_app_asset(file: UploadFile, request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin")
     kind = request.query_params.get("kind", "logo")
     if kind not in _settings.APP_ASSET_CONFIG:
         raise HTTPException(400, "kind must be logo or favicon")
@@ -472,12 +475,11 @@ async def serve_app_asset(kind: str):
 async def login(request: Request, body: LoginRequest):
     _auth.check_login_rate_limit(request)
     _auth.validate_login_origin(request)
-    import secrets as _secrets
-    if not _secrets.compare_digest(body.username, _auth.ADMIN_USER) or \
-       not _secrets.compare_digest(body.password, _auth.ADMIN_PASS):
+    user = _auth.authenticate_user(body.username, body.password)
+    if not user:
         raise HTTPException(401, "Invalid credentials")
-    token = _auth.create_token()
-    return {"token": token}
+    token = _auth.create_token(user["user_id"], user["role"], user["username"])
+    return {"token": token, "role": user["role"], "username": user["username"]}
 
 
 @app.post("/api/logout")
@@ -489,10 +491,66 @@ async def logout(request: Request):
 @app.get("/api/auth/check")
 async def auth_check(request: Request):
     try:
-        _auth.require_auth(request)
-        return {"authenticated": True}
+        user = _auth.require_auth(request)
+        return {"authenticated": True, "role": user["role"], "username": user["username"]}
     except HTTPException:
         return {"authenticated": False}
+
+
+# ---------------------------------------------------------------------------
+# User management (admin only)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/users")
+async def list_users(request: Request):
+    _auth.require_role(request, "admin")
+    users = _db.list_users()
+    # Strip password hashes from response
+    return [
+        {k: v for k, v in u.items() if k != "password_hash"}
+        for u in users
+    ]
+
+
+@app.post("/api/users")
+async def create_user(request: Request, body: CreateUserRequest):
+    _auth.require_role(request, "admin")
+    existing = _db.get_user_by_username(body.username)
+    if existing:
+        raise HTTPException(409, "Username already exists")
+    password_hash = _auth.hash_password(body.password)
+    user = _db.create_user(body.username, password_hash, body.role, body.display_name)
+    return {"ok": True, "user": user}
+
+
+@app.patch("/api/users/{user_id}")
+async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
+    _auth.require_role(request, "admin")
+    user = _db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    updates = {}
+    if body.password is not None:
+        updates["password_hash"] = _auth.hash_password(body.password)
+    if body.role is not None:
+        updates["role"] = body.role
+    if body.display_name is not None:
+        updates["display_name"] = body.display_name
+    if body.enabled is not None:
+        updates["enabled"] = 1 if body.enabled else 0
+    if not updates:
+        return {"ok": True}
+    _db.update_user(user_id, **updates)
+    updated = _db.get_user_by_id(user_id)
+    return {"ok": True, "user": {k: v for k, v in updated.items() if k != "password_hash"}}
+
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(user_id: str, request: Request):
+    _auth.require_role(request, "admin")
+    if not _db.delete_user(user_id):
+        raise HTTPException(404, "User not found")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +559,7 @@ async def auth_check(request: Request):
 
 @app.get("/api/admin/diagnostics")
 async def admin_diagnostics(request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin")
     _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
 
     matches = await _load_matches()
@@ -546,7 +604,7 @@ async def admin_diagnostics(request: Request):
 
 @app.post("/api/admin/backfill-hls")
 async def admin_backfill_hls(request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin")
     result = await _backfill_hls_for_existing_videos()
     return {"ok": True, **result}
 
@@ -566,7 +624,7 @@ async def list_matches(q: str | None = None, page: int | None = None, limit: int
 
 @app.post("/api/matches")
 async def create_match(request: Request, body: CreateMatchRequest):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     match_id = f"match-{int(time.time() * 1000)}"
 
     slug_base = _db.generate_slug(body.home_team, body.away_team, body.date)
@@ -602,7 +660,7 @@ async def create_match(request: Request, body: CreateMatchRequest):
 
 @app.put("/api/matches/{match_id}")
 async def update_match(match_id: str, request: Request, body: UpdateMatchRequest):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     updates = body.model_dump(exclude_unset=True)
     async with MATCHES_LOCK:
         matches = _db.load_matches_unlocked()
@@ -627,7 +685,7 @@ async def update_match(match_id: str, request: Request, body: UpdateMatchRequest
 
 @app.delete("/api/matches/{match_id}")
 async def delete_match(match_id: str, request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin")
     async with MATCHES_LOCK:
         matches = _db.load_matches_unlocked()
         match = _db.find_match(matches, match_id)
@@ -651,7 +709,7 @@ async def delete_match(match_id: str, request: Request):
 
 @app.post("/api/matches/{match_id}/upload-video/session")
 async def create_upload_session(match_id: str, request: Request, body: CreateUploadSessionRequest):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
     slot = request.query_params.get("slot", "full")
     if slot not in ("full", "first_half", "second_half"):
@@ -735,7 +793,7 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
 
 @app.get("/api/uploads/sessions")
 async def list_upload_sessions(request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     status_param = (request.query_params.get("status") or "active").strip().lower()
     if status_param == "all":
         sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, None)
@@ -747,7 +805,7 @@ async def list_upload_sessions(request: Request):
 
 @app.put("/api/uploads/sessions/{session_id}/chunk")
 async def upload_session_chunk(session_id: str, request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     try:
         index = int(request.query_params.get("index", "-1"))
     except ValueError:
@@ -793,7 +851,7 @@ async def upload_session_chunk(session_id: str, request: Request):
 
 @app.get("/api/uploads/sessions/{session_id}")
 async def get_upload_session(session_id: str, request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     row = _uploads.get_session(session_id)
     if not row:
         raise HTTPException(404, "Upload session not found")
@@ -802,7 +860,7 @@ async def get_upload_session(session_id: str, request: Request):
 
 @app.delete("/api/uploads/sessions/{session_id}")
 async def cancel_upload_session(session_id: str, request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     row = _uploads.mark_session_status(session_id, "cancelled")
     if not row:
         raise HTTPException(404, "Upload session not found")
@@ -811,14 +869,14 @@ async def cancel_upload_session(session_id: str, request: Request):
 
 @app.post("/api/uploads/sessions/cleanup")
 async def cleanup_upload_sessions(request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin")
     cleaned = _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
     return {"ok": True, "cleaned_session_ids": cleaned, "count": len(cleaned)}
 
 
 @app.post("/api/uploads/sessions/{session_id}/complete")
 async def complete_upload_session(session_id: str, request: Request):
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     row = _uploads.get_session(session_id)
     if not row:
         raise HTTPException(404, "Upload session not found")
@@ -860,7 +918,7 @@ async def complete_upload_session(session_id: str, request: Request):
 @app.post("/api/matches/{match_id}/upload-video")
 async def upload_video(match_id: str, file: UploadFile, request: Request):
     """Upload a video file (MP4 / MKV).  Query param: slot=full|first_half|second_half"""
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     slot = request.query_params.get("slot", "full")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "slot must be full, first_half, or second_half")
@@ -1111,7 +1169,7 @@ def _range_file_response(file_path: Path, media_type: str, request: Request, con
 @app.post("/api/matches/{match_id}/upload-logo")
 async def upload_logo(match_id: str, file: UploadFile, request: Request):
     """Upload a team logo.  Query param: team=home|away"""
-    _auth.require_auth(request)
+    _auth.require_role(request, "admin", "uploader")
     team = request.query_params.get("team", "home")
     if team not in ("home", "away"):
         raise HTTPException(400, "team must be home or away")

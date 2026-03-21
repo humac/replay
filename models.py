@@ -89,3 +89,45 @@ class UpdateMatchRequest(BaseModel):
 class CreateUploadSessionRequest(BaseModel):
     filename: str = Field("video.mp4", min_length=1, max_length=500)
     size_bytes: int = Field(..., gt=0)
+
+
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_VALID_ROLES = {"admin", "uploader", "viewer"}
+
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=50)
+    password: str = Field(..., min_length=8, max_length=200)
+    role: str = Field("viewer")
+    display_name: str = Field("", max_length=100)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        v = v.strip()
+        if not _USERNAME_RE.match(v):
+            raise ValueError("username may only contain letters, digits, underscores, dots, and hyphens")
+        return v
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in _VALID_ROLES:
+            raise ValueError(f"role must be one of: {', '.join(sorted(_VALID_ROLES))}")
+        return v
+
+
+class UpdateUserRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: Optional[str] = Field(None, min_length=8, max_length=200)
+    role: Optional[str] = None
+    display_name: Optional[str] = Field(None, max_length=100)
+    enabled: Optional[bool] = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str | None) -> str | None:
+        if v is not None and v not in _VALID_ROLES:
+            raise ValueError(f"role must be one of: {', '.join(sorted(_VALID_ROLES))}")
+        return v

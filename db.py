@@ -142,7 +142,25 @@ def _migrate_v1(conn: sqlite3.Connection):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_slug ON matches(slug)")
 
 
-_MIGRATIONS = [_migrate_v0, _migrate_v1]
+def _migrate_v2(conn: sqlite3.Connection):
+    """Add users table."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'viewer',
+            display_name TEXT DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2]
 
 
 def _run_migrations(conn: sqlite3.Connection):
@@ -356,3 +374,74 @@ def backfill_slugs():
         if rows:
             conn.commit()
             logger.info("Backfilled slugs for %d matches", len(rows))
+
+
+# ---------------------------------------------------------------------------
+# User helpers
+# ---------------------------------------------------------------------------
+
+def _row_to_user(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "password_hash": row["password_hash"],
+        "role": row["role"],
+        "display_name": row["display_name"] or "",
+        "enabled": bool(row["enabled"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def create_user(username: str, password_hash: str, role: str, display_name: str = "") -> dict:
+    import uuid
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    user_id = str(uuid.uuid4())
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, role, display_name, enabled, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+            (user_id, username, password_hash, role, display_name, now, now),
+        )
+        conn.commit()
+    return {"id": user_id, "username": username, "role": role, "display_name": display_name,
+            "enabled": True, "created_at": now, "updated_at": now}
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
+        return _row_to_user(row) if row else None
+
+
+def get_user_by_id(user_id: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return _row_to_user(row) if row else None
+
+
+def list_users() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+        return [_row_to_user(r) for r in rows]
+
+
+def update_user(user_id: str, **fields) -> bool:
+    allowed = {"username", "password_hash", "role", "display_name", "enabled"}
+    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if not updates:
+        return False
+    updates["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [user_id]
+    with connect() as conn:
+        conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+    return True
+
+
+def delete_user(user_id: str) -> bool:
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        return cursor.rowcount > 0
