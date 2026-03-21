@@ -5,7 +5,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 ## Stack
 
 - Backend: `server.py` (route registration + entrypoint) with modular services
-- Frontend: `index.html`, `script.js`, `styles.css`
+- Frontend: `index.html`, `script.js` (ES module entry point), `js/` (module mixins), `styles.css`
 - Storage: SQLite in `replay.db` plus filesystem media files
 - Media pipeline: `media.py` wrapping `ffmpeg` and `ffprobe`
 - Testing: `pytest` + `pytest-asyncio` + `httpx` (see `tests/`)
@@ -22,8 +22,14 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU), HLS variant generation
 - `models.py`: Pydantic v2 request models for login, match CRUD, and upload sessions
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
-- `script.js`: SPA state, uploads, playback, Cast/AirPlay, URL-based history navigation
-- `index.html`: single-page app shell
+- `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
+- `js/utils.js`: pure utility functions (esc, formatDate, statusLabel, etc.)
+- `js/api.js`: auth, data loading, settings, transcode polling
+- `js/player.js`: AirPlay, Chromecast, HLS playback
+- `js/uploads.js`: chunked upload sessions, resume logic
+- `js/views.js`: season view, game view, match form, settings form, admin panel
+- `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
+- `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling
 - `tests/`: pytest test suite (auth, matches, uploads, settings)
 - `docker-compose.yml`: local container runtime
@@ -91,9 +97,12 @@ After frontend changes, sanity-check:
 
 - Keep API shapes stable unless the task requires a breaking change.
 - Reuse existing helper functions instead of duplicating upload, playback, or view-toggle logic.
+- Frontend JS is split into ES modules under `js/` using a mixin pattern. Each module exports a plain object; `script.js` merges them into `window.app`. Add new methods to the appropriate mixin, not to `script.js` directly.
 - For SPA navigation, prefer the shared history helpers in `script.js`. Match URLs use slug-based paths (`/match/{slug}`).
 - For caching behavior, be careful with `index.html`, `/static/*`, and Cloudflare-facing asset URLs.
 - When adding or modifying API endpoints, add or update Pydantic models in `models.py` and add corresponding tests in `tests/`.
 - Login is rate-limited (5 attempts/60s per IP). Token cleanup sweeps run automatically.
 - Backend logic is organized into focused modules (`db.py`, `auth.py`, `settings.py`, `uploads.py`, `media.py`). Keep `server.py` as the route registration layer; add business logic to the appropriate module.
 - The `MATCHES_LOCK` is an `asyncio.Lock` — all callers that hold it must be async.
+- For UI feedback, use the toast system in `js/ui.js` (`showSuccess`, `showError`, `showInfo`) instead of `alert()`. Use `btnLoading()` for button loading states.
+- **After every code change**, update the relevant markdown files (`ROADMAP.md`, `AGENTS.md`, `CLAUDE.md`) to reflect what changed — new files, completed roadmap items, new conventions, updated guidance. Keep these files as the living source of truth.

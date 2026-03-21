@@ -326,12 +326,14 @@ async def match_deep_link(slug: str, slot: str | None = None):
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
-@app.get("/static/{filename}")
-async def static_file(filename: str):
-    filename = filename.split("?", 1)[0]
-    if ".." in filename:
+@app.get("/static/{filepath:path}")
+async def static_file(filepath: str):
+    filepath = filepath.split("?", 1)[0]
+    if ".." in filepath:
         raise HTTPException(400, "Invalid path")
-    path = STATIC_DIR / filename
+    path = (STATIC_DIR / filepath).resolve()
+    if STATIC_DIR.resolve() not in path.parents and path != STATIC_DIR.resolve():
+        raise HTTPException(400, "Invalid path")
     if not path.is_file():
         raise HTTPException(404, "Not found")
     media_types = {

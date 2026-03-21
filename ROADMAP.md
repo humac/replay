@@ -107,12 +107,11 @@ Already extracted to `media.py` (~345 lines): probing, transcoding (GPU/CPU fall
 
 ### Frontend modularization
 
-**3.1 Split `script.js` into logical modules**
-**File:** `script.js` (~2600 lines)
-The entire frontend is a single file with functions in a flat namespace. Split into modules (e.g. API client, player, uploads, season view, settings) loaded via `<script>` tags or lightweight ES modules — still no build step.
+**3.1 Split `script.js` into logical modules** ✅
+Split the monolithic `script.js` (~2300 lines) into 6 ES modules using a mixin pattern — no build step. `script.js` (284 lines) is now the entry point that imports and assembles mixins from `js/utils.js`, `js/api.js`, `js/player.js`, `js/uploads.js`, and `js/views.js`. Inline `onclick` handlers preserved via `window.app`.
 
-**3.2 Centralize UI feedback**
-Consistent loading states, success/error banners, and clearer processing/retry messaging across all views.
+**3.2 Centralize UI feedback** ✅
+Added `js/ui.js` with a toast notification system (success/error/info) and `btnLoading()` helper for button loading states. All 10 `alert()` calls replaced with non-blocking toasts. Animated slide-in/out with dismiss buttons, styled to match the dark theme.
 
 ### User experience
 

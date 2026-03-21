@@ -1,0 +1,1039 @@
+// All view rendering: season, game, match form, settings form, admin panel.
+
+export const viewsMixin = {
+    // ===== SETTINGS APPLY =====
+    applyAppSettings() {
+        const settings = this.getAppSettings();
+        const assets = this.appAssets || {};
+        document.title = settings.app_name || 'Replay';
+
+        const faviconEl = document.querySelector('link[rel="icon"]');
+        if (faviconEl && assets.favicon_url) faviconEl.href = assets.favicon_url;
+
+        const mappings = [
+            ['nav-app-name', settings.app_name],
+            ['nav-season-link', settings.nav_matches_label],
+            ['nav-add-match', settings.nav_add_match_label],
+            ['nav-settings', settings.nav_settings_label],
+            ['season-title', settings.season_title],
+            ['season-intro', settings.season_intro],
+            ['filter-all-btn', settings.filter_all_label],
+            ['filter-home-btn', settings.filter_home_label],
+            ['filter-away-btn', settings.filter_away_label],
+            ['stat-played-label', settings.stat_matches_label],
+            ['stat-ready-label', settings.stat_ready_label],
+            ['stat-processing-label', settings.stat_processing_label],
+            ['game-back-label', settings.game_back_label],
+            ['game-replay-label', settings.game_replay_label],
+            ['game-video-status-label', settings.game_video_status_label],
+            ['team-stats-title', `${settings.main_team_name || 'Team'} Performance`],
+        ];
+        mappings.forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el && value != null) el.textContent = value;
+        });
+
+        const teamStatsSubtitle = document.getElementById('team-stats-subtitle');
+        if (teamStatsSubtitle) {
+            teamStatsSubtitle.textContent = settings.main_team_name
+                ? `Results update automatically from recorded scores for ${settings.main_team_name}.`
+                : 'Set a main team name in Settings to see team results and scoring stats here.';
+        }
+
+        const seasonLogo = document.getElementById('season-logo');
+        if (seasonLogo && assets.logo_url) seasonLogo.src = assets.logo_url;
+
+        if (this.matches.length) this.renderSeasonView();
+        if (this.activeMatchId) {
+            const match = this.matches.find((item) => item.id === this.activeMatchId);
+            if (match) this.renderDownloadActions(match);
+        }
+    },
+
+    setSeasonFilter(filter) {
+        this.activeFilter = filter;
+        document.querySelectorAll('#season-filter-group .filter-btn').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.filter === filter);
+        });
+        this.renderSeasonView();
+    },
+
+    toggleTeamStats(force) {
+        this.teamStatsExpanded = typeof force === 'boolean' ? force : !this.teamStatsExpanded;
+        this.renderSeasonView();
+    },
+
+    // ===== ADMIN PANEL =====
+    setAdminPanelVisibility(visible) {
+        const panel = document.getElementById('admin-ops-card');
+        if (!panel) return;
+        panel.style.display = visible ? 'block' : 'none';
+        if (!visible) {
+            const diagnosticsGrid = document.getElementById('diagnostics-grid');
+            const serverList = document.getElementById('upload-sessions-list');
+            const localList = document.getElementById('local-upload-sessions-list');
+            if (diagnosticsGrid) diagnosticsGrid.innerHTML = '';
+            if (serverList) serverList.innerHTML = '';
+            if (localList) localList.innerHTML = '';
+        }
+    },
+
+    // ===== SETTINGS FORM =====
+    renderSettingsForm() {
+        const settings = this.getAppSettings();
+        const fieldMap = {
+            'settings-app-name': settings.app_name,
+            'settings-main-team-name': settings.main_team_name,
+            'settings-season-title': settings.season_title,
+            'settings-season-intro': settings.season_intro,
+            'settings-nav-matches-label': settings.nav_matches_label,
+            'settings-nav-add-match-label': settings.nav_add_match_label,
+            'settings-nav-settings-label': settings.nav_settings_label,
+            'settings-filter-all-label': settings.filter_all_label,
+            'settings-filter-home-label': settings.filter_home_label,
+            'settings-filter-away-label': settings.filter_away_label,
+            'settings-stat-matches-label': settings.stat_matches_label,
+            'settings-stat-ready-label': settings.stat_ready_label,
+            'settings-stat-processing-label': settings.stat_processing_label,
+            'settings-game-back-label': settings.game_back_label,
+            'settings-game-replay-label': settings.game_replay_label,
+            'settings-game-video-status-label': settings.game_video_status_label,
+            'settings-download-label': settings.download_label,
+        };
+        Object.entries(fieldMap).forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el) el.value = value || '';
+        });
+        const downloadsEnabled = document.getElementById('settings-downloads-enabled');
+        if (downloadsEnabled) downloadsEnabled.checked = settings.downloads_enabled === '1';
+        this.renderSettingsAssetStates();
+    },
+
+    renderSettingsAssetStates() {
+        const settings = this.getAppSettings();
+        const logoState = document.getElementById('settings-app-logo-state');
+        const faviconState = document.getElementById('settings-favicon-state');
+        if (logoState) {
+            logoState.textContent = settings.app_logo_filename
+                ? `Current app logo: ${settings.app_logo_filename}`
+                : 'No custom app logo uploaded.';
+            logoState.className = `uploaded-state ${settings.app_logo_filename ? 'ready' : ''}`.trim();
+        }
+        if (faviconState) {
+            faviconState.textContent = settings.favicon_filename
+                ? `Current favicon: ${settings.favicon_filename}`
+                : 'No custom favicon uploaded.';
+            faviconState.className = `uploaded-state ${settings.favicon_filename ? 'ready' : ''}`.trim();
+        }
+    },
+
+    updateSettingsPendingState(inputId, file) {
+        const stateMap = {
+            'settings-app-logo': 'settings-app-logo-state',
+            'settings-favicon': 'settings-favicon-state',
+        };
+        const stateEl = document.getElementById(stateMap[inputId]);
+        if (!stateEl) return;
+        if (file) {
+            stateEl.textContent = `Selected for upload: ${file.name}`;
+            stateEl.className = 'uploaded-state pending';
+            return;
+        }
+        this.renderSettingsAssetStates();
+    },
+
+    resetSettingsFileLabels() {
+        ['settings-app-logo', 'settings-favicon'].forEach((id) => {
+            const input = document.getElementById(id);
+            const label = document.getElementById(id + '-label');
+            if (input) input.value = '';
+            if (label) label.textContent = 'No file chosen';
+        });
+        this.renderSettingsAssetStates();
+    },
+
+    async uploadSettingsAsset(inputId, kind) {
+        const input = document.getElementById(inputId);
+        if (!input || !input.files[0]) return;
+        const form = new FormData();
+        form.append('file', input.files[0]);
+        const resp = await fetch(`/api/admin/settings/asset?kind=${kind}`, {
+            method: 'POST',
+            headers: this.getAuthHeaders(),
+            body: form,
+        });
+        if (resp.status === 401) {
+            this.setLoggedOut();
+            sessionStorage.removeItem('replay_admin_token');
+            this.showLoginModal();
+            throw new Error('Session expired. Please log in again.');
+        }
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `Failed to upload ${kind}`);
+        }
+        this.setAppSettingsPayload(await resp.json());
+        this.applyAppSettings();
+    },
+
+    async handleSettingsSubmit() {
+        const submitBtn = document.getElementById('settings-submit-btn');
+        const body = {
+            app_name: document.getElementById('settings-app-name').value.trim(),
+            main_team_name: document.getElementById('settings-main-team-name').value.trim(),
+            season_title: document.getElementById('settings-season-title').value.trim(),
+            season_intro: document.getElementById('settings-season-intro').value.trim(),
+            nav_matches_label: document.getElementById('settings-nav-matches-label').value.trim(),
+            nav_add_match_label: document.getElementById('settings-nav-add-match-label').value.trim(),
+            nav_settings_label: document.getElementById('settings-nav-settings-label').value.trim(),
+            filter_all_label: document.getElementById('settings-filter-all-label').value.trim(),
+            filter_home_label: document.getElementById('settings-filter-home-label').value.trim(),
+            filter_away_label: document.getElementById('settings-filter-away-label').value.trim(),
+            stat_matches_label: document.getElementById('settings-stat-matches-label').value.trim(),
+            stat_ready_label: document.getElementById('settings-stat-ready-label').value.trim(),
+            stat_processing_label: document.getElementById('settings-stat-processing-label').value.trim(),
+            game_back_label: document.getElementById('settings-game-back-label').value.trim(),
+            game_replay_label: document.getElementById('settings-game-replay-label').value.trim(),
+            game_video_status_label: document.getElementById('settings-game-video-status-label').value.trim(),
+            download_label: document.getElementById('settings-download-label').value.trim(),
+            downloads_enabled: document.getElementById('settings-downloads-enabled').checked,
+        };
+
+        const restore = this.btnLoading(submitBtn, 'Saving...');
+        try {
+            const resp = await fetch('/api/admin/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify(body),
+            });
+            if (resp.status === 401) {
+                this.setLoggedOut();
+                sessionStorage.removeItem('replay_admin_token');
+                this.showLoginModal();
+                throw new Error('Session expired. Please log in again.');
+            }
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Failed to save settings');
+            }
+            this.setAppSettingsPayload(await resp.json());
+            await this.uploadSettingsAsset('settings-app-logo', 'logo');
+            await this.uploadSettingsAsset('settings-favicon', 'favicon');
+            await this.loadAppSettings(true);
+            this.applyAppSettings();
+            this.renderSettingsForm();
+            this.renderSeasonView();
+            this.showSuccess('Settings saved.');
+        } catch (error) {
+            this.showError(error.message);
+        } finally {
+            restore('Save Settings');
+            this.resetSettingsFileLabels();
+        }
+    },
+
+    // ===== ADMIN DIAGNOSTICS =====
+    async refreshAdminDiagnostics() {
+        if (!this.authToken) return;
+
+        const diagnosticsGrid = document.getElementById('diagnostics-grid');
+        const serverList = document.getElementById('upload-sessions-list');
+        const localList = document.getElementById('local-upload-sessions-list');
+        if (diagnosticsGrid) diagnosticsGrid.innerHTML = '<div class="diagnostic-card"><span class="diagnostic-label">Loading</span><strong class="diagnostic-value">Updating...</strong></div>';
+        if (serverList) serverList.innerHTML = '<div class="session-empty">Loading upload sessions...</div>';
+        if (localList) localList.innerHTML = '<div class="session-empty">Checking resumable uploads...</div>';
+
+        try {
+            const resp = await fetch('/api/admin/diagnostics', {
+                headers: this.getAuthHeaders(),
+            });
+            if (resp.status === 401) {
+                this.setLoggedOut();
+                sessionStorage.removeItem('replay_admin_token');
+                this.showLoginModal();
+                return;
+            }
+            if (!resp.ok) throw new Error('Failed to load diagnostics');
+            this.diagnostics = await resp.json();
+            this.renderAdminDiagnostics();
+        } catch (error) {
+            if (diagnosticsGrid) diagnosticsGrid.innerHTML = `<div class="session-empty">${this.esc(error.message)}</div>`;
+            if (serverList) serverList.innerHTML = '<div class="session-empty">Diagnostics unavailable.</div>';
+            if (localList) localList.innerHTML = this.renderLocalResumeSessions();
+        }
+    },
+
+    renderAdminDiagnostics() {
+        const diagnosticsGrid = document.getElementById('diagnostics-grid');
+        const serverList = document.getElementById('upload-sessions-list');
+        const localList = document.getElementById('local-upload-sessions-list');
+        if (!this.diagnostics || !diagnosticsGrid || !serverList || !localList) return;
+
+        const { counts, disk, upload_limits, upload_sessions, hls } = this.diagnostics;
+        diagnosticsGrid.innerHTML = `
+            <div class="diagnostic-card">
+                <span class="diagnostic-label">Free Disk</span>
+                <strong class="diagnostic-value">${this.formatBytes(disk.free_bytes)}</strong>
+                <span class="diagnostic-note">Need at least ${this.formatBytes(disk.min_free_bytes)} minimum</span>
+            </div>
+            <div class="diagnostic-card ${disk.enough_space ? '' : 'danger'}">
+                <span class="diagnostic-label">Upload Headroom</span>
+                <strong class="diagnostic-value">${disk.enough_space ? 'Ready' : 'Low'}</strong>
+                <span class="diagnostic-note">${disk.enough_space ? 'Disk can accept new chunk sessions.' : 'Large uploads may be rejected.'}</span>
+            </div>
+            <div class="diagnostic-card">
+                <span class="diagnostic-label">Matches</span>
+                <strong class="diagnostic-value">${counts.matches}</strong>
+                <span class="diagnostic-note">${counts.ready_slots} ready slots, ${counts.transcoding_slots} processing</span>
+            </div>
+            <div class="diagnostic-card">
+                <span class="diagnostic-label">HLS Backfill</span>
+                <strong class="diagnostic-value">${counts.hls_missing_slots}</strong>
+                <span class="diagnostic-note">${hls.backfill_running ? 'Backfill is running now.' : 'Ready MP4 slots still missing HLS assets.'}</span>
+            </div>
+            <div class="diagnostic-card">
+                <span class="diagnostic-label">Chunk Size</span>
+                <strong class="diagnostic-value">${this.formatBytes(upload_limits.chunk_size_bytes)}</strong>
+                <span class="diagnostic-note">Session timeout after ${this.formatDuration(upload_limits.stale_upload_session_seconds)}</span>
+            </div>
+        `;
+
+        if (!upload_sessions.length) {
+            serverList.innerHTML = '<div class="session-empty">No recent upload sessions.</div>';
+        } else {
+            serverList.innerHTML = upload_sessions.map((session) => `
+                <div class="session-item">
+                    <div class="session-main">
+                        <div class="session-title-row">
+                            <strong>${this.esc(session.match_id)}</strong>
+                            <span class="status-pill ${this.statusClass(session.status)}">${this.statusLabel(session.status)}</span>
+                        </div>
+                        <div class="session-meta">${this.slotLabel(session.slot)} • ${this.formatBytes(session.uploaded_bytes)} / ${this.formatBytes(session.size_bytes)} • ${session.progress_pct}%</div>
+                        <div class="session-meta">Idle ${this.formatAge(session.idle_seconds)}${session.stale ? ' • stale' : ''}</div>
+                    </div>
+                    <div class="session-actions">
+                        ${session.status === 'active' ? `<button type="button" class="mini-action-btn" onclick="app.cancelUploadSession('${this.esc(session.session_id)}')">Cancel</button>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        localList.innerHTML = this.renderLocalResumeSessions();
+    },
+
+    renderLocalResumeSessions() {
+        const entries = Object.entries(this.getSavedUploadSessions());
+        if (!entries.length) {
+            return '<div class="session-empty">No resumable uploads saved in this browser.</div>';
+        }
+
+        return entries.map(([key, session]) => `
+            <div class="session-item">
+                <div class="session-main">
+                    <div class="session-title-row">
+                        <strong>${this.esc(session.file_name || session.match_id)}</strong>
+                        <span class="status-pill resume">Resume</span>
+                    </div>
+                    <div class="session-meta">${this.esc(session.match_id)} • ${this.slotLabel(session.slot)} • ${this.formatBytes(session.size_bytes || 0)}</div>
+                    <div class="session-meta">Re-open this match form, select the same file, and submit again.</div>
+                </div>
+                <div class="session-actions">
+                    <button type="button" class="mini-action-btn" onclick="app.clearLocalResumeSession(decodeURIComponent('${encodeURIComponent(key)}'))">Clear</button>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    async cleanupStaleUploads() {
+        if (!this.authToken) return;
+        try {
+            const resp = await fetch('/api/uploads/sessions/cleanup', {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Failed to cleanup upload sessions');
+            const data = await resp.json();
+            this.showSuccess(`Cleaned ${data.count} stale upload session${data.count === 1 ? '' : 's'}.`);
+            await this.refreshAdminDiagnostics();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async backfillExistingHls() {
+        if (!this.authToken) return;
+        try {
+            const resp = await fetch('/api/admin/backfill-hls', {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Failed to backfill HLS assets');
+            const data = await resp.json();
+            if (data.reason === 'already-running') {
+                this.showInfo('HLS backfill is already running.');
+            } else {
+                this.showSuccess(`Backfill checked ${data.processed} ready slot${data.processed === 1 ? '' : 's'} and generated ${data.generated} HLS ladder${data.generated === 1 ? '' : 's'}.`);
+            }
+            await this.refreshAdminDiagnostics();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async cancelUploadSession(sessionId) {
+        if (!confirm('Cancel this upload session and remove its partial file?')) return;
+        try {
+            const resp = await fetch(`/api/uploads/sessions/${sessionId}`, {
+                method: 'DELETE',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Failed to cancel upload session');
+            this.clearSavedUploadSessionBySessionId(sessionId);
+            await this.refreshAdminDiagnostics();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    clearLocalResumeSession(key) {
+        this.clearSavedUploadSession(key);
+        if (this.authToken) this.renderAdminDiagnostics();
+    },
+
+    // ===== MATCH FORM =====
+    toggleFormatFields() {
+        const format = document.querySelector('input[name="format"]:checked').value;
+        document.getElementById('video-full-group').style.display = format === 'full' ? 'block' : 'none';
+        document.getElementById('video-halves-group').style.display = format === 'two_halves' ? 'block' : 'none';
+    },
+
+    updatePendingUploadState(inputId, file) {
+        const stateEl = document.getElementById(inputId + '-state');
+        if (!stateEl) return;
+
+        if (file) {
+            stateEl.textContent = `Selected for upload: ${file.name}`;
+            stateEl.className = 'uploaded-state pending';
+            return;
+        }
+
+        if (!document.getElementById('edit-match-id').value) {
+            if (inputId.includes('logo')) {
+                stateEl.textContent = 'No logo uploaded yet.';
+            } else {
+                stateEl.textContent = 'No video uploaded yet.';
+            }
+            stateEl.className = 'uploaded-state';
+        }
+    },
+
+    renderEditAssetStates(match) {
+        const assetStates = [
+            {
+                elementId: 'f-home-logo-state',
+                present: !!match.home_logo,
+                readyText: `Current logo uploaded: ${match.home_logo}`,
+                emptyText: 'No home logo uploaded yet.',
+            },
+            {
+                elementId: 'f-away-logo-state',
+                present: !!match.away_logo,
+                readyText: `Current logo uploaded: ${match.away_logo}`,
+                emptyText: 'No away logo uploaded yet.',
+            },
+            {
+                elementId: 'f-video-full-state',
+                present: !!match.videos?.full,
+                readyText: this.describeVideoState(match, 'full', 'Full match video'),
+                emptyText: 'No full match video uploaded yet.',
+            },
+            {
+                elementId: 'f-video-first-state',
+                present: !!match.videos?.first_half,
+                readyText: this.describeVideoState(match, 'first_half', '1st half video'),
+                emptyText: 'No 1st half video uploaded yet.',
+            },
+            {
+                elementId: 'f-video-second-state',
+                present: !!match.videos?.second_half,
+                readyText: this.describeVideoState(match, 'second_half', '2nd half video'),
+                emptyText: 'No 2nd half video uploaded yet.',
+            },
+        ];
+
+        assetStates.forEach(({ elementId, present, readyText, emptyText }) => {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            el.textContent = present ? readyText : emptyText;
+            el.className = `uploaded-state ${present ? 'ready' : ''}`.trim();
+        });
+    },
+
+    describeVideoState(match, slot, label) {
+        const status = this.slotStatus(match, slot);
+        if (status === 'transcoding') return `${label} uploaded and processing.`;
+        if (status === 'ready') return `${label} uploaded and ready to play.`;
+        if (status === 'error') return `${label} upload exists but processing failed.`;
+        return `${label} uploaded.`;
+    },
+
+    async handleFormSubmit() {
+        const editId = document.getElementById('edit-match-id').value;
+        const submitBtn = document.getElementById('submit-btn');
+        const format = document.querySelector('input[name="format"]:checked').value;
+        const fullFile = document.getElementById('f-video-full')?.files?.[0];
+        const firstFile = document.getElementById('f-video-first')?.files?.[0];
+        const secondFile = document.getElementById('f-video-second')?.files?.[0];
+        let createdNewMatch = false;
+
+        const matchData = {
+            home_team: document.getElementById('f-home-team').value.trim(),
+            away_team: document.getElementById('f-away-team').value.trim(),
+            date: document.getElementById('f-date').value,
+            time: document.getElementById('f-time').value,
+            location: document.getElementById('f-location').value.trim(),
+            score_home: document.getElementById('f-score-home').value ? parseInt(document.getElementById('f-score-home').value) : null,
+            score_away: document.getElementById('f-score-away').value ? parseInt(document.getElementById('f-score-away').value) : null,
+            format,
+        };
+
+        const restore = this.btnLoading(submitBtn, editId ? 'Updating...' : 'Creating...');
+
+        try {
+            if (!editId && format === 'full' && !fullFile) {
+                throw new Error('Please choose a full-match video file before creating the match.');
+            }
+
+            if (!editId && format === 'two_halves' && !firstFile && !secondFile) {
+                throw new Error('Please choose at least one half video before creating the match.');
+            }
+
+            const filesToValidate = [];
+            if (format === 'full' && fullFile) filesToValidate.push(fullFile);
+            if (format === 'two_halves' && firstFile) filesToValidate.push(firstFile);
+            if (format === 'two_halves' && secondFile) filesToValidate.push(secondFile);
+            for (const f of filesToValidate) {
+                if (f.size > this.MAX_VIDEO_SIZE_BYTES) {
+                    throw new Error(`File ${f.name} exceeds ${Math.round(this.MAX_VIDEO_SIZE_BYTES / (1024 * 1024 * 1024))}GB upload limit.`);
+                }
+            }
+
+            let match;
+            if (editId) {
+                const resp = await fetch(`/api/matches/${editId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                    body: JSON.stringify(matchData),
+                });
+                if (resp.status === 401) {
+                    this.setLoggedOut();
+                    sessionStorage.removeItem('replay_admin_token');
+                    this.showLoginModal();
+                    throw new Error('Session expired. Please log in again.');
+                }
+                match = await resp.json();
+            } else {
+                const resp = await fetch('/api/matches', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                    body: JSON.stringify(matchData),
+                });
+                if (resp.status === 401) {
+                    this.setLoggedOut();
+                    sessionStorage.removeItem('replay_admin_token');
+                    this.showLoginModal();
+                    throw new Error('Session expired. Please log in again.');
+                }
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || 'Failed to create match');
+                }
+                match = await resp.json();
+                createdNewMatch = true;
+                document.getElementById('edit-match-id').value = match.id;
+                document.getElementById('form-heading').textContent = 'Edit Match';
+                document.getElementById('submit-btn').textContent = 'Update Match';
+                document.getElementById('cancel-edit-btn').style.display = 'inline-block';
+            }
+
+            await this.uploadFileIfSelected('f-home-logo', match.id, 'logo', 'home');
+            await this.uploadFileIfSelected('f-away-logo', match.id, 'logo', 'away');
+
+            if (format === 'full') {
+                await this.uploadVideoIfSelected('f-video-full', match.id, 'full');
+            } else {
+                await this.uploadVideoIfSelected('f-video-first', match.id, 'first_half');
+                await this.uploadVideoIfSelected('f-video-second', match.id, 'second_half');
+            }
+
+            await this.loadMatches();
+            this.renderSeasonView();
+            this.cancelEdit();
+            document.getElementById('add-match-form').reset();
+            this.resetFileLabels();
+            this.showSeasonView({ replaceHistory: true });
+
+            this.checkTranscodePolling();
+
+        } catch (e) {
+            if (document.getElementById('edit-match-id').value) {
+                await this.loadMatches();
+                this.renderSeasonView();
+            }
+            const resumeHint = createdNewMatch
+                ? ' The match record was created. Re-submit this form to resume any incomplete upload for the same selected file.'
+                : '';
+            this.showError(e.message + resumeHint);
+        } finally {
+            const btnLabel = document.getElementById('edit-match-id').value ? 'Update Match' : 'Create Match';
+            restore(btnLabel);
+        }
+    },
+
+    editMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
+        const match = this.matches.find(m => m.id === matchId);
+        if (!match) return;
+
+        this.activateView('add-match-view', 'add-match');
+        if (this.authToken) this.refreshAdminDiagnostics();
+
+        document.getElementById('edit-match-id').value = match.id;
+        document.getElementById('f-home-team').value = match.home_team || '';
+        document.getElementById('f-away-team').value = match.away_team || '';
+        document.getElementById('f-date').value = match.date || '';
+        document.getElementById('f-time').value = match.time || '';
+        document.getElementById('f-location').value = match.location || '';
+        document.getElementById('f-score-home').value = match.score_home != null ? match.score_home : '';
+        document.getElementById('f-score-away').value = match.score_away != null ? match.score_away : '';
+
+        const formatRadio = document.querySelector(`input[name="format"][value="${match.format || 'full'}"]`);
+        if (formatRadio) formatRadio.checked = true;
+        this.toggleFormatFields();
+        this.resetFileLabels();
+        this.renderEditAssetStates(match);
+
+        document.getElementById('form-heading').textContent = 'Edit Match';
+        document.getElementById('submit-btn').textContent = 'Update Match';
+        document.getElementById('cancel-edit-btn').style.display = 'inline-block';
+
+        if (pushHistory) {
+            this.pushHistoryState({ view: 'add-match', mode: 'edit', matchId }, { replace: replaceHistory });
+        }
+        if (scrollTop) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    },
+
+    cancelEdit() {
+        document.getElementById('edit-match-id').value = '';
+        document.getElementById('add-match-form').reset();
+        document.getElementById('form-heading').textContent = 'Add New Match';
+        document.getElementById('submit-btn').textContent = 'Create Match';
+        document.getElementById('cancel-edit-btn').style.display = 'none';
+        this.resetFileLabels();
+    },
+
+    async deleteMatch(matchId) {
+        if (!confirm('Delete this match and all its videos?')) return;
+
+        try {
+            const resp = await fetch(`/api/matches/${matchId}`, { method: 'DELETE', headers: this.getAuthHeaders() });
+            if (resp.status === 401) {
+                this.setLoggedOut();
+                sessionStorage.removeItem('replay_admin_token');
+                this.showLoginModal();
+                throw new Error('Session expired. Please log in again.');
+            }
+            if (!resp.ok) throw new Error('Failed to delete');
+            await this.loadMatches();
+            this.renderSeasonView();
+            this.showSuccess('Match deleted.');
+        } catch (e) {
+            this.showError(e.message);
+        }
+    },
+
+    // ===== SEASON VIEW =====
+    renderSeasonView() {
+        const grid = document.getElementById('matches-grid');
+        if (!grid) return;
+
+        const visibleMatches = this.filteredMatches();
+
+        document.querySelectorAll('#season-filter-group .filter-btn').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.filter === this.activeFilter);
+        });
+
+        this.renderSeasonTeamStats(visibleMatches);
+
+        grid.innerHTML = '';
+        if (visibleMatches.length === 0) {
+            const emptyMessage = this.matches.length === 0
+                ? 'No matches yet. Click "Add Match" to get started.'
+                : 'No matches found for the current filter.';
+            grid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 2rem;">${emptyMessage}</p>`;
+            return;
+        }
+
+        const sorted = [...visibleMatches].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        sorted.forEach(m => {
+            const card = document.createElement('div');
+            card.className = 'match-card';
+            card.onclick = () => this.openMatch(m.id);
+
+            const homeLogo = m.home_logo
+                ? `<img src="/api/matches/${m.id}/logo/home" class="card-team-logo" alt="${this.esc(m.home_team)}">`
+                : `<div class="card-team-initial">${this.esc((m.home_team || '?')[0])}</div>`;
+            const awayLogo = m.away_logo
+                ? `<img src="/api/matches/${m.id}/logo/away" class="card-team-logo" alt="${this.esc(m.away_team)}">`
+                : `<div class="card-team-initial">${this.esc((m.away_team || '?')[0])}</div>`;
+
+            const homeScore = m.score_home != null ? m.score_home : '';
+            const awayScore = m.score_away != null ? m.score_away : '';
+
+            const dateStr = this.formatDate(m.date);
+            const timeStr = m.time ? ` \u00b7 ${m.time}` : '';
+            const locationHtml = m.location
+                ? `<span class="match-detail-pill location">${this.esc(m.location)}</span>`
+                : '';
+
+            const isTranscoding = this.matchTranscoding(m);
+
+            card.innerHTML = `
+                <div class="card-bg"></div>
+                <div class="card-matchup">
+                    <div class="card-team-col">
+                        ${homeLogo}
+                        <span class="team-side-label">Home</span>
+                        <div class="team-name-score-row">
+                            <span class="card-team-name">${this.esc(m.home_team)}</span>
+                            ${homeScore !== '' ? `<span class="card-team-score">${homeScore}</span>` : '<span class="card-team-score empty">-</span>'}
+                        </div>
+                    </div>
+                    <div class="card-vs-col">
+                        <span class="card-vs">VS</span>
+                    </div>
+                    <div class="card-team-col">
+                        ${awayLogo}
+                        <span class="team-side-label">Away</span>
+                        <div class="team-name-score-row">
+                            <span class="card-team-name">${this.esc(m.away_team)}</span>
+                            ${awayScore !== '' ? `<span class="card-team-score">${awayScore}</span>` : '<span class="card-team-score empty">-</span>'}
+                        </div>
+                    </div>
+                </div>
+                <div class="match-detail-row">
+                    <span class="match-detail-pill">${this.esc(dateStr)}${timeStr}</span>
+                    ${locationHtml}
+                </div>
+                <div class="match-meta">
+                    ${isTranscoding ? '<span class="badge processing">PROCESSING</span>' : ''}
+                </div>
+                <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
+                ${this.authToken ? `
+                <button class="match-card-edit-btn" onclick="app.triggerEdit(event, '${m.id}')" title="Edit">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button class="match-card-delete-btn" onclick="app.triggerDelete(event, '${m.id}')" title="Delete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+                ` : ''}
+            `;
+            grid.appendChild(card);
+        });
+    },
+
+    triggerEdit(event, matchId) {
+        event.stopPropagation();
+        this.editMatch(matchId);
+    },
+
+    triggerDelete(event, matchId) {
+        event.stopPropagation();
+        this.deleteMatch(matchId);
+    },
+
+    // ===== GAME VIEW =====
+    openMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true, initialSlot = null } = {}) {
+        const match = this.matches.find(m => m.id === matchId);
+        if (!match) return;
+        this._pendingInitialSlot = initialSlot;
+
+        this.activeMatchId = matchId;
+        const gameEditBtn = document.getElementById('game-edit-btn');
+        if (gameEditBtn) gameEditBtn.style.display = this.authToken ? 'inline-flex' : 'none';
+
+        document.getElementById('active-game-date').textContent =
+            this.formatDate(match.date) + (match.time ? ` \u00b7 ${match.time}` : '');
+
+        document.getElementById('active-game-loc').textContent = match.location || '-';
+        this.renderGameStatus(match);
+
+        const matchupEl = document.getElementById('game-matchup');
+        const homeLogo = match.home_logo
+            ? `<img src="/api/matches/${match.id}/logo/home" class="game-logo-large">`
+            : `<div class="game-logo-initial-large">${this.esc((match.home_team || '?')[0])}</div>`;
+        const awayLogo = match.away_logo
+            ? `<img src="/api/matches/${match.id}/logo/away" class="game-logo-large">`
+            : `<div class="game-logo-initial-large">${this.esc((match.away_team || '?')[0])}</div>`;
+        const homeScore = match.score_home != null ? match.score_home : '';
+        const awayScore = match.score_away != null ? match.score_away : '';
+        matchupEl.innerHTML = `
+            <div class="game-team-col">
+                ${homeLogo}
+                <span class="team-side-label game-side-label">Home</span>
+                <div class="team-name-score-row game-team-name-score-row">
+                    <span class="game-team-name">${this.esc(match.home_team)}</span>
+                    ${homeScore !== '' ? `<span class="game-team-score">${homeScore}</span>` : '<span class="game-team-score empty">-</span>'}
+                </div>
+            </div>
+            <div class="game-vs-col">VS</div>
+            <div class="game-team-col">
+                ${awayLogo}
+                <span class="team-side-label game-side-label">Away</span>
+                <div class="team-name-score-row game-team-name-score-row">
+                    <span class="game-team-name">${this.esc(match.away_team)}</span>
+                    ${awayScore !== '' ? `<span class="game-team-score">${awayScore}</span>` : '<span class="game-team-score empty">-</span>'}
+                </div>
+            </div>
+        `;
+
+        this.activateView('game-view');
+        if (pushHistory) {
+            const matchUrl = match.slug ? `/match/${match.slug}` : null;
+            this.pushHistoryState({ view: 'game', matchId, slug: match.slug }, { replace: replaceHistory, url: matchUrl });
+        }
+
+        this.setupVideoSlots(match);
+        this.renderDownloadActions(match);
+        if (scrollTop) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    },
+
+    setupVideoSlots(match) {
+        const segSelector = document.getElementById('segment-selector');
+        segSelector.innerHTML = '';
+
+        if (match.format === 'two_halves') {
+            segSelector.style.display = 'flex';
+            const readySlots = [];
+
+            ['first_half', 'second_half'].forEach(slot => {
+                const status = this.slotStatus(match, slot);
+                const btn = document.createElement('button');
+                btn.className = 'segment-btn';
+                btn.dataset.slot = slot;
+
+                if (status === 'ready') {
+                    btn.textContent = slot === 'first_half' ? '1st Half' : '2nd Half';
+                    btn.onclick = () => this.playSlot(match.id, slot);
+                    readySlots.push(slot);
+                } else if (status === 'transcoding') {
+                    btn.textContent = (slot === 'first_half' ? '1st Half' : '2nd Half') + ' (processing)';
+                    btn.disabled = true;
+                    btn.style.opacity = '0.5';
+                } else {
+                    return;
+                }
+                segSelector.appendChild(btn);
+            });
+
+            if (readySlots.length > 0) {
+                const preferred = this._pendingInitialSlot && readySlots.includes(this._pendingInitialSlot)
+                    ? this._pendingInitialSlot : readySlots[0];
+                this._pendingInitialSlot = null;
+                this.playSlot(match.id, preferred);
+            } else if (this.matchTranscoding(match)) {
+                this.showProcessingState();
+            } else {
+                this.showNoVideoState();
+            }
+        } else {
+            segSelector.style.display = 'none';
+            const status = this.slotStatus(match, 'full');
+            if (status === 'ready') {
+                this.playSlot(match.id, 'full');
+            } else if (status === 'transcoding') {
+                this.showProcessingState();
+            } else {
+                this.showNoVideoState();
+            }
+        }
+    },
+
+    refreshGameView(match) {
+        if (!document.getElementById('game-view').classList.contains('active')) return;
+        this.renderGameStatus(match);
+        this.renderDownloadActions(match);
+
+        if (this.activeSlot) {
+            const status = this.slotStatus(match, this.activeSlot);
+            if (status === 'ready') return;
+        }
+
+        this.setupVideoSlots(match);
+    },
+
+    closeGame() {
+        this.showSeasonView({ replaceHistory: true });
+    },
+
+    renderDownloadActions(match) {
+        const container = document.getElementById('download-actions');
+        if (!container) return;
+        const settings = this.getAppSettings();
+        if (settings.downloads_enabled !== '1') {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            return;
+        }
+
+        const slots = match.format === 'two_halves'
+            ? [['first_half', this.slotLabel('first_half')], ['second_half', this.slotLabel('second_half')]]
+            : [['full', this.slotLabel('full')]];
+        const readySlots = slots.filter(([slot]) => this.slotStatus(match, slot) === 'ready');
+        if (!readySlots.length) {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            return;
+        }
+
+        container.style.display = 'flex';
+        container.innerHTML = readySlots.map(([slot, label]) => `
+            <a class="download-btn" href="/api/matches/${match.id}/download/${slot}" download>
+                ${this.esc(settings.download_label)} ${this.esc(label)}
+            </a>
+        `).join('');
+    },
+
+    // ===== SEASON TEAM STATS =====
+    renderSeasonTeamStats(visibleMatches) {
+        const section = document.getElementById('season-team-stats');
+        const grid = document.getElementById('team-stats-grid');
+        const empty = document.getElementById('team-stats-empty');
+        const title = document.getElementById('team-stats-title');
+        const toggle = document.getElementById('team-stats-toggle');
+        if (!section || !grid || !empty || !title) return;
+
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', this.teamStatsExpanded ? 'true' : 'false');
+        }
+        section.classList.toggle('is-collapsed', !this.teamStatsExpanded);
+        section.setAttribute('aria-hidden', this.teamStatsExpanded ? 'false' : 'true');
+
+        const settings = this.getAppSettings();
+        const mainTeamName = settings.main_team_name?.trim();
+        title.textContent = `${mainTeamName || 'Team'} Performance`;
+
+        if (!mainTeamName) {
+            grid.innerHTML = '';
+            empty.style.display = 'block';
+            empty.textContent = 'Set the main team name in Settings to unlock score-based season stats.';
+            return;
+        }
+
+        const teamMatches = visibleMatches.filter((match) => this.matchFilterCategory(match) !== 'other');
+        const scoredMatches = teamMatches.filter((match) => match.score_home != null && match.score_away != null);
+
+        if (!scoredMatches.length) {
+            grid.innerHTML = '';
+            empty.style.display = 'block';
+            empty.textContent = teamMatches.length
+                ? 'Scores have not been entered for the matches in this view yet.'
+                : `No ${mainTeamName} matches are currently visible for this filter.`;
+            return;
+        }
+
+        let wins = 0;
+        let draws = 0;
+        let losses = 0;
+        let goalsFor = 0;
+        let goalsAgainst = 0;
+        let cleanSheets = 0;
+
+        scoredMatches.forEach((match) => {
+            const category = this.matchFilterCategory(match);
+            const teamScore = category === 'home' ? Number(match.score_home || 0) : Number(match.score_away || 0);
+            const opponentScore = category === 'home' ? Number(match.score_away || 0) : Number(match.score_home || 0);
+            goalsFor += teamScore;
+            goalsAgainst += opponentScore;
+            if (teamScore > opponentScore) wins += 1;
+            else if (teamScore < opponentScore) losses += 1;
+            else draws += 1;
+            if (opponentScore === 0) cleanSheets += 1;
+        });
+
+        const points = wins * 3 + draws;
+        const gamesPlayed = scoredMatches.length;
+        const goalDiff = goalsFor - goalsAgainst;
+        const pointsPerGame = gamesPlayed ? (points / gamesPlayed).toFixed(2) : '0.00';
+        const avgGoals = gamesPlayed ? (goalsFor / gamesPlayed).toFixed(1) : '0.0';
+
+        const cards = [
+            {
+                accent: 'record',
+                label: 'Record',
+                value: `${wins}-${draws}-${losses}`,
+                note: `${gamesPlayed} scored matches`,
+            },
+            {
+                accent: 'points',
+                label: 'Points',
+                value: String(points),
+                note: `${pointsPerGame} per game`,
+            },
+            {
+                accent: 'goals',
+                label: 'Goals',
+                value: `${goalsFor}-${goalsAgainst}`,
+                note: `${avgGoals} scored per game`,
+            },
+            {
+                accent: 'difference',
+                label: 'Goal Diff',
+                value: goalDiff > 0 ? `+${goalDiff}` : String(goalDiff),
+                note: `${cleanSheets} clean sheet${cleanSheets === 1 ? '' : 's'}`,
+            },
+        ];
+        empty.style.display = 'none';
+        grid.innerHTML = cards.map((card) => `
+            <article class="team-stat-card ${card.accent}">
+                <span class="team-stat-label">${this.esc(card.label)}</span>
+                <strong class="team-stat-value">${this.esc(card.value)}</strong>
+                <span class="team-stat-note">${this.esc(card.note)}</span>
+            </article>
+        `).join('');
+    },
+
+    // ===== GAME STATUS =====
+    renderGameStatus(match) {
+        const pills = document.getElementById('game-status-pills');
+        const slotList = document.getElementById('game-slot-status-list');
+        if (!slotList) return;
+
+        const formatLabel = match.format === 'two_halves' ? 'Two Halves' : 'Full Match';
+        const readySlots = this.readySlotsCount(match);
+        const totalSlots = match.format === 'two_halves' ? 2 : 1;
+        if (pills) {
+            pills.innerHTML = `
+                <span class="status-pill neutral">${this.esc(formatLabel)}</span>
+                <span class="status-pill ${this.matchTranscoding(match) ? 'processing' : 'ready'}">${readySlots}/${totalSlots} Ready</span>
+            `;
+        }
+
+        const slots = match.format === 'two_halves'
+            ? [['first_half', '1st Half'], ['second_half', '2nd Half']]
+            : [['full', 'Full Match']];
+        slotList.innerHTML = slots.map(([slot, label]) => {
+            const status = this.slotStatus(match, slot);
+            return `
+                <div class="slot-status-row">
+                    <span class="slot-status-label">${label}</span>
+                    <span class="status-pill ${this.statusClass(status)}">${this.statusLabel(status)}</span>
+                </div>
+            `;
+        }).join('');
+    },
+};

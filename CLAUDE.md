@@ -6,10 +6,16 @@ Additional guidance for Claude in this repo:
 
 - Favor direct, minimal edits over speculative rewrites.
 - Check the current file contents before editing because this repo is often changed iteratively.
-- When fixing UI behavior, inspect both `index.html` and `script.js`; many issues here are caused by interaction between markup and SPA state.
+- When fixing UI behavior, inspect `index.html` and the relevant JS module in `js/` (views, player, uploads, api, utils). `script.js` is the entry point that assembles all mixins into `window.app`.
 - When fixing public-domain behavior, consider cache and proxy behavior before assuming application logic is broken.
 - When adding or modifying API endpoints, update Pydantic models in `models.py` and add tests in `tests/`.
 - Match URLs use slug-based deep links (`/match/{slug}`, `/match/{slug}/first-half`).
+
+After every code change, update the relevant markdown files to stay in sync:
+
+- `ROADMAP.md` — mark completed items, add descriptions of what was done.
+- `AGENTS.md` — update Key Files, Editing Guidance, or Stack if new files/conventions were added.
+- `CLAUDE.md` — update if validation commands or editing guidance changed.
 
 Primary validation:
 
