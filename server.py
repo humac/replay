@@ -121,9 +121,15 @@ async def _render_index_html() -> str:
     return _settings.render_index_html(settings_payload)
 
 
+def _enrich_match(match: dict) -> dict:
+    """Add computed fields to a match dict."""
+    match["has_thumbnail"] = (VIDEOS_DIR / match["id"] / "thumb.jpg").is_file()
+    return match
+
+
 async def _load_matches() -> list[dict]:
     async with MATCHES_LOCK:
-        return _db.load_matches_unlocked()
+        return [_enrich_match(m) for m in _db.load_matches_unlocked()]
 
 
 async def _save_matches(matches: list[dict]):
@@ -554,7 +560,7 @@ async def list_matches(q: str | None = None, page: int | None = None, limit: int
     if q is not None or page is not None or limit is not None:
         clamped_limit = max(1, min(limit or 50, 200))
         matches, total = _db.search_matches(q=q, page=page or 1, limit=clamped_limit)
-        return {"matches": matches, "total": total, "page": page or 1, "limit": clamped_limit}
+        return {"matches": [_enrich_match(m) for m in matches], "total": total, "page": page or 1, "limit": clamped_limit}
     return await _load_matches()
 
 
@@ -977,6 +983,13 @@ async def startup_backfill_hls():
     asyncio.create_task(_backfill_hls_for_existing_videos())
 
 
+@app.on_event("startup")
+async def startup_backfill_thumbnails():
+    asyncio.create_task(
+        _media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches)
+    )
+
+
 # ---------------------------------------------------------------------------
 # HLS streaming
 # ---------------------------------------------------------------------------
@@ -1153,6 +1166,14 @@ async def serve_logo(match_id: str, team: str):
         headers["Content-Security-Policy"] = "script-src 'none'"
         headers["Content-Disposition"] = f"inline; filename=\"{logo_path.name}\""
     return FileResponse(str(logo_path), media_type=mt, headers=headers)
+
+
+@app.get("/api/matches/{match_id}/thumbnail")
+async def serve_thumbnail(match_id: str):
+    thumb_path = VIDEOS_DIR / match_id / "thumb.jpg"
+    if not thumb_path.is_file():
+        raise HTTPException(404, "No thumbnail available")
+    return FileResponse(str(thumb_path), media_type="image/jpeg")
 
 
 # ---------------------------------------------------------------------------

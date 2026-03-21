@@ -19,13 +19,13 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `auth.py`: token management, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
-- `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU) with real-time progress tracking, HLS variant generation
+- `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU) with real-time progress tracking, HLS variant generation, thumbnail extraction
 - `models.py`: Pydantic v2 request models for login, match CRUD, and upload sessions
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
 - `js/utils.js`: pure utility functions (esc, formatDate, statusLabel, etc.)
 - `js/api.js`: auth, data loading, settings, transcode polling
-- `js/player.js`: AirPlay, Chromecast, HLS playback
+- `js/player.js`: AirPlay, Chromecast, HLS playback, position/speed memory, keyboard shortcuts, match navigation
 - `js/uploads.js`: chunked upload sessions, resume logic
 - `js/views.js`: season view, game view, match form, settings form, admin panel
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
@@ -105,4 +105,5 @@ After frontend changes, sanity-check:
 - Backend logic is organized into focused modules (`db.py`, `auth.py`, `settings.py`, `uploads.py`, `media.py`). Keep `server.py` as the route registration layer; add business logic to the appropriate module.
 - The `MATCHES_LOCK` is an `asyncio.Lock` — all callers that hold it must be async.
 - For UI feedback, use the toast system in `js/ui.js` (`showSuccess`, `showError`, `showInfo`) instead of `alert()`. Use `btnLoading()` for button loading states.
+- Playback state (position, speed) is persisted in localStorage by `js/player.js`. Keyboard shortcuts are YouTube-style and registered globally in `initKeyboardShortcuts()`. Thumbnails are auto-generated during transcoding and backfilled at startup for existing videos.
 - **After every code change**, update the relevant markdown files (`ROADMAP.md`, `AGENTS.md`, `CLAUDE.md`) to reflect what changed — new files, completed roadmap items, new conventions, updated guidance. Keep these files as the living source of truth.

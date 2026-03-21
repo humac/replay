@@ -325,6 +325,12 @@ async def transcode_video(
         hls_segment_duration=hls_segment_duration,
         hls_variant_presets=hls_variant_presets,
     )
+    thumb_path = videos_dir / match_id / "thumb.jpg"
+
+    async def _maybe_generate_thumb(mp4: Path):
+        """Generate a match thumbnail if one doesn't exist yet."""
+        if not thumb_path.exists():
+            await generate_thumbnail(mp4, thumb_path)
 
     def _on_progress(pct: int):
         _set_transcode_progress(match_id, slot, pct, "transcoding")
@@ -353,6 +359,7 @@ async def transcode_video(
                     src.unlink(missing_ok=True)
                     _set_transcode_progress(match_id, slot, 95, "generating HLS")
                     hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
+                    await _maybe_generate_thumb(dest)
                     clear_transcode_progress(match_id, slot)
                     await set_video_status(match_id, slot, "ready", dest.name)
                     logger.info("Remux done: %s/%s (hls=%s)", match_id, slot, hls_ok)
@@ -377,6 +384,7 @@ async def transcode_video(
                 src.unlink(missing_ok=True)
                 _set_transcode_progress(match_id, slot, 95, "generating HLS")
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
+                await _maybe_generate_thumb(dest)
                 clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
                 logger.info("GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
@@ -399,6 +407,7 @@ async def transcode_video(
                 src.unlink(missing_ok=True)
                 _set_transcode_progress(match_id, slot, 95, "generating HLS")
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
+                await _maybe_generate_thumb(dest)
                 clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
                 logger.info("CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
@@ -414,6 +423,78 @@ async def transcode_video(
         clear_transcode_progress(match_id, slot)
         await set_video_status(match_id, slot, "error", None)
         src.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Thumbnail generation
+# ---------------------------------------------------------------------------
+
+async def generate_thumbnail(
+    src: Path,
+    dest: Path,
+    *,
+    position_pct: float = 0.10,
+) -> bool:
+    """Extract a single JPEG frame from *src* at *position_pct* of duration.
+
+    Returns True on success, False on failure.
+    """
+    duration = await probe_duration(src)
+    if not duration or duration <= 0:
+        seek_s = 2.0
+    else:
+        seek_s = duration * position_pct
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    ok, err = await run_ffmpeg([
+        "ffmpeg", "-y",
+        "-ss", f"{seek_s:.2f}",
+        "-i", str(src),
+        "-frames:v", "1",
+        "-q:v", "3",
+        "-vf", "scale='min(640,iw)':-2",
+        str(dest),
+    ])
+    if not ok:
+        logger.warning("Thumbnail generation failed for %s: %s", src, err)
+        dest.unlink(missing_ok=True)
+    return ok
+
+
+async def backfill_thumbnails(
+    *,
+    videos_dir: Path,
+    load_matches,
+) -> dict:
+    """Generate thumbnails for matches that have ready videos but no thumb.jpg."""
+    matches = await load_matches()
+    generated = 0
+    skipped = 0
+
+    for match in matches:
+        match_id = match["id"]
+        thumb_path = videos_dir / match_id / "thumb.jpg"
+        if thumb_path.exists():
+            continue
+
+        # Find a ready video slot to extract from
+        vs = match.get("video_status", {})
+        videos = match.get("videos", {})
+        for slot in ("full", "first_half", "second_half"):
+            if vs.get(slot) == "ready" and videos.get(slot):
+                mp4_path = videos_dir / match_id / f"{slot}.mp4"
+                if mp4_path.is_file():
+                    ok = await generate_thumbnail(mp4_path, thumb_path)
+                    if ok:
+                        generated += 1
+                        logger.info("Backfilled thumbnail for %s from %s", match_id, slot)
+                    else:
+                        skipped += 1
+                    break
+        else:
+            skipped += 1
+
+    return {"generated": generated, "skipped": skipped, "total": len(matches)}
 
 
 # ---------------------------------------------------------------------------

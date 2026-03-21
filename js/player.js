@@ -1,4 +1,10 @@
-// Playback, AirPlay, and Chromecast methods.
+// Playback, AirPlay, Chromecast, and QoL methods.
+
+const POSITION_STORAGE_KEY = 'replay_playback_positions';
+const SPEED_STORAGE_KEY = 'replay_playback_speed';
+const POSITION_SAVE_INTERVAL = 3; // seconds between saves
+const POSITION_RESUME_THRESHOLD = 5; // ignore if < 5s from start
+const POSITION_END_MARGIN = 30; // ignore if < 30s from end
 
 export const playerMixin = {
     // ===== AIRPLAY =====
@@ -394,10 +400,15 @@ export const playerMixin = {
         const { hlsUrl, mp4Url } = this.getStreamUrls(matchId, slot);
 
         this.destroyHlsPlayer();
+        this._stopPositionTracking();
 
         document.querySelectorAll('.segment-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.slot === slot);
         });
+
+        // Apply saved speed preference
+        const savedSpeed = this._getSavedSpeed();
+        if (savedSpeed) videoEl.playbackRate = savedSpeed;
 
         videoEl.preload = 'auto';
         videoEl.onerror = null;
@@ -406,7 +417,24 @@ export const playerMixin = {
             placeholder.style.display = 'none';
             videoEl.style.display = 'block';
             videoEl.classList.add('active');
+
+            // Resume from saved position
+            const savedPos = this._getSavedPosition(matchId, slot);
+            if (savedPos && videoEl.duration &&
+                savedPos > POSITION_RESUME_THRESHOLD &&
+                savedPos < videoEl.duration - POSITION_END_MARGIN) {
+                videoEl.currentTime = savedPos;
+            }
+
+            // Start tracking position
+            this._startPositionTracking(matchId, slot);
         };
+
+        // Track speed changes
+        videoEl.onratechange = () => {
+            this._saveSpeed(videoEl.playbackRate);
+        };
+
         this.loadPlaybackSource(videoEl, hlsUrl, mp4Url, playRequestToken);
 
         if (this.castSession) {
@@ -414,5 +442,173 @@ export const playerMixin = {
         }
 
         this.updateRemotePlaybackNote();
+    },
+
+    // ===== PLAYBACK POSITION MEMORY =====
+    _getSavedPositions() {
+        try {
+            return JSON.parse(localStorage.getItem(POSITION_STORAGE_KEY) || '{}');
+        } catch { return {}; }
+    },
+
+    _getSavedPosition(matchId, slot) {
+        const positions = this._getSavedPositions();
+        return positions[`${matchId}/${slot}`] || null;
+    },
+
+    _savePosition(matchId, slot, time) {
+        const positions = this._getSavedPositions();
+        positions[`${matchId}/${slot}`] = Math.floor(time);
+        // Keep only the most recent 50 entries
+        const keys = Object.keys(positions);
+        if (keys.length > 50) {
+            delete positions[keys[0]];
+        }
+        try {
+            localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(positions));
+        } catch { /* storage full */ }
+    },
+
+    _clearSavedPosition(matchId, slot) {
+        const positions = this._getSavedPositions();
+        delete positions[`${matchId}/${slot}`];
+        try {
+            localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(positions));
+        } catch { /* ignore */ }
+    },
+
+    _startPositionTracking(matchId, slot) {
+        this._stopPositionTracking();
+        const videoEl = document.getElementById('game-video');
+        if (!videoEl) return;
+
+        this._positionInterval = setInterval(() => {
+            if (!videoEl.paused && videoEl.currentTime > 0) {
+                this._savePosition(matchId, slot, videoEl.currentTime);
+            }
+        }, POSITION_SAVE_INTERVAL * 1000);
+
+        // Clear position when video ends
+        this._onVideoEnded = () => {
+            this._clearSavedPosition(matchId, slot);
+        };
+        videoEl.addEventListener('ended', this._onVideoEnded);
+    },
+
+    _stopPositionTracking() {
+        if (this._positionInterval) {
+            clearInterval(this._positionInterval);
+            this._positionInterval = null;
+        }
+        const videoEl = document.getElementById('game-video');
+        if (videoEl && this._onVideoEnded) {
+            videoEl.removeEventListener('ended', this._onVideoEnded);
+            this._onVideoEnded = null;
+        }
+    },
+
+    // ===== SPEED PREFERENCE =====
+    _getSavedSpeed() {
+        try {
+            const speed = parseFloat(localStorage.getItem(SPEED_STORAGE_KEY));
+            return (speed && speed > 0 && speed <= 4) ? speed : null;
+        } catch { return null; }
+    },
+
+    _saveSpeed(rate) {
+        try {
+            localStorage.setItem(SPEED_STORAGE_KEY, String(rate));
+        } catch { /* ignore */ }
+    },
+
+    // ===== KEYBOARD SHORTCUTS =====
+    initKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // Only when game view is active
+            if (!this.activeMatchId) return;
+            // Don't intercept when typing in inputs
+            const tag = (e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+            const videoEl = document.getElementById('game-video');
+            if (!videoEl || videoEl.style.display === 'none') return;
+
+            switch (e.key) {
+                case ' ':
+                case 'k':
+                    e.preventDefault();
+                    videoEl.paused ? videoEl.play() : videoEl.pause();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    videoEl.currentTime = Math.max(0, videoEl.currentTime - (e.shiftKey ? 30 : 10));
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    videoEl.currentTime = Math.min(videoEl.duration || 0, videoEl.currentTime + (e.shiftKey ? 30 : 10));
+                    break;
+                case 'j':
+                    e.preventDefault();
+                    videoEl.currentTime = Math.max(0, videoEl.currentTime - 10);
+                    break;
+                case 'l':
+                    e.preventDefault();
+                    videoEl.currentTime = Math.min(videoEl.duration || 0, videoEl.currentTime + 10);
+                    break;
+                case 'f':
+                    e.preventDefault();
+                    if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                    } else {
+                        videoEl.requestFullscreen?.();
+                    }
+                    break;
+                case 'm':
+                    e.preventDefault();
+                    videoEl.muted = !videoEl.muted;
+                    break;
+                case ',':
+                    if (e.shiftKey) { // <
+                        e.preventDefault();
+                        videoEl.playbackRate = Math.max(0.25, videoEl.playbackRate - 0.25);
+                    }
+                    break;
+                case '.':
+                    if (e.shiftKey) { // >
+                        e.preventDefault();
+                        videoEl.playbackRate = Math.min(4, videoEl.playbackRate + 0.25);
+                    }
+                    break;
+                case '0':
+                case 'Home':
+                    e.preventDefault();
+                    videoEl.currentTime = 0;
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    videoEl.currentTime = videoEl.duration || 0;
+                    break;
+            }
+        });
+    },
+
+    // ===== NEXT/PREVIOUS MATCH =====
+    getAdjacentMatch(direction) {
+        if (!this.activeMatchId) return null;
+        const sorted = [...this.matches].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        const idx = sorted.findIndex(m => m.id === this.activeMatchId);
+        if (idx < 0) return null;
+        const targetIdx = idx + direction;
+        return (targetIdx >= 0 && targetIdx < sorted.length) ? sorted[targetIdx] : null;
+    },
+
+    goToNextMatch() {
+        const match = this.getAdjacentMatch(1);
+        if (match) this.openMatch(match.id);
+    },
+
+    goToPreviousMatch() {
+        const match = this.getAdjacentMatch(-1);
+        if (match) this.openMatch(match.id);
     },
 };

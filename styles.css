@@ -473,13 +473,36 @@ button {
     background: var(--bg-panel);
     border: 1px solid var(--border-light);
     border-radius: 12px;
-    padding: 2rem;
     cursor: pointer;
     overflow: hidden;
     transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s ease;
-    min-height: 260px;
     display: flex;
     flex-direction: column;
+}
+
+.match-card:not(.has-thumb) {
+    padding: 2rem;
+    min-height: 260px;
+}
+
+.card-thumb {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    display: block;
+}
+
+.card-body {
+    position: relative;
+    padding: 1.25rem 1.5rem 1.5rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-body > * {
+    position: relative;
+    z-index: 1;
 }
 
 .match-card:hover {
@@ -1029,6 +1052,32 @@ button {
     align-items: center;
     gap: 1rem;
     margin-bottom: 2rem;
+}
+
+.game-nav-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.match-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1px solid var(--border-light);
+    background: var(--bg-panel);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.match-nav-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(23, 113, 201, 0.1);
 }
 
 .sidebar {

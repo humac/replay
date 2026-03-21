@@ -48,6 +48,7 @@ const app = {
         this.initializeHistory();
         this.initAirPlay();
         this.initCast();
+        this.initKeyboardShortcuts();
         this.checkTranscodePolling();
     },
 
@@ -134,6 +135,14 @@ const app = {
     },
 
     teardownGameView() {
+        // Save final position before tearing down
+        if (this.activeMatchId && this.activeSlot) {
+            const videoEl = document.getElementById('game-video');
+            if (videoEl && videoEl.currentTime > 0) {
+                this._savePosition(this.activeMatchId, this.activeSlot, videoEl.currentTime);
+            }
+        }
+        this._stopPositionTracking();
         this.activeMatchId = null;
         this.activeSlot = null;
         this.destroyHlsPlayer();

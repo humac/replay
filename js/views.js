@@ -699,8 +699,17 @@ export const viewsMixin = {
                 : '';
 
             const isTranscoding = this.matchTranscoding(m);
+            if (m.has_thumbnail) card.classList.add('has-thumb');
+
+            const thumbHtml = m.has_thumbnail
+                ? `<img src="/api/matches/${m.id}/thumbnail" class="card-thumb" alt="" loading="lazy">`
+                : '';
+            const bodyOpen = m.has_thumbnail ? '<div class="card-body">' : '';
+            const bodyClose = m.has_thumbnail ? '</div>' : '';
 
             card.innerHTML = `
+                ${thumbHtml}
+                ${bodyOpen}
                 <div class="card-bg"></div>
                 <div class="card-matchup">
                     <div class="card-team-col">
@@ -731,6 +740,7 @@ export const viewsMixin = {
                     ${isTranscoding ? `<span class="badge processing">${this.matchProgressLabel(m)}</span>` : ''}
                 </div>
                 <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
+                ${bodyClose}
                 ${this.authToken ? `
                 <button class="match-card-edit-btn" onclick="app.triggerEdit(event, '${m.id}')" title="Edit">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -763,6 +773,12 @@ export const viewsMixin = {
         this.activeMatchId = matchId;
         const gameEditBtn = document.getElementById('game-edit-btn');
         if (gameEditBtn) gameEditBtn.style.display = this.authToken ? 'inline-flex' : 'none';
+
+        // Update prev/next nav buttons
+        const prevBtn = document.getElementById('prev-match-btn');
+        const nextBtn = document.getElementById('next-match-btn');
+        if (prevBtn) prevBtn.style.display = this.getAdjacentMatch(-1) ? 'inline-flex' : 'none';
+        if (nextBtn) nextBtn.style.display = this.getAdjacentMatch(1) ? 'inline-flex' : 'none';
 
         document.getElementById('active-game-date').textContent =
             this.formatDate(match.date) + (match.time ? ` \u00b7 ${match.time}` : '');

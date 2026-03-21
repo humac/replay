@@ -121,14 +121,15 @@ Added `js/ui.js` with a toast notification system (success/error/info) and `btnL
 **3.4 Match search and pagination** ✅
 Added client-side instant search filtering in the season view — search bar filters matches by team name, location, or date as you type. Server-side `search_matches()` in `db.py` supports `?q=&page=&limit=` query params on `GET /api/matches` for future use; existing no-param calls return the full list (backward-compatible).
 
-**3.5 Thumbnail generation**
-Generate a thumbnail image (e.g. frame at 10% duration) during transcoding for each match. Display these on match cards in the season view instead of relying solely on team logos.
+**3.5 Thumbnail generation** ✅
+During transcoding, a JPEG thumbnail is extracted at 10% of video duration (scaled to max 640px width) and saved as `thumb.jpg` in the match directory. The first slot to complete generates the thumbnail; subsequent slots skip if one exists. Thumbnails are served via `GET /api/matches/{id}/thumbnail` and displayed as a subtle background image on match cards. Match data includes `has_thumbnail` computed at load time.
 
-**3.6 Playback quality-of-life**
-- Remember playback position
-- Remember speed preference
-- Keyboard shortcuts for common actions
-- Next/previous match navigation
+**3.6 Playback quality-of-life** ✅
+
+- **Resume playback**: position saved to localStorage every 3s, restored on re-open (skipped if near start/end or video finished)
+- **Speed memory**: playback rate persisted in localStorage, applied automatically on next video load
+- **Keyboard shortcuts**: Space/K (play/pause), J/Left (back 10s), L/Right (forward 10s), Shift+Left/Right (30s), F (fullscreen), M (mute), < > (speed), 0/Home/End (seek)
+- **Match navigation**: prev/next buttons in game view header, based on date-sorted match order
 
 **3.7 Multi-user support**
 The app currently supports a single admin account. For team use, consider adding:
