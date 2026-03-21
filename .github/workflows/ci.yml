@@ -29,4 +29,8 @@ jobs:
           python3 -m py_compile uploads.py
           python3 -m py_compile log.py
       - name: Run tests
+        env:
+          REPLAY_DATA_DIR: ${{ runner.temp }}/replay_data
+          ADMIN_USER: admin
+          ADMIN_PASS: admin
         run: pytest tests/ -v
