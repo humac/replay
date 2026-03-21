@@ -2458,3 +2458,16 @@ button {
     background: rgba(255, 255, 255, 0.85);
     border-bottom-color: rgba(0,0,0,0.08);
 }
+
+[data-theme="light"] .season-team-stats {
+    background:
+        radial-gradient(circle at top right, rgba(23, 113, 201, 0.08), transparent 32%),
+        var(--bg-panel);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+[data-theme="light"] .team-stat-card {
+    background: var(--bg-panel);
+    border-color: rgba(0,0,0,0.08);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
