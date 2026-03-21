@@ -10,6 +10,10 @@ Additional guidance for Claude in this repo:
 - When fixing public-domain behavior, consider cache and proxy behavior before assuming application logic is broken.
 - When adding or modifying API endpoints, update Pydantic models in `models.py` and add tests in `tests/`.
 - Match URLs use slug-based deep links (`/match/{slug}`, `/match/{slug}/first-half`).
+- When setting video status to `"error"`, always pass `error_info` dict with `error_code`, `reason`, `details` to `_set_video_status()` so errors are persisted to the `video_errors` table.
+- Admin recovery endpoints live under `/api/admin/matches/{id}/...` — retry, regenerate-hls, verify, errors.
+- Use the `lifespan` async context manager for startup/shutdown tasks (not `@app.on_event`).
+- Deployment and troubleshooting docs live in `docs/DEPLOYMENT.md` and `docs/TROUBLESHOOTING.md`.
 
 After every code change, update the relevant markdown files to stay in sync:
 
