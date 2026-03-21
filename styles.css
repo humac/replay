@@ -2323,6 +2323,7 @@ button {
     cursor: pointer;
     color: var(--text-muted);
     transition: color 0.2s, border-color 0.2s;
+    margin-right: 0.75rem;
 }
 
 .nav-icon-btn:hover {
