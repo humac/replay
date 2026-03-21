@@ -143,25 +143,26 @@ Three roles: **admin** (full access + user management + settings), **uploader** 
 
 ---
 
-## Milestone 4 — Media Hardening, Features & Ops
+## Milestone 4 — Media Hardening & Ops ✅ COMPLETE
 
-**Goal:** make the media pipeline recoverable, add advanced features, and harden for production.
+**Goal:** make the media pipeline recoverable, expand admin diagnostics, and harden for production.
 
 ### Media pipeline hardening
 
-**4.1 Formalize processing state machine**
-Define explicit states: created → uploading → uploaded → queued → processing → ready / failed. Persist failure reasons so admins can diagnose without inspecting files.
+**4.1 Formalize processing state machine** ✅
+Kept existing `none/transcoding/ready/error` states (adding uploading/queued would require too many changes for marginal benefit). Added `video_errors` table (migration v3) to persist failure reasons with error codes: `disk_full`, `probe_failed`, `all_methods_failed`, `unexpected_error`. Errors are logged automatically during transcode failures and exposed via `GET /api/admin/matches/{id}/errors`.
 
-**4.2 Retry and recovery actions**
-- Retry failed transcode from the UI or API
-- Regenerate HLS for an existing MP4
-- Clean orphaned partial uploads
-- Verify asset integrity per match
+**4.2 Retry and recovery actions** ✅
 
-**4.3 Expand admin diagnostics**
-Surface active jobs, stale sessions, failed items, missing HLS assets, and disk usage summaries in the admin panel.
+- **Retry failed transcode**: `POST /api/admin/matches/{id}/slots/{slot}/retry` — checks for raw upload or MP4, resets to "transcoding" and kicks off background task
+- **Regenerate HLS**: `POST /api/admin/matches/{id}/slots/{slot}/regenerate-hls` — rebuilds HLS from existing MP4 without re-transcoding
+- **Verify asset integrity**: `GET /api/admin/matches/{id}/verify` — per-slot report of MP4 existence/size, HLS completeness, missing variants
+- **Clean orphaned files**: Enhanced `POST /api/uploads/sessions/cleanup` now also removes orphaned `raw_*.tmp` files and expired completed sessions (>7 days)
 
-### Feature enhancements
+**4.3 Expand admin diagnostics** ✅
+Enriched `GET /api/admin/diagnostics` with: `failed_slots` (count + details), `active_jobs` (with progress/stage/elapsed), `recent_errors` (last 10 from DB), `disk_usage_by_match` (top 5). Admin panel UI shows active transcode jobs with progress bars, failed slots with Retry/Verify buttons, and recent error history.
+
+### Feature enhancements (deferred to M5)
 
 **4.4 Video clipping / highlights**
 Allow admins to mark time ranges within a match video as "highlights" or "clips." Generate sub-clips on the backend and display them alongside the full match.
@@ -180,19 +181,17 @@ Replace filesystem storage with an optional S3-compatible backend for deployment
 
 ### Operational readiness
 
-**4.9 Database backup and export**
-Add an admin endpoint to export the SQLite database and match metadata as a downloadable archive. Useful for migration, disaster recovery, or switching to a different storage backend.
+**4.9 Database backup and export** ✅
+`POST /api/admin/export-database` returns the SQLite file as a downloadable attachment with timestamped filename. Export button added to admin panel.
 
-**4.10 Deployment documentation**
-- CPU-only vs GPU deployment paths
-- Upgrade/migration guide
-- Troubleshooting guide for uploads/transcodes/HLS
-- Backup and restore procedures
+**4.10 Deployment documentation** ✅
+Created `docs/DEPLOYMENT.md` (Docker/bare-metal setup, env vars reference, reverse proxy, storage layout, backup, resource requirements) and `docs/TROUBLESHOOTING.md` (transcode failures, upload issues, HLS playback, GPU setup, database recovery).
 
-### Exit criteria
-- Failed processing can be retried from the UI
-- Media state is diagnosable without inspecting files manually
-- Maintenance tasks are documented
+### M4 exit criteria — all met
+
+- ✅ Failed processing can be retried from the UI (retry button + API endpoint)
+- ✅ Media state is diagnosable without inspecting files manually (error history, asset verification, enriched diagnostics)
+- ✅ Maintenance tasks are documented (deployment + troubleshooting guides)
 
 ---
 

@@ -353,7 +353,7 @@ export const viewsMixin = {
         const localList = document.getElementById('local-upload-sessions-list');
         if (!this.diagnostics || !diagnosticsGrid || !serverList || !localList) return;
 
-        const { counts, disk, upload_limits, upload_sessions, hls } = this.diagnostics;
+        const { counts, disk, upload_limits, upload_sessions, hls, failed_slots, active_jobs, recent_errors } = this.diagnostics;
         diagnosticsGrid.innerHTML = `
             <div class="diagnostic-card">
                 <span class="diagnostic-label">Free Disk</span>
@@ -370,6 +370,11 @@ export const viewsMixin = {
                 <strong class="diagnostic-value">${counts.matches}</strong>
                 <span class="diagnostic-note">${counts.ready_slots} ready slots, ${counts.transcoding_slots} processing</span>
             </div>
+            <div class="diagnostic-card ${counts.failed_slots > 0 ? 'danger' : ''}">
+                <span class="diagnostic-label">Failed Slots</span>
+                <strong class="diagnostic-value">${counts.failed_slots}</strong>
+                <span class="diagnostic-note">${counts.failed_slots > 0 ? 'Slots need attention — retry or inspect errors below.' : 'No failed slots.'}</span>
+            </div>
             <div class="diagnostic-card">
                 <span class="diagnostic-label">HLS Backfill</span>
                 <strong class="diagnostic-value">${counts.hls_missing_slots}</strong>
@@ -381,6 +386,79 @@ export const viewsMixin = {
                 <span class="diagnostic-note">Session timeout after ${this.formatDuration(upload_limits.stale_upload_session_seconds)}</span>
             </div>
         `;
+
+        // Active jobs
+        const jobsSection = document.getElementById('active-jobs-section');
+        const jobsList = document.getElementById('active-jobs-list');
+        if (jobsSection && jobsList) {
+            if (active_jobs && active_jobs.length) {
+                jobsSection.style.display = '';
+                jobsList.innerHTML = active_jobs.map(j => `
+                    <div class="session-item">
+                        <div class="session-main">
+                            <div class="session-title-row">
+                                <strong>${this.esc(j.home_team)} vs ${this.esc(j.away_team)}</strong>
+                                <span class="status-pill transcoding">${this.esc(j.stage || 'transcoding')}</span>
+                            </div>
+                            <div class="session-meta">${this.slotLabel(j.slot)}${j.pct != null ? ' • ' + j.pct + '%' : ''}${j.elapsed_s != null ? ' • ' + this.formatAge(j.elapsed_s) : ''}</div>
+                            ${j.pct != null ? `<div class="progress-bar-container"><div class="progress-bar" style="width:${j.pct}%"></div></div>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                jobsSection.style.display = 'none';
+            }
+        }
+
+        // Failed slots
+        const failedSection = document.getElementById('failed-slots-section');
+        const failedList = document.getElementById('failed-slots-list');
+        if (failedSection && failedList) {
+            if (failed_slots && failed_slots.length) {
+                failedSection.style.display = '';
+                failedList.innerHTML = failed_slots.map(f => `
+                    <div class="session-item">
+                        <div class="session-main">
+                            <div class="session-title-row">
+                                <strong>${this.esc(f.home_team)} vs ${this.esc(f.away_team)}</strong>
+                                <span class="status-pill error">Error</span>
+                            </div>
+                            <div class="session-meta">${this.slotLabel(f.slot)} • ${this.esc(f.match_id)}</div>
+                        </div>
+                        <div class="session-actions">
+                            <button type="button" class="mini-action-btn" onclick="app.retryTranscode('${this.esc(f.match_id)}', '${this.esc(f.slot)}')">Retry</button>
+                            <button type="button" class="mini-action-btn" onclick="app.verifyAssets('${this.esc(f.match_id)}')">Verify</button>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                failedSection.style.display = 'none';
+            }
+        }
+
+        // Recent errors
+        const errorsSection = document.getElementById('recent-errors-section');
+        const errorsList = document.getElementById('recent-errors-list');
+        if (errorsSection && errorsList) {
+            if (recent_errors && recent_errors.length) {
+                errorsSection.style.display = '';
+                errorsList.innerHTML = recent_errors.map(e => `
+                    <div class="session-item">
+                        <div class="session-main">
+                            <div class="session-title-row">
+                                <strong>${this.esc(e.match_id)}</strong>
+                                <span class="status-pill error">${this.esc(e.error_code)}</span>
+                            </div>
+                            <div class="session-meta">${this.slotLabel(e.slot)} • ${this.esc(e.reason)}</div>
+                            ${e.details ? `<div class="session-meta error-details">${this.esc(e.details).substring(0, 200)}</div>` : ''}
+                            <div class="session-meta">${this.esc(e.created_at)}</div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                errorsSection.style.display = 'none';
+            }
+        }
 
         if (!upload_sessions.length) {
             serverList.innerHTML = '<div class="session-empty">No recent upload sessions.</div>';
@@ -439,6 +517,90 @@ export const viewsMixin = {
             const data = await resp.json();
             this.showSuccess(`Cleaned ${data.count} stale upload session${data.count === 1 ? '' : 's'}.`);
             await this.refreshAdminDiagnostics();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async retryTranscode(matchId, slot) {
+        if (!confirm(`Retry transcoding ${slot} for this match?`)) return;
+        try {
+            const resp = await fetch(`/api/admin/matches/${matchId}/slots/${slot}/retry`, {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Retry failed');
+            }
+            this.showSuccess(`Retry started for ${slot}.`);
+            await this.refreshAdminDiagnostics();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async verifyAssets(matchId) {
+        try {
+            const resp = await fetch(`/api/admin/matches/${matchId}/verify`, {
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Verification failed');
+            const data = await resp.json();
+            const lines = Object.entries(data.slots).map(([slot, info]) => {
+                const parts = [];
+                parts.push(`${slot}: status=${info.status}`);
+                parts.push(`mp4=${info.mp4_exists ? this.formatBytes(info.mp4_size) : 'missing'}`);
+                parts.push(`hls=${info.hls_complete ? 'ok' : (info.hls_master_exists ? 'incomplete' : 'missing')}`);
+                if (info.missing_variants && info.missing_variants.length) {
+                    parts.push(`missing: ${info.missing_variants.join(', ')}`);
+                }
+                return parts.join(' • ');
+            });
+            alert('Asset Verification:\n\n' + (lines.length ? lines.join('\n') : 'No slots found.'));
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async regenerateHls(matchId, slot) {
+        if (!confirm(`Regenerate HLS for ${slot}?`)) return;
+        try {
+            const resp = await fetch(`/api/admin/matches/${matchId}/slots/${slot}/regenerate-hls`, {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'HLS regeneration failed');
+            }
+            this.showSuccess(`HLS regenerated for ${slot}.`);
+            await this.refreshAdminDiagnostics();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async exportDatabase() {
+        try {
+            const resp = await fetch('/api/admin/export-database', {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Export failed');
+            const blob = await resp.blob();
+            const disposition = resp.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="(.+?)"/);
+            const filename = match ? match[1] : 'replay-backup.db';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            this.showSuccess('Database exported.');
         } catch (error) {
             this.showError(error.message);
         }

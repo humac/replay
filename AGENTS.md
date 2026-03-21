@@ -11,6 +11,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - Testing: `pytest` + `pytest-asyncio` + `httpx` (see `tests/`)
 - CI: GitHub Actions (`.github/workflows/ci.yml`)
 - Runtime: direct Python or Docker Compose
+- Docs: `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`
 
 ## Key Files
 
@@ -31,7 +32,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling
-- `tests/`: pytest test suite (auth, matches, uploads, settings)
+- `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin)
 - `docker-compose.yml`: local container runtime
 - `.env.example`: deployment configuration template
 
@@ -107,4 +108,6 @@ After frontend changes, sanity-check:
 - The `MATCHES_LOCK` is an `asyncio.Lock` — all callers that hold it must be async.
 - For UI feedback, use the toast system in `js/ui.js` (`showSuccess`, `showError`, `showInfo`) instead of `alert()`. Use `btnLoading()` for button loading states.
 - Playback state (position, speed) is persisted in localStorage by `js/player.js`. Keyboard shortcuts are YouTube-style and registered globally in `initKeyboardShortcuts()`. Thumbnails are auto-generated during transcoding and backfilled at startup for existing videos.
+- Video errors are persisted in the `video_errors` table. When setting status to `"error"`, pass `error_info={"error_code": ..., "reason": ..., "details": ...}` to `_set_video_status()`.
+- Admin recovery endpoints: retry transcode (`POST .../retry`), regenerate HLS (`POST .../regenerate-hls`), verify assets (`GET .../verify`), export DB (`POST /api/admin/export-database`).
 - **After every code change**, update the relevant markdown files (`ROADMAP.md`, `AGENTS.md`, `CLAUDE.md`) to reflect what changed — new files, completed roadmap items, new conventions, updated guidance. Keep these files as the living source of truth.

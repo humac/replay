@@ -140,8 +140,20 @@ async def _save_matches(matches: list[dict]):
         _db.save_matches_unlocked(matches)
 
 
-async def _set_video_status(match_id: str, slot: str, status: str, filename: str | None):
-    """Persist video status + filename to the database."""
+async def _set_video_status(
+    match_id: str,
+    slot: str,
+    status: str,
+    filename: str | None,
+    *,
+    error_info: dict | None = None,
+):
+    """Persist video status + filename to the database.
+
+    When *status* is ``"error"`` and *error_info* is provided (with keys
+    ``error_code``, ``reason``, ``details``), the error is also logged to the
+    ``video_errors`` table for admin diagnostics.
+    """
     async with MATCHES_LOCK:
         matches = _db.load_matches_unlocked()
         match = _db.find_match(matches, match_id)
@@ -155,6 +167,15 @@ async def _set_video_status(match_id: str, slot: str, status: str, filename: str
         elif status == "error":
             match["videos"][slot] = None
         _db.save_matches_unlocked(matches)
+
+    if status == "error" and error_info:
+        _db.log_video_error(
+            match_id,
+            slot,
+            error_info.get("error_code", "unknown"),
+            error_info.get("reason", "Unknown error"),
+            error_info.get("details", ""),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +310,11 @@ async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
                     "Insufficient disk space to transcode %s/%s: need %d, have %d",
                     match_id, slot, required, stats["free_bytes"],
                 )
-                await _set_video_status(match_id, slot, "error", None)
+                await _set_video_status(match_id, slot, "error", None, error_info={
+                    "error_code": "disk_full",
+                    "reason": "Insufficient disk space to transcode",
+                    "details": f"Need {required} bytes, have {stats['free_bytes']} bytes",
+                })
                 return
     except Exception as exc:
         logger.warning("Disk space check failed before transcode %s/%s: %s", match_id, slot, exc)
@@ -578,15 +603,56 @@ async def admin_diagnostics(request: Request):
         if status == "ready"
     )
 
+    # Failed slots
+    failed_slots = []
+    for match in matches:
+        vs = match.get("video_status") or {}
+        for s, st in vs.items():
+            if st == "error":
+                failed_slots.append({"match_id": match["id"], "slot": s,
+                                      "home_team": match.get("home_team", ""),
+                                      "away_team": match.get("away_team", "")})
+
+    # Active transcode jobs
+    active_jobs = []
+    for match in matches:
+        vs = match.get("video_status") or {}
+        for s, st in vs.items():
+            if st == "transcoding":
+                prog = _media.get_transcode_progress(match["id"], s)
+                job = {"match_id": match["id"], "slot": s,
+                       "home_team": match.get("home_team", ""),
+                       "away_team": match.get("away_team", "")}
+                if prog:
+                    job.update({"pct": prog.get("pct", 0), "stage": prog.get("stage", ""),
+                                "elapsed_s": round(time.time() - prog.get("started_at", time.time()), 1)})
+                active_jobs.append(job)
+
+    # Recent errors from DB
+    recent_errors = _db.get_video_errors(limit=10)
+
+    # Disk usage by match (top 5)
+    disk_by_match = []
+    if VIDEOS_DIR.is_dir():
+        for d in VIDEOS_DIR.iterdir():
+            if d.is_dir():
+                total_size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                if total_size > 0:
+                    disk_by_match.append({"match_id": d.name, "bytes": total_size})
+        disk_by_match.sort(key=lambda x: x["bytes"], reverse=True)
+        disk_by_match = disk_by_match[:5]
+
     return {
         "counts": {
             "matches": len(matches),
             "transcoding_slots": transcoding_count,
             "ready_slots": ready_count,
+            "failed_slots": len(failed_slots),
             "hls_missing_slots": len(hls_missing_slots),
             "active_tokens": _auth.active_token_count(),
         },
         "disk": _disk_stats_payload(),
+        "disk_usage_by_match": disk_by_match,
         "upload_limits": {
             "max_upload_size_bytes": MAX_UPLOAD_SIZE_BYTES,
             "chunk_size_bytes": UPLOAD_CHUNK_SIZE_BYTES,
@@ -599,6 +665,9 @@ async def admin_diagnostics(request: Request):
             "backfill_running": HLS_BACKFILL_LOCK.locked(),
         },
         "upload_sessions": upload_sessions,
+        "failed_slots": failed_slots,
+        "active_jobs": active_jobs,
+        "recent_errors": recent_errors,
     }
 
 
@@ -607,6 +676,109 @@ async def admin_backfill_hls(request: Request):
     _auth.require_role(request, "admin")
     result = await _backfill_hls_for_existing_videos()
     return {"ok": True, **result}
+
+
+@app.get("/api/admin/matches/{match_id}/errors")
+async def admin_match_errors(match_id: str, request: Request):
+    _auth.require_role(request, "admin")
+    errors = _db.get_video_errors(match_id=match_id, limit=50)
+    return {"errors": errors}
+
+
+@app.post("/api/admin/matches/{match_id}/slots/{slot}/retry")
+async def admin_retry_transcode(match_id: str, slot: str, request: Request):
+    """Retry a failed transcode from the existing MP4 or raw upload file."""
+    _auth.require_role(request, "admin")
+    if slot not in ("full", "first_half", "second_half"):
+        raise HTTPException(400, "Invalid slot")
+
+    match = _db.get_match_by_id(match_id)
+    if not match:
+        raise HTTPException(404, "Match not found")
+
+    status = _get_video_status(match, slot)
+    if status != "error":
+        raise HTTPException(409, f"Slot status is '{status}', must be 'error' to retry")
+
+    vid_dir = VIDEOS_DIR / match_id
+    final_path = vid_dir / f"{slot}.mp4"
+
+    # Prefer raw upload file if it still exists; otherwise use the MP4
+    src = None
+    for ext in (".mp4", ".mkv"):
+        raw = vid_dir / f"{slot}_raw{ext}"
+        if raw.is_file():
+            src = raw
+            break
+    if src is None and final_path.is_file():
+        # Re-transcode from existing MP4 (e.g. if remux failed but file exists)
+        src = final_path
+
+    if src is None:
+        raise HTTPException(
+            404,
+            "No source file found — neither raw upload nor MP4 exists on disk",
+        )
+
+    await _set_video_status(match_id, slot, "transcoding", None)
+    asyncio.create_task(_transcode_video(match_id, slot, src, final_path))
+    return {"ok": True, "status": "transcoding", "source": src.name}
+
+
+@app.post("/api/admin/matches/{match_id}/slots/{slot}/regenerate-hls")
+async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
+    """Regenerate HLS assets from an existing MP4 without re-transcoding."""
+    _auth.require_role(request, "admin")
+    if slot not in ("full", "first_half", "second_half"):
+        raise HTTPException(400, "Invalid slot")
+
+    match = _db.get_match_by_id(match_id)
+    if not match:
+        raise HTTPException(404, "Match not found")
+
+    mp4_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+    if not mp4_path.is_file():
+        raise HTTPException(404, "MP4 file not found on disk")
+
+    ok = await _build_hls_assets(mp4_path, match_id, slot)
+    if not ok:
+        raise HTTPException(500, "HLS generation failed")
+    return {"ok": True, "slot": slot}
+
+
+@app.get("/api/admin/matches/{match_id}/verify")
+async def admin_verify_assets(match_id: str, request: Request):
+    """Check asset integrity for all slots in a match."""
+    _auth.require_role(request, "admin")
+    match = _db.get_match_by_id(match_id)
+    if not match:
+        raise HTTPException(404, "Match not found")
+
+    slots = {}
+    for slot in ("full", "first_half", "second_half"):
+        status = _get_video_status(match, slot)
+        if status == "none":
+            continue
+        report = _media.verify_slot_assets(VIDEOS_DIR, match_id, slot)
+        report["status"] = status
+        slots[slot] = report
+    return {"match_id": match_id, "slots": slots}
+
+
+@app.post("/api/admin/export-database")
+async def admin_export_database(request: Request):
+    """Download the SQLite database file as a backup."""
+    _auth.require_role(request, "admin")
+    if not DB_FILE.is_file():
+        raise HTTPException(404, "Database file not found")
+    date_str = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    return FileResponse(
+        str(DB_FILE),
+        media_type="application/x-sqlite3",
+        headers={
+            "Content-Disposition": f'attachment; filename="replay-backup-{date_str}.db"',
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -871,7 +1043,15 @@ async def cancel_upload_session(session_id: str, request: Request):
 async def cleanup_upload_sessions(request: Request):
     _auth.require_role(request, "admin")
     cleaned = _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
-    return {"ok": True, "cleaned_session_ids": cleaned, "count": len(cleaned)}
+    expired = _uploads.cleanup_old_completed_sessions()
+    orphaned = _uploads.cleanup_orphaned_raw_files(VIDEOS_DIR)
+    return {
+        "ok": True,
+        "cleaned_session_ids": cleaned,
+        "count": len(cleaned),
+        "expired_sessions": expired,
+        "orphaned_files_removed": len(orphaned),
+    }
 
 
 @app.post("/api/uploads/sessions/{session_id}/complete")

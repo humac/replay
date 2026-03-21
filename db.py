@@ -160,7 +160,27 @@ def _migrate_v2(conn: sqlite3.Connection):
     )
 
 
-_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2]
+def _migrate_v3(conn: sqlite3.Connection):
+    """Add video_errors table for persisting transcode failure details."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS video_errors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            slot TEXT NOT NULL,
+            error_code TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            details TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_video_errors_match ON video_errors(match_id)"
+    )
+
+
+_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3]
 
 
 def _run_migrations(conn: sqlite3.Connection):
@@ -445,3 +465,66 @@ def delete_user(user_id: str) -> bool:
         cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return cursor.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Video error helpers
+# ---------------------------------------------------------------------------
+
+def log_video_error(
+    match_id: str,
+    slot: str,
+    error_code: str,
+    reason: str,
+    details: str = "",
+) -> int:
+    """Insert a video error record and return its ID."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with connect() as conn:
+        cursor = conn.execute(
+            "INSERT INTO video_errors (match_id, slot, error_code, reason, details, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (match_id, slot, error_code, reason, details, now),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_video_errors(
+    match_id: str | None = None,
+    slot: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Return recent video errors, optionally filtered by match/slot."""
+    where = []
+    params: list = []
+    if match_id:
+        where.append("match_id = ?")
+        params.append(match_id)
+    if slot:
+        where.append("slot = ?")
+        params.append(slot)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    params.append(limit)
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM video_errors{where_sql} ORDER BY created_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "match_id": r["match_id"],
+                "slot": r["slot"],
+                "error_code": r["error_code"],
+                "reason": r["reason"],
+                "details": r["details"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+
+def count_video_errors() -> int:
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM video_errors").fetchone()[0]

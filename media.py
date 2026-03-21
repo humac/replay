@@ -319,6 +319,9 @@ async def transcode_video(
       1. If input is already H.264 (+AAC), remux (stream-copy) -- fastest.
       2. Try GPU transcode with h264_nvenc.
       3. Fall back to CPU libx264.
+
+    On failure, *set_video_status* is called with error_info dict containing
+    ``error_code``, ``reason``, and ``details`` keys.
     """
     hls_kwargs = dict(
         videos_dir=videos_dir,
@@ -342,10 +345,23 @@ async def transcode_video(
             v_codec, a_codec = await probe_codecs(src)
             duration_s = await probe_duration(src)
             logger.info("Probe %s/%s: video=%s audio=%s duration=%s", match_id, slot, v_codec, a_codec, duration_s)
+
+            if v_codec is None:
+                logger.error("Probe failed for %s/%s — cannot determine codecs", match_id, slot)
+                clear_transcode_progress(match_id, slot)
+                await set_video_status(match_id, slot, "error", None, error_info={
+                    "error_code": "probe_failed",
+                    "reason": "Could not determine video codecs",
+                    "details": f"ffprobe returned no video codec for {src.name}",
+                })
+                src.unlink(missing_ok=True)
+                return
+
             shutil.rmtree(slot_hls_dir(videos_dir, match_id, slot), ignore_errors=True)
             dest.unlink(missing_ok=True)
 
             # --- 1. Remux if already browser-friendly ---
+            remux_err = ""
             if v_codec == "h264" and a_codec in ("aac", None):
                 logger.info("Remuxing (stream copy) %s/%s", match_id, slot)
                 _set_transcode_progress(match_id, slot, 0, "remuxing")
@@ -364,12 +380,13 @@ async def transcode_video(
                     await set_video_status(match_id, slot, "ready", dest.name)
                     logger.info("Remux done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                     return
+                remux_err = err
                 logger.warning("Remux failed, will transcode: %s", err)
 
             # --- 2. GPU transcode (NVENC) ---
             logger.info("GPU transcode %s/%s", match_id, slot)
             _set_transcode_progress(match_id, slot, 0, "transcoding (GPU)")
-            ok, err = await run_ffmpeg(
+            ok, gpu_err = await run_ffmpeg(
                 ["ffmpeg", "-y",
                  "-hwaccel", "cuda",
                  "-i", str(src),
@@ -389,12 +406,12 @@ async def transcode_video(
                 await set_video_status(match_id, slot, "ready", dest.name)
                 logger.info("GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                 return
-            logger.warning("GPU transcode failed, falling back to CPU: %s", err)
+            logger.warning("GPU transcode failed, falling back to CPU: %s", gpu_err)
 
             # --- 3. CPU fallback (libx264) ---
             logger.info("CPU transcode %s/%s", match_id, slot)
             _set_transcode_progress(match_id, slot, 0, "transcoding (CPU)")
-            ok, err = await run_ffmpeg(
+            ok, cpu_err = await run_ffmpeg(
                 ["ffmpeg", "-y",
                  "-i", str(src),
                  "-c:v", "libx264", "-preset", "medium", "-crf", "23",
@@ -413,15 +430,28 @@ async def transcode_video(
                 logger.info("CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                 return
 
-            logger.error("All transcode methods failed %s/%s: %s", match_id, slot, err)
+            logger.error("All transcode methods failed %s/%s: %s", match_id, slot, cpu_err)
             clear_transcode_progress(match_id, slot)
-            await set_video_status(match_id, slot, "error", None)
+            details_parts = []
+            if remux_err:
+                details_parts.append(f"remux: {remux_err}")
+            details_parts.append(f"gpu: {gpu_err}")
+            details_parts.append(f"cpu: {cpu_err}")
+            await set_video_status(match_id, slot, "error", None, error_info={
+                "error_code": "all_methods_failed",
+                "reason": "All transcode methods (remux/GPU/CPU) failed",
+                "details": " | ".join(details_parts),
+            })
             src.unlink(missing_ok=True)
 
     except Exception as exc:
         logger.exception("Transcode error %s/%s: %s", match_id, slot, exc)
         clear_transcode_progress(match_id, slot)
-        await set_video_status(match_id, slot, "error", None)
+        await set_video_status(match_id, slot, "error", None, error_info={
+            "error_code": "unexpected_error",
+            "reason": str(exc),
+            "details": "",
+        })
         src.unlink(missing_ok=True)
 
 
@@ -495,6 +525,45 @@ async def backfill_thumbnails(
             skipped += 1
 
     return {"generated": generated, "skipped": skipped, "total": len(matches)}
+
+
+# ---------------------------------------------------------------------------
+# Asset integrity verification
+# ---------------------------------------------------------------------------
+
+def verify_slot_assets(
+    videos_dir: Path,
+    match_id: str,
+    slot: str,
+) -> dict:
+    """Check that expected media assets exist for a slot.
+
+    Returns a dict with mp4_exists, mp4_size, hls_complete, missing_variants.
+    """
+    mp4_path = videos_dir / match_id / f"{slot}.mp4"
+    mp4_exists = mp4_path.is_file()
+    mp4_size = mp4_path.stat().st_size if mp4_exists else 0
+
+    hls_dir = slot_hls_dir(videos_dir, match_id, slot)
+    master = slot_hls_master_path(videos_dir, match_id, slot)
+    master_exists = master.is_file()
+
+    missing_variants: list[str] = []
+    if master_exists:
+        for line in master.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                variant_playlist = hls_dir / line
+                if not variant_playlist.is_file():
+                    missing_variants.append(line)
+
+    return {
+        "mp4_exists": mp4_exists,
+        "mp4_size": mp4_size,
+        "hls_master_exists": master_exists,
+        "hls_complete": master_exists and len(missing_variants) == 0,
+        "missing_variants": missing_variants,
+    }
 
 
 # ---------------------------------------------------------------------------

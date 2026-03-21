@@ -271,6 +271,9 @@ const app = {
         document.getElementById('cleanup-uploads-btn')?.addEventListener('click', () => {
             this.cleanupStaleUploads();
         });
+        document.getElementById('export-db-btn')?.addEventListener('click', () => {
+            this.exportDatabase();
+        });
 
         ['f-home-logo', 'f-away-logo', 'f-video-full', 'f-video-first', 'f-video-second', 'settings-app-logo', 'settings-favicon'].forEach(id => {
             const input = document.getElementById(id);

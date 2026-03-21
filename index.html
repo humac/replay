@@ -319,9 +319,22 @@
                                 <button type="button" class="btn-secondary" id="refresh-diagnostics-btn">Refresh</button>
                                 <button type="button" class="btn-secondary" id="backfill-hls-btn">Backfill Existing HLS</button>
                                 <button type="button" class="btn-secondary" id="cleanup-uploads-btn">Cleanup Stale Uploads</button>
+                                <button type="button" class="btn-secondary" id="export-db-btn">Export Database</button>
                             </div>
                         </div>
                         <div id="diagnostics-grid" class="diagnostics-grid"></div>
+                        <div id="active-jobs-section" class="diagnostics-section" style="display:none;">
+                            <div class="diagnostics-section-title">Active Transcode Jobs</div>
+                            <div id="active-jobs-list" class="session-list"></div>
+                        </div>
+                        <div id="failed-slots-section" class="diagnostics-section" style="display:none;">
+                            <div class="diagnostics-section-title">Failed Slots</div>
+                            <div id="failed-slots-list" class="session-list"></div>
+                        </div>
+                        <div id="recent-errors-section" class="diagnostics-section" style="display:none;">
+                            <div class="diagnostics-section-title">Recent Errors</div>
+                            <div id="recent-errors-list" class="session-list"></div>
+                        </div>
                         <div class="diagnostics-columns">
                             <div class="diagnostics-section">
                                 <div class="diagnostics-section-title">Server Upload Sessions</div>

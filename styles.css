@@ -2271,3 +2271,27 @@ button {
         max-width: none;
     }
 }
+
+/* ===== PROGRESS BARS (admin panel) ===== */
+
+.progress-bar-container {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-dark);
+    border-radius: 3px;
+    margin-top: 0.4rem;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.error-details {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    word-break: break-all;
+}
