@@ -15,6 +15,8 @@ import time
 import uuid
 from pathlib import Path
 
+from contextlib import asynccontextmanager
+
 import aiofiles
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -43,7 +45,17 @@ DB_FILE = DATA_DIR / "replay.db"
 VIDEOS_DIR = DATA_DIR / "videos"
 APP_ASSETS_DIR = DATA_DIR / "app_assets"
 
-app = FastAPI(title="Replay")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Startup/shutdown lifecycle — replaces deprecated on_event handlers."""
+    asyncio.create_task(_backfill_hls_for_existing_videos())
+    asyncio.create_task(
+        _media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches)
+    )
+    yield
+
+
+app = FastAPI(title="Replay", lifespan=lifespan)
 
 MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", str(12 * 1024 * 1024 * 1024)))
 UPLOAD_CHUNK_SIZE_BYTES = int(os.environ.get("UPLOAD_CHUNK_SIZE_BYTES", str(16 * 1024 * 1024)))
@@ -1213,18 +1225,6 @@ async def download_video(match_id: str, slot: str, request: Request):
         "video/mp4",
         request,
         content_disposition=f'attachment; filename="{safe_name}.mp4"',
-    )
-
-
-@app.on_event("startup")
-async def startup_backfill_hls():
-    asyncio.create_task(_backfill_hls_for_existing_videos())
-
-
-@app.on_event("startup")
-async def startup_backfill_thumbnails():
-    asyncio.create_task(
-        _media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches)
     )
 
 
