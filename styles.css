@@ -2453,3 +2453,8 @@ button {
 [data-theme="light"] .user-row {
     border-color: rgba(0,0,0,0.06);
 }
+
+[data-theme="light"] .main-nav {
+    background: rgba(255, 255, 255, 0.85);
+    border-bottom-color: rgba(0,0,0,0.08);
+}
