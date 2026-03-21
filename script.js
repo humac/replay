@@ -41,6 +41,7 @@ const app = {
 
     // ===== INIT & LIFECYCLE =====
     async init() {
+        this.applyStoredTheme();
         await this.checkAuth();
         await this.loadAppSettings();
         await this.loadMatches();

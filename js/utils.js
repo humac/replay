@@ -111,4 +111,27 @@ export const utilsMixin = {
         const stage = p.stage || 'transcoding';
         return `${stage} ${p.pct}%`;
     },
+
+    toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('replay_theme', next);
+        this._updateThemeIcon(next);
+    },
+
+    applyStoredTheme() {
+        const theme = localStorage.getItem('replay_theme') || 'dark';
+        if (theme === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light');
+        }
+        this._updateThemeIcon(theme);
+    },
+
+    _updateThemeIcon(theme) {
+        const sun = document.getElementById('theme-icon-sun');
+        const moon = document.getElementById('theme-icon-moon');
+        if (sun) sun.style.display = theme === 'light' ? 'block' : 'none';
+        if (moon) moon.style.display = theme === 'light' ? 'none' : 'block';
+    },
 };
