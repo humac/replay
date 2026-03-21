@@ -20,6 +20,7 @@ const app = {
     activeMatchId: null,
     activeSlot: null,
     activeFilter: 'all',
+    searchQuery: '',
     teamStatsExpanded: false,
     castSession: null,
     hlsPlayer: null,
@@ -34,6 +35,7 @@ const app = {
     _pollTimer: null,
     authToken: null,
     diagnostics: null,
+    transcodeProgress: {},
 
     // ===== INIT & LIFECYCLE =====
     async init() {
@@ -232,6 +234,11 @@ const app = {
 
         document.getElementById('team-stats-toggle')?.addEventListener('click', () => {
             this.toggleTeamStats();
+        });
+
+        document.getElementById('match-search')?.addEventListener('input', (e) => {
+            this.searchQuery = e.target.value;
+            this.renderSeasonView();
         });
 
         document.getElementById('add-match-form')?.addEventListener('submit', (e) => {

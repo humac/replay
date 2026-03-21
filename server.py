@@ -550,7 +550,11 @@ async def admin_backfill_hls(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/matches")
-async def list_matches():
+async def list_matches(q: str | None = None, page: int | None = None, limit: int | None = None):
+    if q is not None or page is not None or limit is not None:
+        clamped_limit = max(1, min(limit or 50, 200))
+        matches, total = _db.search_matches(q=q, page=page or 1, limit=clamped_limit)
+        return {"matches": matches, "total": total, "page": page or 1, "limit": clamped_limit}
     return await _load_matches()
 
 
@@ -923,6 +927,16 @@ async def stream_video(match_id: str, slot: str, request: Request):
         raise HTTPException(404, "Video not found")
 
     return _range_file_response(vid_path, "video/mp4", request)
+
+
+@app.get("/api/matches/{match_id}/transcode-progress/{slot}")
+async def transcode_progress(match_id: str, slot: str):
+    if slot not in ("full", "first_half", "second_half"):
+        raise HTTPException(400, "Invalid slot")
+    progress = _media.get_transcode_progress(match_id, slot)
+    if not progress:
+        return {"active": False}
+    return {"active": True, **progress}
 
 
 @app.get("/api/matches/{match_id}/download/{slot}")

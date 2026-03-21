@@ -19,7 +19,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `auth.py`: token management, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
-- `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU), HLS variant generation
+- `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU) with real-time progress tracking, HLS variant generation
 - `models.py`: Pydantic v2 request models for login, match CRUD, and upload sessions
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly

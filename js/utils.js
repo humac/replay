@@ -90,4 +90,25 @@ export const utilsMixin = {
             return Object.values(vs).some(s => s === 'transcoding');
         });
     },
+
+    matchProgressLabel(match) {
+        const vs = match.video_status || {};
+        const transcodingSlots = Object.entries(vs).filter(([, s]) => s === 'transcoding');
+        if (!transcodingSlots.length) return 'PROCESSING';
+        const pcts = transcodingSlots.map(([slot]) => {
+            const p = this.getSlotProgress(match.id, slot);
+            return p ? p.pct : null;
+        });
+        const known = pcts.filter(p => p !== null);
+        if (!known.length) return 'PROCESSING';
+        const avg = Math.round(known.reduce((a, b) => a + b, 0) / known.length);
+        return `PROCESSING ${avg}%`;
+    },
+
+    slotProgressLabel(matchId, slot) {
+        const p = this.getSlotProgress(matchId, slot);
+        if (!p) return null;
+        const stage = p.stage || 'transcoding';
+        return `${stage} ${p.pct}%`;
+    },
 };

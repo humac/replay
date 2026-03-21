@@ -254,6 +254,36 @@ def load_matches_unlocked() -> list[dict]:
         return [row_to_match(row) for row in rows]
 
 
+def search_matches(
+    q: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+) -> tuple[list[dict], int]:
+    """Search and paginate matches.  Returns (matches, total_count)."""
+    with connect() as conn:
+        where_clauses = []
+        params: list = []
+        if q:
+            where_clauses.append(
+                "(home_team LIKE ? COLLATE NOCASE OR away_team LIKE ? COLLATE NOCASE"
+                " OR location LIKE ? COLLATE NOCASE)"
+            )
+            pattern = f"%{q}%"
+            params.extend([pattern, pattern, pattern])
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        total = conn.execute(f"SELECT COUNT(*) FROM matches{where_sql}", params).fetchone()[0]
+
+        offset = (max(1, page) - 1) * limit
+        rows = conn.execute(
+            f"SELECT * FROM matches{where_sql} ORDER BY date DESC, created_at DESC, id DESC"
+            f" LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
+        return [row_to_match(row) for row in rows], total
+
+
 def save_matches_unlocked(matches: list[dict]):
     with connect() as conn:
         existing_ids = {row["id"] for row in conn.execute("SELECT id FROM matches").fetchall()}

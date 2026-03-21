@@ -728,7 +728,7 @@ export const viewsMixin = {
                     ${locationHtml}
                 </div>
                 <div class="match-meta">
-                    ${isTranscoding ? '<span class="badge processing">PROCESSING</span>' : ''}
+                    ${isTranscoding ? `<span class="badge processing">${this.matchProgressLabel(m)}</span>` : ''}
                 </div>
                 <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
                 ${this.authToken ? `
@@ -831,7 +831,9 @@ export const viewsMixin = {
                     btn.onclick = () => this.playSlot(match.id, slot);
                     readySlots.push(slot);
                 } else if (status === 'transcoding') {
-                    btn.textContent = (slot === 'first_half' ? '1st Half' : '2nd Half') + ' (processing)';
+                    const pLabel = this.slotProgressLabel(match.id, slot);
+                    const suffix = pLabel ? ` (${pLabel})` : ' (processing)';
+                    btn.textContent = (slot === 'first_half' ? '1st Half' : '2nd Half') + suffix;
                     btn.disabled = true;
                     btn.style.opacity = '0.5';
                 } else {
@@ -1028,10 +1030,12 @@ export const viewsMixin = {
             : [['full', 'Full Match']];
         slotList.innerHTML = slots.map(([slot, label]) => {
             const status = this.slotStatus(match, slot);
+            const progressLabel = status === 'transcoding' ? this.slotProgressLabel(match.id, slot) : null;
+            const displayLabel = progressLabel || this.statusLabel(status);
             return `
                 <div class="slot-status-row">
                     <span class="slot-status-label">${label}</span>
-                    <span class="status-pill ${this.statusClass(status)}">${this.statusLabel(status)}</span>
+                    <span class="status-pill ${this.statusClass(status)}">${this.esc(displayLabel)}</span>
                 </div>
             `;
         }).join('');

@@ -5,11 +5,45 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import time
 from pathlib import Path
 
 import log as _log
 
 logger = _log.setup("replay")
+
+# ---------------------------------------------------------------------------
+# Transcode progress tracking
+# ---------------------------------------------------------------------------
+
+# Key: "match_id/slot", value: {pct, started_at, updated_at, stage}
+_transcode_progress: dict[str, dict] = {}
+
+
+def get_transcode_progress(match_id: str, slot: str) -> dict | None:
+    """Return current progress for a transcode job, or None."""
+    return _transcode_progress.get(f"{match_id}/{slot}")
+
+
+def clear_transcode_progress(match_id: str, slot: str):
+    _transcode_progress.pop(f"{match_id}/{slot}", None)
+
+
+def _set_transcode_progress(match_id: str, slot: str, pct: int, stage: str = "transcoding"):
+    key = f"{match_id}/{slot}"
+    now = time.time()
+    entry = _transcode_progress.get(key)
+    if entry:
+        entry["pct"] = pct
+        entry["updated_at"] = now
+        entry["stage"] = stage
+    else:
+        _transcode_progress[key] = {
+            "pct": pct,
+            "started_at": now,
+            "updated_at": now,
+            "stage": stage,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -75,11 +109,79 @@ async def probe_video_dimensions(src: Path) -> tuple[int | None, int | None]:
 
 
 # ---------------------------------------------------------------------------
+# Duration probing
+# ---------------------------------------------------------------------------
+
+async def probe_duration(src: Path) -> float | None:
+    """Return duration in seconds, or None on failure."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_format", str(src),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return None
+        data = json.loads(stdout)
+        dur = data.get("format", {}).get("duration")
+        return float(dur) if dur else None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # FFmpeg execution
 # ---------------------------------------------------------------------------
 
-async def run_ffmpeg(cmd: list[str]) -> tuple[bool, str]:
-    """Run an ffmpeg command; return (success, stderr_tail)."""
+async def run_ffmpeg(cmd: list[str], *, on_progress=None, duration_s: float | None = None) -> tuple[bool, str]:
+    """Run an ffmpeg command; return (success, stderr_tail).
+
+    If *on_progress* is provided, ``-progress pipe:1`` is injected and
+    progress percentage is reported via the callback.
+    """
+    if on_progress and duration_s and duration_s > 0:
+        cmd = list(cmd)
+        # Insert -progress pipe:1 after "ffmpeg"
+        cmd[1:1] = ["-progress", "pipe:1"]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stderr_chunks = []
+
+        async def _read_stderr():
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                stderr_chunks.append(line)
+
+        stderr_task = asyncio.create_task(_read_stderr())
+
+        # Parse -progress output from stdout
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            text = line.decode(errors="replace").strip()
+            if text.startswith("out_time_us="):
+                try:
+                    us = int(text.split("=", 1)[1])
+                    pct = min(99, int((us / 1_000_000) / duration_s * 100))
+                    on_progress(pct)
+                except (ValueError, ZeroDivisionError):
+                    pass
+
+        await stderr_task
+        await proc.wait()
+        stderr = b"".join(stderr_chunks)
+        tail = stderr[-500:].decode(errors="replace") if stderr else ""
+        return proc.returncode == 0, tail
+
+    # Simple mode — no progress tracking
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -223,25 +325,35 @@ async def transcode_video(
         hls_segment_duration=hls_segment_duration,
         hls_variant_presets=hls_variant_presets,
     )
+
+    def _on_progress(pct: int):
+        _set_transcode_progress(match_id, slot, pct, "transcoding")
+
     try:
         async with transcode_semaphore:
             logger.info("Transcode acquired for %s/%s (max concurrency=%d)", match_id, slot, transcode_concurrency)
+            _set_transcode_progress(match_id, slot, 0, "probing")
             v_codec, a_codec = await probe_codecs(src)
-            logger.info("Probe %s/%s: video=%s audio=%s", match_id, slot, v_codec, a_codec)
+            duration_s = await probe_duration(src)
+            logger.info("Probe %s/%s: video=%s audio=%s duration=%s", match_id, slot, v_codec, a_codec, duration_s)
             shutil.rmtree(slot_hls_dir(videos_dir, match_id, slot), ignore_errors=True)
             dest.unlink(missing_ok=True)
 
             # --- 1. Remux if already browser-friendly ---
             if v_codec == "h264" and a_codec in ("aac", None):
                 logger.info("Remuxing (stream copy) %s/%s", match_id, slot)
-                ok, err = await run_ffmpeg([
-                    "ffmpeg", "-y", "-i", str(src),
-                    "-c", "copy", "-movflags", "+faststart",
-                    str(dest),
-                ])
+                _set_transcode_progress(match_id, slot, 0, "remuxing")
+                ok, err = await run_ffmpeg(
+                    ["ffmpeg", "-y", "-i", str(src),
+                     "-c", "copy", "-movflags", "+faststart",
+                     str(dest)],
+                    on_progress=_on_progress, duration_s=duration_s,
+                )
                 if ok:
                     src.unlink(missing_ok=True)
+                    _set_transcode_progress(match_id, slot, 95, "generating HLS")
                     hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
+                    clear_transcode_progress(match_id, slot)
                     await set_video_status(match_id, slot, "ready", dest.name)
                     logger.info("Remux done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                     return
@@ -249,19 +361,23 @@ async def transcode_video(
 
             # --- 2. GPU transcode (NVENC) ---
             logger.info("GPU transcode %s/%s", match_id, slot)
-            ok, err = await run_ffmpeg([
-                "ffmpeg", "-y",
-                "-hwaccel", "cuda",
-                "-i", str(src),
-                "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
-                "-cq", "23", "-b:v", "0",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                str(dest),
-            ])
+            _set_transcode_progress(match_id, slot, 0, "transcoding (GPU)")
+            ok, err = await run_ffmpeg(
+                ["ffmpeg", "-y",
+                 "-hwaccel", "cuda",
+                 "-i", str(src),
+                 "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
+                 "-cq", "23", "-b:v", "0",
+                 "-c:a", "aac", "-b:a", "128k",
+                 "-movflags", "+faststart",
+                 str(dest)],
+                on_progress=_on_progress, duration_s=duration_s,
+            )
             if ok:
                 src.unlink(missing_ok=True)
+                _set_transcode_progress(match_id, slot, 95, "generating HLS")
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
+                clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
                 logger.info("GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                 return
@@ -269,27 +385,33 @@ async def transcode_video(
 
             # --- 3. CPU fallback (libx264) ---
             logger.info("CPU transcode %s/%s", match_id, slot)
-            ok, err = await run_ffmpeg([
-                "ffmpeg", "-y",
-                "-i", str(src),
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                str(dest),
-            ])
+            _set_transcode_progress(match_id, slot, 0, "transcoding (CPU)")
+            ok, err = await run_ffmpeg(
+                ["ffmpeg", "-y",
+                 "-i", str(src),
+                 "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                 "-c:a", "aac", "-b:a", "128k",
+                 "-movflags", "+faststart",
+                 str(dest)],
+                on_progress=_on_progress, duration_s=duration_s,
+            )
             if ok:
                 src.unlink(missing_ok=True)
+                _set_transcode_progress(match_id, slot, 95, "generating HLS")
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
+                clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
                 logger.info("CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                 return
 
             logger.error("All transcode methods failed %s/%s: %s", match_id, slot, err)
+            clear_transcode_progress(match_id, slot)
             await set_video_status(match_id, slot, "error", None)
             src.unlink(missing_ok=True)
 
     except Exception as exc:
         logger.exception("Transcode error %s/%s: %s", match_id, slot, exc)
+        clear_transcode_progress(match_id, slot)
         await set_video_status(match_id, slot, "error", None)
         src.unlink(missing_ok=True)
 

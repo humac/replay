@@ -115,12 +115,11 @@ Added `js/ui.js` with a toast notification system (success/error/info) and `btnL
 
 ### User experience
 
-**3.3 Transcode progress reporting**
-Currently the frontend polls match status and sees only `transcoding` or `ready`. There is no progress percentage. ffmpeg outputs frame progress to stderr — capture and expose it (e.g. via an SSE endpoint or a progress field on the match) so users see estimated completion.
+**3.3 Transcode progress reporting** ✅
+`media.py` now probes video duration before transcoding and uses `ffmpeg -progress pipe:1` to parse `out_time_us` in real time. Progress (percentage + stage label) is stored in a module-level dict and exposed via `GET /api/matches/{id}/transcode-progress/{slot}`. The frontend polls this during transcoding and displays percentage on match cards ("PROCESSING 42%"), game status pills, and segment buttons.
 
-**3.4 Match search and pagination**
-**File:** `server.py:1163-1165`
-`GET /api/matches` returns all matches with no pagination or filtering. As the match count grows, this becomes slow and wastes bandwidth. Add `?page=&limit=` query params and optional `?q=` text search across team names.
+**3.4 Match search and pagination** ✅
+Added client-side instant search filtering in the season view — search bar filters matches by team name, location, or date as you type. Server-side `search_matches()` in `db.py` supports `?q=&page=&limit=` query params on `GET /api/matches` for future use; existing no-param calls return the full list (backward-compatible).
 
 **3.5 Thumbnail generation**
 Generate a thumbnail image (e.g. frame at 10% duration) during transcoding for each match. Display these on match cards in the season view instead of relying solely on team logos.

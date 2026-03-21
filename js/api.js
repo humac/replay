@@ -190,11 +190,23 @@ export const apiMixin = {
     },
 
     filteredMatches() {
-        if (!this.mainTeamNameNormalized()) {
-            return this.matches;
+        let results = this.matches;
+
+        if (this.mainTeamNameNormalized() && this.activeFilter !== 'all') {
+            results = results.filter((match) => this.matchFilterCategory(match) === this.activeFilter);
         }
-        if (this.activeFilter === 'all') return this.matches;
-        return this.matches.filter((match) => this.matchFilterCategory(match) === this.activeFilter);
+
+        const q = (this.searchQuery || '').trim().toLowerCase();
+        if (q) {
+            results = results.filter((match) =>
+                (match.home_team || '').toLowerCase().includes(q) ||
+                (match.away_team || '').toLowerCase().includes(q) ||
+                (match.location || '').toLowerCase().includes(q) ||
+                (match.date || '').includes(q)
+            );
+        }
+
+        return results;
     },
 
     checkTranscodePolling() {
@@ -207,6 +219,7 @@ export const apiMixin = {
         if (this._pollTimer) return;
         this._pollTimer = setInterval(async () => {
             await this.loadMatches();
+            await this.fetchTranscodeProgress();
             this.renderSeasonView();
 
             if (this.activeMatchId) {
@@ -215,10 +228,35 @@ export const apiMixin = {
             }
 
             if (!this.anyTranscoding()) {
+                this.transcodeProgress = {};
                 clearInterval(this._pollTimer);
                 this._pollTimer = null;
             }
         }, 5000);
+    },
+
+    async fetchTranscodeProgress() {
+        const progress = {};
+        const fetches = [];
+        for (const match of this.matches) {
+            const vs = match.video_status || {};
+            for (const [slot, status] of Object.entries(vs)) {
+                if (status === 'transcoding') {
+                    fetches.push(
+                        fetch(`/api/matches/${match.id}/transcode-progress/${slot}`)
+                            .then(r => r.ok ? r.json() : null)
+                            .then(data => { if (data?.active) progress[`${match.id}/${slot}`] = data; })
+                            .catch(() => {})
+                    );
+                }
+            }
+        }
+        await Promise.all(fetches);
+        this.transcodeProgress = progress;
+    },
+
+    getSlotProgress(matchId, slot) {
+        return (this.transcodeProgress || {})[`${matchId}/${slot}`] || null;
     },
 
     stopTranscodePolling() {
