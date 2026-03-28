@@ -30,6 +30,7 @@ async def client(data_dir, monkeypatch):
     _db.close_thread_connection()
 
     monkeypatch.setattr(server, "DATA_DIR", data_dir)
+    monkeypatch.setattr(server, "DB_FILE", data_dir / "replay.db")
     monkeypatch.setattr(server, "VIDEOS_DIR", data_dir / "videos")
     monkeypatch.setattr(server, "APP_ASSETS_DIR", data_dir / "app_assets")
 
