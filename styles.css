@@ -2401,6 +2401,28 @@ button {
 
 [data-theme="light"] .status-pill {
     background: rgba(0,0,0,0.06);
+    color: var(--text-main);
+}
+
+[data-theme="light"] .status-pill.ready,
+[data-theme="light"] .status-pill.resume {
+    background: rgba(22, 163, 74, 0.12);
+    color: #15803d;
+}
+
+[data-theme="light"] .status-pill.processing {
+    background: rgba(217, 119, 6, 0.12);
+    color: #b45309;
+}
+
+[data-theme="light"] .status-pill.danger {
+    background: rgba(220, 38, 38, 0.12);
+    color: #dc2626;
+}
+
+[data-theme="light"] .status-pill.neutral {
+    background: rgba(0,0,0,0.06);
+    color: var(--text-muted);
 }
 
 [data-theme="light"] .tab-selector button {
@@ -2469,6 +2491,38 @@ button {
 
 [data-theme="light"] .team-stat-card {
     background: var(--bg-panel);
-    border-color: rgba(0,0,0,0.08);
+    border-color: rgba(0,0,0,0.10);
     box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+[data-theme="light"] .team-stat-card .stat {
+    color: var(--text-main);
+}
+
+[data-theme="light"] .team-stat-label {
+    color: var(--text-muted);
+}
+
+[data-theme="light"] .team-stat-sub {
+    color: var(--text-muted);
+}
+
+[data-theme="light"] .nav-icon-btn {
+    border-color: rgba(0,0,0,0.15);
+    color: var(--text-muted);
+}
+
+[data-theme="light"] .nav-icon-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+[data-theme="light"] .nav-auth-btn {
+    border-color: rgba(0,0,0,0.15);
+    color: var(--text-muted);
+}
+
+[data-theme="light"] .nav-auth-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-main);
 }
