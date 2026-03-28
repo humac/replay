@@ -47,7 +47,11 @@ APP_ASSETS_DIR = DATA_DIR / "app_assets"
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    """Startup/shutdown lifecycle — replaces deprecated on_event handlers."""
+    """Startup/shutdown lifecycle."""
+    _db.init(DATA_DIR, DB_FILE, APP_ASSETS_DIR)
+    _db.migrate_json_to_sqlite(MATCHES_FILE)
+    _db.backfill_slugs()
+    _settings.init(APP_ASSETS_DIR, STATIC_DIR)
     asyncio.create_task(_backfill_hls_for_existing_videos())
     asyncio.create_task(
         _media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches)
@@ -101,15 +105,6 @@ HLS_VARIANT_PRESETS = [
         "bandwidth": 1800000,
     },
 ]
-
-# ---------------------------------------------------------------------------
-# Module initialization
-# ---------------------------------------------------------------------------
-
-_db.init(DATA_DIR, DB_FILE, APP_ASSETS_DIR)
-_db.migrate_json_to_sqlite(MATCHES_FILE)
-_db.backfill_slugs()
-_settings.init(APP_ASSETS_DIR, STATIC_DIR)
 
 # ---------------------------------------------------------------------------
 # Async wrappers around module functions (lock-protected)
