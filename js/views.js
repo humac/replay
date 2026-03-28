@@ -941,7 +941,7 @@ export const viewsMixin = {
             const dateStr = this.formatDate(m.date);
             const timeStr = m.time ? ` \u00b7 ${m.time}` : '';
             const locationHtml = m.location
-                ? `<span class="match-detail-pill location">${this.esc(m.location)}</span>`
+                ? `<span class="match-detail-pill location"><span class="pill-label">Location</span>${this.esc(m.location)}</span>`
                 : '';
 
             const isTranscoding = this.matchTranscoding(m);

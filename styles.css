@@ -704,6 +704,16 @@ button {
     white-space: normal;
     text-align: center;
     color: var(--text-main);
+    gap: 0.35rem;
+}
+
+.pill-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    opacity: 0.8;
 }
 
 .match-meta {
@@ -753,7 +763,7 @@ button {
 }
 
 .match-card:hover .hover-reveal {
-    bottom: 2rem;
+    bottom: 3rem;
 }
 
 .match-card:hover .match-meta {
@@ -2356,6 +2366,17 @@ button {
 [data-theme="light"] .game-view-card {
     background: linear-gradient(135deg, #fff, #f8f8fa);
     border-color: rgba(0,0,0,0.08);
+}
+
+[data-theme="light"] .player-wrapper {
+    border-color: rgba(0,0,0,0.08);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+[data-theme="light"] .slot-status-card {
+    border-color: rgba(0,0,0,0.08);
+    background: rgba(0,0,0,0.02);
+    box-shadow: none;
 }
 
 [data-theme="light"] .modal-content {
