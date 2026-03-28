@@ -2373,6 +2373,11 @@ button {
 [data-theme="light"] .player-wrapper {
     border-color: transparent;
     box-shadow: none;
+    background: transparent;
+}
+
+[data-theme="light"] .main-video {
+    background: transparent;
 }
 
 [data-theme="light"] .slot-status-card {
