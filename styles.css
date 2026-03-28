@@ -684,6 +684,7 @@ button {
     justify-content: center;
     gap: 0.55rem;
     margin-bottom: 0.9rem;
+    transition: opacity 0.3s ease;
 }
 
 .match-detail-pill {
@@ -763,10 +764,11 @@ button {
 }
 
 .match-card:hover .hover-reveal {
-    bottom: 3rem;
+    bottom: 1.5rem;
 }
 
-.match-card:hover .match-meta {
+.match-card:hover .match-meta,
+.match-card:hover .match-detail-row {
     opacity: 0;
 }
 
