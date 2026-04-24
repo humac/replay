@@ -12,10 +12,19 @@ services:
       TMPDIR: /tmp/ffmpeg
       MAX_UPLOAD_SIZE_BYTES: 12884901888
       TRANSCODE_CONCURRENCY: 2
+      # NVIDIA GPU — comment the next two lines out when switching to Intel iGPU
       NVIDIA_VISIBLE_DEVICES: GPU-26ddab77-c658-9829-0ace-90674c97dc87
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
     volumes:
       - replay_data:/data
+      # Intel GPU (VAAPI / QSV) — uncomment to expose the iGPU render node
+      # - /dev/dri:/dev/dri
+    # Intel GPU (VAAPI / QSV) — uncomment to pass the render device through
+    # devices:
+    #   - /dev/dri/renderD128:/dev/dri/renderD128
+    # group_add:
+    #   - "video"
+    #   - "render"
     tmpfs:
       - /tmp/ffmpeg:size=20g,exec
     healthcheck:
@@ -25,6 +34,9 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+    # NVIDIA GPU — comment this whole `deploy:` block out when switching to
+    # Intel iGPU. Intel VAAPI/QSV does not use `deploy.resources.reservations`;
+    # the `devices:` + `group_add:` passthrough above is sufficient.
     deploy:
       resources:
         reservations:
