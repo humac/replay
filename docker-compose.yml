@@ -1,6 +1,8 @@
 services:
   replay:
-    build: .
+    image: ghcr.io/humac/replay:latest
+    # Uncomment to build locally instead of pulling from GHCR:
+    # build: .
     container_name: replay
     ports:
       - "8090:8090"
