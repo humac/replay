@@ -93,9 +93,17 @@ to `active=false` sooner after the camera stops sending video keyframes.
 ## Cloudflare Dynamic DNS
 
 If your Replay host runs on a residential connection without a static IP,
-the `cloudflare-ddns` sidecar in `docker-compose.yml` keeps both A records
-pointing at the current public IP. Uses `favonia/cloudflare-ddns` —
-config is entirely env-var driven, no JSON file.
+the `cloudflare-ddns` sidecar in `docker-compose.yml` keeps the RTMP A
+record pointing at the current public IP. Uses `favonia/cloudflare-ddns`
+— config is entirely env-var driven, no JSON file.
+
+This sidecar **only manages the RTMP host** (`f2014steel-live.jvhlabs.com`
+in the default config). The HTTPS host (`f2014steel.jvhlabs.com`) is
+expected to flow through a Cloudflare Tunnel (`cloudflared`), so its A
+record points at Cloudflare's tunnel infrastructure rather than the home
+IP — no DDNS needed there. Cloudflare Tunnel can't carry RTMP, so the
+camera connects directly to the home IP via the live host, which is why
+that one record needs DDNS.
 
 One-time setup:
 
@@ -110,11 +118,10 @@ One-time setup:
    CLOUDFLARE_API_TOKEN=your-token-here
    ```
 
-3. Adjust the `DOMAINS` and `PROXIED` env vars in `docker-compose.yml` to
-   match your hosts. Default keeps `f2014steel.jvhlabs.com` proxied
-   (orange cloud, for HTTPS+CDN) and `f2014steel-live.jvhlabs.com`
-   DNS-only (gray cloud, required for RTMP). The `PROXIED=is(...)`
-   syntax matches a specific domain; everything else stays not-proxied.
+3. Adjust the `DOMAINS` env var in `docker-compose.yml` to match the
+   subdomain you're using for RTMP. The default is
+   `f2014steel-live.jvhlabs.com`. Multiple subdomains can be
+   comma-separated.
 
 4. Start the sidecar:
 
@@ -123,15 +130,14 @@ One-time setup:
    docker compose logs -f cloudflare-ddns
    ```
 
-   On boot you should see lines like
-   `Updating A (f2014steel.jvhlabs.com) to <ip>` or
-   `Set A (f2014steel.jvhlabs.com) to <ip>`. Subsequent polls (every 5
-   minutes) only log when the IP actually changes.
+   On boot you should see a line like
+   `Set A (f2014steel-live.jvhlabs.com) to <ip>`. Subsequent polls
+   (every 5 minutes) only log when the IP actually changes.
 
-If the IP changes, propagation to viewers depends on the Cloudflare
-record's TTL — visible in the Cloudflare dashboard. Default is "Auto"
-(60s when proxied). Set explicitly via `TTL` env var if you need
-something specific.
+If the IP changes, propagation to the camera depends on the Cloudflare
+record's TTL. Default is "Auto" (300s for DNS-only records). Lower it in
+the dashboard if your ISP cycles IPs frequently and you need faster
+recovery.
 
 ## Storage
 
