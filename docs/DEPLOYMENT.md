@@ -94,42 +94,44 @@ to `active=false` sooner after the camera stops sending video keyframes.
 
 If your Replay host runs on a residential connection without a static IP,
 the `cloudflare-ddns` sidecar in `docker-compose.yml` keeps both A records
-pointing at the current public IP.
+pointing at the current public IP. Uses `favonia/cloudflare-ddns` —
+config is entirely env-var driven, no JSON file.
 
 One-time setup:
 
 1. Cloudflare dashboard → My Profile → API Tokens → **Create Token**.
    Use the "Edit zone DNS" template, scope it to the relevant zone
    (e.g. `jvhlabs.com`). Copy the token — you won't see it again.
-2. Cloudflare dashboard → zone overview → copy the **Zone ID** from the
-   right sidebar.
-3. Copy the example config and fill in the secrets:
 
-   ```bash
-   cp cloudflare-ddns/config.example.json cloudflare-ddns/config.json
-   # edit cloudflare-ddns/config.json — replace the api_token + zone_id placeholders
-   chmod 600 cloudflare-ddns/config.json
+2. Add the token to `.env.local` (gitignored, alongside the existing
+   `replay` env values):
+
+   ```
+   CLOUDFLARE_API_TOKEN=your-token-here
    ```
 
-   The actual `config.json` is gitignored.
+3. Adjust the `DOMAINS` and `PROXIED` env vars in `docker-compose.yml` to
+   match your hosts. Default keeps `f2014steel.jvhlabs.com` proxied
+   (orange cloud, for HTTPS+CDN) and `f2014steel-live.jvhlabs.com`
+   DNS-only (gray cloud, required for RTMP). The `PROXIED=is(...)`
+   syntax matches a specific domain; everything else stays not-proxied.
 
-4. Adjust the `subdomains` list in `config.json` to match your hosts. The
-   default config keeps `f2014steel` proxied (orange cloud, for HTTPS+CDN)
-   and `f2014steel-live` DNS-only (gray cloud, required for RTMP).
-
-5. Start the sidecar:
+4. Start the sidecar:
 
    ```bash
    docker compose up -d cloudflare-ddns
    docker compose logs -f cloudflare-ddns
    ```
 
-   You should see "Updated A record" or "No update needed" lines on each
-   poll cycle (every 5 minutes by default).
+   On boot you should see lines like
+   `Updating A (f2014steel.jvhlabs.com) to <ip>` or
+   `Set A (f2014steel.jvhlabs.com) to <ip>`. Subsequent polls (every 5
+   minutes) only log when the IP actually changes.
 
-If the IP changes, propagation to viewers takes ~`ttl` seconds (300 default
-in the example config). Lower the TTL in `config.json` if you need faster
-failover at the cost of more DNS queries.
+If the IP changes, propagation to viewers depends on the Cloudflare
+record's TTL — visible in the Cloudflare dashboard. Default is "Auto"
+(60s when proxied). Set explicitly via `TTL` env var if you need
+something specific.
 
 ## Storage
 

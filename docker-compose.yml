@@ -67,17 +67,31 @@ services:
     restart: unless-stopped
 
   # Cloudflare DDNS — keeps the public A records pointing at the current
-  # public IP when the home connection's IP changes. Config in
-  # cloudflare-ddns/config.json (gitignored — copy from config.example.json
-  # and fill in the API token + zone ID). Two records managed:
+  # public IP when the home connection's IP changes. Two records managed:
   #   f2014steel.jvhlabs.com       → proxied (HTTPS via Cloudflare CDN)
   #   f2014steel-live.jvhlabs.com  → DNS-only (RTMP can't go through proxy)
+  # Token comes from .env.local (CLOUDFLARE_API_TOKEN). No JSON config —
+  # everything is env-var driven via favonia/cloudflare-ddns.
   cloudflare-ddns:
-    image: timothyjmiller/cloudflare-ddns:latest
+    image: favonia/cloudflare-ddns:latest
     container_name: replay-cloudflare-ddns
-    volumes:
-      - ./cloudflare-ddns/config.json:/config.json:ro
+    env_file:
+      - .env.local
+    environment:
+      DOMAINS: f2014steel.jvhlabs.com,f2014steel-live.jvhlabs.com
+      # Proxy only the HTTPS host; the RTMP host stays DNS-only because
+      # Cloudflare's proxy doesn't speak RTMP.
+      PROXIED: is(f2014steel.jvhlabs.com)
+      IP4_PROVIDER: cloudflare.trace
+      IP6_PROVIDER: none
+      UPDATE_CRON: "@every 5m"
+      TZ: UTC
     restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [all]
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   replay_data:
