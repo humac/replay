@@ -107,6 +107,66 @@ async def test_live_status_disabled_when_setting_off(client):
     assert data["active"] is False
 
 
+async def test_live_status_marks_stale_publisher_offline(client, monkeypatch):
+    """If MediaMTX says ready=true but the HLS playlist's last segment is
+    older than STALE_SEGMENT_AGE_SECONDS (camera stopped sending video but
+    kept the RTMP socket open), status reports offline."""
+    import live as _live
+
+    async def fake_list_paths():
+        return True, [{
+            "name": _live.stream_path("test-secret-123"),
+            "ready": True,
+            "source": {"type": "rtmpConn", "id": "x"},
+            "tracks": ["H264"],
+            "bytesReceived": 1000,
+        }]
+
+    async def fake_age(_stream_key):
+        return _live.STALE_SEGMENT_AGE_SECONDS + 30.0
+
+    import settings as _settings
+    _settings.save_unlocked({"live_stream_key": "test-secret-123"})
+    monkeypatch.setattr(_live, "_list_paths", fake_list_paths)
+    monkeypatch.setattr(_live, "_last_segment_age", fake_age)
+
+    resp = await client.get("/api/live/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["active"] is False
+    assert data["ready"] is False
+
+
+async def test_live_status_keeps_active_when_segments_fresh(client, monkeypatch):
+    """ready=true plus a fresh HLS segment should report active even on a
+    slow uplink where individual gaps approach but stay under the threshold."""
+    import live as _live
+
+    async def fake_list_paths():
+        return True, [{
+            "name": _live.stream_path("test-secret-123"),
+            "ready": True,
+            "source": {"type": "rtmpConn", "id": "x"},
+            "tracks": ["H264"],
+            "bytesReceived": 1000,
+        }]
+
+    async def fake_age(_stream_key):
+        # 60s old — slow uplink but inside the 90s threshold.
+        return 60.0
+
+    import settings as _settings
+    _settings.save_unlocked({"live_stream_key": "test-secret-123"})
+    monkeypatch.setattr(_live, "_list_paths", fake_list_paths)
+    monkeypatch.setattr(_live, "_last_segment_age", fake_age)
+
+    resp = await client.get("/api/live/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["active"] is True
+    assert data["ready"] is True
+
+
 # ---------------------------------------------------------------------------
 # /api/live/hls/* — proxy
 # ---------------------------------------------------------------------------

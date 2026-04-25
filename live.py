@@ -17,8 +17,10 @@ test suite can point at fake endpoints.
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import httpx
@@ -43,6 +45,20 @@ STREAM_PATH_PREFIX = "live"
 # means it's down.
 _STATUS_TIMEOUT = httpx.Timeout(3.0, connect=2.0)
 _PROXY_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+
+# How long without a new HLS segment before we treat the publisher as stale,
+# even if MediaMTX still reports path.ready=true. Cameras (e.g. the XbotGo
+# Falcon iOS app) can stop sending video keyframes while leaving the RTMP
+# socket open with audio-only flowing — MediaMTX keeps the path "ready" but
+# stops cutting new segments, so the playlist's last EXT-X-PROGRAM-DATE-TIME
+# falls progressively further behind wall clock. The threshold needs to be
+# larger than the worst-case real-streaming inter-segment gap on a slow
+# uplink (observed up to ~60s on a 4G XbotGo Falcon).
+STALE_SEGMENT_AGE_SECONDS = float(
+    os.environ.get("LIVE_STALE_SEGMENT_AGE_SECONDS", "90")
+)
+
+_PDT_RE = re.compile(r"#EXT-X-PROGRAM-DATE-TIME:([^\r\n]+)")
 
 
 def stream_path(stream_key: str) -> str:
@@ -90,11 +106,44 @@ async def _list_rtmp_conns() -> list[dict]:
     return resp.json().get("items") or []
 
 
+async def _last_segment_age(stream_key: str) -> float | None:
+    """Seconds since the most recent EXT-X-PROGRAM-DATE-TIME in the live
+    playlist, or ``None`` when the playlist can't be fetched or has no
+    PDT entries (e.g. before the first segment cut).
+    """
+    if not stream_key:
+        return None
+    url = f"{MEDIAMTX_HLS_URL}/{stream_path(stream_key)}/main_stream.m3u8"
+    try:
+        async with httpx.AsyncClient(timeout=_STATUS_TIMEOUT) as c:
+            resp = await c.get(url)
+    except httpx.HTTPError:
+        return None
+    if resp.status_code != 200:
+        return None
+    pdts = _PDT_RE.findall(resp.text)
+    if not pdts:
+        return None
+    last = pdts[-1].strip()
+    try:
+        dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - dt).total_seconds()
+
+
 async def check_publisher_active(stream_key: str) -> dict:
     """Return ``{"active": bool, "ready": bool, ...}`` for the live path.
 
     ``ready`` is true once MediaMTX has segments available for HLS playback;
     ``active`` is true while a publisher (the camera) is connected.
+
+    Includes a stale-publisher override: if MediaMTX still reports the path
+    as ready but no new HLS segment has been cut for STALE_SEGMENT_AGE_SECONDS,
+    we treat the stream as offline. This covers the case where a camera (e.g.
+    XbotGo Falcon) stops recording but leaves the RTMP socket open with
+    audio-only data flowing — MediaMTX keeps the path "ready" but stops
+    producing playable video segments.
     """
     reachable, items = await _list_paths()
     if not reachable:
@@ -105,7 +154,7 @@ async def check_publisher_active(stream_key: str) -> dict:
     if match is None:
         return {"active": False, "ready": False, "reachable": True}
 
-    return {
+    result = {
         "active": bool(match.get("ready") or match.get("source")),
         "ready": bool(match.get("ready")),
         "reachable": True,
@@ -113,6 +162,19 @@ async def check_publisher_active(stream_key: str) -> dict:
         "bytes_received": match.get("bytesReceived"),
         "ready_time": match.get("readyTime"),
     }
+
+    age = await _last_segment_age(stream_key)
+    result["last_segment_age_seconds"] = age
+    if age is not None and age > STALE_SEGMENT_AGE_SECONDS and (
+        result["ready"] or result["active"]
+    ):
+        logger.info(
+            "Live publisher marked stale: last segment %.1fs ago (threshold %.0fs).",
+            age, STALE_SEGMENT_AGE_SECONDS,
+        )
+        result["active"] = False
+        result["ready"] = False
+    return result
 
 
 def validate_publish_auth(payload: dict, stream_key: str) -> tuple[bool, str]:
