@@ -176,6 +176,19 @@ async def test_public_settings_never_exposes_stream_key(client, auth_headers):
 
 
 # ---------------------------------------------------------------------------
+# /live deep-link — must serve the SPA shell, not 404
+# ---------------------------------------------------------------------------
+
+async def test_live_deep_link_serves_spa(client):
+    resp = await client.get("/live")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "<html" in body.lower()
+    # Sanity-check it's the actual SPA, not some other 200.
+    assert "/static/script.js" in body
+
+
+# ---------------------------------------------------------------------------
 # /api/admin/live/diagnostics
 # ---------------------------------------------------------------------------
 

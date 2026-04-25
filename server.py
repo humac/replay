@@ -368,6 +368,12 @@ async def match_deep_link(slug: str, slot: str | None = None):
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
+@app.get("/live")
+async def live_deep_link():
+    """Serve the SPA shell for the Watch Live deep link."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
 @app.get("/static/{filepath:path}")
 async def static_file(filepath: str):
     filepath = filepath.split("?", 1)[0]
