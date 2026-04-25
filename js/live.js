@@ -122,8 +122,14 @@ export const liveMixin = {
         const video = document.getElementById('live-video');
         if (!video) return;
 
-        // Native HLS (Safari, iOS) — let the browser handle it.
-        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Prefer hls.js over native HLS. Chrome/Firefox/Edge return
+        // "maybe" from canPlayType('application/vnd.apple.mpegurl') but
+        // can't actually play HLS without hls.js — falling into the native
+        // path leaves the player stuck on a loading spinner. Only use
+        // native playback when hls.js isn't supported (Safari, iOS).
+        const hlsSupported = typeof Hls !== 'undefined' && Hls.isSupported?.();
+
+        if (!hlsSupported && video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = LIVE_HLS_URL;
             const onLoaded = () => {
                 video.play?.().catch(() => {});
@@ -133,7 +139,7 @@ export const liveMixin = {
             return;
         }
 
-        if (typeof Hls === 'undefined' || !Hls.isSupported?.()) {
+        if (!hlsSupported) {
             console.warn('HLS.js not available; live stream cannot be played in this browser.');
             return;
         }
