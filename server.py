@@ -893,7 +893,10 @@ async def list_matches(q: str | None = None, page: int | None = None, limit: int
 @app.post("/api/matches")
 async def create_match(request: Request, body: CreateMatchRequest):
     _auth.require_role(request, "admin", "uploader")
-    match_id = f"match-{int(time.time() * 1000)}"
+    # Timestamp prefix keeps IDs sortable in logs; the random suffix prevents
+    # collisions when two POSTs land in the same millisecond (silently turning
+    # the upsert into an overwrite of the first row).
+    match_id = f"match-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
 
     slug_base = _db.generate_slug(body.home_team, body.away_team, body.date)
 
