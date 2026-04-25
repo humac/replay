@@ -90,6 +90,47 @@ Tune `LIVE_STALE_SEGMENT_AGE_SECONDS` (default 90) if your camera disconnect
 behavior needs faster offline detection. A smaller value flips `/api/live/status`
 to `active=false` sooner after the camera stops sending video keyframes.
 
+## Cloudflare Dynamic DNS
+
+If your Replay host runs on a residential connection without a static IP,
+the `cloudflare-ddns` sidecar in `docker-compose.yml` keeps both A records
+pointing at the current public IP.
+
+One-time setup:
+
+1. Cloudflare dashboard → My Profile → API Tokens → **Create Token**.
+   Use the "Edit zone DNS" template, scope it to the relevant zone
+   (e.g. `jvhlabs.com`). Copy the token — you won't see it again.
+2. Cloudflare dashboard → zone overview → copy the **Zone ID** from the
+   right sidebar.
+3. Copy the example config and fill in the secrets:
+
+   ```bash
+   cp cloudflare-ddns/config.example.json cloudflare-ddns/config.json
+   # edit cloudflare-ddns/config.json — replace the api_token + zone_id placeholders
+   chmod 600 cloudflare-ddns/config.json
+   ```
+
+   The actual `config.json` is gitignored.
+
+4. Adjust the `subdomains` list in `config.json` to match your hosts. The
+   default config keeps `f2014steel` proxied (orange cloud, for HTTPS+CDN)
+   and `f2014steel-live` DNS-only (gray cloud, required for RTMP).
+
+5. Start the sidecar:
+
+   ```bash
+   docker compose up -d cloudflare-ddns
+   docker compose logs -f cloudflare-ddns
+   ```
+
+   You should see "Updated A record" or "No update needed" lines on each
+   poll cycle (every 5 minutes by default).
+
+If the IP changes, propagation to viewers takes ~`ttl` seconds (300 default
+in the example config). Lower the TTL in `config.json` if you need faster
+failover at the cost of more DNS queries.
+
 ## Storage
 
 Data lives under `REPLAY_DATA_DIR`:

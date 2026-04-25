@@ -2,7 +2,7 @@ services:
   replay:
     image: ghcr.io/humac/replay:latest
     # Uncomment to build locally instead of pulling from GHCR:
-    # build: .
+    build: .
     container_name: replay
     ports:
       - "8090:8090"
@@ -64,6 +64,19 @@ services:
       - "9997"        # control API (internal only)
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+    restart: unless-stopped
+
+  # Cloudflare DDNS — keeps the public A records pointing at the current
+  # public IP when the home connection's IP changes. Config in
+  # cloudflare-ddns/config.json (gitignored — copy from config.example.json
+  # and fill in the API token + zone ID). Two records managed:
+  #   f2014steel.jvhlabs.com       → proxied (HTTPS via Cloudflare CDN)
+  #   f2014steel-live.jvhlabs.com  → DNS-only (RTMP can't go through proxy)
+  cloudflare-ddns:
+    image: timothyjmiller/cloudflare-ddns:latest
+    container_name: replay-cloudflare-ddns
+    volumes:
+      - ./cloudflare-ddns/config.json:/config.json:ro
     restart: unless-stopped
 
 volumes:
