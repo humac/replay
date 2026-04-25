@@ -173,3 +173,59 @@ async def test_public_settings_never_exposes_stream_key(client, auth_headers):
     assert resp.status_code == 200
     settings = resp.json()["settings"]
     assert "live_stream_key" not in settings
+
+
+# ---------------------------------------------------------------------------
+# /api/admin/live/diagnostics
+# ---------------------------------------------------------------------------
+
+async def test_admin_live_diagnostics_requires_auth(client):
+    resp = await client.get("/api/admin/live/diagnostics")
+    assert resp.status_code == 401
+
+
+async def test_admin_live_diagnostics_shape(client, auth_headers):
+    """When MediaMTX is unreachable (test env), shape should still be sensible."""
+    import live as _live
+    _live.clear_rejections()
+
+    resp = await client.get("/api/admin/live/diagnostics", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["reachable"] is False
+    assert "stream_path" in data and data["stream_path"].startswith("live/")
+    assert data["publisher"] is None
+    assert data["paths"] == []
+    assert data["rtmp_connections"] == []
+    assert data["recent_rejections"] == []
+
+
+async def test_admin_live_diagnostics_captures_rejections(client, auth_headers):
+    """Rejected /api/live/auth attempts should show up in the diagnostics buffer."""
+    import live as _live
+    import settings as _settings
+    _live.clear_rejections()
+    _settings.save_unlocked({"live_stream_key": "valid-key-xyz"})
+
+    # Send a publish with the wrong key.
+    bad = await client.post(
+        "/api/live/auth",
+        json={
+            "action": "publish",
+            "path": "live/totally-wrong",
+            "protocol": "rtmp",
+            "ip": "203.0.113.99",
+            "id": "x",
+        },
+    )
+    assert bad.status_code == 401
+
+    # Diagnostics should show that rejection.
+    resp = await client.get("/api/admin/live/diagnostics", headers=auth_headers)
+    rejections = resp.json()["recent_rejections"]
+    assert len(rejections) >= 1
+    last = rejections[0]
+    assert last["ip"] == "203.0.113.99"
+    assert last["path"] == "live/totally-wrong"
+    assert last["action"] == "publish"
+    assert "stream key did not match" in last["reason"]

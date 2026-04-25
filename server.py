@@ -553,14 +553,25 @@ async def live_auth_webhook(body: LiveAuthRequest):
     publish attempts.  Allow if the path matches the configured stream key.
     """
     key = await _stream_key()
-    if not _live.validate_publish_auth(body.model_dump(), key):
+    payload = body.model_dump()
+    allowed, reason = _live.validate_publish_auth(payload, key)
+    if not allowed:
+        _live.record_rejection(payload, reason)
         logger.info(
-            "Live auth rejected: action=%s path=%s protocol=%s ip=%s",
-            body.action, body.path, body.protocol, body.ip,
+            "Live auth rejected (%s): action=%s path=%s protocol=%s ip=%s",
+            reason, body.action, body.path, body.protocol, body.ip,
         )
         raise HTTPException(401, "Invalid stream key")
     logger.info("Live auth accepted: ip=%s protocol=%s", body.ip, body.protocol)
     return {"ok": True}
+
+
+@app.get("/api/admin/live/diagnostics")
+async def admin_live_diagnostics(request: Request):
+    """Admin: bundled diagnostics for live ingest troubleshooting."""
+    _auth.require_role(request, "admin")
+    key = await _stream_key()
+    return await _live.get_diagnostics(key)
 
 
 @app.get("/api/admin/live/config")

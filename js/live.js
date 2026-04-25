@@ -329,6 +329,25 @@ export const liveMixin = {
             );
         });
 
+        document.getElementById('live-diagnose-btn')?.addEventListener('click', async () => {
+            const btn = document.getElementById('live-diagnose-btn');
+            const report = document.getElementById('live-diagnose-report');
+            if (!report) return;
+            const restore = this.btnLoading(btn, 'Checking...');
+            try {
+                const resp = await fetch('/api/admin/live/diagnostics', { headers: this.getAuthHeaders() });
+                if (!resp.ok) throw new Error('Diagnostics request failed');
+                const data = await resp.json();
+                report.innerHTML = this.renderLiveDiagnostics(data);
+                report.style.display = 'block';
+            } catch (e) {
+                report.innerHTML = `<div class="live-diagnose-error">${this.esc(e.message)}</div>`;
+                report.style.display = 'block';
+            } finally {
+                restore('Diagnose');
+            }
+        });
+
         document.getElementById('live-rotate-key-btn')?.addEventListener('click', async () => {
             if (!confirm('Rotate the live stream key? Any camera using the current key will be disconnected.')) return;
             const btn = document.getElementById('live-rotate-key-btn');
@@ -362,5 +381,66 @@ export const liveMixin = {
                 restore('Rotate');
             }
         });
+    },
+
+    renderLiveDiagnostics(data) {
+        const esc = (s) => this.esc(String(s ?? ''));
+        const reachable = data?.reachable;
+        const publisher = data?.publisher;
+        const paths = data?.paths || [];
+        const conns = data?.rtmp_connections || [];
+        const rejections = data?.recent_rejections || [];
+
+        const reachableLine = reachable
+            ? '<span class="live-diagnose-pill ok">MediaMTX reachable</span>'
+            : '<span class="live-diagnose-pill bad">MediaMTX unreachable</span>';
+
+        const publisherLine = publisher
+            ? `<span class="live-diagnose-pill ${publisher.ready ? 'ok' : 'warn'}">Publisher: ${publisher.ready ? 'ready' : 'not ready'} ${publisher.bytes_received != null ? '· ' + publisher.bytes_received + ' bytes' : ''}</span>`
+            : '<span class="live-diagnose-pill warn">No publisher on configured path</span>';
+
+        const connLines = conns.length
+            ? conns.map(c => `
+                <div class="live-diagnose-row-item">
+                    <code>${esc(c.remote_addr || '?')}</code>
+                    · state=<strong>${esc(c.state || 'unknown')}</strong>
+                    · path=<code>${esc(c.path || '(none)')}</code>
+                    · in=${esc(c.bytes_received ?? 0)}b · out=${esc(c.bytes_sent ?? 0)}b
+                </div>
+            `).join('')
+            : '<div class="live-diagnose-empty">No active RTMP connections.</div>';
+
+        const otherPaths = paths.filter(p => p.name !== data.stream_path);
+        const otherPathsBlock = otherPaths.length
+            ? `<details class="live-diagnose-details"><summary>Other paths (${otherPaths.length})</summary>${otherPaths.map(p => `<div class="live-diagnose-row-item"><code>${esc(p.name)}</code> · ready=${p.ready ? 'yes' : 'no'}</div>`).join('')}</details>`
+            : '';
+
+        const rejectionLines = rejections.length
+            ? rejections.slice(0, 5).map(r => `
+                <div class="live-diagnose-row-item">
+                    <code>${esc(r.ts)}</code>
+                    · ip=<code>${esc(r.ip || '?')}</code>
+                    · ${esc(r.action || '?')}/${esc(r.protocol || '?')}
+                    · path=<code>${esc(r.path || '(none)')}</code>
+                    · <strong>${esc(r.reason)}</strong>
+                </div>
+            `).join('')
+            : '<div class="live-diagnose-empty">No recent auth rejections.</div>';
+
+        return `
+            <div class="live-diagnose-section">${reachableLine} ${publisherLine}</div>
+            <div class="live-diagnose-section">
+                <h4>RTMP Connections</h4>
+                ${connLines}
+            </div>
+            <div class="live-diagnose-section">
+                <h4>Recent Auth Rejections</h4>
+                ${rejectionLines}
+            </div>
+            ${otherPathsBlock}
+            <div class="live-diagnose-hint">
+                Hint: a connection in state <code>read</code> means RTMP handshake completed; <code>idle</code>/<code>preRead</code> means the camera opened the socket but hasn't sent the publish command yet — usually a camera config or network/MTU issue.
+            </div>
+        `;
     },
 };
