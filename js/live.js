@@ -153,8 +153,18 @@ export const liveMixin = {
         // configured in mediamtx.yml. lowLatencyMode requires exact LL-HLS
         // part timing which MediaMTX can't always hit, leading to silent
         // white-screens when the timing drifts.
+        //
+        // Buffer tuning: cameras on weak uplinks (e.g. XbotGo Falcon on 4G)
+        // can produce segments 10× slower than real-time, leaving the player
+        // chasing the bleeding edge and stalling between segments. Sit ~6
+        // segments back from live and pre-buffer up to 90s so a single slow
+        // segment doesn't drain us. liveMaxLatencyDurationCount must be >
+        // liveSyncDurationCount or we jump forward and resync constantly.
         const hls = new Hls({
             backBufferLength: 30,
+            maxBufferLength: 90,
+            liveSyncDurationCount: 6,
+            liveMaxLatencyDurationCount: 12,
             enableWorker: true,
         });
         hls.loadSource(LIVE_HLS_URL);
