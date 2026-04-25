@@ -62,6 +62,34 @@ Set `client_max_body_size` to match `MAX_UPLOAD_SIZE_BYTES` (or larger) if
 using non-chunked uploads.  Chunked uploads send small pieces so this is
 usually not an issue.
 
+## CDN / Live-Stream Scale-Out
+
+The HLS proxy at `/api/live/hls/*` sets `Cache-Control` per asset type:
+
+| Path | `Cache-Control` |
+|------|-----------------|
+| `*.m3u8` | `public, max-age=1, must-revalidate` |
+| `*.ts`, `*.mp4`, `*.m4s` | `public, max-age=60, immutable` |
+| Errors (4xx/5xx) | `no-store` |
+
+Segments are content-addressed (filenames embed a session prefix + sequence
+number and are never reused), so a CDN edge can dedupe them safely. With a
+CDN in front of Replay, N concurrent viewers cost ~1 origin pull per segment
+instead of N — the practical scale-out lever for live streaming.
+
+Recommended Cloudflare setup:
+
+1. Add the Replay hostname to Cloudflare; proxy traffic (orange cloud).
+2. Page Rule on `your-host/api/live/hls/*` → "Cache Level: Cache Everything",
+   "Edge Cache TTL: respect existing headers".
+3. Leave the rest of the site on the default rules — only HLS benefits from
+   edge caching; everything else is dynamic or already covered by the
+   per-asset headers Replay sets.
+
+Tune `LIVE_STALE_SEGMENT_AGE_SECONDS` (default 90) if your camera disconnect
+behavior needs faster offline detection. A smaller value flips `/api/live/status`
+to `active=false` sooner after the camera stops sending video keyframes.
+
 ## Storage
 
 Data lives under `REPLAY_DATA_DIR`:

@@ -313,17 +313,33 @@ async def proxy_hls(asset_path: str, stream_key: str) -> tuple[int, dict, AsyncI
         raise
 
     # Forward only the headers a player cares about — drop hop-by-hop and
-    # MediaMTX's internal CORS values (we set our own).
+    # MediaMTX's internal CORS values (we set our own). Also drop MediaMTX's
+    # Cache-Control (it sends no-store) so we can substitute our own.
     drop = {
         "transfer-encoding",
         "connection",
         "content-encoding",
+        "cache-control",
         "access-control-allow-origin",
         "access-control-allow-methods",
         "access-control-allow-headers",
     }
     headers = {k: v for k, v in resp.headers.items() if k.lower() not in drop}
-    headers.setdefault("Cache-Control", "no-store")
+
+    # Cache-Control by asset type — gives a CDN (Cloudflare, BunnyCDN, etc.)
+    # something to dedupe on. Playlists change every segment, so cache them
+    # only briefly; segments are content-addressed (filenames embed a
+    # session prefix + sequence number) and never get reused, so cache them
+    # aggressively. Errors are never cached.
+    lower = asset_path.lower()
+    if resp.status_code != 200:
+        headers["Cache-Control"] = "no-store"
+    elif lower.endswith(".m3u8"):
+        headers["Cache-Control"] = "public, max-age=1, must-revalidate"
+    elif lower.endswith((".ts", ".mp4", ".m4s")):
+        headers["Cache-Control"] = "public, max-age=60, immutable"
+    else:
+        headers["Cache-Control"] = "no-store"
 
     async def _iter() -> AsyncIterator[bytes]:
         try:

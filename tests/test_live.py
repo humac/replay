@@ -333,6 +333,88 @@ async def test_live_hls_proxy_disabled_returns_404(client):
     assert resp.status_code == 404
 
 
+def _patch_hls_proxy_response(monkeypatch, status_code=200, body=b"#EXTM3U\n",
+                              headers=None):
+    """Stub httpx.AsyncClient for proxy_hls — it uses build_request + send
+    with stream=True, so we need a different shape than _patch_hls_fetch."""
+    import live as _live
+
+    class _StubResp:
+        def __init__(self):
+            self.status_code = status_code
+            self.headers = headers or {"Content-Type": "application/vnd.apple.mpegurl"}
+        async def aiter_bytes(self):
+            yield body
+        async def aclose(self):
+            pass
+
+    class _StubClient:
+        def __init__(self, *_a, **_k):
+            pass
+        def build_request(self, _method, _url):
+            return object()
+        async def send(self, _req, stream=False):
+            return _StubResp()
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(_live.httpx, "AsyncClient", _StubClient)
+
+
+async def test_live_hls_proxy_caches_segments_aggressively(monkeypatch):
+    """.ts segments are content-addressed and immutable — long max-age."""
+    import live as _live
+
+    _patch_hls_proxy_response(monkeypatch, body=b"\x00\x00\x00\x01")
+    _, headers, body = await _live.proxy_hls("seg42.ts", "any-key")
+    async for _ in body:
+        pass
+    assert headers["Cache-Control"] == "public, max-age=60, immutable"
+
+
+async def test_live_hls_proxy_caches_playlists_briefly(monkeypatch):
+    """Playlists change every segment — short cache so CDNs dedupe but
+    don't fall behind the live edge."""
+    import live as _live
+
+    _patch_hls_proxy_response(monkeypatch, body=b"#EXTM3U\n")
+    _, headers, body = await _live.proxy_hls("main_stream.m3u8", "any-key")
+    async for _ in body:
+        pass
+    assert headers["Cache-Control"] == "public, max-age=1, must-revalidate"
+
+
+async def test_live_hls_proxy_does_not_cache_errors(monkeypatch):
+    """Never cache 4xx/5xx — even for normally-cacheable extensions."""
+    import live as _live
+
+    _patch_hls_proxy_response(monkeypatch, status_code=404, body=b"not found")
+    status, headers, body = await _live.proxy_hls("seg42.ts", "any-key")
+    async for _ in body:
+        pass
+    assert status == 404
+    assert headers["Cache-Control"] == "no-store"
+
+
+async def test_live_hls_proxy_overrides_mediamtx_cache_control(monkeypatch):
+    """MediaMTX sends Cache-Control: no-store; we replace it, not append."""
+    import live as _live
+
+    _patch_hls_proxy_response(
+        monkeypatch,
+        body=b"\x00",
+        headers={
+            "Content-Type": "video/mp2t",
+            "Cache-Control": "no-store",
+        },
+    )
+    _, headers, body = await _live.proxy_hls("seg42.ts", "any-key")
+    async for _ in body:
+        pass
+    # Single Cache-Control header with our value, not MediaMTX's no-store.
+    assert headers["Cache-Control"] == "public, max-age=60, immutable"
+
+
 # ---------------------------------------------------------------------------
 # /api/admin/live/* — admin-only management
 # ---------------------------------------------------------------------------
