@@ -83,14 +83,17 @@ export const liveMixin = {
             this.detachLivePlayer();
             if (placeholder) placeholder.style.display = 'flex';
             if (placeholderSub) placeholderSub.textContent = 'Live streaming is currently disabled in settings.';
-            if (video) video.style.display = 'none';
+            if (video) video.classList.remove('active');
             if (metaRow) metaRow.style.display = 'none';
             return;
         }
 
         if (isActive) {
             if (placeholder) placeholder.style.display = 'none';
-            if (video) video.style.display = '';
+            // .main-video defaults to display:none in styles.css; the legacy
+            // game player toggles .active to show the element. Match that
+            // pattern instead of trying to override via inline style.
+            if (video) video.classList.add('active');
             if (metaRow) metaRow.style.display = 'flex';
             if (!this.liveLastActive) this.attachLivePlayer();
             this.liveLastActive = true;
@@ -107,7 +110,7 @@ export const liveMixin = {
                         : 'The feed will start automatically when the camera goes online.');
             }
             if (video) {
-                video.style.display = 'none';
+                video.classList.remove('active');
                 video.removeAttribute('src');
                 video.load?.();
             }
