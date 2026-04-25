@@ -2735,3 +2735,109 @@ button {
 [data-theme="light"] .live-settings-card .live-config-row {
     border-bottom-color: rgba(0, 0, 0, 0.08);
 }
+
+/* ===== Season-view live CTA ===== */
+.season-header {
+    flex-wrap: wrap;
+}
+
+.season-info {
+    flex: 1 1 320px;
+}
+
+.season-live-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.85rem 1.1rem 0.85rem 1.25rem;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(135deg, rgba(23, 113, 201, 0.18), rgba(23, 113, 201, 0.04));
+    color: var(--text-main);
+    text-decoration: none;
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease;
+    flex-shrink: 0;
+}
+
+.season-live-cta:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    box-shadow: 0 12px 28px rgba(23, 113, 201, 0.25);
+}
+
+.season-live-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #555;
+    flex-shrink: 0;
+}
+
+.season-live-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    line-height: 1.1;
+}
+
+.season-live-kicker {
+    font-family: var(--font-heading);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.season-live-text {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 1rem;
+    letter-spacing: 0.05em;
+}
+
+.season-live-arrow {
+    color: var(--text-muted);
+    transition: transform 0.25s ease, color 0.25s ease;
+}
+
+.season-live-cta:hover .season-live-arrow {
+    color: var(--accent);
+    transform: translateX(3px);
+}
+
+.season-live-cta[data-state="live"] {
+    border-color: rgba(239, 68, 68, 0.55);
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.22), rgba(239, 68, 68, 0.05));
+    box-shadow: 0 12px 32px rgba(239, 68, 68, 0.18);
+}
+
+.season-live-cta[data-state="live"] .season-live-dot {
+    background: #ef4444;
+    animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+.season-live-cta[data-state="live"] .season-live-kicker {
+    color: #ff8a8a;
+}
+
+.season-live-cta[data-state="live"] .season-live-arrow,
+.season-live-cta[data-state="live"]:hover .season-live-arrow {
+    color: #ff6b6b;
+}
+
+@media (max-width: 720px) {
+    .season-live-cta {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+[data-theme="light"] .season-live-cta {
+    background: linear-gradient(135deg, rgba(23, 113, 201, 0.12), rgba(23, 113, 201, 0.02));
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .season-live-cta[data-state="live"] {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(239, 68, 68, 0.04));
+    border-color: rgba(220, 38, 38, 0.45);
+}

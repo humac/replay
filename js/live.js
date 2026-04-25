@@ -3,10 +3,12 @@
 
 const LIVE_POLL_INTERVAL_MS = 4000;
 const LIVE_HLS_URL = '/api/live/hls/index.m3u8';
+const SEASON_CTA_POLL_INTERVAL_MS = 30000;
 
 export const liveMixin = {
     showLiveView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         this.teardownGameView();
+        this.stopSeasonLiveCtaPolling();
         this.activateView('live-view', 'live');
 
         const settings = this.getAppSettings();
@@ -170,6 +172,68 @@ export const liveMixin = {
             try { video.pause(); } catch { /* ignore */ }
             video.removeAttribute('src');
             try { video.load(); } catch { /* ignore */ }
+        }
+    },
+
+    // ===== SEASON-VIEW CTA =====
+
+    refreshSeasonLiveCta() {
+        const cta = document.getElementById('season-live-cta');
+        if (!cta) return;
+
+        const settings = this.getAppSettings();
+        if (settings.live_enabled !== '1') {
+            cta.style.display = 'none';
+            this.stopSeasonLiveCtaPolling();
+            return;
+        }
+
+        cta.style.display = '';
+        this.startSeasonLiveCtaPolling();
+        this.pollSeasonLiveCta();
+    },
+
+    startSeasonLiveCtaPolling() {
+        if (this._seasonCtaTimer) return;
+        this._seasonCtaTimer = setInterval(() => this.pollSeasonLiveCta(), SEASON_CTA_POLL_INTERVAL_MS);
+    },
+
+    stopSeasonLiveCtaPolling() {
+        if (this._seasonCtaTimer) {
+            clearInterval(this._seasonCtaTimer);
+            this._seasonCtaTimer = null;
+        }
+    },
+
+    async pollSeasonLiveCta() {
+        const cta = document.getElementById('season-live-cta');
+        if (!cta) return;
+
+        // Skip the network call if we're not on the season view anymore.
+        if (!document.getElementById('season-view')?.classList.contains('active')) {
+            this.stopSeasonLiveCtaPolling();
+            return;
+        }
+
+        let isLive = false;
+        try {
+            const resp = await fetch('/api/live/status', { cache: 'no-store' });
+            if (resp.ok) {
+                const data = await resp.json();
+                isLive = !!(data.enabled && data.active && data.ready);
+            }
+        } catch { /* offline — keep CTA in offline state */ }
+
+        const kicker = document.getElementById('season-live-kicker');
+        const text = document.getElementById('season-live-text');
+        if (isLive) {
+            cta.dataset.state = 'live';
+            if (kicker) kicker.textContent = 'Live Now';
+            if (text) text.textContent = 'Watch the Match';
+        } else {
+            cta.dataset.state = 'offline';
+            if (kicker) kicker.textContent = 'Live Stream';
+            if (text) text.textContent = 'Watch Live';
         }
     },
 

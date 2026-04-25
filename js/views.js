@@ -44,6 +44,8 @@ export const viewsMixin = {
         const seasonLogo = document.getElementById('season-logo');
         if (seasonLogo && assets.logo_url) seasonLogo.src = assets.logo_url;
 
+        if (typeof this.refreshSeasonLiveCta === 'function') this.refreshSeasonLiveCta();
+
         if (this.matches.length) this.renderSeasonView();
         if (this.activeMatchId) {
             const match = this.matches.find((item) => item.id === this.activeMatchId);
@@ -1024,6 +1026,7 @@ export const viewsMixin = {
         if (!match) return;
         this._pendingInitialSlot = initialSlot;
         if (typeof this.teardownLiveView === 'function') this.teardownLiveView();
+        if (typeof this.stopSeasonLiveCtaPolling === 'function') this.stopSeasonLiveCtaPolling();
 
         this.activeMatchId = matchId;
         const gameEditBtn = document.getElementById('game-edit-btn');

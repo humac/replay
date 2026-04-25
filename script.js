@@ -186,6 +186,7 @@ const app = {
         this.teardownLiveView();
         this.activateView('season-view', 'season');
         this.renderSeasonView();
+        this.refreshSeasonLiveCta?.();
         if (pushHistory) {
             this.pushHistoryState({ view: 'season' }, { replace: replaceHistory, url: '/' });
         }
@@ -197,6 +198,7 @@ const app = {
     openAddMatchView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         this.teardownGameView();
         this.teardownLiveView();
+        this.stopSeasonLiveCtaPolling?.();
         this.activateView('add-match-view', 'add-match');
         if (this.authToken) this.refreshAdminDiagnostics();
         if (pushHistory) {
@@ -210,6 +212,7 @@ const app = {
     showSettingsView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         this.teardownGameView();
         this.teardownLiveView();
+        this.stopSeasonLiveCtaPolling?.();
         this.activateView('settings-view', 'settings');
         this.renderSettingsForm();
         if (pushHistory) {
