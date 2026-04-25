@@ -140,11 +140,12 @@ export const liveMixin = {
             this.liveHls = null;
         }
 
+        // Keep the HLS.js config conservative — matches the `mpegts` variant
+        // configured in mediamtx.yml. lowLatencyMode requires exact LL-HLS
+        // part timing which MediaMTX can't always hit, leading to silent
+        // white-screens when the timing drifts.
         const hls = new Hls({
-            lowLatencyMode: true,
             backBufferLength: 30,
-            liveSyncDuration: 2,
-            liveMaxLatencyDuration: 6,
             enableWorker: true,
         });
         hls.loadSource(LIVE_HLS_URL);

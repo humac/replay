@@ -16,11 +16,16 @@ rtmpAddress: :1935
 
 hls: yes
 hlsAddress: :8888
-hlsVariant: lowLatency
+# `mpegts` (= classic HLS) is the most compatible variant — plays in HLS.js,
+# Safari, and every native player without fuss. Latency is ~6–10s vs. the 2–5s
+# of `lowLatency`, but LL-HLS requires exact part-duration timing that
+# MediaMTX can't always hit (you'll see "part duration changed" warnings),
+# which makes HLS.js silently white-screen when the timing drifts.
+# Switch back to `lowLatency` once everything is stable end-to-end.
+hlsVariant: mpegts
 hlsAlwaysRemux: yes
 hlsSegmentCount: 7
-hlsSegmentDuration: 1s
-hlsPartDuration: 200ms
+hlsSegmentDuration: 2s
 hlsAllowOrigin: '*'
 
 rtsp: no
