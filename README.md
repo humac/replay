@@ -11,6 +11,7 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **Adaptive streaming** — each processed upload is packaged into an HLS ladder for smoother playback under varying bandwidth
 - **Direct MP4 fallback** — the processed MP4 remains available for simple playback, range seeking, and casting
 - **HLS backfill for existing uploads** — already processed MP4 files can generate HLS assets later without re-uploading
+- **Watch Live (RTMP ingest → LL-HLS)** — point a camera (e.g. XbotGo Falcon) at the site's RTMP URL with a configurable stream key; viewers watch the live feed at `/live` with sub-5s latency
 - **AirPlay 2** — explicit AirPlay picker button on supported Safari/WebKit devices for Apple TV and AirPlay 2 displays
 - **Chromecast** — Google Cast SDK integration with a dedicated cast button, metadata, and remote playback resume support
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
@@ -58,7 +59,9 @@ cp .env.example .env.local
 
 Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the container.
 
-Build/run with plain Docker:
+Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1935` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8090` origin via a reverse proxy.
+
+Build/run with plain Docker (without the live stream):
 
 ```bash
 docker build -t replay .
@@ -79,6 +82,8 @@ docker run --rm -p 8090:8090 -v replay_data:/data replay
 | `MIN_FREE_DISK_BYTES` | `21474836480` | Minimum free disk threshold before accepting new uploads |
 | `UPLOAD_DISK_HEADROOM_MULTIPLIER` | `2.2` | Required free-space multiplier for new uploads |
 | `STALE_UPLOAD_SESSION_SECONDS` | `21600` | Idle upload session age before cleanup |
+| `MEDIAMTX_HLS_URL` | `http://mediamtx:8888` | Internal HLS endpoint of the MediaMTX sidecar |
+| `MEDIAMTX_API_URL` | `http://mediamtx:9997` | Internal control API of the MediaMTX sidecar |
 
 ## System Settings
 
@@ -93,6 +98,31 @@ After logging in as admin, open the `Settings` page from the main navigation to 
 - whether public downloads are enabled
 
 These settings are stored in SQLite and applied across the SPA without changing match records.
+
+## Live Streaming
+
+Replay can ingest a live RTMP feed (e.g. from an XbotGo Falcon or any camera/encoder that speaks RTMP) and play it back in the browser at `/live` with sub-5s latency over LL-HLS.
+
+The live pipeline is provided by a `mediamtx` sidecar in `docker-compose.yml`:
+
+- camera pushes RTMP to `rtmp://<your-host>:1935/live/<stream-key>`
+- MediaMTX repackages to LL-HLS and exposes it on its internal port `8888`
+- the `replay` app reverse-proxies the playlist + segments at `/api/live/hls/*`, so viewers only ever talk to the same `8090` origin
+- MediaMTX calls back to `/api/live/auth` on every publish to validate the stream key — rotating the key invalidates any active publisher immediately
+
+### Camera setup
+
+Log in as admin and open **Settings → Live Streaming**:
+
+1. tick **Enable the Watch Live tab** (default on)
+2. enter the public-facing RTMP URL you want camera operators to use, e.g. `rtmp://replay.example.com:1935/live`
+3. copy the auto-generated **Stream Key** (click *Reveal* to view it)
+4. paste the URL + key into your camera/encoder
+5. point a viewer at `/live` — the player shows an "Offline" placeholder until the camera goes live, then auto-attaches to the LL-HLS feed
+
+The stream key is private — it is never returned by `/api/settings`. Use **Rotate** to generate a new one whenever you need to revoke access.
+
+There is no recording: live frames are not persisted on disk. Once the match is done, upload the camera's local recording the usual way.
 
 ## Downloads
 
@@ -147,11 +177,17 @@ $REPLAY_DATA_DIR/
 | `/api/matches/{id}/upload-logo?team=` | POST | Upload team logo (team: `home`, `away`) |
 | `/api/matches/{id}/video/{slot}` | GET | Stream video with range request support |
 | `/api/matches/{id}/logo/{team}` | GET | Serve team logo image |
+| `/api/live/status` | GET | Whether a live stream is currently active |
+| `/api/live/hls/{path}` | GET | Same-origin reverse proxy for the LL-HLS playlist + segments |
+| `/api/live/auth` | POST | Webhook MediaMTX calls to authorise an RTMP publish |
+| `/api/admin/live/config` | GET | Admin: view stream key, RTMP path, and live config |
+| `/api/admin/live/rotate-key` | POST | Admin: rotate the stream key (invalidates current publisher) |
 
 ## Tech Stack
 
-- **Backend**: Python, FastAPI, uvicorn
-- **Frontend**: Vanilla HTML/CSS/JS (no build step)
+- **Backend**: Python, FastAPI, uvicorn, httpx
+- **Frontend**: Vanilla HTML/CSS/JS (no build step), HLS.js for in-browser LL-HLS playback
+- **Live ingest**: MediaMTX sidecar (RTMP → LL-HLS) reverse-proxied through FastAPI
 - **Fonts**: Oswald + Manrope (Google Fonts)
 - **Cast**: Google Cast SDK (Chromecast), AirPlay 2 via Safari/WebKit remote playback APIs
 - **Storage**: SQLite + filesystem
