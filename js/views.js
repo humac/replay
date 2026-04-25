@@ -13,7 +13,6 @@ export const viewsMixin = {
         const mappings = [
             ['nav-app-name', settings.app_name],
             ['nav-season-link', settings.nav_matches_label],
-            ['nav-live-link', settings.nav_live_label],
             ['nav-add-match', settings.nav_add_match_label],
             ['nav-settings', settings.nav_settings_label],
             ['season-title', settings.season_title],
@@ -289,7 +288,6 @@ export const viewsMixin = {
             downloads_enabled: document.getElementById('settings-downloads-enabled').checked,
             live_enabled: document.getElementById('settings-live-enabled')?.checked ?? true,
             live_rtmp_public_url: document.getElementById('settings-live-rtmp-public-url')?.value.trim() || '',
-            nav_live_label: document.getElementById('settings-nav-live-label')?.value.trim() || '',
             live_offline_message: document.getElementById('settings-live-offline-message')?.value.trim() || '',
         };
 

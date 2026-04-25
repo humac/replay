@@ -34,7 +34,6 @@
         <a href="/" class="logo" id="nav-app-name" onclick="event.preventDefault(); app.goHome()">Replay</a>
         <div class="nav-links">
             <a href="#" class="active" data-view="season" id="nav-season-link">Matches</a>
-            <a href="#" data-view="live" id="nav-live-link">Watch Live</a>
             <a href="#" data-view="add-match" id="nav-add-match" style="display:none;">Add Match</a>
             <a href="#" data-view="settings" id="nav-settings" style="display:none;">Settings</a>
         </div>
@@ -528,7 +527,7 @@
                             <div class="form-group settings-checkbox-group">
                                 <label class="checkbox-label">
                                     <input type="checkbox" id="settings-live-enabled">
-                                    Enable the Watch Live tab and accept incoming streams
+                                    Enable live streaming and accept incoming streams
                                 </label>
                             </div>
                         </div>
@@ -536,10 +535,6 @@
                             <div class="form-group">
                                 <label>Public RTMP URL (shown to camera operators)</label>
                                 <input type="text" id="settings-live-rtmp-public-url" maxlength="200" placeholder="rtmp://your-host:1935/live">
-                            </div>
-                            <div class="form-group">
-                                <label>Watch Live Nav Label</label>
-                                <input type="text" id="settings-nav-live-label" maxlength="40" placeholder="Watch Live">
                             </div>
                         </div>
                         <div class="form-row">

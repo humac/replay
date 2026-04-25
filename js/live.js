@@ -282,11 +282,9 @@ export const liveMixin = {
         const settings = this.getAppSettings();
         const enabledEl = document.getElementById('settings-live-enabled');
         const rtmpEl = document.getElementById('settings-live-rtmp-public-url');
-        const navLabelEl = document.getElementById('settings-nav-live-label');
         const offlineEl = document.getElementById('settings-live-offline-message');
         if (enabledEl) enabledEl.checked = settings.live_enabled === '1';
         if (rtmpEl) rtmpEl.value = settings.live_rtmp_public_url || '';
-        if (navLabelEl) navLabelEl.value = settings.nav_live_label || '';
         if (offlineEl) offlineEl.value = settings.live_offline_message || '';
 
         const config = await this.loadLiveAdminConfig();
