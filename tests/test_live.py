@@ -168,6 +168,154 @@ async def test_live_status_keeps_active_when_segments_fresh(client, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# _last_segment_age — direct parser tests
+# ---------------------------------------------------------------------------
+
+class _FakeResp:
+    def __init__(self, status_code: int, text: str = ""):
+        self.status_code = status_code
+        self.text = text
+
+
+def _patch_hls_fetch(monkeypatch, *, text: str | None = None,
+                     status_code: int = 200, raise_exc=None):
+    """Replace httpx.AsyncClient.get with a stub that returns / raises
+    whatever the test wants. The helper reaches into the live module's
+    httpx import so existing httpx.AsyncClient instances elsewhere are
+    unaffected."""
+    import live as _live
+
+    class _StubClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_exc):
+            return False
+        async def get(self, _url):
+            if raise_exc is not None:
+                raise raise_exc
+            return _FakeResp(status_code, text or "")
+
+    monkeypatch.setattr(_live.httpx, "AsyncClient", _StubClient)
+
+
+async def test_last_segment_age_parses_recent_pdt(monkeypatch):
+    """A PDT 30s in the past should produce an age of roughly 30 seconds."""
+    import live as _live
+    from datetime import datetime, timezone, timedelta
+
+    pdt = (datetime.now(timezone.utc) - timedelta(seconds=30)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    playlist = (
+        "#EXTM3U\n"
+        "#EXT-X-VERSION:3\n"
+        f"#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"
+        "#EXTINF:3.96,\n"
+        "seg.ts\n"
+    )
+    _patch_hls_fetch(monkeypatch, text=playlist)
+
+    age = await _live._last_segment_age("any-key")
+    assert age is not None
+    assert 28 <= age <= 35  # generous slack for test scheduling
+
+
+async def test_last_segment_age_uses_last_pdt_in_playlist(monkeypatch):
+    """Multiple PDT entries — only the last one matters (it's the live edge)."""
+    import live as _live
+    from datetime import datetime, timezone, timedelta
+
+    old = (datetime.now(timezone.utc) - timedelta(seconds=600)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    recent = (datetime.now(timezone.utc) - timedelta(seconds=10)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    playlist = (
+        f"#EXT-X-PROGRAM-DATE-TIME:{old}\n"
+        "seg1.ts\n"
+        f"#EXT-X-PROGRAM-DATE-TIME:{recent}\n"
+        "seg2.ts\n"
+    )
+    _patch_hls_fetch(monkeypatch, text=playlist)
+
+    age = await _live._last_segment_age("any-key")
+    assert age is not None
+    assert age < 30  # i.e. it picked the recent one, not the 600s-old one
+
+
+async def test_last_segment_age_returns_none_when_no_pdt(monkeypatch):
+    """A playlist without any PDT lines (e.g. before first segment cut)."""
+    import live as _live
+
+    _patch_hls_fetch(monkeypatch, text="#EXTM3U\n#EXT-X-VERSION:3\n")
+    assert await _live._last_segment_age("any-key") is None
+
+
+async def test_last_segment_age_returns_none_on_malformed_pdt(monkeypatch):
+    """Garbage in the PDT value → None, not an exception."""
+    import live as _live
+
+    _patch_hls_fetch(
+        monkeypatch,
+        text="#EXTM3U\n#EXT-X-PROGRAM-DATE-TIME:not-a-real-date\nseg.ts\n",
+    )
+    assert await _live._last_segment_age("any-key") is None
+
+
+async def test_last_segment_age_returns_none_on_http_error(monkeypatch):
+    """MediaMTX unreachable → None, swallowed cleanly."""
+    import httpx
+    import live as _live
+
+    _patch_hls_fetch(monkeypatch, raise_exc=httpx.ConnectError("nope"))
+    assert await _live._last_segment_age("any-key") is None
+
+
+async def test_last_segment_age_returns_none_on_non_200(monkeypatch):
+    """404 / 502 from MediaMTX → None."""
+    import live as _live
+
+    _patch_hls_fetch(monkeypatch, status_code=404, text="not found")
+    assert await _live._last_segment_age("any-key") is None
+
+
+async def test_last_segment_age_handles_crlf_line_endings(monkeypatch):
+    """Some MediaMTX builds emit \\r\\n. The PDT regex must not eat the CR."""
+    import live as _live
+    from datetime import datetime, timezone, timedelta
+
+    pdt = (datetime.now(timezone.utc) - timedelta(seconds=15)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    playlist = f"#EXTM3U\r\n#EXT-X-PROGRAM-DATE-TIME:{pdt}\r\nseg.ts\r\n"
+    _patch_hls_fetch(monkeypatch, text=playlist)
+
+    age = await _live._last_segment_age("any-key")
+    assert age is not None
+    assert 13 <= age <= 20
+
+
+async def test_last_segment_age_returns_none_for_empty_stream_key(monkeypatch):
+    """No stream key configured → None without making any HTTP call."""
+    import live as _live
+
+    called = {"hit": False}
+
+    class _ShouldNotCall:
+        def __init__(self, *_a, **_k): pass
+        async def __aenter__(self): called["hit"] = True; return self
+        async def __aexit__(self, *_): return False
+        async def get(self, _url): called["hit"] = True; return _FakeResp(200)
+
+    monkeypatch.setattr(_live.httpx, "AsyncClient", _ShouldNotCall)
+    assert await _live._last_segment_age("") is None
+    assert called["hit"] is False
+
+
+# ---------------------------------------------------------------------------
 # /api/live/hls/* — proxy
 # ---------------------------------------------------------------------------
 

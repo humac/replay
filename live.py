@@ -16,6 +16,7 @@ test suite can point at fake endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -145,7 +146,12 @@ async def check_publisher_active(stream_key: str) -> dict:
     audio-only data flowing — MediaMTX keeps the path "ready" but stops
     producing playable video segments.
     """
-    reachable, items = await _list_paths()
+    # Fan out the path-list and segment-age queries concurrently — they're
+    # independent and both hit the same internal MediaMTX, so awaiting in
+    # parallel halves the wall time of every status poll.
+    (reachable, items), age = await asyncio.gather(
+        _list_paths(), _last_segment_age(stream_key)
+    )
     if not reachable:
         return {"active": False, "ready": False, "reachable": False}
 
@@ -161,10 +167,8 @@ async def check_publisher_active(stream_key: str) -> dict:
         "tracks": match.get("tracks") or [],
         "bytes_received": match.get("bytesReceived"),
         "ready_time": match.get("readyTime"),
+        "last_segment_age_seconds": age,
     }
-
-    age = await _last_segment_age(stream_key)
-    result["last_segment_age_seconds"] = age
     if age is not None and age > STALE_SEGMENT_AGE_SECONDS and (
         result["ready"] or result["active"]
     ):
