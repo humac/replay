@@ -7,6 +7,7 @@ import { playerMixin } from './js/player.js';
 import { uploadsMixin } from './js/uploads.js';
 import { viewsMixin } from './js/views.js';
 import { uiMixin } from './js/ui.js';
+import { liveMixin } from './js/live.js';
 
 const app = {
     // ===== STATE & CONFIG =====
@@ -71,6 +72,12 @@ const app = {
             }
         }
 
+        if (path === '/live') {
+            window.history.replaceState({ view: 'live' }, '', '/live');
+            this.showLiveView({ pushHistory: false, scrollTop: false });
+            return;
+        }
+
         const current = window.history.state;
         if (!current || !current.view) {
             window.history.replaceState({ view: 'season' }, '', '/');
@@ -119,6 +126,11 @@ const app = {
                 return;
             }
             this.showSettingsView({ pushHistory: false, scrollTop });
+            return;
+        }
+
+        if (state.view === 'live') {
+            this.showLiveView({ pushHistory: false, scrollTop });
             return;
         }
 
@@ -171,6 +183,7 @@ const app = {
 
     showSeasonView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         this.teardownGameView();
+        this.teardownLiveView();
         this.activateView('season-view', 'season');
         this.renderSeasonView();
         if (pushHistory) {
@@ -183,6 +196,7 @@ const app = {
 
     openAddMatchView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         this.teardownGameView();
+        this.teardownLiveView();
         this.activateView('add-match-view', 'add-match');
         if (this.authToken) this.refreshAdminDiagnostics();
         if (pushHistory) {
@@ -195,6 +209,7 @@ const app = {
 
     showSettingsView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         this.teardownGameView();
+        this.teardownLiveView();
         this.activateView('settings-view', 'settings');
         this.renderSettingsForm();
         if (pushHistory) {
@@ -234,6 +249,9 @@ const app = {
                 } else if (view === 'settings') {
                     this.cancelEdit();
                     this.showSettingsView();
+                } else if (view === 'live') {
+                    this.cancelEdit();
+                    this.showLiveView();
                 }
             });
         });
@@ -292,6 +310,11 @@ const app = {
         });
     },
 
+    // ===== LIVE VIEW STATE =====
+    liveStatusTimer: null,
+    liveHls: null,
+    liveLastActive: false,
+
     // Merge all module mixins
     ...utilsMixin,
     ...apiMixin,
@@ -299,6 +322,7 @@ const app = {
     ...uploadsMixin,
     ...viewsMixin,
     ...uiMixin,
+    ...liveMixin,
 };
 
 // Expose globally for inline onclick handlers

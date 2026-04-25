@@ -1,0 +1,49 @@
+# MediaMTX configuration for the Replay live stream.
+#
+# - Accepts RTMP push at rtmp://<host>:1935/live/<stream-key>
+# - Publishes LL-HLS at http://mediamtx:8888/live/<stream-key>/index.m3u8
+#   (internal only; viewers reach it through the replay reverse proxy)
+# - Stream-key validation is delegated to the replay app via an HTTP webhook
+#   so the secret can be rotated without a MediaMTX restart.
+
+logLevel: info
+
+api: yes
+apiAddress: :9997
+
+rtmp: yes
+rtmpAddress: :1935
+
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsAlwaysRemux: yes
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsAllowOrigin: '*'
+
+rtsp: no
+webrtc: no
+srt: no
+
+record: no
+
+# External authentication — every publish/read/api call hits this URL and
+# the replay app decides allow/deny. Reads, API, metrics, and pprof originate
+# from inside the compose network so they're allowed unconditionally.
+authMethod: http
+authHTTPAddress: http://replay:8090/api/live/auth
+authHTTPExclude:
+  - action: read
+  - action: playback
+  - action: api
+  - action: metrics
+  - action: pprof
+
+paths:
+  # Single regex path: anything under "live/<stream-key>". The auth webhook
+  # validates that <stream-key> matches the value persisted in the replay app's
+  # settings table.
+  '~^live/[^/]+$':
+    source: publisher

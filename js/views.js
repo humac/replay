@@ -13,6 +13,7 @@ export const viewsMixin = {
         const mappings = [
             ['nav-app-name', settings.app_name],
             ['nav-season-link', settings.nav_matches_label],
+            ['nav-live-link', settings.nav_live_label],
             ['nav-add-match', settings.nav_add_match_label],
             ['nav-settings', settings.nav_settings_label],
             ['season-title', settings.season_title],
@@ -107,6 +108,9 @@ export const viewsMixin = {
         const downloadsEnabled = document.getElementById('settings-downloads-enabled');
         if (downloadsEnabled) downloadsEnabled.checked = settings.downloads_enabled === '1';
         this.renderSettingsAssetStates();
+
+        // Live streaming card (admin only)
+        if (typeof this.renderLiveSettingsCard === 'function') this.renderLiveSettingsCard();
 
         // Show user management for admins
         const userCard = document.getElementById('user-management-card');
@@ -281,6 +285,10 @@ export const viewsMixin = {
             game_video_status_label: document.getElementById('settings-game-video-status-label').value.trim(),
             download_label: document.getElementById('settings-download-label').value.trim(),
             downloads_enabled: document.getElementById('settings-downloads-enabled').checked,
+            live_enabled: document.getElementById('settings-live-enabled')?.checked ?? true,
+            live_rtmp_public_url: document.getElementById('settings-live-rtmp-public-url')?.value.trim() || '',
+            nav_live_label: document.getElementById('settings-nav-live-label')?.value.trim() || '',
+            live_offline_message: document.getElementById('settings-live-offline-message')?.value.trim() || '',
         };
 
         const restore = this.btnLoading(submitBtn, 'Saving...');
@@ -1015,6 +1023,7 @@ export const viewsMixin = {
         const match = this.matches.find(m => m.id === matchId);
         if (!match) return;
         this._pendingInitialSlot = initialSlot;
+        if (typeof this.teardownLiveView === 'function') this.teardownLiveView();
 
         this.activeMatchId = matchId;
         const gameEditBtn = document.getElementById('game-edit-btn');

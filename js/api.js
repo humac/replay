@@ -141,6 +141,7 @@ export const apiMixin = {
             nav_matches_label: 'Matches',
             nav_add_match_label: 'Add Match',
             nav_settings_label: 'Settings',
+            nav_live_label: 'Watch Live',
             season_title: 'U12 GIRLS STEEL',
             season_intro: 'Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)',
             main_team_name: 'OSU Steel',
@@ -155,6 +156,9 @@ export const apiMixin = {
             game_video_status_label: 'Video Status',
             download_label: 'Download',
             downloads_enabled: '1',
+            live_enabled: '1',
+            live_offline_message: 'No live stream right now. Check back at kick-off.',
+            live_rtmp_public_url: '',
             app_logo_filename: '',
             favicon_filename: '',
         };

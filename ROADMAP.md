@@ -195,6 +195,37 @@ Created `docs/DEPLOYMENT.md` (Docker/bare-metal setup, env vars reference, rever
 
 ---
 
+## Milestone 5 — Live Streaming ✅ COMPLETE
+
+**Goal:** let users watch the current match in real time without waiting for upload + transcode.
+
+**5.1 RTMP ingest via MediaMTX sidecar** ✅
+Added `mediamtx` service to `docker-compose.yml`. Accepts RTMP push at port 1935, exposes LL-HLS internally on port 8888, exposes a control API on 9997 (internal only). Configured via `mediamtx.yml` with external HTTP auth — every publish hits `/api/live/auth` so the stream key can be rotated without restarting the sidecar.
+
+**5.2 Live stream key management** ✅
+Stream key is generated lazily on first read (24 chars of url-safe entropy) and persisted in the `settings` table under the new private key `live_stream_key`. The key is never included in the public `/api/settings` payload (private-key denylist in `settings.public_payload`). Admin endpoints: `GET /api/admin/live/config` (view), `POST /api/admin/live/rotate-key` (rotate).
+
+**5.3 Backend bridge to MediaMTX** ✅
+New `live.py` module with three responsibilities: validate publish auth webhook payloads, query the MediaMTX control API for publisher status, and reverse-proxy LL-HLS playlists/segments back to the browser via async streaming. Browsers only ever see the replay origin — MediaMTX's 8888/9997 ports stay on the internal compose network.
+
+**5.4 Watch Live SPA tab** ✅
+New "Watch Live" nav link, deep-link route `/live`, and live view section. New `js/live.js` mixin polls `/api/live/status` every 4s, attaches HLS.js (or native HLS for Safari) to `/api/live/hls/index.m3u8` when a publisher is active, shows an offline placeholder otherwise. Tear-down is wired into all view transitions so leaving the page stops polling and destroys the player.
+
+**5.5 Admin live settings card** ✅
+Settings view gains a "Live Streaming" card (admin-only): toggle live on/off, set the public-facing RTMP URL shown to camera operators, customise the offline message and nav label, view/copy the RTMP endpoint and stream key (masked by default), and rotate the key with one click.
+
+**5.6 Test coverage** ✅
+13 new tests in `tests/test_live.py`: auth webhook accepts/rejects (correct key, wrong key, non-publish action, wrong protocol), status endpoint shape and disabled-state, HLS proxy 502/404 paths, admin config + rotate flows, and a regression check that the stream key never leaks via `/api/settings`.
+
+### M5 exit criteria — all met
+
+- ✅ Camera operators get a stable RTMP URL + rotatable stream key
+- ✅ Viewers can watch live without authenticating
+- ✅ Stream key is never exposed in public payloads
+- ✅ Live and replay flows share zero state — leaving Watch Live releases the player
+
+---
+
 ## Dependencies
 
 - **M1 before M2:** tests and CI must exist before major refactors.

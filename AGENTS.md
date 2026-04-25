@@ -21,7 +21,8 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `settings.py`: app settings persistence, rendering helpers
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
 - `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU) with real-time progress tracking, HLS variant generation, thumbnail extraction
-- `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, and user management
+- `live.py`: MediaMTX bridge — HLS reverse proxy, RTMP-publish auth webhook validation, control-API status query
+- `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, and live auth webhook
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
 - `js/utils.js`: pure utility functions (esc, formatDate, statusLabel, etc.)
@@ -29,11 +30,13 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `js/player.js`: AirPlay, Chromecast, HLS playback, position/speed memory, keyboard shortcuts, match navigation
 - `js/uploads.js`: chunked upload sessions, resume logic
 - `js/views.js`: season view, game view, match form, settings form, admin panel
+- `js/live.js`: Watch Live view (HLS.js player + status polling) and admin live config card
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling
-- `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin)
-- `docker-compose.yml`: local container runtime
+- `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live)
+- `docker-compose.yml`: local container runtime — defines `replay` and the `mediamtx` sidecar
+- `mediamtx.yml`: MediaMTX config (RTMP ingest, LL-HLS output, external auth webhook)
 - `.env.example`: deployment configuration template
 
 ## Common Commands
@@ -67,6 +70,8 @@ Most relevant variables:
 - `ALLOWED_ORIGINS` — optional comma-separated hostnames for login origin validation
 - `LOG_FORMAT` — `json` (default) or `text` for human-readable logs
 - `LOG_LEVEL` — `INFO` (default), `DEBUG`, `WARNING`, etc.
+- `MEDIAMTX_HLS_URL` — internal address of the MediaMTX sidecar's HLS port (default `http://mediamtx:8888`)
+- `MEDIAMTX_API_URL` — internal address of the MediaMTX control API (default `http://mediamtx:9997`)
 
 ## Project Constraints
 
@@ -110,4 +115,5 @@ After frontend changes, sanity-check:
 - Playback state (position, speed) is persisted in localStorage by `js/player.js`. Keyboard shortcuts are YouTube-style and registered globally in `initKeyboardShortcuts()`. Thumbnails are auto-generated during transcoding and backfilled at startup for existing videos.
 - Video errors are persisted in the `video_errors` table. When setting status to `"error"`, pass `error_info={"error_code": ..., "reason": ..., "details": ...}` to `_set_video_status()`.
 - Admin recovery endpoints: retry transcode (`POST .../retry`), regenerate HLS (`POST .../regenerate-hls`), verify assets (`GET .../verify`), export DB (`POST /api/admin/export-database`).
+- Live streaming (RTMP ingest → LL-HLS) is provided by a `mediamtx` sidecar in compose. Stream-key auth runs through `POST /api/live/auth` (called by MediaMTX); browsers always reach LL-HLS via the proxy at `/api/live/hls/*` so they only ever talk to the replay origin. The stream key is private (never returned by `/api/settings`) and is rotated via `POST /api/admin/live/rotate-key`.
 - **After every code change**, update the relevant markdown files (`ROADMAP.md`, `AGENTS.md`, `CLAUDE.md`) to reflect what changed — new files, completed roadmap items, new conventions, updated guidance. Keep these files as the living source of truth.

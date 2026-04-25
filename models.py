@@ -131,3 +131,17 @@ class UpdateUserRequest(BaseModel):
         if v is not None and v not in _VALID_ROLES:
             raise ValueError(f"role must be one of: {', '.join(sorted(_VALID_ROLES))}")
         return v
+
+
+class LiveAuthRequest(BaseModel):
+    """Body MediaMTX POSTs to the auth webhook on publish/read attempts."""
+    model_config = ConfigDict(extra="allow")
+
+    user: str = ""
+    password: str = ""
+    ip: str = ""
+    action: str = ""
+    path: str = ""
+    protocol: str = ""
+    id: str = ""
+    query: str = ""

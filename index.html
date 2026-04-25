@@ -34,6 +34,7 @@
         <a href="/" class="logo" id="nav-app-name" onclick="event.preventDefault(); app.goHome()">Replay</a>
         <div class="nav-links">
             <a href="#" class="active" data-view="season" id="nav-season-link">Matches</a>
+            <a href="#" data-view="live" id="nav-live-link">Watch Live</a>
             <a href="#" data-view="add-match" id="nav-add-match" style="display:none;">Add Match</a>
             <a href="#" data-view="settings" id="nav-settings" style="display:none;">Settings</a>
         </div>
@@ -90,6 +91,38 @@
 
             <div class="matches-grid" id="matches-grid">
                 <!-- Matches dynamically populated -->
+            </div>
+        </section>
+
+        <!-- Live View -->
+        <section id="live-view" class="view">
+            <header class="live-header">
+                <div class="live-header-text">
+                    <span class="live-kicker">Now Streaming</span>
+                    <h1 id="live-title">Watch Live</h1>
+                    <p id="live-subtitle">Live coverage of the current match. The feed appears as soon as the camera starts streaming.</p>
+                </div>
+                <div class="live-status-badge" id="live-status-badge" data-state="offline">
+                    <span class="live-status-dot" aria-hidden="true"></span>
+                    <span class="live-status-text" id="live-status-text">Offline</span>
+                </div>
+            </header>
+
+            <div class="live-stage">
+                <div class="player-wrapper live-player-wrapper">
+                    <video id="live-video" controls playsinline autoplay muted preload="auto" class="main-video">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="video-placeholder live-placeholder" id="live-placeholder">
+                        <div class="play-indicator"></div>
+                        <span class="player-label" id="live-placeholder-label">No live stream right now.</span>
+                        <span class="player-sublabel" id="live-placeholder-sub">Check back at kick-off — the feed will start automatically.</span>
+                    </div>
+                </div>
+                <div class="live-meta-row" id="live-meta-row" style="display:none;">
+                    <span class="status-pill processing" id="live-meta-pill">LIVE</span>
+                    <span class="live-meta-text" id="live-meta-text">Streaming from the field camera.</span>
+                </div>
             </div>
         </section>
 
@@ -476,6 +509,51 @@
                                     <input type="checkbox" id="settings-downloads-enabled">
                                     Allow visitors to download ready game MP4 files
                                 </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="options-card mt-4 live-settings-card" id="live-settings-card" style="display:none;">
+                        <h3>Live Streaming</h3>
+                        <p class="text-muted">Point a camera (e.g. XbotGo Falcon) at the RTMP URL with the stream key below. Rotating the key invalidates the old one immediately.</p>
+                        <div class="form-row">
+                            <div class="form-group settings-checkbox-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="settings-live-enabled">
+                                    Enable the Watch Live tab and accept incoming streams
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Public RTMP URL (shown to camera operators)</label>
+                                <input type="text" id="settings-live-rtmp-public-url" maxlength="200" placeholder="rtmp://your-host:1935/live">
+                            </div>
+                            <div class="form-group">
+                                <label>Watch Live Nav Label</label>
+                                <input type="text" id="settings-nav-live-label" maxlength="40" placeholder="Watch Live">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Offline Message</label>
+                                <input type="text" id="settings-live-offline-message" maxlength="160" placeholder="Shown when no stream is active">
+                            </div>
+                        </div>
+                        <div class="live-config-row">
+                            <span class="live-config-label">RTMP Endpoint</span>
+                            <span class="live-config-value" id="live-config-rtmp">—</span>
+                            <div class="live-config-actions">
+                                <button type="button" class="btn-secondary" id="live-copy-rtmp-btn">Copy</button>
+                            </div>
+                        </div>
+                        <div class="live-config-row">
+                            <span class="live-config-label">Stream Key</span>
+                            <span class="live-config-value is-secret" id="live-config-stream-key">••••••••</span>
+                            <div class="live-config-actions">
+                                <button type="button" class="btn-secondary" id="live-reveal-key-btn">Reveal</button>
+                                <button type="button" class="btn-secondary" id="live-copy-key-btn">Copy</button>
+                                <button type="button" class="btn-secondary" id="live-rotate-key-btn">Rotate</button>
                             </div>
                         </div>
                     </div>

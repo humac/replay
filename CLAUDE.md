@@ -6,10 +6,11 @@ Additional guidance for Claude in this repo:
 
 - Favor direct, minimal edits over speculative rewrites.
 - Check the current file contents before editing because this repo is often changed iteratively.
-- When fixing UI behavior, inspect `index.html` and the relevant JS module in `js/` (views, player, uploads, api, utils). `script.js` is the entry point that assembles all mixins into `window.app`.
+- When fixing UI behavior, inspect `index.html` and the relevant JS module in `js/` (views, player, uploads, api, utils, live). `script.js` is the entry point that assembles all mixins into `window.app`.
 - When fixing public-domain behavior, consider cache and proxy behavior before assuming application logic is broken.
 - When adding or modifying API endpoints, update Pydantic models in `models.py` and add tests in `tests/`.
-- Match URLs use slug-based deep links (`/match/{slug}`, `/match/{slug}/first-half`).
+- Match URLs use slug-based deep links (`/match/{slug}`, `/match/{slug}/first-half`). The Watch Live page deep-links to `/live`.
+- Live streaming runs through a `mediamtx` sidecar in compose. Camera-facing surface is RTMP at port 1935; browsers play LL-HLS via the proxy at `/api/live/hls/*`. Never expose MediaMTX's 8888/9997 ports publicly — they stay on the internal compose network.
 - When setting video status to `"error"`, always pass `error_info` dict with `error_code`, `reason`, `details` to `_set_video_status()` so errors are persisted to the `video_errors` table.
 - Admin recovery endpoints live under `/api/admin/matches/{id}/...` — retry, regenerate-hls, verify, errors.
 - Use the `lifespan` async context manager for startup/shutdown tasks (not `@app.on_event`).
@@ -24,6 +25,6 @@ After every code change, update the relevant markdown files to stay in sync:
 Primary validation:
 
 ```bash
-python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py
+python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py
 pytest tests/ -v
 ```

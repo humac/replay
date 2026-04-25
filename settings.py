@@ -5,6 +5,7 @@ from __future__ import annotations
 import html as html_lib
 import json
 import re
+import secrets
 import time
 from pathlib import Path
 
@@ -15,6 +16,7 @@ DEFAULT_APP_SETTINGS = {
     "nav_matches_label": "Matches",
     "nav_add_match_label": "Add Match",
     "nav_settings_label": "Settings",
+    "nav_live_label": "Watch Live",
     "season_title": "U12 GIRLS STEEL",
     "season_intro": "Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)",
     "main_team_name": "OSU Steel",
@@ -29,9 +31,16 @@ DEFAULT_APP_SETTINGS = {
     "game_video_status_label": "Video Status",
     "download_label": "Download",
     "downloads_enabled": "1",
+    "live_enabled": "1",
+    "live_offline_message": "No live stream right now. Check back at kick-off.",
+    "live_rtmp_public_url": "",
     "app_logo_filename": "",
     "favicon_filename": "",
 }
+
+# Keys that are private — never returned in the public settings payload, and
+# only writable through dedicated admin endpoints (not the generic settings PUT).
+PRIVATE_SETTING_KEYS = {"live_stream_key"}
 
 EDITABLE_APP_SETTING_KEYS = {
     key for key in DEFAULT_APP_SETTINGS.keys()
@@ -91,11 +100,46 @@ def save_unlocked(updates: dict[str, str]) -> dict[str, str]:
 def normalize_value(key: str, value) -> str:
     if value is None:
         return DEFAULT_APP_SETTINGS.get(key, "")
-    if key == "downloads_enabled":
+    if key in {"downloads_enabled", "live_enabled"}:
         if isinstance(value, bool):
             return "1" if value else "0"
         return "1" if str(value).strip().lower() in {"1", "true", "yes", "on"} else "0"
     return str(value).strip()
+
+
+# ---------------------------------------------------------------------------
+# Live stream key management
+# ---------------------------------------------------------------------------
+
+def _generate_stream_key() -> str:
+    """24 chars of url-safe entropy — enough to make brute force infeasible."""
+    return secrets.token_urlsafe(18)
+
+
+def get_or_create_stream_key_unlocked() -> str:
+    """Return the configured live stream key, generating one on first access."""
+    with _db.connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = 'live_stream_key'"
+        ).fetchone()
+        if row and row["value"]:
+            return row["value"]
+        key = _generate_stream_key()
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            ("live_stream_key", key, now),
+        )
+        conn.commit()
+        return key
+
+
+def rotate_stream_key_unlocked() -> str:
+    """Generate and persist a new stream key, returning the new value."""
+    key = _generate_stream_key()
+    save_unlocked({"live_stream_key": key})
+    return key
 
 
 def _asset_version(filename: str) -> str:
@@ -123,8 +167,9 @@ def app_asset_url(kind: str, settings: dict[str, str]) -> str:
 
 
 def public_payload(settings: dict[str, str]) -> dict:
+    public_settings = {k: v for k, v in settings.items() if k not in PRIVATE_SETTING_KEYS}
     return {
-        "settings": settings,
+        "settings": public_settings,
         "assets": {
             "logo_url": app_asset_url("logo", settings),
             "favicon_url": app_asset_url("favicon", settings),

@@ -17,6 +17,9 @@ services:
       # NVIDIA GPU — comment the next two lines out when switching to Intel iGPU
       NVIDIA_VISIBLE_DEVICES: GPU-26ddab77-c658-9829-0ace-90674c97dc87
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      # Live streaming — internal addresses for the mediamtx sidecar
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
+      MEDIAMTX_API_URL: http://mediamtx:9997
     volumes:
       - replay_data:/data
       # Intel GPU (VAAPI / QSV) — uncomment to expose the iGPU render node
@@ -46,6 +49,22 @@ services:
             - driver: nvidia
               device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
               capabilities: [gpu, video]
+
+  # MediaMTX — RTMP ingest (camera push) → LL-HLS output (browser playback).
+  # Only RTMP (1935) is exposed publicly; HLS and the control API stay on the
+  # internal compose network and are reverse-proxied by `replay` so viewers and
+  # admins only need to reach a single origin.
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: replay-mediamtx
+    ports:
+      - "1935:1935"   # RTMP — point your camera here
+    expose:
+      - "8888"        # LL-HLS (internal only)
+      - "9997"        # control API (internal only)
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    restart: unless-stopped
 
 volumes:
   replay_data:

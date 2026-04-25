@@ -23,13 +23,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 
 import auth as _auth
 import db as _db
+import live as _live
 import log as _log
 import media as _media
 import settings as _settings
 import uploads as _uploads
 from models import (
     CreateMatchRequest, CreateUploadSessionRequest, CreateUserRequest,
-    LoginRequest, UpdateMatchRequest, UpdateUserRequest,
+    LiveAuthRequest, LoginRequest, UpdateMatchRequest, UpdateUserRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -497,6 +498,94 @@ async def serve_app_asset(kind: str):
         media_type=mt,
         headers=headers,
     )
+
+
+# ---------------------------------------------------------------------------
+# Live streaming (MediaMTX bridge)
+# ---------------------------------------------------------------------------
+
+async def _stream_key() -> str:
+    """Cached read of the configured live stream key, generating one lazily."""
+    async with MATCHES_LOCK:
+        return _settings.get_or_create_stream_key_unlocked()
+
+
+@app.get("/api/live/status")
+async def live_status():
+    """Public — does the camera have an active publish session?"""
+    settings = await _load_settings()
+    if settings.get("live_enabled", "1") != "1":
+        return {"enabled": False, "active": False, "ready": False}
+    key = await _stream_key()
+    info = await _live.check_publisher_active(key)
+    return {
+        "enabled": True,
+        "active": info["active"],
+        "ready": info["ready"],
+        "reachable": info.get("reachable", False),
+    }
+
+
+@app.get("/api/live/hls/{asset_path:path}")
+async def live_hls_proxy(asset_path: str):
+    """Reverse-proxy MediaMTX's LL-HLS playlist + segments to the browser."""
+    settings = await _load_settings()
+    if settings.get("live_enabled", "1") != "1":
+        raise HTTPException(404, "Live streaming is disabled")
+    if not asset_path:
+        raise HTTPException(400, "Missing HLS asset path")
+    try:
+        key = await _stream_key()
+        status_code, headers, body = await _live.proxy_hls(asset_path, key)
+    except ValueError:
+        raise HTTPException(400, "Invalid HLS asset path")
+    except Exception as exc:
+        logger.warning("Live HLS proxy error for %s: %s", asset_path, exc)
+        raise HTTPException(502, "Upstream live stream unavailable")
+    return StreamingResponse(body, status_code=status_code, headers=headers)
+
+
+@app.post("/api/live/auth")
+async def live_auth_webhook(body: LiveAuthRequest):
+    """Webhook MediaMTX calls to authorise an RTMP publish.
+
+    Reads/api/etc. are excluded in mediamtx.yml so this only ever sees
+    publish attempts.  Allow if the path matches the configured stream key.
+    """
+    key = await _stream_key()
+    if not _live.validate_publish_auth(body.model_dump(), key):
+        logger.info(
+            "Live auth rejected: action=%s path=%s protocol=%s ip=%s",
+            body.action, body.path, body.protocol, body.ip,
+        )
+        raise HTTPException(401, "Invalid stream key")
+    logger.info("Live auth accepted: ip=%s protocol=%s", body.ip, body.protocol)
+    return {"ok": True}
+
+
+@app.get("/api/admin/live/config")
+async def admin_live_config(request: Request):
+    """Admin: full config including the stream key, plus a ready-to-paste RTMP URL."""
+    _auth.require_role(request, "admin")
+    settings = await _load_settings()
+    key = await _stream_key()
+    return {
+        "enabled": settings.get("live_enabled", "1") == "1",
+        "stream_key": key,
+        "stream_path": _live.stream_path(key),
+        "rtmp_public_url": settings.get("live_rtmp_public_url", "") or "",
+        "offline_message": settings.get("live_offline_message", ""),
+    }
+
+
+@app.post("/api/admin/live/rotate-key")
+async def admin_live_rotate_key(request: Request):
+    """Admin: generate a new stream key and invalidate the old one."""
+    _auth.require_role(request, "admin")
+    async with MATCHES_LOCK:
+        new_key = _settings.rotate_stream_key_unlocked()
+    logger.info("Live stream key rotated by %s", _auth.require_auth(request)["username"])
+    return {"ok": True, "stream_key": new_key, "stream_path": _live.stream_path(new_key)}
 
 
 # ---------------------------------------------------------------------------
