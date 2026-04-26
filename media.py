@@ -271,7 +271,11 @@ async def build_hls_assets(
             "-i", str(source_mp4),
             "-vf", f"scale=-2:{variant['height']}",
             "-c:v", "libx264",
-            "-preset", "medium",
+            # `fast` preset for the HLS-variant CPU fallback. The fallback
+            # only runs if VAAPI fails — when it does, we want it to finish
+            # quickly. Quality difference vs `medium` at HLS bitrates is
+            # negligible (CRF 20 still bounds quality regardless of preset).
+            "-preset", "fast",
             "-profile:v", "main",
             "-crf", "20",
             "-g", "48",
@@ -523,7 +527,7 @@ async def transcode_video(
             ok, cpu_err = await run_ffmpeg(
                 ["ffmpeg", "-y",
                  "-i", str(src),
-                 "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                  "-c:a", "aac", "-b:a", "128k",
                  "-movflags", "+faststart",
                  str(dest)],
