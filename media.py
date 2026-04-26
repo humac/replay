@@ -293,19 +293,27 @@ async def build_hls_assets(
         ]
 
     def _vaapi_cmd(variant: dict, segment_pattern: Path, playlist_path: Path) -> list[str]:
-        # scale_vaapi keeps the resize on the GPU. format=nv12|vaapi handles
-        # both GPU-decoded and software-decoded inputs (some codecs fall back
-        # to CPU decode silently). h264_vaapi has no -crf or -preset; bitrate
-        # control matches the libx264 VBR settings via -b:v / -maxrate /
-        # -bufsize. -low_power 1 targets the LP encode entrypoint required by
-        # low-power Intel iGPUs (N-series, Atom, Celeron, J-series).
+        # CPU scale + GPU encode: scale_vaapi (GPU rescale) was the original
+        # design but the iHD driver's VPP bring-up is buggy on low-power Intel
+        # iGPUs (Gen Graphics / N-series / Atom / Celeron) and fails with
+        # "Failed to create processing pipeline context" even though vainfo
+        # advertises VAEntrypointVideoProc. The reliable pattern: do the
+        # rescale with libavfilter's `scale` (CPU — cheap), then `hwupload`
+        # the result onto a VAAPI surface and encode with h264_vaapi (GPU —
+        # the expensive bit). Notes:
+        #   - No `-hwaccel_output_format vaapi`: frames come back as software
+        #     (nv12) so the CPU scale can operate on them, then hwupload
+        #     pushes the scaled frames to the GPU for encoding.
+        #   - `-low_power 1` targets the LP encode entrypoint required by
+        #     low-power iGPUs; full-power iGPUs support it too.
+        #   - h264_vaapi has no -crf / -preset; bitrate control matches the
+        #     libx264 VBR settings via -b:v / -maxrate / -bufsize.
         return [
             "ffmpeg", "-y",
             "-hwaccel", "vaapi",
             "-hwaccel_device", VAAPI_RENDER_NODE,
-            "-hwaccel_output_format", "vaapi",
             "-i", str(source_mp4),
-            "-vf", f"scale_vaapi=w=-2:h={variant['height']},format=nv12|vaapi",
+            "-vf", f"scale=-2:{variant['height']},format=nv12,hwupload",
             "-c:v", "h264_vaapi", "-low_power", "1",
             "-profile:v", "main",
             "-g", "48",
