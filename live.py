@@ -326,8 +326,15 @@ async def proxy_hls(
         if k.lower() in forward_keys
     }
 
+    # MediaMTX's HLS muxer reliably handles GET but historically returns
+    # 404 for HEAD on the same path — which would defeat the whole point
+    # of accepting HEAD here (AVPlayer / AirPlay receivers probe with
+    # HEAD first and silently abort on 404).  Always issue GET upstream,
+    # stream-mode so the body isn't buffered, and discard it locally
+    # when the downstream method is HEAD.
+    upstream_method = "GET" if method.upper() == "HEAD" else method
     try:
-        req = client.build_request(method, url, headers=upstream_headers)
+        req = client.build_request(upstream_method, url, headers=upstream_headers)
         resp = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
         await client.aclose()
