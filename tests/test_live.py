@@ -351,7 +351,7 @@ def _patch_hls_proxy_response(monkeypatch, status_code=200, body=b"#EXTM3U\n",
     class _StubClient:
         def __init__(self, *_a, **_k):
             pass
-        def build_request(self, _method, _url):
+        def build_request(self, _method, _url, headers=None):
             return object()
         async def send(self, _req, stream=False):
             return _StubResp()

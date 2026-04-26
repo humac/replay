@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 
 import aiofiles
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
 import auth as _auth
 import db as _db
@@ -559,9 +559,27 @@ async def live_status():
     }
 
 
-@app.get("/api/live/hls/{asset_path:path}")
-async def live_hls_proxy(asset_path: str):
-    """Reverse-proxy MediaMTX's LL-HLS playlist + segments to the browser."""
+@app.api_route("/api/live/hls/{asset_path:path}", methods=["GET", "HEAD", "OPTIONS"])
+async def live_hls_proxy(asset_path: str, request: Request):
+    """Reverse-proxy MediaMTX's LL-HLS playlist + segments to the browser.
+
+    Accepts HEAD so AVPlayer / AirPlay receivers can probe the URL before
+    starting playback (a GET-only route returns 405 and the receiver
+    silently aborts after the user enters the AirPlay PIN).  Accepts
+    OPTIONS so cross-origin clients (Chromecast Default Media Receiver,
+    browser fetch) can preflight.
+    """
+    if request.method == "OPTIONS":
+        return Response(
+            status_code=204,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                "Access-Control-Allow-Headers": "Range, If-Range, If-Modified-Since, If-None-Match",
+                "Access-Control-Max-Age": "86400",
+            },
+        )
+
     settings = await _load_settings()
     if settings.get("live_enabled", "1") != "1":
         raise HTTPException(404, "Live streaming is disabled")
@@ -569,7 +587,12 @@ async def live_hls_proxy(asset_path: str):
         raise HTTPException(400, "Missing HLS asset path")
     try:
         key = await _stream_key()
-        status_code, headers, body = await _live.proxy_hls(asset_path, key)
+        status_code, headers, body = await _live.proxy_hls(
+            asset_path,
+            key,
+            method=request.method,
+            request_headers=dict(request.headers),
+        )
     except ValueError:
         raise HTTPException(400, "Invalid HLS asset path")
     except Exception as exc:

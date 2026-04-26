@@ -133,14 +133,23 @@ export const liveMixin = {
         const video = document.getElementById('live-video');
         if (!video) return;
 
-        // Prefer hls.js over native HLS. Chrome/Firefox/Edge return
-        // "maybe" from canPlayType('application/vnd.apple.mpegurl') but
-        // can't actually play HLS without hls.js — falling into the native
-        // path leaves the player stuck on a loading spinner. Only use
-        // native playback when hls.js isn't supported (Safari, iOS).
+        // Prefer hls.js over native HLS for Chrome/Firefox/Edge: they
+        // return "maybe" from canPlayType('application/vnd.apple.mpegurl')
+        // but can't actually play HLS, and falling into the native path
+        // leaves the player stuck on a loading spinner.
+        //
+        // Safari is the exception. Hls.isSupported() returns true on
+        // Safari macOS because it has MSE, but AirPlay does not work for
+        // MSE-backed video — Safari only surfaces the AirPlay picker /
+        // wireless-target events when the <video> has a direct HLS src.
+        // Force the native path on Safari (macOS + iOS) so AirPlay works.
+        const ua = navigator.userAgent || '';
+        const isSafari = /Safari\//.test(ua) && !/(Chrome|Chromium|CriOS|FxiOS|Edg|OPR)\//.test(ua);
+        const isIOS = /(iPad|iPhone|iPod)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const preferNative = (isSafari || isIOS) && video.canPlayType('application/vnd.apple.mpegurl');
         const hlsSupported = typeof Hls !== 'undefined' && Hls.isSupported?.();
 
-        if (!hlsSupported && video.canPlayType('application/vnd.apple.mpegurl')) {
+        if (preferNative || (!hlsSupported && video.canPlayType('application/vnd.apple.mpegurl'))) {
             video.src = LIVE_HLS_URL;
             const onLoaded = () => {
                 video.play?.().catch(() => {});

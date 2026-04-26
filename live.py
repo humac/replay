@@ -287,7 +287,13 @@ def _rtmp_conn_summary(item: dict) -> dict:
     }
 
 
-async def proxy_hls(asset_path: str, stream_key: str) -> tuple[int, dict, AsyncIterator[bytes]]:
+async def proxy_hls(
+    asset_path: str,
+    stream_key: str,
+    *,
+    method: str = "GET",
+    request_headers: dict | None = None,
+) -> tuple[int, dict, AsyncIterator[bytes]]:
     """Stream a MediaMTX HLS asset back through the replay origin.
 
     Returns ``(status_code, headers, body_iterator)``.  The caller wraps the
@@ -297,6 +303,12 @@ async def proxy_hls(asset_path: str, stream_key: str) -> tuple[int, dict, AsyncI
     ``asset_path`` is the path component the player asked for, e.g.
     ``index.m3u8`` or ``segment_42.ts``.  We map it onto MediaMTX's
     ``/live/<stream-key>/<asset_path>`` URL.
+
+    ``method`` is forwarded as-is so HEAD probes from AVPlayer / AirPlay
+    receivers reach MediaMTX intact.  ``request_headers`` lets the caller
+    forward client headers like ``Range`` so segment fetches return
+    ``206 Partial Content`` instead of a full body — Apple TV refuses to
+    play HLS when a ranged request is answered with a 200.
     """
     if ".." in asset_path or asset_path.startswith("/"):
         raise ValueError("invalid hls asset path")
@@ -304,8 +316,18 @@ async def proxy_hls(asset_path: str, stream_key: str) -> tuple[int, dict, AsyncI
     url = f"{MEDIAMTX_HLS_URL}/{stream_path(stream_key)}/{asset_path}"
     client = httpx.AsyncClient(timeout=_PROXY_TIMEOUT)
 
+    # Pass through only the conditional / range headers that affect the
+    # response semantics.  Anything else (Host, Cookie, Authorization,
+    # Origin) would either confuse MediaMTX or leak across origins.
+    forward_keys = {"range", "if-range", "if-modified-since", "if-none-match"}
+    upstream_headers = {
+        k: v
+        for k, v in (request_headers or {}).items()
+        if k.lower() in forward_keys
+    }
+
     try:
-        req = client.build_request("GET", url)
+        req = client.build_request(method, url, headers=upstream_headers)
         resp = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
         await client.aclose()
@@ -323,6 +345,7 @@ async def proxy_hls(asset_path: str, stream_key: str) -> tuple[int, dict, AsyncI
         "access-control-allow-origin",
         "access-control-allow-methods",
         "access-control-allow-headers",
+        "access-control-expose-headers",
     }
     headers = {k: v for k, v in resp.headers.items() if k.lower() not in drop}
 
@@ -332,7 +355,7 @@ async def proxy_hls(asset_path: str, stream_key: str) -> tuple[int, dict, AsyncI
     # session prefix + sequence number) and never get reused, so cache them
     # aggressively. Errors are never cached.
     lower = asset_path.lower()
-    if resp.status_code != 200:
+    if resp.status_code >= 400:
         headers["Cache-Control"] = "no-store"
     elif lower.endswith(".m3u8"):
         headers["Cache-Control"] = "public, max-age=1, must-revalidate"
@@ -341,8 +364,23 @@ async def proxy_hls(asset_path: str, stream_key: str) -> tuple[int, dict, AsyncI
     else:
         headers["Cache-Control"] = "no-store"
 
+    # CORS: the Chromecast Default Media Receiver (and any future
+    # cross-origin web client) fetches the playlist + segments from its
+    # own iframe origin and requires permissive CORS to load HLS.
+    # Expose Content-Length / Content-Range so range-aware players can
+    # seek correctly.
+    headers["Access-Control-Allow-Origin"] = "*"
+    headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+    headers["Access-Control-Allow-Headers"] = "Range, If-Range, If-Modified-Since, If-None-Match"
+    headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Range, Accept-Ranges, Date"
+    headers.setdefault("Accept-Ranges", "bytes")
+
     async def _iter() -> AsyncIterator[bytes]:
         try:
+            if method.upper() == "HEAD":
+                # HEAD must not return a body, but we still need to release
+                # the upstream connection.
+                return
             async for chunk in resp.aiter_bytes():
                 yield chunk
         finally:
