@@ -11,6 +11,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        python3 python3-pip ffmpeg \
+       # sqlite3 CLI for `docker exec replay sqlite3 /data/replay.db ...`
+       # debugging without having to drop into python.
+       sqlite3 \
        # Intel VAAPI / QSV userspace so the same image can transcode on
        # Intel iGPU hosts. NVIDIA hosts ignore these. iHD covers Gen9+ (most
        # modern Intel CPUs); i965 is kept for older hardware. vainfo is a

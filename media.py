@@ -263,13 +263,10 @@ async def build_hls_assets(
     shutil.rmtree(hls_dir, ignore_errors=True)
     hls_dir.mkdir(parents=True, exist_ok=True)
 
-    async def _generate_variant(variant: dict) -> dict | None:
-        variant_dir = hls_dir / variant["name"]
-        variant_dir.mkdir(parents=True, exist_ok=True)
-        playlist_path = variant_dir / "index.m3u8"
-        segment_pattern = variant_dir / "segment_%03d.ts"
+    hwaccel = select_hwaccel()
 
-        ok, err = await run_ffmpeg([
+    def _cpu_cmd(variant: dict, segment_pattern: Path, playlist_path: Path) -> list[str]:
+        return [
             "ffmpeg", "-y",
             "-i", str(source_mp4),
             "-vf", f"scale=-2:{variant['height']}",
@@ -293,10 +290,61 @@ async def build_hls_assets(
             "-hls_flags", "independent_segments",
             "-hls_segment_filename", str(segment_pattern),
             str(playlist_path),
-        ])
+        ]
+
+    def _vaapi_cmd(variant: dict, segment_pattern: Path, playlist_path: Path) -> list[str]:
+        # scale_vaapi keeps the resize on the GPU. format=nv12|vaapi handles
+        # both GPU-decoded and software-decoded inputs (some codecs fall back
+        # to CPU decode silently). h264_vaapi has no -crf or -preset; bitrate
+        # control matches the libx264 VBR settings via -b:v / -maxrate /
+        # -bufsize. -low_power 1 targets the LP encode entrypoint required by
+        # low-power Intel iGPUs (N-series, Atom, Celeron, J-series).
+        return [
+            "ffmpeg", "-y",
+            "-hwaccel", "vaapi",
+            "-hwaccel_device", VAAPI_RENDER_NODE,
+            "-hwaccel_output_format", "vaapi",
+            "-i", str(source_mp4),
+            "-vf", f"scale_vaapi=w=-2:h={variant['height']},format=nv12|vaapi",
+            "-c:v", "h264_vaapi", "-low_power", "1",
+            "-profile:v", "main",
+            "-g", "48",
+            "-b:v", variant["video_bitrate"],
+            "-maxrate", variant["maxrate"],
+            "-bufsize", variant["bufsize"],
+            "-c:a", "aac",
+            "-b:a", variant["audio_bitrate"],
+            "-ac", "2",
+            "-ar", "48000",
+            "-f", "hls",
+            "-hls_time", str(hls_segment_duration),
+            "-hls_playlist_type", "vod",
+            "-hls_flags", "independent_segments",
+            "-hls_segment_filename", str(segment_pattern),
+            str(playlist_path),
+        ]
+
+    async def _generate_variant(variant: dict) -> dict | None:
+        variant_dir = hls_dir / variant["name"]
+        variant_dir.mkdir(parents=True, exist_ok=True)
+        playlist_path = variant_dir / "index.m3u8"
+        segment_pattern = variant_dir / "segment_%03d.ts"
+
+        if hwaccel == "vaapi":
+            ok, err = await run_ffmpeg(_vaapi_cmd(variant, segment_pattern, playlist_path))
+            if ok:
+                logger.info("HLS variant %s/%s/%s done (vaapi)", match_id, slot, variant['name'])
+                return variant
+            logger.warning("HLS variant %s/%s/%s VAAPI failed, falling back to CPU: %s",
+                           match_id, slot, variant['name'], err)
+            shutil.rmtree(variant_dir, ignore_errors=True)
+            variant_dir.mkdir(parents=True, exist_ok=True)
+
+        ok, err = await run_ffmpeg(_cpu_cmd(variant, segment_pattern, playlist_path))
         if not ok:
             logger.warning("HLS variant generation failed %s/%s/%s: %s", match_id, slot, variant['name'], err)
             return None
+        logger.info("HLS variant %s/%s/%s done (cpu)", match_id, slot, variant['name'])
         return variant
 
     results = await asyncio.gather(*[_generate_variant(v) for v in variants])
