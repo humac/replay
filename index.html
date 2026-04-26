@@ -352,44 +352,6 @@
                         <button type="submit" id="submit-btn" class="btn-primary">Create Match</button>
                         <button type="button" id="cancel-edit-btn" class="btn-secondary" style="display:none;" onclick="app.cancelEdit()">Cancel</button>
                     </div>
-
-                    <div class="options-card mt-4 admin-ops-card" id="admin-ops-card" style="display:none;">
-                        <div class="admin-panel-head">
-                            <div>
-                                <h3>Admin Diagnostics</h3>
-                                <p class="admin-panel-copy">Live upload state, disk headroom, and cleanup controls for interrupted jobs.</p>
-                            </div>
-                            <div class="admin-panel-actions">
-                                <button type="button" class="btn-secondary" id="refresh-diagnostics-btn">Refresh</button>
-                                <button type="button" class="btn-secondary" id="backfill-hls-btn">Backfill Existing HLS</button>
-                                <button type="button" class="btn-secondary" id="cleanup-uploads-btn">Cleanup Stale Uploads</button>
-                                <button type="button" class="btn-secondary" id="export-db-btn">Export Database</button>
-                            </div>
-                        </div>
-                        <div id="diagnostics-grid" class="diagnostics-grid"></div>
-                        <div id="active-jobs-section" class="diagnostics-section" style="display:none;">
-                            <div class="diagnostics-section-title">Active Transcode Jobs</div>
-                            <div id="active-jobs-list" class="session-list"></div>
-                        </div>
-                        <div id="failed-slots-section" class="diagnostics-section" style="display:none;">
-                            <div class="diagnostics-section-title">Failed Slots</div>
-                            <div id="failed-slots-list" class="session-list"></div>
-                        </div>
-                        <div id="recent-errors-section" class="diagnostics-section" style="display:none;">
-                            <div class="diagnostics-section-title">Recent Errors</div>
-                            <div id="recent-errors-list" class="session-list"></div>
-                        </div>
-                        <div class="diagnostics-columns">
-                            <div class="diagnostics-section">
-                                <div class="diagnostics-section-title">Server Upload Sessions</div>
-                                <div id="upload-sessions-list" class="session-list"></div>
-                            </div>
-                            <div class="diagnostics-section">
-                                <div class="diagnostics-section-title">This Browser Can Resume</div>
-                                <div id="local-upload-sessions-list" class="session-list"></div>
-                            </div>
-                        </div>
-                    </div>
                 </form>
             </div>
         </section>
@@ -602,6 +564,44 @@
                             </div>
                         </div>
                         <button type="button" id="add-user-btn" class="btn-primary" onclick="app.handleAddUser()">Add User</button>
+                    </div>
+                </div>
+
+                <div class="options-card admin-ops-card" id="admin-ops-card" style="display:none;">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Admin Diagnostics</h3>
+                            <p class="admin-panel-copy">Live upload state, disk headroom, and cleanup controls for interrupted jobs.</p>
+                        </div>
+                        <div class="admin-panel-actions">
+                            <button type="button" class="btn-secondary" id="refresh-diagnostics-btn">Refresh</button>
+                            <button type="button" class="btn-secondary" id="backfill-hls-btn">Backfill Existing HLS</button>
+                            <button type="button" class="btn-secondary" id="cleanup-uploads-btn">Cleanup Stale Uploads</button>
+                            <button type="button" class="btn-secondary" id="export-db-btn">Export Database</button>
+                        </div>
+                    </div>
+                    <div id="diagnostics-grid" class="diagnostics-grid"></div>
+                    <div id="active-jobs-section" class="diagnostics-section" style="display:none;">
+                        <div class="diagnostics-section-title">Active Transcode Jobs</div>
+                        <div id="active-jobs-list" class="session-list"></div>
+                    </div>
+                    <div id="failed-slots-section" class="diagnostics-section" style="display:none;">
+                        <div class="diagnostics-section-title">Failed Slots</div>
+                        <div id="failed-slots-list" class="session-list"></div>
+                    </div>
+                    <div id="recent-errors-section" class="diagnostics-section" style="display:none;">
+                        <div class="diagnostics-section-title">Recent Errors</div>
+                        <div id="recent-errors-list" class="session-list"></div>
+                    </div>
+                    <div class="diagnostics-columns">
+                        <div class="diagnostics-section">
+                            <div class="diagnostics-section-title">Server Upload Sessions</div>
+                            <div id="upload-sessions-list" class="session-list"></div>
+                        </div>
+                        <div class="diagnostics-section">
+                            <div class="diagnostics-section-title">This Browser Can Resume</div>
+                            <div id="local-upload-sessions-list" class="session-list"></div>
+                        </div>
                     </div>
                 </div>
             </div>

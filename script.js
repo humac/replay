@@ -200,7 +200,6 @@ const app = {
         this.teardownLiveView();
         this.stopSeasonLiveCtaPolling?.();
         this.activateView('add-match-view', 'add-match');
-        if (this.authToken) this.refreshAdminDiagnostics();
         if (pushHistory) {
             this.pushHistoryState({ view: 'add-match', mode: 'create' }, { replace: replaceHistory });
         }
@@ -215,6 +214,7 @@ const app = {
         this.stopSeasonLiveCtaPolling?.();
         this.activateView('settings-view', 'settings');
         this.renderSettingsForm();
+        if (this.authToken) this.refreshAdminDiagnostics();
         if (pushHistory) {
             this.pushHistoryState({ view: 'settings' }, { replace: replaceHistory });
         }
