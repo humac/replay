@@ -53,6 +53,7 @@ async def lifespan(application: FastAPI):
     _db.migrate_json_to_sqlite(MATCHES_FILE)
     _db.backfill_slugs()
     _settings.init(APP_ASSETS_DIR, STATIC_DIR)
+    await _sweep_orphaned_transcodes()
     asyncio.create_task(_backfill_hls_for_existing_videos())
     asyncio.create_task(
         _media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches)
@@ -184,6 +185,32 @@ async def _set_video_status(
             error_info.get("reason", "Unknown error"),
             error_info.get("details", ""),
         )
+
+
+async def _sweep_orphaned_transcodes():
+    """Flip any 'transcoding' slot left over from a previous process to 'error'.
+
+    Transcode jobs are in-process asyncio tasks — they cannot survive a
+    container restart. Any slot still in 'transcoding' at startup is by
+    definition orphaned, so move it to 'error' (with a clear error_code) so
+    it shows up in the admin "Failed Slots" list and can be retried via the
+    existing UI button instead of stalling forever.
+    """
+    matches = await _load_matches()
+    orphans: list[tuple[str, str]] = []
+    for match in matches:
+        for slot, status in (match.get("video_status") or {}).items():
+            if status == "transcoding":
+                orphans.append((match["id"], slot))
+    for match_id, slot in orphans:
+        await _set_video_status(match_id, slot, "error", None, error_info={
+            "error_code": "transcode_orphaned_at_startup",
+            "reason": "Transcode worker did not survive a server restart",
+            "details": "Slot was 'transcoding' when the server started — the in-process job is gone. Use Retry to start a fresh transcode from the source file.",
+        })
+    if orphans:
+        logger.warning("Reset %d orphaned 'transcoding' slot(s) to 'error': %s",
+                       len(orphans), ", ".join(f"{m}/{s}" for m, s in orphans))
 
 
 # ---------------------------------------------------------------------------

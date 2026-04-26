@@ -239,6 +239,9 @@ Dockerfile installs `intel-media-va-driver` (iHD, Gen9+) and `i965-va-driver` al
 **6.3 Intel compose variant** ✅
 `docker-compose-intel.yml` passes through `/dev/dri` and the render node, takes `VIDEO_GID` / `RENDER_GID` from `.env.local` (render's GID is distro-specific), and inlines the MediaMTX config via Compose `configs:` so Komodo only ships one file.
 
+**6.4 Orphaned-transcode sweep at startup** ✅
+`_sweep_orphaned_transcodes()` runs in the lifespan startup hook and flips any slot still in `transcoding` state to `error` with `error_code=transcode_orphaned_at_startup`. Transcode jobs are in-process asyncio tasks and cannot survive a container restart, so any `transcoding` row at boot is by definition stale. Reset slots show up in the existing admin "Failed Slots" list and can be retried via the existing UI button — no manual SQL needed after a restart kills a transcode mid-flight.
+
 ---
 
 ## Dependencies
