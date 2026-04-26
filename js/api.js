@@ -49,6 +49,8 @@ export const apiMixin = {
         document.getElementById('nav-logout-btn').style.display = '';
         const gameEditBtn = document.getElementById('game-edit-btn');
         if (gameEditBtn && this.activeMatchId) gameEditBtn.style.display = this.canEdit() ? 'inline-flex' : 'none';
+        const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
+        if (regenThumbBtn && this.activeMatchId) regenThumbBtn.style.display = this.isAdmin() ? 'inline-flex' : 'none';
         this.setAdminPanelVisibility(this.isAdmin());
         if (this.isAdmin()) this.refreshAdminDiagnostics();
     },
@@ -63,6 +65,8 @@ export const apiMixin = {
         document.getElementById('nav-logout-btn').style.display = 'none';
         const gameEditBtn = document.getElementById('game-edit-btn');
         if (gameEditBtn) gameEditBtn.style.display = 'none';
+        const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
+        if (regenThumbBtn) regenThumbBtn.style.display = 'none';
         this.setAdminPanelVisibility(false);
         if (document.getElementById('add-match-view')?.classList.contains('active') || document.getElementById('settings-view')?.classList.contains('active')) {
             this.cancelEdit();

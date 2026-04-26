@@ -571,6 +571,43 @@ export const viewsMixin = {
         }
     },
 
+    async regenerateActiveThumbnail() {
+        if (!this.activeMatchId) return;
+        // Optional slot picker — empty input = backend's priority order
+        // (full > first_half > second_half).
+        const slot = (prompt(
+            'Regenerate from which slot? Leave blank for the default priority (full > first_half > second_half).',
+            ''
+        ) || '').trim().toLowerCase();
+        if (slot && !['full', 'first_half', 'second_half'].includes(slot)) {
+            this.showError(`Invalid slot "${slot}" — use full, first_half, or second_half.`);
+            return;
+        }
+        const url = `/api/admin/matches/${this.activeMatchId}/regenerate-thumbnail${slot ? `?slot=${slot}` : ''}`;
+        try {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Thumbnail regeneration failed');
+            }
+            const data = await resp.json();
+            this.showSuccess(`Thumbnail regenerated from ${data.slot}.`);
+            // Bust the in-page <img> cache so admins see the new thumb without
+            // reloading. Server already sends Cache-Control no-cache, but in-DOM
+            // <img src> won't refetch unless the URL changes.
+            const cacheBust = `?t=${Date.now()}`;
+            document.querySelectorAll(`img[src*="/api/matches/${this.activeMatchId}/thumbnail"]`).forEach(img => {
+                const base = img.src.split('?')[0];
+                img.src = base + cacheBust;
+            });
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
     async regenerateHls(matchId, slot) {
         if (!confirm(`Regenerate HLS for ${slot}?`)) return;
         try {
@@ -1029,6 +1066,8 @@ export const viewsMixin = {
         this.activeMatchId = matchId;
         const gameEditBtn = document.getElementById('game-edit-btn');
         if (gameEditBtn) gameEditBtn.style.display = this.canEdit() ? 'inline-flex' : 'none';
+        const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
+        if (regenThumbBtn) regenThumbBtn.style.display = this.isAdmin() ? 'inline-flex' : 'none';
 
         // Update prev/next nav buttons
         const prevBtn = document.getElementById('prev-match-btn');

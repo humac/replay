@@ -163,6 +163,8 @@ const app = {
         this.destroyHlsPlayer();
         const gameEditBtn = document.getElementById('game-edit-btn');
         if (gameEditBtn) gameEditBtn.style.display = 'none';
+        const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
+        if (regenThumbBtn) regenThumbBtn.style.display = 'none';
         const videoEl = document.getElementById('game-video');
         if (videoEl) {
             videoEl.pause();

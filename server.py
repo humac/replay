@@ -891,6 +891,47 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
     return {"ok": True, "slot": slot}
 
 
+@app.post("/api/admin/matches/{match_id}/regenerate-thumbnail")
+async def admin_regenerate_thumbnail(match_id: str, request: Request):
+    """Regenerate the match thumbnail from a chosen (or auto-picked) ready slot.
+
+    Optional `?slot=<full|first_half|second_half>` query param picks which
+    video to extract from. Without it, falls back to the same priority order
+    as the startup backfill task: full > first_half > second_half. This
+    overwrites the existing thumb.jpg on disk.
+    """
+    _auth.require_role(request, "admin")
+    match = _db.get_match_by_id(match_id)
+    if not match:
+        raise HTTPException(404, "Match not found")
+
+    requested = (request.query_params.get("slot") or "").strip()
+    if requested and requested not in ("full", "first_half", "second_half"):
+        raise HTTPException(400, "Invalid slot")
+
+    slot_order = (requested,) if requested else ("full", "first_half", "second_half")
+    chosen_slot = None
+    for slot in slot_order:
+        if _get_video_status(match, slot) == "ready":
+            mp4_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+            if mp4_path.is_file():
+                chosen_slot = slot
+                break
+    if not chosen_slot:
+        raise HTTPException(
+            404,
+            "No ready slot available — request a specific slot or wait for a transcode to complete",
+        )
+
+    mp4_path = VIDEOS_DIR / match_id / f"{chosen_slot}.mp4"
+    thumb_path = VIDEOS_DIR / match_id / "thumb.jpg"
+    thumb_path.unlink(missing_ok=True)
+    ok = await _media.generate_thumbnail(mp4_path, thumb_path)
+    if not ok:
+        raise HTTPException(500, "Thumbnail generation failed")
+    return {"ok": True, "slot": chosen_slot}
+
+
 @app.get("/api/admin/matches/{match_id}/verify")
 async def admin_verify_assets(match_id: str, request: Request):
     """Check asset integrity for all slots in a match."""
@@ -1547,7 +1588,14 @@ async def serve_thumbnail(match_id: str):
     thumb_path = VIDEOS_DIR / match_id / "thumb.jpg"
     if not thumb_path.is_file():
         raise HTTPException(404, "No thumbnail available")
-    return FileResponse(str(thumb_path), media_type="image/jpeg")
+    # Validate against mtime so admins regenerating the thumbnail see the new
+    # one immediately, but cached copies are still served when unchanged.
+    mtime = int(thumb_path.stat().st_mtime)
+    headers = {
+        "Cache-Control": "no-cache, must-revalidate",
+        "ETag": f'"{mtime}"',
+    }
+    return FileResponse(str(thumb_path), media_type="image/jpeg", headers=headers)
 
 
 # ---------------------------------------------------------------------------
