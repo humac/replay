@@ -2826,6 +2826,9 @@ button {
 }
 
 @media (max-width: 720px) {
+    .season-info {
+        flex: 0 1 auto;
+    }
     .season-live-cta {
         width: 100%;
         justify-content: flex-start;
