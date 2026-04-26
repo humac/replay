@@ -38,6 +38,12 @@ export const liveMixin = {
         }
         this.detachLivePlayer();
         this.liveLastActive = false;
+        // Hide the live cast overlay if it was visible. Leave the cast
+        // session itself running — switching pages shouldn't disconnect a
+        // user's TV, mirroring how the game view behaves.
+        const liveOverlay = document.getElementById('cast-overlay-live');
+        if (liveOverlay) liveOverlay.style.display = 'none';
+        this.liveCastingActive = false;
     },
 
     startLiveStatusPolling() {
@@ -97,6 +103,11 @@ export const liveMixin = {
             if (metaRow) metaRow.style.display = 'flex';
             if (!this.liveLastActive) this.attachLivePlayer();
             this.liveLastActive = true;
+            // If a cast session is already up when the feed comes online,
+            // hand the stream off to the TV instead of duplicating playback.
+            if (this.castSession && !this.liveCastingActive) {
+                this.castLiveStream();
+            }
         } else {
             if (this.liveLastActive) this.detachLivePlayer();
             this.liveLastActive = false;
@@ -192,6 +203,114 @@ export const liveMixin = {
             try { video.pause(); } catch { /* ignore */ }
             video.removeAttribute('src');
             try { video.load(); } catch { /* ignore */ }
+        }
+    },
+
+    // ===== LIVE: AIRPLAY & CHROMECAST =====
+
+    initLiveRemotePlayback() {
+        const video = document.getElementById('live-video');
+        const airplayBtn = document.getElementById('airplay-btn-live');
+        if (!video || !airplayBtn) return;
+
+        video.disableRemotePlayback = false;
+
+        const refreshAvailability = (available) => {
+            airplayBtn.style.display = available ? 'flex' : 'none';
+        };
+
+        if (typeof video.webkitShowPlaybackTargetPicker === 'function') {
+            // Safari / iOS — webkit picker. Show the button by default and
+            // rely on availability events to hide it if no target is found.
+            refreshAvailability(true);
+            video.addEventListener('webkitplaybacktargetavailabilitychanged', (event) => {
+                refreshAvailability(event.availability === 'available');
+            });
+            video.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', () => {
+                airplayBtn.classList.toggle('casting', !!video.webkitCurrentPlaybackTargetIsWireless);
+            });
+        } else if (video.remote && typeof video.remote.watchAvailability === 'function') {
+            video.remote.watchAvailability((available) => {
+                refreshAvailability(!!available);
+            }).catch(() => refreshAvailability(false));
+        }
+    },
+
+    async toggleLiveAirPlay() {
+        const video = document.getElementById('live-video');
+        if (!video) return;
+
+        if (typeof video.webkitShowPlaybackTargetPicker === 'function') {
+            video.webkitShowPlaybackTargetPicker();
+            return;
+        }
+        if (video.remote && typeof video.remote.prompt === 'function') {
+            try { await video.remote.prompt(); } catch { /* user cancelled */ }
+        }
+    },
+
+    toggleLiveCast() {
+        // Cast button visibility/availability is owned by setupCastFramework
+        // in player.js — reuse the existing toggleCast which calls into the
+        // global CastContext. onCastConnected will detect the live view and
+        // route the HLS stream via castLiveStream().
+        this.toggleCast?.();
+    },
+
+    castLiveStream() {
+        if (!this.castSession || !window.chrome?.cast?.media) return;
+
+        const liveUrl = `${window.location.origin}/api/live/hls/index.m3u8`;
+        // The default media receiver supports HLS via x-mpegURL. Mark the
+        // stream LIVE so the receiver hides the seek bar and seeds at the
+        // live edge instead of treating it as a fixed-duration asset.
+        const mediaInfo = new chrome.cast.media.MediaInfo(liveUrl, 'application/x-mpegURL');
+        mediaInfo.streamType = chrome.cast.media.StreamType.LIVE;
+
+        const settings = this.getAppSettings();
+        const metadata = new chrome.cast.media.GenericMediaMetadata();
+        metadata.title = settings.season_title || settings.app_name || 'Live Stream';
+        metadata.subtitle = 'Live now';
+        mediaInfo.metadata = metadata;
+
+        const request = new chrome.cast.media.LoadRequest(mediaInfo);
+        request.autoplay = true;
+
+        this.castSession.loadMedia(request).then(
+            () => {
+                this.liveCastingActive = true;
+                // Pause local playback so audio isn't doubled with the TV.
+                const video = document.getElementById('live-video');
+                if (video) try { video.pause(); } catch { /* ignore */ }
+
+                const overlay = document.getElementById('cast-overlay-live');
+                const deviceLabel = document.getElementById('cast-device-name-live');
+                if (overlay) overlay.style.display = 'flex';
+                if (deviceLabel) {
+                    const name = this.castSession.getCastDevice().friendlyName || 'TV';
+                    deviceLabel.textContent = `Casting to ${name}`;
+                }
+            },
+            (err) => {
+                console.error('Live cast load error', err);
+                this.liveCastingActive = false;
+            },
+        );
+    },
+
+    resumeLiveAfterCast() {
+        if (!this.liveCastingActive) return;
+        this.liveCastingActive = false;
+        const liveActive = document.getElementById('live-view')?.classList.contains('active');
+        // Only auto-resume if the user is still on the live view AND the
+        // feed is still up — otherwise applyLiveStatus will handle re-attach
+        // on its next poll.
+        if (liveActive && this.liveLastActive) {
+            const video = document.getElementById('live-video');
+            if (video) {
+                try { video.muted = true; } catch { /* ignore */ }
+                video.play?.().catch(() => {});
+            }
         }
     },
 
