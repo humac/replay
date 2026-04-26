@@ -422,6 +422,11 @@ async def transcode_video(
                 # software-decoded inputs — VAAPI decode silently falls back to
                 # CPU for codecs the iGPU can't handle, and the encoder needs
                 # frames on the GPU either way.
+                #
+                # `-low_power 1` targets VAEntrypointEncSliceLP. Required on
+                # low-power Intel iGPUs (N-series / Atom / Celeron / J-series)
+                # which only expose the LP encode entrypoint; full-power iGPUs
+                # (Iris, Xe) support both, so this is safe to always set.
                 gpu_cmd = [
                     "ffmpeg", "-y",
                     "-hwaccel", "vaapi",
@@ -429,7 +434,7 @@ async def transcode_video(
                     "-hwaccel_output_format", "vaapi",
                     "-i", str(src),
                     "-vf", "format=nv12|vaapi,hwupload",
-                    "-c:v", "h264_vaapi", "-qp", "23",
+                    "-c:v", "h264_vaapi", "-low_power", "1", "-qp", "23",
                     "-c:a", "aac", "-b:a", "128k",
                     "-movflags", "+faststart",
                     str(dest),
