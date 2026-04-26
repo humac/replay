@@ -851,8 +851,13 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
             src = raw
             break
     if src is None and final_path.is_file():
-        # Re-transcode from existing MP4 (e.g. if remux failed but file exists)
-        src = final_path
+        # Re-transcode from the existing MP4. Promote it to a raw-named path
+        # first so source and destination are distinct — transcode_video does
+        # `dest.unlink(missing_ok=True)` before invoking ffmpeg, which would
+        # otherwise delete its own input.
+        raw_promoted = vid_dir / f"{slot}_raw.mp4"
+        final_path.rename(raw_promoted)
+        src = raw_promoted
 
     if src is None:
         raise HTTPException(
