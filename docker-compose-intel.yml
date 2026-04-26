@@ -1,0 +1,146 @@
+services:
+  app:
+    image: ghcr.io/humac/replay:latest
+    # Uncomment to build locally instead of pulling from GHCR:
+    #build: .
+    #container_name: replay
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env.local
+    environment:
+      REPLAY_PORT: 8090
+      REPLAY_DATA_DIR: /data
+      TMPDIR: /tmp/ffmpeg
+      MAX_UPLOAD_SIZE_BYTES: 12884901888
+      TRANSCODE_CONCURRENCY: 2
+      # NVIDIA GPU — comment the next two lines out when switching to Intel iGPU
+      #NVIDIA_VISIBLE_DEVICES: GPU-26ddab77-c658-9829-0ace-90674c97dc87
+      #NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      # Live streaming — internal addresses for the mediamtx sidecar
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
+      MEDIAMTX_API_URL: http://mediamtx:9997
+    volumes:
+      - /mnt/apps_ssd/apps/replay:/data
+      # Intel GPU (VAAPI / QSV) — uncomment to expose the iGPU render node
+      - /dev/dri:/dev/dri
+    # Intel GPU (VAAPI / QSV) — uncomment to pass the render device through
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    # Numeric GIDs of the host's video / render groups. Names would be looked
+    # up inside the container, which has no `render` group. Defaults match
+    # Debian/Ubuntu (video=44); render varies, so set RENDER_GID in .env.local
+    # via: RENDER_GID=$(stat -c '%g' /dev/dri/renderD128)
+    group_add:
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-107}"
+    tmpfs:
+      - /tmp/ffmpeg:size=20g,exec
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/auth/check', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    # NVIDIA GPU — comment this whole `deploy:` block out when switching to
+    # Intel iGPU. Intel VAAPI/QSV does not use `deploy.resources.reservations`;
+    # the `devices:` + `group_add:` passthrough above is sufficient.
+    #deploy:
+    #  resources:
+    #    reservations:
+    #      devices:
+    #        - driver: nvidia
+    #          device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
+    #          capabilities: [gpu, video]
+
+  # MediaMTX — RTMP ingest (camera push) → LL-HLS output (browser playback).
+  # Only RTMP (1935) is exposed publicly; HLS and the control API stay on the
+  # internal compose network and are reverse-proxied by `replay` so viewers and
+  # admins only need to reach a single origin.
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: replay-mediamtx
+    ports:
+      - "1935:1935"   # RTMP — point your camera here
+    expose:
+      - "8888"        # LL-HLS (internal only)
+      - "9997"        # control API (internal only)
+    configs:
+      - source: mediamtx_config
+        target: /mediamtx.yml
+    restart: unless-stopped
+
+  # Cloudflare DDNS — keeps f2014steel-live.jvhlabs.com pointing at the
+  # current public IP when the home connection's IP changes. Only the
+  # RTMP host needs DDNS — f2014steel.jvhlabs.com flows through a
+  # Cloudflare Tunnel (cloudflared), so its A record points at Cloudflare,
+  # not the home IP. RTMP can't go through the tunnel, so the camera
+  # connects directly to the home IP via this DNS-only record.
+  # Token comes from .env.local (CLOUDFLARE_API_TOKEN).
+  cloudflare-ddns:
+    image: favonia/cloudflare-ddns:latest
+    container_name: replay-cloudflare-ddns
+    env_file:
+     - .env.local
+    environment:
+      DOMAINS: f2014steel-live.jvhlabs.com
+      PROXIED: "false"
+      IP4_PROVIDER: cloudflare.trace
+      IP6_PROVIDER: none
+      UPDATE_CRON: "@every 5m"
+      TZ: UTC
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [all]
+    security_opt:
+      - no-new-privileges:true
+
+configs:
+  # Inlined so this stack is self-contained — Komodo only needs to ship the
+  # compose file, no sibling mediamtx.yml on the host.
+  #
+  # CANONICAL SOURCE: ./mediamtx.yml in the repo. If you edit MediaMTX config,
+  # edit that file first and copy the body into the `content:` block below.
+  # docker-compose.yml (NVIDIA variant) still bind-mounts ./mediamtx.yml
+  # directly, so keeping the repo copy authoritative avoids drift.
+  mediamtx_config:
+    content: |
+      logLevel: info
+
+      api: yes
+      apiAddress: :9997
+
+      rtmp: yes
+      rtmpAddress: :1935
+
+      hls: yes
+      hlsAddress: :8888
+      hlsVariant: mpegts
+      hlsAlwaysRemux: yes
+      hlsSegmentCount: 7
+      hlsSegmentDuration: 2s
+      hlsAllowOrigin: '*'
+
+      rtsp: no
+      webrtc: no
+      srt: no
+
+      record: no
+
+      authMethod: http
+      authHTTPAddress: http://replay:8090/api/live/auth
+      authHTTPExclude:
+        - action: read
+        - action: playback
+        - action: api
+        - action: metrics
+        - action: pprof
+
+      paths:
+        '~^live/[^/]+$':
+          source: publisher
+
+#volumes:
+# replay_data:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -11,6 +12,26 @@ from pathlib import Path
 import log as _log
 
 logger = _log.setup("replay")
+
+
+# ---------------------------------------------------------------------------
+# Hardware acceleration selection
+# ---------------------------------------------------------------------------
+
+# Path probed to detect an Intel iGPU render node. Overridable for tests.
+VAAPI_RENDER_NODE = "/dev/dri/renderD128"
+
+
+def select_hwaccel() -> str:
+    """Pick the hardware encoder to attempt before falling back to CPU.
+
+    Returns one of "nvenc", "vaapi", "cpu". Honors the REPLAY_HWACCEL env
+    var ("auto" | "nvenc" | "vaapi" | "cpu"); auto-detects when unset/auto.
+    """
+    choice = (os.environ.get("REPLAY_HWACCEL") or "auto").strip().lower()
+    if choice in ("nvenc", "vaapi", "cpu"):
+        return choice
+    return "vaapi" if Path(VAAPI_RENDER_NODE).exists() else "nvenc"
 
 # ---------------------------------------------------------------------------
 # Transcode progress tracking
@@ -317,7 +338,7 @@ async def transcode_video(
 
     Strategy:
       1. If input is already H.264 (+AAC), remux (stream-copy) -- fastest.
-      2. Try GPU transcode with h264_nvenc.
+      2. Try GPU transcode (NVENC on NVIDIA, VAAPI on Intel iGPU).
       3. Fall back to CPU libx264.
 
     On failure, *set_video_status* is called with error_info dict containing
@@ -383,20 +404,47 @@ async def transcode_video(
                 remux_err = err
                 logger.warning("Remux failed, will transcode: %s", err)
 
-            # --- 2. GPU transcode (NVENC) ---
-            logger.info("GPU transcode %s/%s", match_id, slot)
-            _set_transcode_progress(match_id, slot, 0, "transcoding (GPU)")
-            ok, gpu_err = await run_ffmpeg(
-                ["ffmpeg", "-y",
-                 "-hwaccel", "cuda",
-                 "-i", str(src),
-                 "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
-                 "-cq", "23", "-b:v", "0",
-                 "-c:a", "aac", "-b:a", "128k",
-                 "-movflags", "+faststart",
-                 str(dest)],
-                on_progress=_on_progress, duration_s=duration_s,
-            )
+            # --- 2. GPU transcode (NVENC or VAAPI) ---
+            hwaccel = select_hwaccel()
+            if hwaccel == "nvenc":
+                gpu_cmd = [
+                    "ffmpeg", "-y",
+                    "-hwaccel", "cuda",
+                    "-i", str(src),
+                    "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
+                    "-cq", "23", "-b:v", "0",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    str(dest),
+                ]
+            elif hwaccel == "vaapi":
+                # `format=nv12|vaapi,hwupload` covers both GPU-decoded and
+                # software-decoded inputs — VAAPI decode silently falls back to
+                # CPU for codecs the iGPU can't handle, and the encoder needs
+                # frames on the GPU either way.
+                gpu_cmd = [
+                    "ffmpeg", "-y",
+                    "-hwaccel", "vaapi",
+                    "-hwaccel_device", VAAPI_RENDER_NODE,
+                    "-hwaccel_output_format", "vaapi",
+                    "-i", str(src),
+                    "-vf", "format=nv12|vaapi,hwupload",
+                    "-c:v", "h264_vaapi", "-qp", "23",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    str(dest),
+                ]
+            else:  # "cpu" — skip the GPU attempt entirely
+                gpu_cmd = None
+
+            if gpu_cmd is not None:
+                logger.info("GPU transcode %s/%s (%s)", match_id, slot, hwaccel)
+                _set_transcode_progress(match_id, slot, 0, f"transcoding (GPU/{hwaccel})")
+                ok, gpu_err = await run_ffmpeg(
+                    gpu_cmd, on_progress=_on_progress, duration_s=duration_s,
+                )
+            else:
+                ok, gpu_err = False, "skipped (REPLAY_HWACCEL=cpu)"
             if ok:
                 src.unlink(missing_ok=True)
                 _set_transcode_progress(match_id, slot, 95, "generating HLS")

@@ -20,7 +20,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `auth.py`: multi-user authentication, token management, password hashing (scrypt), role-based access, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
-- `media.py`: ffmpeg/ffprobe probing, transcoding (GPU/CPU) with real-time progress tracking, HLS variant generation, thumbnail extraction
+- `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation, thumbnail extraction
 - `live.py`: MediaMTX bridge — HLS reverse proxy, RTMP-publish auth webhook validation, control-API status query
 - `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, and live auth webhook
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)

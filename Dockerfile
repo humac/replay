@@ -11,6 +11,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        python3 python3-pip ffmpeg \
+       # Intel VAAPI / QSV userspace so the same image can transcode on
+       # Intel iGPU hosts. NVIDIA hosts ignore these. iHD covers Gen9+ (most
+       # modern Intel CPUs); i965 is kept for older hardware. vainfo is a
+       # tiny diagnostic tool — useful for `docker exec replay vainfo`.
+       libva-drm2 libva2 intel-media-va-driver i965-va-driver vainfo \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

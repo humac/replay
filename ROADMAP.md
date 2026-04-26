@@ -226,6 +226,21 @@ Settings view gains a "Live Streaming" card (admin-only): toggle live on/off, se
 
 ---
 
+## Milestone 6 — Multi-host GPU support ✅ COMPLETE
+
+**Goal:** run the same `ghcr.io/humac/replay:latest` image on both NVIDIA and Intel-iGPU hosts.
+
+**6.1 Hardware-accelerated transcode dispatcher** ✅
+`media.py` now picks NVENC or VAAPI per-job via `select_hwaccel()` (auto-detects `/dev/dri/renderD128`; overridable via `REPLAY_HWACCEL=auto|nvenc|vaapi|cpu`). VAAPI command line uses `-hwaccel vaapi -hwaccel_output_format vaapi` with a `format=nv12|vaapi,hwupload` filter so it works whether decode lands on the GPU or falls back to software. CPU fallback path is unchanged.
+
+**6.2 VAAPI userspace in the image** ✅
+Dockerfile installs `intel-media-va-driver` (iHD, Gen9+) and `i965-va-driver` alongside `libva-drm2 libva2 vainfo`. Same image transcodes on either GPU; NVIDIA hosts ignore the Intel drivers. `vainfo` available inside the container for diagnostics.
+
+**6.3 Intel compose variant** ✅
+`docker-compose-intel.yml` passes through `/dev/dri` and the render node, takes `VIDEO_GID` / `RENDER_GID` from `.env.local` (render's GID is distro-specific), and inlines the MediaMTX config via Compose `configs:` so Komodo only ships one file.
+
+---
+
 ## Dependencies
 
 - **M1 before M2:** tests and CI must exist before major refactors.
