@@ -353,6 +353,125 @@ export const viewsMixin = {
             if (serverList) serverList.innerHTML = '<div class="session-empty">Diagnostics unavailable.</div>';
             if (localList) localList.innerHTML = this.renderLocalResumeSessions();
         }
+
+        await this.refreshActiveStreams();
+    },
+
+    async refreshActiveStreams() {
+        if (!this.authToken) return;
+        const list = document.getElementById('active-streams-list');
+        const blocksSection = document.getElementById('stream-blocks-section');
+        const blocksList = document.getElementById('stream-blocks-list');
+        if (!list) return;
+        try {
+            const resp = await fetch('/api/admin/streams', { headers: this.getAuthHeaders() });
+            if (!resp.ok) throw new Error('Failed to load active streams');
+            const data = await resp.json();
+            this.activeStreams = data.active || [];
+            this.streamBlocks = data.blocks || [];
+            this.renderActiveStreams();
+            if (blocksSection && blocksList) {
+                if (this.streamBlocks.length) {
+                    blocksSection.style.display = '';
+                    blocksList.innerHTML = this.streamBlocks.map((b) => `
+                        <div class="session-item">
+                            <div class="session-main">
+                                <div class="session-title-row">
+                                    <strong>${this.esc(b.ip)}</strong>
+                                    <span class="status-pill error">${this.esc(b.kind)}</span>
+                                </div>
+                                <div class="session-meta">
+                                    ${b.match_id ? this.esc(b.match_id) + (b.slot ? ' • ' + this.slotLabel(b.slot) : '') : 'live stream'}
+                                    • clears in ${Math.max(0, Math.round(b.expires_in_seconds))}s
+                                </div>
+                            </div>
+                            <div class="session-actions">
+                                <button type="button" class="mini-action-btn" onclick='app.unblockStream(${JSON.stringify(b)})'>Unblock</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    blocksSection.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            list.innerHTML = `<div class="session-empty">${this.esc(error.message)}</div>`;
+        }
+    },
+
+    renderActiveStreams() {
+        const list = document.getElementById('active-streams-list');
+        if (!list) return;
+        if (!this.activeStreams || !this.activeStreams.length) {
+            list.innerHTML = '<div class="session-empty">No active streaming connections.</div>';
+            return;
+        }
+        list.innerHTML = this.activeStreams.map((s) => {
+            const target = s.kind === 'live'
+                ? 'Live stream'
+                : `${this.esc(s.match_label || s.match_id || 'match')}${s.slot ? ' • ' + this.slotLabel(s.slot) : ''}`;
+            const geoBits = [];
+            if (s.geo) {
+                if (s.geo.city) geoBits.push(s.geo.city);
+                if (s.geo.country) geoBits.push(s.geo.country);
+            }
+            const geoText = geoBits.length ? geoBits.join(', ') : '—';
+            const ua = (s.user_agent || '').slice(0, 60);
+            const dur = this.formatDuration ? this.formatDuration(s.duration_seconds) : `${Math.round(s.duration_seconds)}s`;
+            return `
+                <div class="session-item">
+                    <div class="session-main">
+                        <div class="session-title-row">
+                            <strong>${target}</strong>
+                            <span class="status-pill">${this.esc(s.kind)}</span>
+                        </div>
+                        <div class="session-meta">${this.esc(s.ip)} • ${this.esc(geoText)} • ${dur} • ${this.formatBytes(s.bytes_sent || 0)}</div>
+                        <div class="session-meta" title="${this.esc(s.user_agent || '')}">${this.esc(ua)}${s.user_agent && s.user_agent.length > 60 ? '…' : ''}</div>
+                    </div>
+                    <div class="session-actions">
+                        <button type="button" class="mini-action-btn" onclick="app.killStream('${this.esc(s.id)}')">Kill</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    },
+
+    async killStream(sessionId) {
+        if (!confirm('Disconnect this viewer? They will be blocked from this stream for 5 minutes.')) return;
+        try {
+            const resp = await fetch(`/api/admin/streams/${sessionId}/kill`, {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Kill failed');
+            }
+            this.showSuccess('Stream disconnected.');
+            await this.refreshActiveStreams();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async unblockStream(block) {
+        try {
+            const resp = await fetch('/api/admin/streams/blocks', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify({
+                    ip: block.ip,
+                    kind: block.kind,
+                    match_id: block.match_id,
+                    slot: block.slot,
+                }),
+            });
+            if (!resp.ok) throw new Error('Unblock failed');
+            this.showSuccess('Block cleared.');
+            await this.refreshActiveStreams();
+        } catch (error) {
+            this.showError(error.message);
+        }
     },
 
     renderAdminDiagnostics() {

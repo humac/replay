@@ -27,10 +27,12 @@ import live as _live
 import log as _log
 import media as _media
 import settings as _settings
+import streams as _streams
 import uploads as _uploads
 from models import (
     CreateMatchRequest, CreateUploadSessionRequest, CreateUserRequest,
-    LiveAuthRequest, LoginRequest, UpdateMatchRequest, UpdateUserRequest,
+    LiveAuthRequest, LoginRequest, UnblockStreamRequest,
+    UpdateMatchRequest, UpdateUserRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,7 +60,11 @@ async def lifespan(application: FastAPI):
     asyncio.create_task(
         _media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches)
     )
-    yield
+    sweeper = asyncio.create_task(_streams.sweeper_task())
+    try:
+        yield
+    finally:
+        sweeper.cancel()
 
 
 app = FastAPI(title="Replay", lifespan=lifespan)
@@ -585,6 +591,12 @@ async def live_hls_proxy(asset_path: str, request: Request):
         raise HTTPException(404, "Live streaming is disabled")
     if not asset_path:
         raise HTTPException(400, "Missing HLS asset path")
+
+    ip = _streams.client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
+    if _streams.registry.is_blocked(ip, "live", None, None):
+        return Response(status_code=403, content="Stream killed by admin")
+
     try:
         key = await _stream_key()
         status_code, headers, body = await _live.proxy_hls(
@@ -598,7 +610,13 @@ async def live_hls_proxy(asset_path: str, request: Request):
     except Exception as exc:
         logger.warning("Live HLS proxy error for %s: %s", asset_path, exc)
         raise HTTPException(502, "Upstream live stream unavailable")
-    return StreamingResponse(body, status_code=status_code, headers=headers)
+
+    if request.method.upper() == "HEAD":
+        return StreamingResponse(body, status_code=status_code, headers=headers)
+
+    session = _streams.registry.touch("live", None, None, ip, user_agent)
+    wrapped = _streams.wrap_iter(body, session)
+    return StreamingResponse(wrapped, status_code=status_code, headers=headers)
 
 
 @app.post("/api/live/auth")
@@ -653,6 +671,49 @@ async def admin_live_rotate_key(request: Request):
         new_key = _settings.rotate_stream_key_unlocked()
     logger.info("Live stream key rotated by %s", _auth.require_auth(request)["username"])
     return {"ok": True, "stream_key": new_key, "stream_path": _live.stream_path(new_key)}
+
+
+# ---------------------------------------------------------------------------
+# Admin: active streaming connections
+# ---------------------------------------------------------------------------
+
+def _match_label(match_id: str) -> str | None:
+    match = _db.get_match_by_id(match_id)
+    if not match:
+        return None
+    home = match.get("home_team", "?")
+    away = match.get("away_team", "?")
+    return f"{home} vs {away}"
+
+
+@app.get("/api/admin/streams")
+async def admin_active_streams(request: Request):
+    """Admin: list currently-active streaming connections + active kill blocks."""
+    _auth.require_role(request, "admin")
+    return {
+        "active": _streams.serialize_active(match_label_resolver=_match_label),
+        "blocks": _streams.registry.list_blocks(),
+    }
+
+
+@app.post("/api/admin/streams/{session_id}/kill")
+async def admin_kill_stream(session_id: str, request: Request):
+    """Admin: cancel a running stream and short-list the (ip, target) so it can't immediately reconnect."""
+    user = _auth.require_role(request, "admin")
+    killed = _streams.registry.kill(session_id)
+    if not killed:
+        raise HTTPException(404, "Session not found")
+    logger.info("Stream %s killed by %s", session_id, user["username"])
+    return {"ok": True, "killed": True}
+
+
+@app.delete("/api/admin/streams/blocks")
+async def admin_unblock_stream(payload: UnblockStreamRequest, request: Request):
+    """Admin: clear a kill-block early so the affected viewer can rejoin."""
+    _auth.require_role(request, "admin")
+    key = (payload.ip, payload.kind, payload.match_id or "", payload.slot or "")
+    cleared = _streams.registry.unblock(key)
+    return {"ok": True, "cleared": cleared}
 
 
 # ---------------------------------------------------------------------------
@@ -1382,7 +1443,14 @@ async def stream_video(match_id: str, slot: str, request: Request):
     if not vid_path.is_file():
         raise HTTPException(404, "Video not found")
 
-    return _range_file_response(vid_path, "video/mp4", request)
+    ip = _streams.client_ip(request)
+    if _streams.registry.is_blocked(ip, "vod-mp4", match_id, slot):
+        raise HTTPException(403, "Stream killed by admin")
+
+    return _range_file_response(
+        vid_path, "video/mp4", request,
+        match_id=match_id, slot=slot, kind="vod-mp4",
+    )
 
 
 @app.get("/api/matches/{match_id}/transcode-progress/{slot}")
@@ -1418,6 +1486,10 @@ async def download_video(match_id: str, slot: str, request: Request):
     if not vid_path.is_file():
         raise HTTPException(404, "Video not found")
 
+    ip = _streams.client_ip(request)
+    if _streams.registry.is_blocked(ip, "vod-mp4", match_id, slot):
+        raise HTTPException(403, "Stream killed by admin")
+
     slug_parts = [match.get("home_team", "home"), "vs", match.get("away_team", "away"), slot]
     safe_name = "_".join(re.sub(r"[^A-Za-z0-9]+", "_", part).strip("_") or "match" for part in slug_parts)
     return _range_file_response(
@@ -1425,6 +1497,7 @@ async def download_video(match_id: str, slot: str, request: Request):
         "video/mp4",
         request,
         content_disposition=f'attachment; filename="{safe_name}.mp4"',
+        match_id=match_id, slot=slot, kind="vod-mp4",
     )
 
 
@@ -1433,7 +1506,7 @@ async def download_video(match_id: str, slot: str, request: Request):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/matches/{match_id}/hls/{slot}/master.m3u8")
-async def stream_hls_master(match_id: str, slot: str):
+async def stream_hls_master(match_id: str, slot: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
@@ -1451,6 +1524,13 @@ async def stream_hls_master(match_id: str, slot: str):
     if not master_path.is_file():
         raise HTTPException(404, "HLS playlist not found")
 
+    ip = _streams.client_ip(request)
+    if _streams.registry.is_blocked(ip, "vod-hls", match_id, slot):
+        raise HTTPException(403, "Stream killed by admin")
+    _streams.registry.touch(
+        "vod-hls", match_id, slot, ip, request.headers.get("user-agent", ""),
+    )
+
     return FileResponse(
         str(master_path),
         media_type="application/vnd.apple.mpegurl",
@@ -1459,7 +1539,7 @@ async def stream_hls_master(match_id: str, slot: str):
 
 
 @app.get("/api/matches/{match_id}/hls/{slot}/{asset_path:path}")
-async def stream_hls_asset(match_id: str, slot: str, asset_path: str):
+async def stream_hls_asset(match_id: str, slot: str, asset_path: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
     if not asset_path or ".." in asset_path:
@@ -1471,6 +1551,19 @@ async def stream_hls_asset(match_id: str, slot: str, asset_path: str):
         raise HTTPException(400, "Invalid asset path")
     if not target_path.is_file():
         raise HTTPException(404, "HLS asset not found")
+
+    ip = _streams.client_ip(request)
+    if _streams.registry.is_blocked(ip, "vod-hls", match_id, slot):
+        raise HTTPException(403, "Stream killed by admin")
+    sess = _streams.registry.touch(
+        "vod-hls", match_id, slot, ip, request.headers.get("user-agent", ""),
+    )
+    # Approximate bytes_sent — FileResponse buffers internally so this is the
+    # closest we can get without an ASGI-level wrapper.
+    try:
+        sess.bytes_sent += target_path.stat().st_size
+    except OSError:
+        pass
 
     media_type = "application/octet-stream"
     if target_path.suffix == ".m3u8":
@@ -1485,8 +1578,21 @@ async def stream_hls_asset(match_id: str, slot: str, asset_path: str):
     )
 
 
-def _range_file_response(file_path: Path, media_type: str, request: Request, content_disposition: str | None = None):
-    """Serve a file with Range-request support for video seeking."""
+def _range_file_response(
+    file_path: Path,
+    media_type: str,
+    request: Request,
+    content_disposition: str | None = None,
+    *,
+    match_id: str | None = None,
+    slot: str | None = None,
+    kind: str | None = None,
+):
+    """Serve a file with Range-request support for video seeking.
+
+    When ``kind`` is supplied, the active byte transfer is registered with
+    the streams registry so admins can see and kill it.
+    """
     file_size = file_path.stat().st_size
     range_header = request.headers.get("range")
     common_headers = {
@@ -1510,19 +1616,35 @@ def _range_file_response(file_path: Path, media_type: str, request: Request, con
         end = min(end, file_size - 1)
         length = end - start + 1
 
+        session = None
+        if kind:
+            session = _streams.registry.register_long(
+                kind, match_id, slot,
+                _streams.client_ip(request),
+                request.headers.get("user-agent", ""),
+            )
+
         def _iter_range():
             with open(file_path, "rb") as f:
                 f.seek(start)
                 remaining = length
                 while remaining > 0:
+                    if session is not None and session.cancel.is_set():
+                        break
                     chunk = f.read(min(VIDEO_STREAM_CHUNK_BYTES, remaining))
                     if not chunk:
                         break
                     remaining -= len(chunk)
+                    if session is not None:
+                        _streams.registry.add_bytes(session.id, len(chunk))
                     yield chunk
 
+        body = _iter_range()
+        if session is not None:
+            body = _wrap_unregister(body, session.id)
+
         return StreamingResponse(
-            _iter_range(),
+            body,
             status_code=206,
             media_type=media_type,
             headers={
@@ -1540,6 +1662,15 @@ def _range_file_response(file_path: Path, media_type: str, request: Request, con
             **common_headers,
         },
     )
+
+
+def _wrap_unregister(body, session_id: str):
+    """Generator wrapper that always unregisters the session on iterator close."""
+    try:
+        for chunk in body:
+            yield chunk
+    finally:
+        _streams.registry.unregister(session_id)
 
 
 # ---------------------------------------------------------------------------

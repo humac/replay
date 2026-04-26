@@ -106,7 +106,10 @@ def require_role(request: Request, *roles: str) -> dict:
 
 def check_login_rate_limit(request: Request):
     """Raise 429 if too many login attempts from this IP."""
-    ip = request.client.host if request.client else "unknown"
+    # Imported lazily to avoid a top-level circular import (streams imports nothing
+    # back into auth, but server.py wires both together).
+    import streams as _streams
+    ip = _streams.client_ip(request)
     now = time.time()
     attempts = _login_attempts.get(ip, [])
     attempts = [t for t in attempts if now - t < _LOGIN_RATE_WINDOW]

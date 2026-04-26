@@ -22,7 +22,8 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
 - `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation, thumbnail extraction
 - `live.py`: MediaMTX bridge — HLS reverse proxy, RTMP-publish auth webhook validation, control-API status query
-- `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, and live auth webhook
+- `streams.py`: in-memory active streaming-connection registry, Cloudflare-aware client-IP resolver, optional offline GeoLite2 lookup, and admin kill/blocklist support
+- `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, live auth webhook, and admin stream unblock
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
 - `js/utils.js`: pure utility functions (esc, formatDate, statusLabel, etc.)
@@ -45,7 +46,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # for testing
 python server.py
-python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py
+python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py && python3 -m py_compile streams.py
 pytest tests/ -v
 docker compose up --build
 ```
@@ -117,4 +118,5 @@ After frontend changes, sanity-check:
 - Admin recovery endpoints: retry transcode (`POST .../retry`), regenerate HLS (`POST .../regenerate-hls`), verify assets (`GET .../verify`), export DB (`POST /api/admin/export-database`).
 - Live streaming (RTMP ingest → LL-HLS) is provided by a `mediamtx` sidecar in compose. Stream-key auth runs through `POST /api/live/auth` (called by MediaMTX); browsers always reach LL-HLS via the proxy at `/api/live/hls/*` so they only ever talk to the replay origin. The stream key is private (never returned by `/api/settings`) and is rotated via `POST /api/admin/live/rotate-key`.
 - AirPlay and Chromecast for the Watch Live feed live alongside the replay-player implementation. `js/live.js::initLiveRemotePlayback` binds the `live-video` element + `airplay-btn-live` / `cast-btn-live` buttons; `js/player.js::onCastConnected` and `setupCastFramework` are view-aware and route the live HLS URL (`application/x-mpegURL` + `streamType=LIVE`) when the live view is active.
+- Active streaming connections (live HLS proxy + VOD HLS + VOD MP4) are tracked in `streams.py`'s in-memory `StreamRegistry`. Admin endpoints `GET /api/admin/streams`, `POST /api/admin/streams/{id}/kill`, and `DELETE /api/admin/streams/blocks` power the "Active Streaming Connections" card in admin diagnostics. Killing a stream cancels its iterator and adds a 5-minute `(ip, kind, match_id, slot)` blocklist entry. Use `streams.client_ip(request)` to resolve client IPs everywhere — it honors `CF-Connecting-IP` / `True-Client-IP` / `X-Forwarded-For` for Cloudflare and reverse-proxy deployments.
 - **After every code change**, update the relevant markdown files (`ROADMAP.md`, `AGENTS.md`, `CLAUDE.md`) to reflect what changed — new files, completed roadmap items, new conventions, updated guidance. Keep these files as the living source of truth.

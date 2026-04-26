@@ -145,3 +145,13 @@ class LiveAuthRequest(BaseModel):
     protocol: str = ""
     id: str = ""
     query: str = ""
+
+
+class UnblockStreamRequest(BaseModel):
+    """Admin: clear a kill-block for a (ip, kind, match_id, slot) tuple."""
+    model_config = ConfigDict(extra="forbid")
+
+    ip: str = Field(..., min_length=1, max_length=64)
+    kind: Literal["live", "vod-hls", "vod-mp4"]
+    match_id: Optional[str] = None
+    slot: Optional[str] = None

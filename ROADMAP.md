@@ -285,3 +285,16 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 | Login rate limiting | ~45 min | High — closes brute-force vector | ✅ Done (M1) |
 | Pydantic models for match CRUD | ~1 hr | Medium — better validation + docs | ✅ Done (M1) |
 | Disk space check before transcode | ~20 min | Medium — prevents failed transcodes | ✅ Done (M1) |
+
+---
+
+## Milestone 7 — Streaming connection visibility ✅ COMPLETE
+
+**Goal:** give admins real-time visibility into who is watching what, the ability to disconnect a stream, and Cloudflare-aware client IP capture so login rate limiting and access logs reflect the real source IP.
+
+- **Stream registry (`streams.py`)** — in-memory `StreamRegistry` tracks active live HLS proxy, VOD HLS, and VOD MP4 range sessions. HLS-style sessions are keyed by `(ip, ua, kind, match_id, slot)` with a 15s idle TTL; long-lived MP4 range requests register one session per request and unregister on iterator close.
+- **Cloudflare-aware IP** — `streams.client_ip(request)` reads `CF-Connecting-IP` first, then `True-Client-IP`, then the leftmost `X-Forwarded-For` hop, before falling back to `request.client.host`. Login rate limiting (`auth.py`) uses the same helper.
+- **Offline GeoIP** — optional `geoip2` lookup against `app_assets/GeoLite2-City.mmdb`. Returns city/country/country_code; fails open when the DB is missing.
+- **Kill switch** — `POST /api/admin/streams/{id}/kill` cancels the in-flight iterator and adds a 5-minute blocklist entry keyed by `(ip, kind, match_id, slot)`. The next HLS segment poll or MP4 range request from that viewer for that resource returns 403. `DELETE /api/admin/streams/blocks` clears a block early.
+- **Admin endpoints** — `GET /api/admin/streams` returns `{active, blocks}`. Wired into the existing admin diagnostics card in `index.html` + `js/views.js` with a kill button per row.
+- **Background sweeper** — runs every 5s in the FastAPI `lifespan` task, dropping idle HLS sessions and expired blocks.

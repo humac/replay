@@ -45,6 +45,7 @@ Requires Python 3.10+ and `ffmpeg`/`ffprobe` on PATH.
 | `ALLOWED_ORIGINS` | (empty) | Comma-separated hostnames for login origin check |
 | `LOG_FORMAT` | `json` | `json` or `text` |
 | `LOG_LEVEL` | `INFO` | Python log level |
+| `GEOIP_DB_PATH` | `<REPLAY_DATA_DIR>/app_assets/GeoLite2-City.mmdb` | Path to MaxMind GeoLite2 City DB used by the admin "Active streaming connections" panel |
 
 ## Reverse Proxy (Nginx / Caddy)
 
@@ -61,6 +62,40 @@ proxy_set_header X-Forwarded-Proto $scheme;
 Set `client_max_body_size` to match `MAX_UPLOAD_SIZE_BYTES` (or larger) if
 using non-chunked uploads.  Chunked uploads send small pieces so this is
 usually not an issue.
+
+### Client IP behind Cloudflare / proxies
+
+`streams.client_ip()` resolves the real client IP by checking, in order:
+
+1. `CF-Connecting-IP` (Cloudflare CDN and Cloudflare Tunnel)
+2. `True-Client-IP` (Cloudflare Enterprise / Akamai)
+3. The leftmost hop in `X-Forwarded-For`
+4. The ASGI peer address (`request.client.host`)
+
+This is used by both the admin "Active streaming connections" panel and the
+login rate-limiter, so make sure your reverse proxy forwards at least one of
+these headers when Replay is not on the public-facing edge.
+
+## Admin: Active streaming connections (GeoIP)
+
+The admin diagnostics panel ("Active streaming connections") shows currently
+connected viewers — live HLS, VOD HLS, and VOD MP4 — with their IP, optional
+city/country, User-Agent, duration, and bytes sent. A "Kill" button cancels
+the in-flight transfer and adds a 5-minute block keyed by
+`(ip, kind, match_id, slot)` so the next segment poll or range request from
+that viewer is rejected.
+
+City/country comes from a MaxMind GeoLite2-City database. It's optional —
+the panel works without it (the location column shows `—`). To enable:
+
+1. Create a free MaxMind account and download `GeoLite2-City.mmdb`
+   (https://www.maxmind.com/en/geolite2/signup).
+2. Drop the file at `<REPLAY_DATA_DIR>/app_assets/GeoLite2-City.mmdb` (or
+   point `GEOIP_DB_PATH` at it).
+3. Restart Replay.
+
+Lookups are LRU-cached (4096 entries) and never block on the network — the
+DB is read-only and bundled with the deployment.
 
 ## CDN / Live-Stream Scale-Out
 
