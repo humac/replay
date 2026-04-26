@@ -99,20 +99,24 @@ export const playerMixin = {
         this.castAvailable = !!isAvailable;
         this.castSdkReady = !!isAvailable && !!window.cast?.framework && !!window.chrome?.cast;
 
-        const castBtn = document.getElementById('cast-btn');
+        const castBtns = ['cast-btn', 'cast-btn-live']
+            .map((id) => document.getElementById(id))
+            .filter(Boolean);
         if (!isAvailable || !window.cast?.framework || !window.chrome?.cast) {
-            if (castBtn && this.castSupportedBrowser) {
-                castBtn.style.display = 'flex';
-                castBtn.classList.add('remote-playback-btn-disabled');
+            if (this.castSupportedBrowser) {
+                castBtns.forEach((btn) => {
+                    btn.style.display = 'flex';
+                    btn.classList.add('remote-playback-btn-disabled');
+                });
             }
             this.updateRemotePlaybackNote();
             return;
         }
 
-        if (castBtn) {
-            castBtn.style.display = 'flex';
-            castBtn.classList.remove('remote-playback-btn-disabled');
-        }
+        castBtns.forEach((btn) => {
+            btn.style.display = 'flex';
+            btn.classList.remove('remote-playback-btn-disabled');
+        });
 
         if (this._castInitialized) {
             this.updateRemotePlaybackNote();
@@ -176,23 +180,29 @@ export const playerMixin = {
 
     onCastConnected() {
         this.castSession = cast.framework.CastContext.getInstance().getCurrentSession();
-        const castBtn = document.getElementById('cast-btn');
-        if (castBtn) castBtn.classList.add('casting');
+        const castBtns = ['cast-btn', 'cast-btn-live']
+            .map((id) => document.getElementById(id))
+            .filter(Boolean);
+        castBtns.forEach((btn) => btn.classList.add('casting'));
 
-        const overlay = document.getElementById('cast-overlay');
-        const deviceName = document.getElementById('cast-device-name');
-        if (overlay) overlay.style.display = 'flex';
-        if (deviceName) {
-            const name = this.castSession.getCastDevice().friendlyName || 'TV';
-            deviceName.textContent = `Casting to ${name}`;
-        }
+        const deviceName = this.castSession.getCastDevice().friendlyName || 'TV';
+        const liveActive = document.getElementById('live-view')?.classList.contains('active');
 
-        const videoEl = document.getElementById('game-video');
-        if (videoEl) videoEl.pause();
+        if (liveActive) {
+            this.castLiveStream?.();
+        } else {
+            const overlay = document.getElementById('cast-overlay');
+            const deviceLabel = document.getElementById('cast-device-name');
+            if (overlay) overlay.style.display = 'flex';
+            if (deviceLabel) deviceLabel.textContent = `Casting to ${deviceName}`;
 
-        if (this.activeMatchId && this.activeSlot) {
-            const src = `${window.location.origin}/api/matches/${this.activeMatchId}/video/${this.activeSlot}`;
-            this.castMedia(src);
+            const videoEl = document.getElementById('game-video');
+            if (videoEl) videoEl.pause();
+
+            if (this.activeMatchId && this.activeSlot) {
+                const src = `${window.location.origin}/api/matches/${this.activeMatchId}/video/${this.activeSlot}`;
+                this.castMedia(src);
+            }
         }
 
         this.updateRemotePlaybackNote();
@@ -200,11 +210,20 @@ export const playerMixin = {
 
     onCastDisconnected() {
         this.castSession = null;
-        const castBtn = document.getElementById('cast-btn');
-        if (castBtn) castBtn.classList.remove('casting');
+        const castBtns = ['cast-btn', 'cast-btn-live']
+            .map((id) => document.getElementById(id))
+            .filter(Boolean);
+        castBtns.forEach((btn) => btn.classList.remove('casting'));
 
         const overlay = document.getElementById('cast-overlay');
         if (overlay) overlay.style.display = 'none';
+        const liveOverlay = document.getElementById('cast-overlay-live');
+        if (liveOverlay) liveOverlay.style.display = 'none';
+
+        // If we were casting the live stream and the user is still on the
+        // live view with the feed up, resume local playback so the screen
+        // doesn't sit blank after the cast session ends.
+        this.resumeLiveAfterCast?.();
         this.updateRemotePlaybackNote();
     },
 

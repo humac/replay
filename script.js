@@ -52,6 +52,7 @@ const app = {
         this.initializeHistory();
         this.initAirPlay();
         this.initCast();
+        this.initLiveRemotePlayback();
         this.initKeyboardShortcuts();
         this.checkTranscodePolling();
     },
@@ -319,6 +320,7 @@ const app = {
     liveStatusTimer: null,
     liveHls: null,
     liveLastActive: false,
+    liveCastingActive: false,
 
     // Merge all module mixins
     ...utilsMixin,
