@@ -1,9 +1,12 @@
 services:
-  app:
+  # Service name MUST stay `replay` — the MediaMTX sidecar calls
+  # http://replay:8090/api/live/auth for RTMP publish-key validation, and
+  # the inlined mediamtx_config below hardcodes that hostname.
+  replay:
     image: ghcr.io/humac/replay:latest
     # Uncomment to build locally instead of pulling from GHCR:
     #build: .
-    #container_name: replay
+    container_name: replay
     ports:
       - "8090:8090"
     env_file:
