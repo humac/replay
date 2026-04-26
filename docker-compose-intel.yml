@@ -8,6 +8,12 @@ services:
       - "8090:8090"
     env_file:
       - .env.local
+    # The image's default UID 10001 can't write to a host bind-mounted /data
+    # whose host directory is root- or app_service-owned. Running as root
+    # sidesteps the UID-mapping problem and matches the host convention on
+    # this server. Switch back to the image default (drop this line) if you
+    # ever migrate to a named volume or chown the host dir to 10001.
+    user: "0:0"
     environment:
       REPLAY_PORT: 8090
       REPLAY_DATA_DIR: /data
