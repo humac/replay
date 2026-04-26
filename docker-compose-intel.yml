@@ -127,13 +127,14 @@ configs:
       hlsAlwaysRemux: yes
       hlsSegmentCount: 7
       hlsSegmentDuration: 2s
-      hlsAllowOrigin: '*'
+      hlsAllowOrigins: ['*']
 
       rtsp: no
       webrtc: no
       srt: no
 
-      record: no
+      pathDefaults:
+        record: no
 
       authMethod: http
       authHTTPAddress: http://replay:8090/api/live/auth

@@ -26,13 +26,14 @@ hlsVariant: mpegts
 hlsAlwaysRemux: yes
 hlsSegmentCount: 7
 hlsSegmentDuration: 2s
-hlsAllowOrigin: '*'
+hlsAllowOrigins: ['*']
 
 rtsp: no
 webrtc: no
 srt: no
 
-record: no
+pathDefaults:
+  record: no
 
 # External authentication — every publish/read/api call hits this URL and
 # the replay app decides allow/deny. Reads, API, metrics, and pprof originate
