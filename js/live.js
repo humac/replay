@@ -495,7 +495,13 @@ export const liveMixin = {
         });
 
         document.getElementById('live-rotate-key-btn')?.addEventListener('click', async () => {
-            if (!confirm('Rotate the live stream key? Any camera using the current key will be disconnected.')) return;
+            const ok = await this.confirmAction({
+                title: 'Rotate live stream key',
+                message: 'Any camera using the current key will be disconnected immediately. The new key will need to be re-entered on the camera.',
+                confirmLabel: 'Rotate key',
+                danger: true,
+            });
+            if (!ok) return;
             const btn = document.getElementById('live-rotate-key-btn');
             const restore = this.btnLoading(btn, 'Rotating...');
             try {

@@ -186,7 +186,13 @@ export const viewsMixin = {
     },
 
     async handleDeleteUser(userId, username) {
-        if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+        const ok = await this.confirmAction({
+            title: 'Delete user',
+            message: `Delete user "${username}"? This cannot be undone.`,
+            confirmLabel: 'Delete user',
+            danger: true,
+        });
+        if (!ok) return;
         try {
             await this.deleteUser(userId);
             this.showSuccess(`User "${username}" deleted.`);
@@ -475,7 +481,13 @@ export const viewsMixin = {
     },
 
     async killStream(sessionId) {
-        if (!confirm('Disconnect this viewer? They will be blocked from this stream for 5 minutes.')) return;
+        const ok = await this.confirmAction({
+            title: 'Disconnect viewer',
+            message: 'They will be blocked from this stream for 5 minutes.',
+            confirmLabel: 'Disconnect',
+            danger: true,
+        });
+        if (!ok) return;
         try {
             const resp = await fetch(`/api/admin/streams/${sessionId}/kill`, {
                 method: 'POST',
@@ -688,7 +700,12 @@ export const viewsMixin = {
     },
 
     async retryTranscode(matchId, slot) {
-        if (!confirm(`Retry transcoding ${slot} for this match?`)) return;
+        const ok = await this.confirmAction({
+            title: 'Retry transcode',
+            message: `Send ${this.slotLabel(slot)} back through the encoding pipeline?`,
+            confirmLabel: 'Retry',
+        });
+        if (!ok) return;
         try {
             const resp = await fetch(`/api/admin/matches/${matchId}/slots/${slot}/retry`, {
                 method: 'POST',
@@ -722,7 +739,10 @@ export const viewsMixin = {
                 }
                 return parts.join(' • ');
             });
-            alert('Asset Verification:\n\n' + (lines.length ? lines.join('\n') : 'No slots found.'));
+            await this.notifyModal({
+                title: 'Asset verification',
+                message: lines.length ? lines.join('\n') : 'No slots found for this match.',
+            });
         } catch (error) {
             this.showError(error.message);
         }
@@ -730,16 +750,19 @@ export const viewsMixin = {
 
     async regenerateActiveThumbnail() {
         if (!this.activeMatchId) return;
-        // Optional slot picker — empty input = backend's priority order
-        // (full > first_half > second_half).
-        const slot = (prompt(
-            'Regenerate from which slot? Leave blank for the default priority (full > first_half > second_half).',
-            ''
-        ) || '').trim().toLowerCase();
-        if (slot && !['full', 'first_half', 'second_half'].includes(slot)) {
-            this.showError(`Invalid slot "${slot}" — use full, first_half, or second_half.`);
-            return;
-        }
+        const slot = await this.promptChoice({
+            title: 'Regenerate thumbnail',
+            message: 'Pick the slot to grab a frame from. "Auto" uses the default priority (full → 1st half → 2nd half).',
+            options: [
+                { value: '', label: 'Auto' },
+                { value: 'full', label: 'Full match' },
+                { value: 'first_half', label: '1st Half' },
+                { value: 'second_half', label: '2nd Half' },
+            ],
+            initialValue: '',
+            confirmLabel: 'Regenerate',
+        });
+        if (slot === null) return;
         const url = `/api/admin/matches/${this.activeMatchId}/regenerate-thumbnail${slot ? `?slot=${slot}` : ''}`;
         try {
             const resp = await fetch(url, {
@@ -766,7 +789,12 @@ export const viewsMixin = {
     },
 
     async regenerateHls(matchId, slot) {
-        if (!confirm(`Regenerate HLS for ${slot}?`)) return;
+        const ok = await this.confirmAction({
+            title: 'Regenerate HLS',
+            message: `Rebuild the HLS variant ladder for ${this.slotLabel(slot)}?`,
+            confirmLabel: 'Regenerate',
+        });
+        if (!ok) return;
         try {
             const resp = await fetch(`/api/admin/matches/${matchId}/slots/${slot}/regenerate-hls`, {
                 method: 'POST',
@@ -829,7 +857,13 @@ export const viewsMixin = {
     },
 
     async cancelUploadSession(sessionId) {
-        if (!confirm('Cancel this upload session and remove its partial file?')) return;
+        const ok = await this.confirmAction({
+            title: 'Cancel upload session',
+            message: 'This removes the partial file on disk and frees the slot. The viewer can re-upload if needed.',
+            confirmLabel: 'Cancel upload',
+            danger: true,
+        });
+        if (!ok) return;
         try {
             const resp = await fetch(`/api/uploads/sessions/${sessionId}`, {
                 method: 'DELETE',
@@ -1085,7 +1119,13 @@ export const viewsMixin = {
     },
 
     async deleteMatch(matchId) {
-        if (!confirm('Delete this match and all its videos?')) return;
+        const ok = await this.confirmAction({
+            title: 'Delete match',
+            message: 'This removes the match record, all uploaded video slots, and any HLS assets. It cannot be undone.',
+            confirmLabel: 'Delete match',
+            danger: true,
+        });
+        if (!ok) return;
 
         try {
             const resp = await fetch(`/api/matches/${matchId}`, { method: 'DELETE', headers: this.getAuthHeaders() });

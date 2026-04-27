@@ -57,6 +57,130 @@ function removeToast(toast) {
     setTimeout(() => { if (toast.isConnected) toast.remove(); }, 400);
 }
 
+// ----- Custom modal dialog -----
+//
+// Promise-based replacement for native confirm() / prompt() / alert() so the
+// site keeps its dark-broadcast look when destructive operations are
+// requested. The DOM is created on demand and torn down on close.
+
+let _activeModal = null;
+
+function escapeHtml(s) {
+    return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function openAppModal({
+    kind = 'confirm',
+    title = '',
+    message = '',
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    danger = false,
+    options = null,             // [{ value, label }] for prompt-style picker
+    initialValue = '',
+} = {}) {
+    return new Promise((resolve) => {
+        if (_activeModal) _activeModal.close(null);
+
+        const wrap = document.createElement('div');
+        wrap.className = 'app-modal';
+        wrap.setAttribute('role', 'dialog');
+        wrap.setAttribute('aria-modal', 'true');
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'app-modal-backdrop';
+
+        const card = document.createElement('div');
+        card.className = `app-modal-card${danger ? ' is-danger' : ''}`;
+        card.innerHTML = `
+            <span class="app-modal-kicker">${danger ? 'Confirm action' : (kind === 'alert' ? 'Status' : 'Confirm')}</span>
+            <h3 class="app-modal-title">${escapeHtml(title)}</h3>
+            <p class="app-modal-message">${escapeHtml(message)}</p>
+        `;
+
+        let pickerEl = null;
+        if (kind === 'prompt' && Array.isArray(options) && options.length) {
+            pickerEl = document.createElement('div');
+            pickerEl.className = 'app-modal-picker';
+            options.forEach((opt) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'app-modal-picker-btn';
+                btn.dataset.value = opt.value;
+                btn.textContent = opt.label;
+                if (opt.value === initialValue) btn.classList.add('is-active');
+                btn.addEventListener('click', () => {
+                    pickerEl.querySelectorAll('.app-modal-picker-btn').forEach((b) => b.classList.remove('is-active'));
+                    btn.classList.add('is-active');
+                });
+                pickerEl.appendChild(btn);
+            });
+            card.appendChild(pickerEl);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'app-modal-actions';
+        actions.innerHTML = kind === 'alert'
+            ? `<button type="button" class="btn-primary app-modal-confirm">${escapeHtml(confirmLabel || 'Close')}</button>`
+            : `
+                <button type="button" class="btn-secondary app-modal-cancel">${escapeHtml(cancelLabel)}</button>
+                <button type="button" class="${danger ? 'btn-danger' : 'btn-primary'} app-modal-confirm">${escapeHtml(confirmLabel)}</button>
+            `;
+        card.appendChild(actions);
+
+        wrap.appendChild(backdrop);
+        wrap.appendChild(card);
+        document.body.appendChild(wrap);
+        requestAnimationFrame(() => wrap.classList.add('is-open'));
+
+        const previousFocus = document.activeElement;
+        const confirmBtn = card.querySelector('.app-modal-confirm');
+        const cancelBtn = card.querySelector('.app-modal-cancel');
+
+        const close = (value) => {
+            if (!wrap.isConnected) return;
+            wrap.classList.remove('is-open');
+            wrap.classList.add('is-closing');
+            setTimeout(() => wrap.remove(), 200);
+            document.removeEventListener('keydown', onKey);
+            _activeModal = null;
+            try { previousFocus?.focus?.(); } catch { /* ignore */ }
+            resolve(value);
+        };
+
+        const onConfirm = () => {
+            if (kind === 'prompt') {
+                const active = pickerEl?.querySelector('.app-modal-picker-btn.is-active');
+                close(active ? active.dataset.value : initialValue);
+            } else if (kind === 'alert') {
+                close(true);
+            } else {
+                close(true);
+            }
+        };
+        const onCancel = () => close(kind === 'prompt' ? null : false);
+        const onKey = (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+            if (e.key === 'Enter' && document.activeElement?.tagName !== 'BUTTON') {
+                e.preventDefault(); onConfirm();
+            }
+        };
+
+        confirmBtn.addEventListener('click', onConfirm);
+        cancelBtn?.addEventListener('click', onCancel);
+        backdrop.addEventListener('click', onCancel);
+        document.addEventListener('keydown', onKey);
+
+        _activeModal = { close };
+        // Focus handling — confirm by default, cancel for destructive prompts.
+        setTimeout(() => (danger ? cancelBtn || confirmBtn : confirmBtn).focus(), 0);
+    });
+}
+
 export const uiMixin = {
     showSuccess(message) {
         showToast(message, { type: 'success' });
@@ -68,6 +192,21 @@ export const uiMixin = {
 
     showInfo(message) {
         showToast(message, { type: 'info' });
+    },
+
+    /** Promise<boolean> — resolves true when the user confirms, false on cancel/escape. */
+    confirmAction({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false } = {}) {
+        return openAppModal({ kind: 'confirm', title, message, confirmLabel, cancelLabel, danger });
+    },
+
+    /** Promise<string|null> — resolves the chosen option value, or null on cancel. */
+    promptChoice({ title, message, options, initialValue = '', confirmLabel = 'Continue', cancelLabel = 'Cancel' } = {}) {
+        return openAppModal({ kind: 'prompt', title, message, options, initialValue, confirmLabel, cancelLabel });
+    },
+
+    /** Promise<true> — informational modal with a single dismiss button. */
+    notifyModal({ title, message, confirmLabel = 'Close' } = {}) {
+        return openAppModal({ kind: 'alert', title, message, confirmLabel });
     },
 
     /** Set a button into a loading state; returns a restore function. */

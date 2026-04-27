@@ -3527,3 +3527,214 @@ button {
     background: rgba(21,101,192,0.10);
     color: var(--accent-hover);
 }
+
+/* ============================================================
+   Custom <select> — match the broadcast aesthetic
+   ============================================================ */
+
+.form-group select {
+    width: 100%;
+    padding: 0.95rem 2.6rem 0.95rem 1rem;
+    background: rgba(0, 0, 0, 0.38);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.92rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23888890' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 12px 8px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-group select:hover {
+    border-color: rgba(255,255,255,0.18);
+}
+
+.form-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+    background-color: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 3px rgba(23, 113, 201, 0.14);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23298bed' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+
+.form-group select option {
+    background: var(--bg-panel);
+    color: var(--text-main);
+    font-family: var(--font-body);
+    text-transform: none;
+    letter-spacing: 0;
+    padding: 0.5rem;
+}
+
+[data-theme="light"] .form-group select {
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%236b6b75' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+
+[data-theme="light"] .form-group select:focus {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%231565c0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+
+/* ============================================================
+   Custom modal dialog (replaces native confirm/alert/prompt)
+   ============================================================ */
+
+.app-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+
+.app-modal.is-open { opacity: 1; }
+.app-modal.is-closing { opacity: 0; }
+
+.app-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(6px);
+}
+
+.app-modal-card {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 460px;
+    background:
+        radial-gradient(circle at top right, rgba(23, 113, 201, 0.10), transparent 50%),
+        var(--bg-panel);
+    border: 1px solid var(--border-light);
+    border-radius: 16px;
+    box-shadow: 0 36px 80px rgba(0, 0, 0, 0.55);
+    padding: 1.7rem 1.7rem 1.4rem;
+    transform: translateY(8px) scale(0.985);
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-modal.is-open .app-modal-card { transform: translateY(0) scale(1); }
+
+.app-modal-card.is-danger {
+    background:
+        radial-gradient(circle at top right, rgba(255, 74, 74, 0.10), transparent 55%),
+        var(--bg-panel);
+    border-color: rgba(255, 74, 74, 0.22);
+}
+
+.app-modal-kicker {
+    display: inline-block;
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.65rem;
+}
+
+.app-modal-card.is-danger .app-modal-kicker { color: var(--red); }
+
+.app-modal-title {
+    font-family: var(--font-heading);
+    font-size: 1.55rem;
+    line-height: 1.05;
+    letter-spacing: 0.02em;
+    color: var(--text-main);
+    margin-bottom: 0.7rem;
+}
+
+.app-modal-message {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    margin-bottom: 1.3rem;
+}
+
+.app-modal-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.3rem;
+}
+
+.app-modal-picker-btn {
+    padding: 0.6rem 1rem;
+    min-height: 40px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(0, 0, 0, 0.32);
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.app-modal-picker-btn:hover {
+    border-color: rgba(255,255,255,0.24);
+    background: rgba(255,255,255,0.04);
+}
+
+.app-modal-picker-btn.is-active {
+    border-color: var(--accent);
+    color: var(--text-main);
+    background: rgba(23, 113, 201, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(23, 113, 201, 0.35);
+}
+
+.app-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+}
+
+.app-modal-actions .btn-primary,
+.app-modal-actions .btn-secondary,
+.app-modal-actions .btn-danger {
+    min-width: 7rem;
+}
+
+@media (max-width: 520px) {
+    .app-modal-card {
+        padding: 1.4rem;
+        border-radius: 14px;
+    }
+    .app-modal-title { font-size: 1.35rem; }
+    .app-modal-actions { flex-direction: column-reverse; }
+    .app-modal-actions .btn-primary,
+    .app-modal-actions .btn-secondary,
+    .app-modal-actions .btn-danger {
+        width: 100%;
+        min-width: 0;
+    }
+}
+
+[data-theme="light"] .app-modal-backdrop {
+    background: rgba(20, 20, 30, 0.45);
+}
+
+[data-theme="light"] .app-modal-picker-btn {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .app-modal-picker-btn.is-active {
+    background: rgba(21, 101, 192, 0.10);
+}
