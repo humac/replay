@@ -1573,18 +1573,20 @@ button {
 .file-upload-row {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0;
     min-width: 0;
-    padding: 0.3rem 0.45rem 0.3rem 0.3rem;
-    border: 1px solid rgba(255,255,255,0.09);
+    padding: 0;
+    border: 1px solid rgba(255,255,255,0.08);
     border-radius: 10px;
-    background: rgba(0, 0, 0, 0.22);
+    background: rgba(0, 0, 0, 0.38);
+    overflow: hidden;
+    min-height: 3.4rem;
     transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .file-upload-row:focus-within {
     border-color: rgba(23, 113, 201, 0.85);
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, 0.5);
     box-shadow: 0 0 0 3px rgba(23, 113, 201, 0.14);
 }
 
@@ -1607,18 +1609,19 @@ button {
 
 /* Use .file-upload-row .file-picker-button so this rule beats
    .form-group label on specificity — that base rule injects margin-bottom,
-   display:block, and text-transform that otherwise leak through. */
+   display:block, font-size:0.8rem, and text-transform that otherwise leak
+   through and break layout. */
 .file-upload-row .file-picker-button,
 .file-picker-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 110px;
     margin: 0;
-    padding: 0.7rem 1rem;
-    background: var(--bg-dark);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 7px;
+    padding: 0.95rem 1.25rem;
+    background: transparent;
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0;
     color: var(--text-main);
     font-family: var(--font-body);
     font-size: 0.85rem;
@@ -1628,17 +1631,13 @@ button {
     line-height: 1;
     cursor: pointer;
     white-space: nowrap;
-    transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease, color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease;
     flex: 0 0 auto;
 }
 
 .file-picker-button:hover {
-    border-color: var(--accent);
-    background: rgba(255, 255, 255, 0.04);
-}
-
-.file-picker-button:active {
-    transform: translateY(1px);
+    background: rgba(23, 113, 201, 0.10);
+    color: var(--accent);
 }
 
 .file-input::file-selector-button {
@@ -1665,7 +1664,7 @@ button {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    padding: 0 0.6rem;
+    padding: 0 1rem;
     line-height: 1.35;
 }
 
@@ -2525,17 +2524,11 @@ button {
     box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.14);
 }
 
-/* File upload row in light theme reads as ONE input with a button section,
-   not a button-in-a-box. The button drops its background and border and
-   becomes an inline section divided by a hairline; padding matches the
-   regular input so heights and visual weight align exactly. */
+/* File upload row in light theme keeps the unified-pill shape from the
+   base rule but recolors to white with a darker hairline divider. */
 [data-theme="light"] .file-upload-row {
     background: #ffffff;
     border-color: rgba(0, 0, 0, 0.14);
-    padding: 0;
-    gap: 0;
-    overflow: hidden;
-    min-height: 3.4rem;
 }
 
 [data-theme="light"] .file-upload-row:focus-within {
@@ -2544,24 +2537,14 @@ button {
     box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.14);
 }
 
-[data-theme="light"] .file-picker-button {
-    background: transparent;
-    border: none;
-    border-right: 1px solid rgba(0, 0, 0, 0.10);
-    border-radius: 0;
+[data-theme="light"] .file-upload-row .file-picker-button {
+    border-right-color: rgba(0, 0, 0, 0.10);
     color: var(--text-main);
-    padding: 0.95rem 1.25rem;
-    min-width: 0;
 }
 
-[data-theme="light"] .file-picker-button:hover {
+[data-theme="light"] .file-upload-row .file-picker-button:hover {
     background: rgba(21, 101, 192, 0.06);
-    border-color: rgba(0, 0, 0, 0.10);
     color: var(--accent);
-}
-
-[data-theme="light"] .file-label {
-    padding: 0 1rem;
 }
 
 /* Upload status text — saturated colors for legibility on white. */
