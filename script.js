@@ -40,6 +40,8 @@ const app = {
     userName: null,
     diagnostics: null,
     transcodeProgress: {},
+    _revealedScores: new Set(),
+    recordVisible: false,
 
     // ===== INIT & LIFECYCLE =====
     async init() {

@@ -3738,3 +3738,222 @@ button {
 [data-theme="light"] .app-modal-picker-btn.is-active {
     background: rgba(21, 101, 192, 0.10);
 }
+
+/* ============================================================
+   Score reveal — replay-first, results-quiet
+   ============================================================ */
+
+.card-team-score.is-hidden,
+.game-team-score.is-hidden {
+    color: var(--text-muted);
+    opacity: 0.45;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    user-select: none;
+}
+
+.score-reveal-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+    padding: 0.3rem 0.7rem;
+    min-height: 32px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(0, 0, 0, 0.28);
+    color: var(--text-muted);
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    cursor: pointer;
+    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.score-reveal-chip:hover {
+    color: var(--text-main);
+    border-color: var(--accent);
+    background: rgba(23, 113, 201, 0.12);
+    transform: translateY(-1px);
+}
+
+.score-reveal-chip svg { flex-shrink: 0; }
+
+/* Larger variant on the game-page reveal row */
+.game-score-reveal-row {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1.25rem;
+}
+
+.score-reveal-chip-large {
+    padding: 0.55rem 1.1rem;
+    min-height: 40px;
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+}
+
+[data-theme="light"] .score-reveal-chip {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .score-reveal-chip:hover {
+    background: rgba(21, 101, 192, 0.10);
+    border-color: var(--accent);
+}
+
+/* Tighten card-team-score weight when revealed too — keep it readable
+   but never the loudest thing on the card. */
+.card-team-score:not(.is-hidden) {
+    color: var(--text-main);
+    opacity: 0.95;
+}
+
+/* Mobile: chip wraps to its own row inside the detail row */
+@media (max-width: 520px) {
+    .score-reveal-chip {
+        margin-left: 0;
+        flex-basis: 100%;
+        justify-content: center;
+    }
+}
+
+/* ============================================================
+   Team performance — effort tiles + collapsed record strip
+   ============================================================ */
+
+.team-stat-grid-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1rem;
+    grid-column: 1 / -1;
+}
+
+/* Neutral variant — drop the colored radial accent on the new effort tiles */
+.team-stat-card.neutral {
+    background: rgba(8, 8, 10, 0.62);
+}
+
+.team-stat-card.neutral::after {
+    display: none;
+}
+
+.team-stat-card.neutral .team-stat-value {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-main);
+}
+
+[data-theme="light"] .team-stat-card.neutral {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.team-record-toggle {
+    grid-column: 1 / -1;
+    align-self: center;
+    margin: 0.4rem auto -0.2rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.95rem;
+    min-height: 36px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-heading);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    cursor: pointer;
+    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.team-record-toggle:hover {
+    color: var(--text-main);
+    border-color: var(--accent);
+}
+
+.team-record-toggle-caret {
+    transition: transform 0.2s ease;
+}
+
+.team-record-toggle.is-open .team-record-toggle-caret {
+    transform: rotate(180deg);
+}
+
+[data-theme="light"] .team-record-toggle {
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+.team-record-strip {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+    padding: 1rem 1.1rem;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.32);
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+.team-record-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    position: relative;
+    padding-left: 0.85rem;
+}
+
+.team-record-cell::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.2rem;
+    bottom: 0.2rem;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    opacity: 0.5;
+}
+
+.team-record-cell.record::before    { background: var(--accent); opacity: 0.85; }
+.team-record-cell.points::before    { background: var(--green); opacity: 0.85; }
+.team-record-cell.difference::before { background: rgba(250, 204, 21, 0.85); }
+
+.team-record-label {
+    font-family: var(--font-heading);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--text-muted);
+}
+
+.team-record-value {
+    font-family: var(--font-heading);
+    font-size: 1.55rem;
+    line-height: 1;
+    color: var(--text-main);
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+}
+
+.team-record-note {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+
+[data-theme="light"] .team-record-strip {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+@media (max-width: 600px) {
+    .team-record-strip {
+        grid-template-columns: 1fr;
+        gap: 0.6rem;
+    }
+}

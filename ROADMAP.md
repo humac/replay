@@ -313,3 +313,15 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Settings consolidation** — dropped `nav_add_match_label` and `nav_settings_label` (keys removed from `settings.py` defaults and `js/api.js`). Replaced with a single `nav_admin_label` (default "Admin"). Top nav now exposes one role-aware "Admin" link.
 - **New module: `js/admin.js`** — admin shell mixin (sidebar render, section show/hide, status-strip polling, overview KPI tiles, role filter). Existing renderers in `views.js` and `live.js` are reused unchanged; only DOM container layout moved.
 - **Aesthetic** — extends the existing dark/Oswald/blue-accent system: status strip with monospace tabular numerals + glowing state dots, sidebar with accent radial-glow halo on the active item, control-room kicker labels (`◉`, `⚡`, `⚙`) in Overview quick-action tiles. No new font imports; all new styles consume existing CSS variables.
+
+---
+
+## Milestone 9 — Replay-First Score De-emphasis ✅ COMPLETE
+
+**Goal:** the site is a replay library, not a results page. Stop spotlighting losses on every visit while keeping scores accessible for anyone who actually wants them.
+
+- **Match cards** — scores are hidden by default behind a small "Reveal score" chip in `.match-detail-row`. Each card flips independently; state lives in an in-memory `_revealedScores` Set, intentionally not persisted, so a refresh hides everything again. Cards with no score recorded render no chip and no numerals.
+- **Game (match detail) page** — same hide-by-default behavior. Matchup header renders a muted dash placeholder; a centered "Reveal final score" chip lives in a new `#game-score-reveal` row between matchup and meta. Reveal state is shared with the season grid (one Set), so revealing on cards carries through to the detail page in the same session.
+- **Team performance panel** — reframed around what was *played*: Matches Played, Goals Scored, Clean Sheets, Replays Available (count of main-team matches with at least one ready slot). The legacy Record / Points / Goal Diff metrics survive behind a "Show record" toggle so users who want them aren't blocked.
+- **Score data is unchanged** — `/api/matches`, the DB schema, and admin entry forms still capture and return scores; this is purely a presentation rework. New helpers `app.revealMatchScore`, `app.isMatchScoreRevealed`, `app.toggleSeasonRecord`, and `app.countAvailableReplays` handle the per-session state and effort-metric counting.
+- **Aesthetic** — quiet by default. Reveal chip is an Oswald uppercase 32-px pill (40-px large variant for the game page), eye SVG icon, accent border on hover. Hidden scores use `var(--text-muted)` at 0.45 opacity. Neutral team-stat tiles drop the colored radial accents from the four primary metrics; accents return on the collapsed record strip as left-edge bars.

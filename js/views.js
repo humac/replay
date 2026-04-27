@@ -1180,13 +1180,26 @@ export const viewsMixin = {
                 ? `<img src="/api/matches/${m.id}/logo/away" class="card-team-logo" alt="${this.esc(m.away_team)}">`
                 : `<div class="card-team-initial">${this.esc((m.away_team || '?')[0])}</div>`;
 
-            const homeScore = m.score_home != null ? m.score_home : '';
-            const awayScore = m.score_away != null ? m.score_away : '';
+            const hasScore = m.score_home != null && m.score_away != null;
+            const revealed = this.isMatchScoreRevealed(m.id);
+            const showScore = hasScore && revealed;
+            const homeScoreHtml = showScore
+                ? `<span class="card-team-score">${m.score_home}</span>`
+                : (hasScore ? '<span class="card-team-score is-hidden" aria-hidden="true">\u2014</span>' : '');
+            const awayScoreHtml = showScore
+                ? `<span class="card-team-score">${m.score_away}</span>`
+                : (hasScore ? '<span class="card-team-score is-hidden" aria-hidden="true">\u2014</span>' : '');
 
             const dateStr = this.formatDate(m.date);
             const timeStr = m.time ? ` \u00b7 ${m.time}` : '';
             const locationHtml = m.location
                 ? `<span class="match-detail-pill location"><span class="pill-label">Location</span>${this.esc(m.location)}</span>`
+                : '';
+            const revealChipHtml = (hasScore && !revealed)
+                ? `<button type="button" class="score-reveal-chip" onclick="app.revealMatchScore('${m.id}', event)" aria-label="Reveal final score for this match">
+                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                       <span>Reveal score</span>
+                   </button>`
                 : '';
 
             const isTranscoding = this.matchTranscoding(m);
@@ -1208,7 +1221,7 @@ export const viewsMixin = {
                         <span class="team-side-label">Home</span>
                         <div class="team-name-score-row">
                             <span class="card-team-name">${this.esc(m.home_team)}</span>
-                            ${homeScore !== '' ? `<span class="card-team-score">${homeScore}</span>` : '<span class="card-team-score empty">-</span>'}
+                            ${homeScoreHtml}
                         </div>
                     </div>
                     <div class="card-vs-col">
@@ -1219,13 +1232,14 @@ export const viewsMixin = {
                         <span class="team-side-label">Away</span>
                         <div class="team-name-score-row">
                             <span class="card-team-name">${this.esc(m.away_team)}</span>
-                            ${awayScore !== '' ? `<span class="card-team-score">${awayScore}</span>` : '<span class="card-team-score empty">-</span>'}
+                            ${awayScoreHtml}
                         </div>
                     </div>
                 </div>
                 <div class="match-detail-row">
                     <span class="match-detail-pill">${this.esc(dateStr)}${timeStr}</span>
                     ${locationHtml}
+                    ${revealChipHtml}
                 </div>
                 <div class="match-meta">
                     ${isTranscoding ? `<span class="badge processing">${this.matchProgressLabel(m)}</span>` : ''}
@@ -1255,6 +1269,94 @@ export const viewsMixin = {
         this.deleteMatch(matchId);
     },
 
+    isMatchScoreRevealed(matchId) {
+        return !!this._revealedScores && this._revealedScores.has(String(matchId));
+    },
+
+    revealMatchScore(matchId, event) {
+        if (event) event.stopPropagation();
+        if (!this._revealedScores) this._revealedScores = new Set();
+        this._revealedScores.add(String(matchId));
+        if (document.getElementById('season-view')?.classList.contains('active')) {
+            this.renderSeasonView();
+        }
+        if (document.getElementById('game-view')?.classList.contains('active') && this.activeMatchId === matchId) {
+            const match = this.matches.find((m) => m.id === matchId);
+            if (match) this.renderGameMatchup(match);
+        }
+    },
+
+    renderGameMatchup(match) {
+        const matchupEl = document.getElementById('game-matchup');
+        const revealEl = document.getElementById('game-score-reveal');
+        if (!matchupEl) return;
+
+        const homeLogo = match.home_logo
+            ? `<img src="/api/matches/${match.id}/logo/home" class="game-logo-large">`
+            : `<div class="game-logo-initial-large">${this.esc((match.home_team || '?')[0])}</div>`;
+        const awayLogo = match.away_logo
+            ? `<img src="/api/matches/${match.id}/logo/away" class="game-logo-large">`
+            : `<div class="game-logo-initial-large">${this.esc((match.away_team || '?')[0])}</div>`;
+
+        const hasScore = match.score_home != null && match.score_away != null;
+        const revealed = this.isMatchScoreRevealed(match.id);
+        const showScore = hasScore && revealed;
+        const homeScoreHtml = showScore
+            ? `<span class="game-team-score">${match.score_home}</span>`
+            : (hasScore ? '<span class="game-team-score is-hidden" aria-hidden="true">—</span>' : '');
+        const awayScoreHtml = showScore
+            ? `<span class="game-team-score">${match.score_away}</span>`
+            : (hasScore ? '<span class="game-team-score is-hidden" aria-hidden="true">—</span>' : '');
+
+        matchupEl.innerHTML = `
+            <div class="game-team-col">
+                ${homeLogo}
+                <span class="team-side-label game-side-label">Home</span>
+                <div class="team-name-score-row game-team-name-score-row">
+                    <span class="game-team-name">${this.esc(match.home_team)}</span>
+                    ${homeScoreHtml}
+                </div>
+            </div>
+            <div class="game-vs-col">VS</div>
+            <div class="game-team-col">
+                ${awayLogo}
+                <span class="team-side-label game-side-label">Away</span>
+                <div class="team-name-score-row game-team-name-score-row">
+                    <span class="game-team-name">${this.esc(match.away_team)}</span>
+                    ${awayScoreHtml}
+                </div>
+            </div>
+        `;
+
+        if (revealEl) {
+            if (hasScore && !revealed) {
+                revealEl.innerHTML = `
+                    <button type="button" class="score-reveal-chip score-reveal-chip-large" onclick="app.revealMatchScore('${match.id}', event)" aria-label="Reveal final score for this match">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <span>Reveal final score</span>
+                    </button>
+                `;
+            } else {
+                revealEl.innerHTML = '';
+            }
+        }
+    },
+
+    toggleSeasonRecord() {
+        this.recordVisible = !this.recordVisible;
+        this.renderSeasonView();
+    },
+
+    countAvailableReplays(matches) {
+        return matches.filter((match) => {
+            if (match.format === 'two_halves') {
+                return this.slotStatus(match, 'first_half') === 'ready'
+                    || this.slotStatus(match, 'second_half') === 'ready';
+            }
+            return this.slotStatus(match, 'full') === 'ready';
+        }).length;
+    },
+
     // ===== GAME VIEW =====
     openMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true, initialSlot = null } = {}) {
         const match = this.matches.find(m => m.id === matchId);
@@ -1281,34 +1383,7 @@ export const viewsMixin = {
         document.getElementById('active-game-loc').textContent = match.location || '-';
         this.renderGameStatus(match);
 
-        const matchupEl = document.getElementById('game-matchup');
-        const homeLogo = match.home_logo
-            ? `<img src="/api/matches/${match.id}/logo/home" class="game-logo-large">`
-            : `<div class="game-logo-initial-large">${this.esc((match.home_team || '?')[0])}</div>`;
-        const awayLogo = match.away_logo
-            ? `<img src="/api/matches/${match.id}/logo/away" class="game-logo-large">`
-            : `<div class="game-logo-initial-large">${this.esc((match.away_team || '?')[0])}</div>`;
-        const homeScore = match.score_home != null ? match.score_home : '';
-        const awayScore = match.score_away != null ? match.score_away : '';
-        matchupEl.innerHTML = `
-            <div class="game-team-col">
-                ${homeLogo}
-                <span class="team-side-label game-side-label">Home</span>
-                <div class="team-name-score-row game-team-name-score-row">
-                    <span class="game-team-name">${this.esc(match.home_team)}</span>
-                    ${homeScore !== '' ? `<span class="game-team-score">${homeScore}</span>` : '<span class="game-team-score empty">-</span>'}
-                </div>
-            </div>
-            <div class="game-vs-col">VS</div>
-            <div class="game-team-col">
-                ${awayLogo}
-                <span class="team-side-label game-side-label">Away</span>
-                <div class="team-name-score-row game-team-name-score-row">
-                    <span class="game-team-name">${this.esc(match.away_team)}</span>
-                    ${awayScore !== '' ? `<span class="game-team-score">${awayScore}</span>` : '<span class="game-team-score empty">-</span>'}
-                </div>
-            </div>
-        `;
+        this.renderGameMatchup(match);
 
         this.activateView('game-view');
         if (pushHistory) {
@@ -1483,41 +1558,73 @@ export const viewsMixin = {
         const goalDiff = goalsFor - goalsAgainst;
         const pointsPerGame = gamesPlayed ? (points / gamesPlayed).toFixed(2) : '0.00';
         const avgGoals = gamesPlayed ? (goalsFor / gamesPlayed).toFixed(1) : '0.0';
+        const replayCount = this.countAvailableReplays(teamMatches);
 
-        const cards = [
+        // Effort-first KPIs — what was played and produced, not won.
+        const effortCards = [
             {
-                accent: 'record',
-                label: 'Record',
-                value: `${wins}-${draws}-${losses}`,
-                note: `${gamesPlayed} scored matches`,
+                label: 'Matches Played',
+                value: String(gamesPlayed),
+                note: gamesPlayed === 1 ? 'with a final score recorded' : 'with final scores recorded',
             },
             {
-                accent: 'points',
-                label: 'Points',
-                value: String(points),
-                note: `${pointsPerGame} per game`,
+                label: 'Goals Scored',
+                value: String(goalsFor),
+                note: `${avgGoals} per match on average`,
             },
             {
-                accent: 'goals',
-                label: 'Goals',
-                value: `${goalsFor}-${goalsAgainst}`,
-                note: `${avgGoals} scored per game`,
+                label: 'Clean Sheets',
+                value: String(cleanSheets),
+                note: cleanSheets === 0 ? 'No shutouts yet — there\'s next week.' : `Out of ${gamesPlayed} scored matches`,
             },
             {
-                accent: 'difference',
-                label: 'Goal Diff',
-                value: goalDiff > 0 ? `+${goalDiff}` : String(goalDiff),
-                note: `${cleanSheets} clean sheet${cleanSheets === 1 ? '' : 's'}`,
+                label: 'Replays Available',
+                value: String(replayCount),
+                note: replayCount === teamMatches.length
+                    ? 'Every match has a replay ready to watch.'
+                    : `${teamMatches.length - replayCount} still uploading or processing.`,
             },
         ];
+
         empty.style.display = 'none';
-        grid.innerHTML = cards.map((card) => `
-            <article class="team-stat-card ${card.accent}">
-                <span class="team-stat-label">${this.esc(card.label)}</span>
-                <strong class="team-stat-value">${this.esc(card.value)}</strong>
-                <span class="team-stat-note">${this.esc(card.note)}</span>
-            </article>
-        `).join('');
+        const recordOpen = !!this.recordVisible;
+        grid.innerHTML = `
+            <div class="team-stat-grid-tiles">
+                ${effortCards.map((card) => `
+                    <article class="team-stat-card neutral">
+                        <span class="team-stat-label">${this.esc(card.label)}</span>
+                        <strong class="team-stat-value">${this.esc(card.value)}</strong>
+                        <span class="team-stat-note">${this.esc(card.note)}</span>
+                    </article>
+                `).join('')}
+            </div>
+            <button type="button"
+                    class="team-record-toggle ${recordOpen ? 'is-open' : ''}"
+                    aria-expanded="${recordOpen ? 'true' : 'false'}"
+                    onclick="app.toggleSeasonRecord()">
+                <span class="team-record-toggle-label">${recordOpen ? 'Hide record' : 'Show record'}</span>
+                <span class="team-record-toggle-caret" aria-hidden="true">▾</span>
+            </button>
+            ${recordOpen ? `
+                <div class="team-record-strip" role="group" aria-label="Win-loss record">
+                    <div class="team-record-cell record">
+                        <span class="team-record-label">Record</span>
+                        <strong class="team-record-value">${wins}-${draws}-${losses}</strong>
+                        <span class="team-record-note">W-D-L</span>
+                    </div>
+                    <div class="team-record-cell points">
+                        <span class="team-record-label">Points</span>
+                        <strong class="team-record-value">${points}</strong>
+                        <span class="team-record-note">${pointsPerGame} per game</span>
+                    </div>
+                    <div class="team-record-cell difference">
+                        <span class="team-record-label">Goal Diff</span>
+                        <strong class="team-record-value">${goalDiff > 0 ? '+' : ''}${goalDiff}</strong>
+                        <span class="team-record-note">${goalsFor} for · ${goalsAgainst} against</span>
+                    </div>
+                </div>
+            ` : ''}
+        `;
     },
 
     // ===== GAME STATUS =====
