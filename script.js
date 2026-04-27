@@ -8,6 +8,7 @@ import { uploadsMixin } from './js/uploads.js';
 import { viewsMixin } from './js/views.js';
 import { uiMixin } from './js/ui.js';
 import { liveMixin } from './js/live.js';
+import { adminMixin } from './js/admin.js';
 
 const app = {
     // ===== STATE & CONFIG =====
@@ -73,6 +74,19 @@ const app = {
             }
         }
 
+        const adminRoute = path.match(/^\/admin(?:\/([^/]+))?\/?$/);
+        if (adminRoute) {
+            if (!this.canEdit()) {
+                window.history.replaceState({ view: 'season' }, '', '/');
+                return;
+            }
+            const requested = adminRoute[1] || this.defaultAdminSection();
+            const resolved = this.resolveAdminSection(requested);
+            window.history.replaceState({ view: 'admin', section: resolved }, '', `/admin/${resolved}`);
+            this.showAdminView(resolved, { pushHistory: false, scrollTop: false });
+            return;
+        }
+
         if (path === '/live') {
             window.history.replaceState({ view: 'live' }, '', '/live');
             this.showLiveView({ pushHistory: false, scrollTop: false });
@@ -107,8 +121,8 @@ const app = {
             return;
         }
 
-        if (state.view === 'add-match') {
-            if (!this.authToken) {
+        if (state.view === 'admin') {
+            if (!this.canEdit()) {
                 this.showSeasonView({ pushHistory: false, scrollTop });
                 return;
             }
@@ -116,17 +130,31 @@ const app = {
                 this.editMatch(state.matchId, { pushHistory: false, scrollTop });
                 return;
             }
-            this.cancelEdit();
-            this.openAddMatchView({ pushHistory: false, scrollTop });
+            this.showAdminView(state.section || this.defaultAdminSection(),
+                { pushHistory: false, scrollTop });
+            return;
+        }
+
+        // Legacy state shapes from older sessions; route them into the new dashboard.
+        if (state.view === 'add-match') {
+            if (!this.canEdit()) {
+                this.showSeasonView({ pushHistory: false, scrollTop });
+                return;
+            }
+            if (state.mode === 'edit' && state.matchId) {
+                this.editMatch(state.matchId, { pushHistory: false, scrollTop });
+                return;
+            }
+            this.showAdminView('matches', { pushHistory: false, scrollTop });
             return;
         }
 
         if (state.view === 'settings') {
-            if (!this.authToken) {
+            if (!this.isAdmin()) {
                 this.showSeasonView({ pushHistory: false, scrollTop });
                 return;
             }
-            this.showSettingsView({ pushHistory: false, scrollTop });
+            this.showAdminView('settings', { pushHistory: false, scrollTop });
             return;
         }
 
@@ -198,32 +226,13 @@ const app = {
         }
     },
 
-    openAddMatchView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
-        this.teardownGameView();
-        this.teardownLiveView();
-        this.stopSeasonLiveCtaPolling?.();
-        this.activateView('add-match-view', 'add-match');
-        if (pushHistory) {
-            this.pushHistoryState({ view: 'add-match', mode: 'create' }, { replace: replaceHistory });
-        }
-        if (scrollTop) {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+    // Backwards-compatible shims — delegate into the unified dashboard.
+    openAddMatchView(opts = {}) {
+        this.showAdminView('matches', opts);
     },
 
-    showSettingsView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
-        this.teardownGameView();
-        this.teardownLiveView();
-        this.stopSeasonLiveCtaPolling?.();
-        this.activateView('settings-view', 'settings');
-        this.renderSettingsForm();
-        if (this.authToken) this.refreshAdminDiagnostics();
-        if (pushHistory) {
-            this.pushHistoryState({ view: 'settings' }, { replace: replaceHistory });
-        }
-        if (scrollTop) {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+    showSettingsView(opts = {}) {
+        this.showAdminView('settings', opts);
     },
 
     goHome() {
@@ -245,16 +254,13 @@ const app = {
         document.querySelectorAll('.nav-links a').forEach(link => {
             link.addEventListener('click', (e) => {
                 e.preventDefault();
-                const view = e.target.dataset.view;
+                const view = e.currentTarget.dataset.view;
                 if (view === 'season') {
                     this.cancelEdit();
                     this.showSeasonView();
-                } else if (view === 'add-match') {
+                } else if (view === 'admin') {
                     this.cancelEdit();
-                    this.openAddMatchView();
-                } else if (view === 'settings') {
-                    this.cancelEdit();
-                    this.showSettingsView();
+                    this.showAdminView(this.defaultAdminSection());
                 } else if (view === 'live') {
                     this.cancelEdit();
                     this.showLiveView();
@@ -277,15 +283,8 @@ const app = {
             this.renderSeasonView();
         });
 
-        document.getElementById('add-match-form')?.addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.handleFormSubmit();
-        });
-
-        document.getElementById('settings-form')?.addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.handleSettingsSubmit();
-        });
+        // Form submits are bound via inline `onsubmit` in index.html so they survive
+        // moves between admin sub-pages without re-wiring.
 
         document.getElementById('refresh-diagnostics-btn')?.addEventListener('click', () => {
             this.refreshAdminDiagnostics();
@@ -330,6 +329,7 @@ const app = {
     ...viewsMixin,
     ...uiMixin,
     ...liveMixin,
+    ...adminMixin,
 };
 
 // Expose globally for inline onclick handlers

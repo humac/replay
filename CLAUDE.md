@@ -6,7 +6,8 @@ Additional guidance for Claude in this repo:
 
 - Favor direct, minimal edits over speculative rewrites.
 - Check the current file contents before editing because this repo is often changed iteratively.
-- When fixing UI behavior, inspect `index.html` and the relevant JS module in `js/` (views, player, uploads, api, utils, live). `script.js` is the entry point that assembles all mixins into `window.app`.
+- When fixing UI behavior, inspect `index.html` and the relevant JS module in `js/` (views, player, uploads, api, utils, live, admin). `script.js` is the entry point that assembles all mixins into `window.app`.
+- The admin/uploader surface lives in a single `#admin-view` shell with sub-routes: `/admin/overview`, `/admin/matches`, `/admin/live`, `/admin/streams`, `/admin/users`, `/admin/settings`, `/admin/system`. Routing, sidebar render, status-strip polling, and role gating are in `js/admin.js`. Existing renderers (`renderSettingsForm`, `renderLiveSettingsCard`, `refreshActiveStreams`, `renderUsersList`, `refreshAdminDiagnostics`) are reused unchanged — only the DOM containers moved.
 - When fixing public-domain behavior, consider cache and proxy behavior before assuming application logic is broken.
 - When adding or modifying API endpoints, update Pydantic models in `models.py` and add tests in `tests/`.
 - Match URLs use slug-based deep links (`/match/{slug}`, `/match/{slug}/first-half`). The Watch Live page deep-links to `/live`.

@@ -43,8 +43,8 @@ export const apiMixin = {
     },
 
     setLoggedIn() {
-        document.getElementById('nav-add-match').style.display = this.canEdit() ? '' : 'none';
-        document.getElementById('nav-settings').style.display = this.isAdmin() ? '' : 'none';
+        const navAdmin = document.getElementById('nav-admin');
+        if (navAdmin) navAdmin.style.display = this.canEdit() ? '' : 'none';
         document.getElementById('nav-login-btn').style.display = 'none';
         document.getElementById('nav-logout-btn').style.display = '';
         const gameEditBtn = document.getElementById('game-edit-btn');
@@ -59,8 +59,8 @@ export const apiMixin = {
         this.authToken = null;
         this.userRole = null;
         this.userName = null;
-        document.getElementById('nav-add-match').style.display = 'none';
-        document.getElementById('nav-settings').style.display = 'none';
+        const navAdmin = document.getElementById('nav-admin');
+        if (navAdmin) navAdmin.style.display = 'none';
         document.getElementById('nav-login-btn').style.display = '';
         document.getElementById('nav-logout-btn').style.display = 'none';
         const gameEditBtn = document.getElementById('game-edit-btn');
@@ -68,7 +68,8 @@ export const apiMixin = {
         const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
         if (regenThumbBtn) regenThumbBtn.style.display = 'none';
         this.setAdminPanelVisibility(false);
-        if (document.getElementById('add-match-view')?.classList.contains('active') || document.getElementById('settings-view')?.classList.contains('active')) {
+        this.stopAdminStatusPolling?.();
+        if (document.getElementById('admin-view')?.classList.contains('active')) {
             this.cancelEdit();
             this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
         }
@@ -143,8 +144,7 @@ export const apiMixin = {
         return {
             app_name: 'Replay',
             nav_matches_label: 'Matches',
-            nav_add_match_label: 'Add Match',
-            nav_settings_label: 'Settings',
+            nav_admin_label: 'Admin',
             season_title: 'U12 GIRLS STEEL',
             season_intro: 'Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)',
             main_team_name: 'OSU Steel',

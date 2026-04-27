@@ -14,8 +14,7 @@ import db as _db
 DEFAULT_APP_SETTINGS = {
     "app_name": "Replay",
     "nav_matches_label": "Matches",
-    "nav_add_match_label": "Add Match",
-    "nav_settings_label": "Settings",
+    "nav_admin_label": "Admin",
     "season_title": "U12 GIRLS STEEL",
     "season_intro": "Missed a game? You can find all our match replays right here! (Subject to my attendance and the battery life of my camera.)",
     "main_team_name": "OSU Steel",

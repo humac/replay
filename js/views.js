@@ -13,8 +13,7 @@ export const viewsMixin = {
         const mappings = [
             ['nav-app-name', settings.app_name],
             ['nav-season-link', settings.nav_matches_label],
-            ['nav-add-match', settings.nav_add_match_label],
-            ['nav-settings', settings.nav_settings_label],
+            ['nav-admin', settings.nav_admin_label],
             ['season-title', settings.season_title],
             ['season-intro', settings.season_intro],
             ['filter-all-btn', settings.filter_all_label],
@@ -89,8 +88,7 @@ export const viewsMixin = {
             'settings-season-title': settings.season_title,
             'settings-season-intro': settings.season_intro,
             'settings-nav-matches-label': settings.nav_matches_label,
-            'settings-nav-add-match-label': settings.nav_add_match_label,
-            'settings-nav-settings-label': settings.nav_settings_label,
+            'settings-nav-admin-label': settings.nav_admin_label,
             'settings-filter-all-label': settings.filter_all_label,
             'settings-filter-home-label': settings.filter_home_label,
             'settings-filter-away-label': settings.filter_away_label,
@@ -272,9 +270,8 @@ export const viewsMixin = {
             main_team_name: document.getElementById('settings-main-team-name').value.trim(),
             season_title: document.getElementById('settings-season-title').value.trim(),
             season_intro: document.getElementById('settings-season-intro').value.trim(),
-            nav_matches_label: document.getElementById('settings-nav-matches-label').value.trim(),
-            nav_add_match_label: document.getElementById('settings-nav-add-match-label').value.trim(),
-            nav_settings_label: document.getElementById('settings-nav-settings-label').value.trim(),
+            nav_matches_label: document.getElementById('settings-nav-matches-label')?.value.trim() ?? '',
+            nav_admin_label: document.getElementById('settings-nav-admin-label')?.value.trim() ?? '',
             filter_all_label: document.getElementById('settings-filter-all-label').value.trim(),
             filter_home_label: document.getElementById('settings-filter-home-label').value.trim(),
             filter_away_label: document.getElementById('settings-filter-away-label').value.trim(),
@@ -348,6 +345,7 @@ export const viewsMixin = {
             if (!resp.ok) throw new Error('Failed to load diagnostics');
             this.diagnostics = await resp.json();
             this.renderAdminDiagnostics();
+            this.renderTranscodingQueuePanel?.();
         } catch (error) {
             if (diagnosticsGrid) diagnosticsGrid.innerHTML = `<div class="session-empty">${this.esc(error.message)}</div>`;
             if (serverList) serverList.innerHTML = '<div class="session-empty">Diagnostics unavailable.</div>';
@@ -355,6 +353,46 @@ export const viewsMixin = {
         }
 
         await this.refreshActiveStreams();
+        this.refreshOverviewKpis?.(this.diagnostics, { active: this.activeStreams, blocks: this.streamBlocks });
+    },
+
+    renderTranscodingQueuePanel() {
+        const list = document.getElementById('matches-queue-list');
+        if (!list) return;
+        const active = this.diagnostics?.active_jobs || [];
+        const failed = this.diagnostics?.failed_slots || [];
+        if (!active.length && !failed.length) {
+            list.innerHTML = '<div class="session-empty">No active or failed encodes. New uploads will appear here while they process.</div>';
+            return;
+        }
+        const activeRows = active.map((j) => `
+            <div class="session-item">
+                <div class="session-main">
+                    <div class="session-title-row">
+                        <strong>${this.esc(j.home_team)} vs ${this.esc(j.away_team)}</strong>
+                        <span class="status-pill transcoding">${this.esc(j.stage || 'transcoding')}</span>
+                    </div>
+                    <div class="session-meta">${this.slotLabel(j.slot)}${j.pct != null ? ' • ' + j.pct + '%' : ''}${j.elapsed_s != null ? ' • ' + this.formatAge(j.elapsed_s) : ''}</div>
+                    ${j.pct != null ? `<div class="progress-bar-container"><div class="progress-bar" style="width:${j.pct}%"></div></div>` : ''}
+                </div>
+            </div>
+        `).join('');
+        const failedRows = failed.map((f) => `
+            <div class="session-item">
+                <div class="session-main">
+                    <div class="session-title-row">
+                        <strong>${this.esc(f.home_team)} vs ${this.esc(f.away_team)}</strong>
+                        <span class="status-pill error">Stuck</span>
+                    </div>
+                    <div class="session-meta">${this.slotLabel(f.slot)}</div>
+                </div>
+                <div class="session-actions">
+                    <button type="button" class="mini-action-btn" onclick="app.retryTranscode('${this.esc(f.match_id)}', '${this.esc(f.slot)}')">Retry</button>
+                    <button type="button" class="mini-action-btn" onclick="app.verifyAssets('${this.esc(f.match_id)}')">Verify</button>
+                </div>
+            </div>
+        `).join('');
+        list.innerHTML = activeRows + failedRows;
     },
 
     async refreshActiveStreams() {
@@ -1004,7 +1042,7 @@ export const viewsMixin = {
         const match = this.matches.find(m => m.id === matchId);
         if (!match) return;
 
-        this.activateView('add-match-view', 'add-match');
+        this.showAdminView('matches', { pushHistory: false, scrollTop: false });
         if (this.authToken) this.refreshAdminDiagnostics();
 
         document.getElementById('edit-match-id').value = match.id;
@@ -1027,7 +1065,10 @@ export const viewsMixin = {
         document.getElementById('cancel-edit-btn').style.display = 'inline-block';
 
         if (pushHistory) {
-            this.pushHistoryState({ view: 'add-match', mode: 'edit', matchId }, { replace: replaceHistory });
+            this.pushHistoryState(
+                { view: 'admin', section: 'matches', mode: 'edit', matchId },
+                { replace: replaceHistory, url: '/admin/matches' },
+            );
         }
         if (scrollTop) {
             window.scrollTo({ top: 0, behavior: 'smooth' });

@@ -298,3 +298,18 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Kill switch** — `POST /api/admin/streams/{id}/kill` cancels the in-flight iterator and adds a 5-minute blocklist entry keyed by `(ip, kind, match_id, slot)`. The next HLS segment poll or MP4 range request from that viewer for that resource returns 403. `DELETE /api/admin/streams/blocks` clears a block early.
 - **Admin endpoints** — `GET /api/admin/streams` returns `{active, blocks}`. Wired into the existing admin diagnostics card in `index.html` + `js/views.js` with a kill button per row.
 - **Background sweeper** — runs every 5s in the FastAPI `lifespan` task, dropping idle HLS sessions and expired blocks.
+
+---
+
+## Milestone 8 — Unified Admin Dashboard ✅ COMPLETE
+
+**Goal:** consolidate the legacy "Add Match" and "Settings" pages into a single `/admin/*` dashboard with sub-routes, role-filtered sidebar navigation, a persistent control-room status strip, and a clearer information hierarchy for operators.
+
+- **Single `#admin-view` shell** (`index.html`) replaces the separate `#add-match-view` and `#settings-view` sections. Layout is a CSS grid: sticky left sidebar + content area. On mobile the sidebar collapses into a horizontal scrollable tab strip.
+- **Slug deep links** — `/admin`, `/admin/overview`, `/admin/matches`, `/admin/live`, `/admin/streams`, `/admin/users`, `/admin/settings`, `/admin/system`. `script.js` history routing recognizes both new (`view: 'admin'`) and legacy (`view: 'add-match'` / `'settings'`) state shapes for back/forward continuity.
+- **Sub-pages**: Overview (KPI grid + quick actions), Matches (Add/Edit form + transcoding queue, uploader+ accessible), Live (RTMP ingest config + stream-key reveal/copy/rotate + MediaMTX diagnose), Streams (active sessions + blocks with kill switch), Users (role management), Settings (branding + nav/replay labels + downloads toggle), System (diagnostics grid + ops buttons).
+- **Status strip** — `js/admin.js:refreshAdminStatusStrip()` polls `/api/admin/diagnostics` + `/api/admin/streams` every 10s while the dashboard is active, surfacing disk, live state, viewer count, encoding count, failed-slot count, and active blocks. Tabular numerals + colored state dots. Tears down on view exit.
+- **Role gating (defense in depth)** — sidebar items are filtered client-side; `resolveAdminSection()` redirects non-admins to `matches`; server still enforces `_auth.require_role(request, "admin")` on all `/api/admin/*` endpoints.
+- **Settings consolidation** — dropped `nav_add_match_label` and `nav_settings_label` (keys removed from `settings.py` defaults and `js/api.js`). Replaced with a single `nav_admin_label` (default "Admin"). Top nav now exposes one role-aware "Admin" link.
+- **New module: `js/admin.js`** — admin shell mixin (sidebar render, section show/hide, status-strip polling, overview KPI tiles, role filter). Existing renderers in `views.js` and `live.js` are reused unchanged; only DOM container layout moved.
+- **Aesthetic** — extends the existing dark/Oswald/blue-accent system: status strip with monospace tabular numerals + glowing state dots, sidebar with accent radial-glow halo on the active item, control-room kicker labels (`◉`, `⚡`, `⚙`) in Overview quick-action tiles. No new font imports; all new styles consume existing CSS variables.

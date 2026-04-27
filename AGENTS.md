@@ -30,8 +30,9 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `js/api.js`: auth, data loading, settings, transcode polling
 - `js/player.js`: AirPlay, Chromecast, HLS playback, position/speed memory, keyboard shortcuts, match navigation
 - `js/uploads.js`: chunked upload sessions, resume logic
-- `js/views.js`: season view, game view, match form, settings form, admin panel
+- `js/views.js`: season view, game view, match form, settings form, admin diagnostics renderers (consumed by `js/admin.js`)
 - `js/live.js`: Watch Live view (HLS.js player + status polling), AirPlay/Chromecast hand-off for the live feed, and admin live config card
+- `js/admin.js`: unified `/admin/*` dashboard mixin — sub-routing, sidebar, status strip polling, role gating, overview KPI tiles
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling
@@ -105,7 +106,7 @@ After frontend changes, sanity-check:
 - Keep API shapes stable unless the task requires a breaking change.
 - Reuse existing helper functions instead of duplicating upload, playback, or view-toggle logic.
 - Frontend JS is split into ES modules under `js/` using a mixin pattern. Each module exports a plain object; `script.js` merges them into `window.app`. Add new methods to the appropriate mixin, not to `script.js` directly.
-- For SPA navigation, prefer the shared history helpers in `script.js`. Match URLs use slug-based paths (`/match/{slug}`).
+- For SPA navigation, prefer the shared history helpers in `script.js`. Match URLs use slug-based paths (`/match/{slug}`). The unified admin dashboard uses `/admin/{section}` deep links (`overview`, `matches`, `live`, `streams`, `users`, `settings`, `system`); routing + role gating live in `js/admin.js`. Legacy `view: 'add-match'` and `view: 'settings'` history states are still recognized in `restoreHistoryState()` and forwarded into the dashboard so back/forward keeps working across deploys.
 - For caching behavior, be careful with `index.html`, `/static/*`, and Cloudflare-facing asset URLs.
 - When adding or modifying API endpoints, add or update Pydantic models in `models.py` and add corresponding tests in `tests/`.
 - Login is rate-limited (5 attempts/60s per IP). Token cleanup sweeps run automatically.

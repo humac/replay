@@ -157,3 +157,20 @@ async def test_viewer_cannot_access_admin(client, auth_headers):
 
     resp = await client.post("/api/admin/export-database", headers=viewer_headers)
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_dashboard_data_endpoints_reachable(client, auth_headers):
+    """Both endpoints the unified Admin Dashboard polls (diagnostics + streams)
+    are reachable for an admin and shaped how the front-end expects."""
+    diag = await client.get("/api/admin/diagnostics", headers=auth_headers)
+    assert diag.status_code == 200
+    diag_data = diag.json()
+    assert "counts" in diag_data
+    assert "disk" in diag_data
+
+    streams = await client.get("/api/admin/streams", headers=auth_headers)
+    assert streams.status_code == 200
+    streams_data = streams.json()
+    assert isinstance(streams_data.get("active"), list)
+    assert isinstance(streams_data.get("blocks"), list)
