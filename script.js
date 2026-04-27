@@ -306,11 +306,22 @@ const app = {
             const label = document.getElementById(id + '-label');
             if (input && label) {
                 input.addEventListener('change', () => {
-                    label.textContent = input.files[0] ? input.files[0].name : 'No file chosen';
-                    if (id.startsWith('settings-')) {
-                        this.updateSettingsPendingState(id, input.files[0] || null);
+                    const file = input.files[0];
+                    // Inline label uses a middle-ellipsis truncation so long
+                    // filenames don't crowd the row. Full filename is shown
+                    // unmodified in the "Selected for upload" status below.
+                    if (file) {
+                        const n = file.name;
+                        label.textContent = n.length > 24
+                            ? n.slice(0, 14) + '…' + n.slice(-8)
+                            : n;
                     } else {
-                        this.updatePendingUploadState(id, input.files[0] || null);
+                        label.textContent = 'No file chosen';
+                    }
+                    if (id.startsWith('settings-')) {
+                        this.updateSettingsPendingState(id, file || null);
+                    } else {
+                        this.updatePendingUploadState(id, file || null);
                     }
                 });
             }
