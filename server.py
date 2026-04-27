@@ -284,7 +284,10 @@ def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
             mp4_path = VIDEOS_DIR / match["id"] / f"{slot}.mp4"
             if not mp4_path.is_file():
                 continue
-            if _slot_hls_master_path(match["id"], slot).is_file():
+            # Use verify_slot_assets so a partially-written master.m3u8 (from
+            # a prior interrupted HLS build) is treated as missing, not complete.
+            report = _media.verify_slot_assets(VIDEOS_DIR, match["id"], slot)
+            if report["hls_complete"]:
                 continue
             missing.append((match["id"], slot))
     return missing
@@ -928,13 +931,18 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
-    match = _db.get_match_by_id(match_id)
-    if not match:
-        raise HTTPException(404, "Match not found")
-
-    status = _get_video_status(match, slot)
-    if status != "error":
-        raise HTTPException(409, f"Slot status is '{status}', must be 'error' to retry")
+    # CAS: status 'error' → 'transcoding' inside the lock so concurrent retries
+    # are rejected before either reaches the filesystem.
+    async with MATCHES_LOCK:
+        matches = _db.load_matches_unlocked()
+        match = _db.find_match(matches, match_id)
+        if not match:
+            raise HTTPException(404, "Match not found")
+        current_status = _get_video_status(match, slot)
+        if current_status != "error":
+            raise HTTPException(409, f"Slot status is '{current_status}', must be 'error' to retry")
+        match.setdefault("video_status", {})[slot] = "transcoding"
+        _db.save_matches_unlocked(matches)
 
     vid_dir = VIDEOS_DIR / match_id
     final_path = vid_dir / f"{slot}.mp4"
@@ -956,12 +964,17 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
         src = raw_promoted
 
     if src is None:
+        # Source file missing — revert status back to error so admin can see it
+        await _set_video_status(match_id, slot, "error", None, error_info={
+            "error_code": "retry_source_missing",
+            "reason": "No source file found for retry",
+            "details": "Neither raw upload nor MP4 exists on disk",
+        })
         raise HTTPException(
             404,
             "No source file found — neither raw upload nor MP4 exists on disk",
         )
 
-    await _set_video_status(match_id, slot, "transcoding", None)
     asyncio.create_task(_transcode_video(match_id, slot, src, final_path))
     return {"ok": True, "status": "transcoding", "source": src.name}
 
@@ -1148,15 +1161,14 @@ async def delete_match(match_id: str, request: Request):
         match = _db.find_match(matches, match_id)
         if not match:
             raise HTTPException(404, "Match not found")
+        # Remove from DB first while holding the lock; no concurrent request can
+        # find this match_id after this point, making the subsequent rmtree safe.
+        matches = [m for m in matches if m["id"] != match_id]
+        _db.save_matches_unlocked(matches)
 
     vid_dir = VIDEOS_DIR / match_id
     if vid_dir.exists():
         shutil.rmtree(str(vid_dir))
-
-    async with MATCHES_LOCK:
-        matches = _db.load_matches_unlocked()
-        matches = [m for m in matches if m["id"] != match_id]
-        _db.save_matches_unlocked(matches)
     return {"ok": True}
 
 
@@ -1361,14 +1373,19 @@ async def complete_upload_session(session_id: str, request: Request):
     slot = row["slot"]
     final_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
 
-    await _set_video_status(match_id, slot, "transcoding", None)
-
+    # CAS: only the first concurrent /complete call wins; the conditional UPDATE
+    # ensures exactly one caller transitions 'active' → 'completed' and spawns
+    # the transcode task.
     with _db.connect() as conn:
-        conn.execute(
-            "UPDATE upload_sessions SET status = 'completed', updated_at = ? WHERE id = ?",
+        cursor = conn.execute(
+            "UPDATE upload_sessions SET status = 'completed', updated_at = ? WHERE id = ? AND status = 'active'",
             (time.time(), session_id),
         )
         conn.commit()
+    if cursor.rowcount != 1:
+        raise HTTPException(409, "Upload session is not active")
+
+    await _set_video_status(match_id, slot, "transcoding", None)
 
     logger.info(
         "Chunked upload complete: %s match=%s slot=%s size=%d",

@@ -417,7 +417,7 @@ export const viewsMixin = {
             if (blocksSection && blocksList) {
                 if (this.streamBlocks.length) {
                     blocksSection.style.display = '';
-                    blocksList.innerHTML = this.streamBlocks.map((b) => `
+                    blocksList.innerHTML = this.streamBlocks.map((b, idx) => `
                         <div class="session-item">
                             <div class="session-main">
                                 <div class="session-title-row">
@@ -430,10 +430,14 @@ export const viewsMixin = {
                                 </div>
                             </div>
                             <div class="session-actions">
-                                <button type="button" class="mini-action-btn" onclick='app.unblockStream(${JSON.stringify(b)})'>Unblock</button>
+                                <button type="button" class="mini-action-btn stream-unblock-btn" data-idx="${idx}">Unblock</button>
                             </div>
                         </div>
                     `).join('');
+                    blocksList.querySelectorAll('.stream-unblock-btn').forEach(btn => {
+                        const idx = parseInt(btn.dataset.idx, 10);
+                        btn.addEventListener('click', () => this.unblockStream(this.streamBlocks[idx]));
+                    });
                 } else {
                     blocksSection.style.display = 'none';
                 }

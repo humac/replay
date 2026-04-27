@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import os
+
+# Provide a test-only default so auth.py doesn't raise on import when ADMIN_PASS
+# is absent from the environment. Production deployments must set it explicitly.
+os.environ.setdefault("ADMIN_PASS", "admin")
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient

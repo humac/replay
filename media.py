@@ -371,7 +371,10 @@ async def build_hls_assets(
     results = await asyncio.gather(*[_generate_variant(v) for v in variants])
     generated_variants = [v for v in results if v is not None]
 
-    if not generated_variants:
+    # Any variant failure → discard all; an incomplete master.m3u8 would be
+    # silently skipped by the backfill check, permanently losing the missing
+    # quality level with no signal.
+    if len(generated_variants) < len(variants):
         shutil.rmtree(hls_dir, ignore_errors=True)
         return False
 
@@ -382,7 +385,10 @@ async def build_hls_assets(
         )
         master_lines.append(f"{variant['name']}/index.m3u8")
 
-    slot_hls_master_path(videos_dir, match_id, slot).write_text("\n".join(master_lines) + "\n")
+    master_path = slot_hls_master_path(videos_dir, match_id, slot)
+    tmp_path = master_path.with_suffix(".m3u8.tmp")
+    tmp_path.write_text("\n".join(master_lines) + "\n")
+    os.replace(tmp_path, master_path)
     return True
 
 

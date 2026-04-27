@@ -31,7 +31,12 @@ _ALLOWED_ORIGINS: set[str] | None = (
 )
 
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "")
+if not ADMIN_PASS:
+    raise RuntimeError(
+        "ADMIN_PASS environment variable is not set. "
+        "Set a strong password in your environment or .env.local before starting the server."
+    )
 
 
 # ---------------------------------------------------------------------------
