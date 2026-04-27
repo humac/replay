@@ -2484,9 +2484,10 @@ button {
 }
 
 /* Light theme — pure white inputs sit on the off-white panel like
-   paper slips on a desk. Higher specificity beats .form-group input rules. */
+   paper slips on a desk. Higher specificity beats .form-group input rules.
+   Use background-color (not the `background` shorthand) so we don't reset
+   background-image / background-repeat / background-size on <select>. */
 [data-theme="light"] input,
-[data-theme="light"] select,
 [data-theme="light"] textarea,
 [data-theme="light"] .form-group input[type="text"],
 [data-theme="light"] .form-group input[type="date"],
@@ -2495,7 +2496,7 @@ button {
 [data-theme="light"] .form-group input[type="password"],
 [data-theme="light"] .form-group select,
 [data-theme="light"] .form-group textarea {
-    background: #ffffff;
+    background-color: #ffffff;
     border-color: rgba(0, 0, 0, 0.14);
     color: var(--text-main);
 }
@@ -2506,23 +2507,25 @@ button {
 }
 
 [data-theme="light"] input:focus,
-[data-theme="light"] select:focus,
 [data-theme="light"] textarea:focus,
 [data-theme="light"] .form-group input:focus,
 [data-theme="light"] .form-group textarea:focus,
 [data-theme="light"] .form-group select:focus {
-    background: #ffffff;
+    background-color: #ffffff;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.14);
 }
 
-/* File upload row mirrors the input shape exactly in light theme — same
-   white background, same border, same focus halo. The CHOOSE FILE button
-   inside picks up a soft tint so it reads as a button without competing
-   with the input affordance. */
+/* File upload row in light theme reads as ONE input with a button section,
+   not a button-in-a-box. The button drops its background and border and
+   becomes an inline section divided by a hairline; padding matches the
+   regular input so heights and visual weight align exactly. */
 [data-theme="light"] .file-upload-row {
     background: #ffffff;
     border-color: rgba(0, 0, 0, 0.14);
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
 }
 
 [data-theme="light"] .file-upload-row:focus-within {
@@ -2532,15 +2535,23 @@ button {
 }
 
 [data-theme="light"] .file-picker-button {
-    background: rgba(0, 0, 0, 0.045);
-    border-color: rgba(0, 0, 0, 0.10);
+    background: transparent;
+    border: none;
+    border-right: 1px solid rgba(0, 0, 0, 0.10);
+    border-radius: 0;
     color: var(--text-main);
+    padding: 0.95rem 1.25rem;
+    min-width: 0;
 }
 
 [data-theme="light"] .file-picker-button:hover {
-    background: rgba(21, 101, 192, 0.09);
-    border-color: var(--accent);
+    background: rgba(21, 101, 192, 0.06);
+    border-color: rgba(0, 0, 0, 0.10);
     color: var(--accent);
+}
+
+[data-theme="light"] .file-label {
+    padding: 0 1rem;
 }
 
 /* Upload status text — saturated colors for legibility on white. */
