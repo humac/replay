@@ -762,7 +762,7 @@ button {
 .hover-reveal {
     position: absolute;
     bottom: -40px;
-    right: 2rem;
+    left: 2rem;
     font-size: 0.85rem;
     font-weight: 700;
     color: var(--accent);
@@ -771,6 +771,7 @@ button {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    pointer-events: none;
 }
 
 .match-card:hover .hover-reveal {
@@ -3811,15 +3812,18 @@ button {
 }
 
 .score-reveal-chip {
+    position: absolute;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    z-index: 3;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    margin-left: auto;
     padding: 0.3rem 0.7rem;
     min-height: 32px;
     border-radius: 999px;
     border: 1px solid rgba(255,255,255,0.14);
-    background: rgba(0, 0, 0, 0.28);
+    background: rgba(0, 0, 0, 0.55);
     color: var(--text-muted);
     font-family: var(--font-heading);
     font-size: 0.68rem;
@@ -3869,12 +3873,12 @@ button {
     opacity: 0.95;
 }
 
-/* Mobile: chip wraps to its own row inside the detail row */
+/* Mobile: chip stays absolutely-positioned bottom-right; tighten the inset
+   slightly so it doesn't crowd the card edge on narrow viewports. */
 @media (max-width: 520px) {
     .score-reveal-chip {
-        margin-left: 0;
-        flex-basis: 100%;
-        justify-content: center;
+        bottom: 1rem;
+        right: 1rem;
     }
 }
 

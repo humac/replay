@@ -1243,12 +1243,12 @@ export const viewsMixin = {
                 <div class="match-detail-row">
                     <span class="match-detail-pill">${this.esc(dateStr)}${timeStr}</span>
                     ${locationHtml}
-                    ${revealChipHtml}
                 </div>
                 <div class="match-meta">
                     ${isTranscoding ? `<span class="badge processing">${this.matchProgressLabel(m)}</span>` : ''}
                 </div>
                 <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
+                ${revealChipHtml}
                 ${bodyClose}
                 ${this.canEdit() ? `
                 <button class="match-card-edit-btn" onclick="app.triggerEdit(event, '${m.id}')" title="Edit">
