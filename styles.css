@@ -1610,14 +1610,18 @@ button {
 /* Use .file-upload-row .file-picker-button so this rule beats
    .form-group label on specificity — that base rule injects margin-bottom,
    display:block, font-size:0.8rem, and text-transform that otherwise leak
-   through and break layout. */
+   through and break layout.
+   align-self:stretch makes the button fill row height so the hairline
+   divider runs edge-to-edge; padding shrinks because the row's min-height
+   already enforces the input-matching height. */
 .file-upload-row .file-picker-button,
 .file-picker-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    align-self: stretch;
     margin: 0;
-    padding: 0.95rem 1.25rem;
+    padding: 0 1.25rem;
     background: transparent;
     border: none;
     border-right: 1px solid rgba(255, 255, 255, 0.08);
