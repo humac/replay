@@ -394,16 +394,28 @@ _SPA_NO_CACHE = {
 }
 
 
+@app.get("/match")
 @app.get("/match/{slug}")
 @app.get("/match/{slug}/{slot}")
-async def match_deep_link(slug: str, slot: str | None = None):
-    """Serve the SPA shell for direct match links."""
+async def match_deep_link(slug: str | None = None, slot: str | None = None):
+    """Serve the SPA shell for direct match links. The SPA's history routing
+    drops the user on the season view when there's no slug or no matching
+    record — preferable to a hard 404 on a stale share."""
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
 @app.get("/live")
 async def live_deep_link():
     """Serve the SPA shell for the Watch Live deep link."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
+@app.get("/admin")
+@app.get("/admin/{section}")
+async def admin_deep_link(section: str | None = None):
+    """Serve the SPA shell for /admin/* dashboard routes. Auth + role gating
+    are handled client-side once the SPA boots; non-admin users land on the
+    season view automatically."""
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
