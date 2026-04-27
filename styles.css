@@ -708,6 +708,7 @@ button {
     font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.06em;
+    transition: opacity 0.3s ease;
 }
 
 .match-detail-pill.location {
@@ -779,7 +780,7 @@ button {
 }
 
 .match-card:hover .match-meta,
-.match-card:hover .match-detail-row {
+.match-card:hover .match-detail-pill {
     opacity: 0;
 }
 
@@ -3812,18 +3813,15 @@ button {
 }
 
 .score-reveal-chip {
-    position: absolute;
-    bottom: 1.25rem;
-    right: 1.25rem;
-    z-index: 3;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
+    margin-left: auto;
     padding: 0.3rem 0.7rem;
     min-height: 32px;
     border-radius: 999px;
     border: 1px solid rgba(255,255,255,0.14);
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.28);
     color: var(--text-muted);
     font-family: var(--font-heading);
     font-size: 0.68rem;
@@ -3831,6 +3829,7 @@ button {
     letter-spacing: 0.14em;
     cursor: pointer;
     transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 3;
 }
 
 .score-reveal-chip:hover {
@@ -3873,12 +3872,12 @@ button {
     opacity: 0.95;
 }
 
-/* Mobile: chip stays absolutely-positioned bottom-right; tighten the inset
-   slightly so it doesn't crowd the card edge on narrow viewports. */
+/* Mobile: chip wraps to its own row inside the detail row */
 @media (max-width: 520px) {
     .score-reveal-chip {
-        bottom: 1rem;
-        right: 1rem;
+        margin-left: 0;
+        flex-basis: 100%;
+        justify-content: center;
     }
 }
 
