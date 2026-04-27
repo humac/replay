@@ -2526,6 +2526,7 @@ button {
     padding: 0;
     gap: 0;
     overflow: hidden;
+    min-height: 3.4rem;
 }
 
 [data-theme="light"] .file-upload-row:focus-within {
