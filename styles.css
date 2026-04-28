@@ -3926,6 +3926,12 @@ button {
     margin-bottom: 1.25rem;
 }
 
+/* The base chip uses margin-left:auto to sit at the right edge of card rows.
+   Override here so the chip stays centered inside the game-page reveal row. */
+.game-score-reveal-row .score-reveal-chip {
+    margin-left: 0;
+}
+
 .score-reveal-chip-large {
     padding: 0.55rem 1.1rem;
     min-height: 40px;
