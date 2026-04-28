@@ -60,16 +60,23 @@ services:
   # Host-published port is 8090 (the same port the replay app used to bind
   # directly) so existing clients, Cloudflare Tunnel rules, and bookmarks
   # keep working unchanged. Caddy listens on :80 inside the container.
+  #
+  # /data is read-only — Caddy's persistence lives outside it (see
+  # XDG_DATA_HOME / XDG_CONFIG_HOME below). Mounting a writable volume
+  # under a read-only mount fails with EROFS during runc start.
   caddy:
     image: caddy:2-alpine
     container_name: replay-caddy
+    environment:
+      XDG_DATA_HOME: /srv/caddy-data
+      XDG_CONFIG_HOME: /srv/caddy-config
     ports:
       - "8090:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - replay_data:/data:ro
-      - replay_caddy_data:/data/caddy
-      - replay_caddy_config:/config
+      - replay_caddy_data:/srv/caddy-data
+      - replay_caddy_config:/srv/caddy-config
     depends_on:
       - replay
     restart: unless-stopped
