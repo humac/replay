@@ -172,3 +172,58 @@ async def test_delete_match(client, auth_headers):
 async def test_delete_match_not_found(client, auth_headers):
     resp = await client.delete("/api/matches/nonexistent", headers=auth_headers)
     assert resp.status_code == 404
+
+
+async def test_update_match_etag_conflict(client, auth_headers):
+    # Create a match and capture its updated_at.
+    resp = await client.post("/api/matches", json=VALID_MATCH, headers=auth_headers)
+    assert resp.status_code == 200
+    match_id = resp.json()["id"]
+
+    # Do a first update (no If-Match) so we know the DB has the latest timestamp.
+    resp = await client.put(
+        f"/api/matches/{match_id}",
+        json={"score_home": 5},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+
+    # Second update: sends a deliberately stale timestamp → must 409.
+    stale_token = "2000-01-01T00:00:00.000Z"
+    resp = await client.put(
+        f"/api/matches/{match_id}",
+        json={"score_away": 2},
+        headers={**auth_headers, "If-Match": f'"{stale_token}"'},
+    )
+    assert resp.status_code == 409
+
+
+async def test_update_match_etag_correct_token_succeeds(client, auth_headers):
+    # PUT with the current updated_at as If-Match must succeed.
+    resp = await client.post("/api/matches", json=VALID_MATCH, headers=auth_headers)
+    assert resp.status_code == 200
+    token = resp.json()["updated_at"]
+    match_id = resp.json()["id"]
+
+    resp = await client.put(
+        f"/api/matches/{match_id}",
+        json={"score_home": 3},
+        headers={**auth_headers, "If-Match": f'"{token}"'},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["score_home"] == 3
+
+
+async def test_update_match_no_ifmatch_succeeds(client, auth_headers):
+    # PUT without an If-Match header must succeed unconditionally.
+    resp = await client.post("/api/matches", json=VALID_MATCH, headers=auth_headers)
+    assert resp.status_code == 200
+    match_id = resp.json()["id"]
+
+    resp = await client.put(
+        f"/api/matches/{match_id}",
+        json={"score_home": 7},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["score_home"] == 7

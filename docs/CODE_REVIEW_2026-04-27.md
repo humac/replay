@@ -98,7 +98,7 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - Only `streams.py` uses `extra={...}`. Everywhere else uses `%s` interpolation, defeating the JSON formatter.
   - Fix: convert high-signal sites (kill, rotate, transcode start/done, upload create/complete, live HLS proxy errors) to `extra=`.
 
-- [ ] **M15. Two admins editing the same match: last-write-wins** — `server.py:1118–1140`
+- [x] **M15. Two admins editing the same match: last-write-wins** — `server.py:1118–1140`
   - `MATCHES_LOCK` only serializes within one process; no version/etag check. With `exclude_unset=True` it's a partial merge — small blast radius, but a deliberate field-clear by admin A can be lost.
   - Fix: `If-Match` ETag with `updated_at`; return 409 on mismatch.
 
@@ -106,7 +106,7 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - 5s poll calls `renderSeasonView` unconditionally. With 100+ cards: 30–80ms DOM thrash every tick; nukes `:hover` state.
   - Fix: stop calling `renderSeasonView` from the poller; update only badge/chip elements for matches whose status changed.
 
-- [ ] **M17. `views.js` is now ~1700 lines and conceptually overloaded** — `js/views.js`
+- [x] **M17. `views.js` is now ~1700 lines and conceptually overloaded** — `js/views.js`
   - Season + game + match form + admin diagnostics renderers + score reveal + team stats. Admin renderers conceptually belong with `js/admin.js`.
   - Fix (low priority): split into `js/views.js` (public viewing) and `js/admin-views.js` (renderers consumed by admin shell). Pure file reorg.
 

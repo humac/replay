@@ -372,6 +372,13 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **m8 — Resilient `loadMatches`** (`js/api.js`): network or non-2xx errors no longer blank `this.matches`. If the list was previously populated, it is preserved and a `showInfo` toast surfaces "Couldn't refresh matches — showing last known data." to the user. On the very first load failure (no prior data) the behaviour is unchanged (empty grid, no toast).
 - **m9 — `editMatch` history fallback** (`js/views.js`): when `editMatch(matchId)` is called for a match that no longer exists in `this.matches` (e.g. back-navigation after a delete), it now calls `showAdminView('matches', { pushHistory })` instead of silently no-opping. The user lands on the matches list rather than a blank form.
 
+## Sprint — Concurrency Safety + File Split ✅ COMPLETE (2026-04-27)
+
+**Goal:** address M15 (optimistic concurrency on match edits) and M17 (split overloaded views.js) from the post-M9 code review.
+
+- **M15 — ETag/If-Match on match edits** (`db.py`, `server.py`, `js/views.js`, `tests/test_matches.py`): added `updated_at` column to the matches table (`_migrate_v5`). `create_match` and `update_match` stamp the field with millisecond-precision UTC via `_now_ms()`. `PUT /api/matches/{id}` now checks an optional `If-Match` request header — if the token doesn't match the stored `updated_at`, it returns 409 "Match was modified by another user. Reload and try again." Omitting the header is still accepted (backward-compatible). The edit form sends `If-Match` and shows a user-friendly conflict toast on 409. Two tests added: conflict scenario returns 409; missing `If-Match` still returns 200.
+- **M17 — Split views.js** (`js/views.js`, `js/admin-views.js`, `script.js`): extracted all admin renderers and action methods (~1040 lines) from `js/views.js` into a new `js/admin-views.js` module exporting `adminViewsMixin`. `js/views.js` is now ~610 lines covering only public-facing views (season, game, score reveal, team stats). `script.js` imports and spreads both mixins. Zero behavior change — all methods remain on `window.app`.
+
 ## Sprint — Ops Quality ✅ COMPLETE (2026-04-27)
 
 **Goal:** address M12, M14, m2, and m6 from the post-M9 code review — GPU health visibility, structured logging, stale upload session cleanup on startup, and path containment.

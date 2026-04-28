@@ -30,7 +30,8 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `js/api.js`: auth, data loading, settings, transcode polling; `authFetch(url, opts)` wraps `fetch` and handles 401 (clears session, shows login modal, throws) — use it for all authenticated requests instead of repeating the 401 boilerplate
 - `js/player.js`: AirPlay, Chromecast, HLS playback, position/speed memory, keyboard shortcuts, match navigation
 - `js/uploads.js`: chunked upload sessions, resume logic
-- `js/views.js`: season view, game view, match form, settings form, admin diagnostics renderers (consumed by `js/admin.js`); `updateTranscodeBadges()` for targeted badge-only updates during transcode polling (avoids full grid re-render)
+- `js/views.js`: public view rendering — season view, game view, score reveal, team stats; `updateTranscodeBadges()` for targeted badge-only updates during transcode polling (avoids full grid re-render)
+- `js/admin-views.js`: admin view renderers and action methods extracted from views.js — settings form, users list, match form (create/edit/delete), admin diagnostics renderers (consumed by `js/admin.js`)
 - `js/live.js`: Watch Live view (HLS.js player + status polling), AirPlay/Chromecast hand-off for the live feed, and admin live config card
 - `js/admin.js`: unified `/admin/*` dashboard mixin — sub-routing, sidebar, status strip polling, role gating, overview KPI tiles
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
