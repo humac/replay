@@ -37,6 +37,11 @@ jobs:
           REPLAY_DATA_DIR: ${{ runner.temp }}/replay_data
           ADMIN_USER: admin
           ADMIN_PASS: admin
+          # GitHub-hosted runners have ~14 GB free; the production default
+          # of 20 GiB is too high and was causing intermittent 507s on the
+          # upload-session tests. The env var seeds the `min_free_disk_bytes`
+          # setting on first boot.
+          MIN_FREE_DISK_BYTES: "1048576"
         run: pytest tests/ -v
 
   build-and-push:
