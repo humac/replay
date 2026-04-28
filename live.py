@@ -175,6 +175,7 @@ async def check_publisher_active(stream_key: str) -> dict:
         logger.info(
             "Live publisher marked stale: last segment %.1fs ago (threshold %.0fs).",
             age, STALE_SEGMENT_AGE_SECONDS,
+            extra={"last_segment_age_s": round(age, 1), "threshold_s": STALE_SEGMENT_AGE_SECONDS},
         )
         result["active"] = False
         result["ready"] = False
@@ -338,7 +339,10 @@ async def proxy_hls(
         resp = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
         await client.aclose()
-        logger.warning("MediaMTX HLS proxy failed for %s: %s", url, exc)
+        logger.warning(
+            "MediaMTX HLS proxy failed for %s: %s", url, exc,
+            extra={"url": url, "error": str(exc)},
+        )
         raise
 
     # Forward only the headers a player cares about — drop hop-by-hop and

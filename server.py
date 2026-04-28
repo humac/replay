@@ -89,6 +89,7 @@ async def lifespan(application: FastAPI):
     _db.backfill_slugs()
     _settings.init(APP_ASSETS_DIR, STATIC_DIR)
     await _sweep_orphaned_transcodes()
+    _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
     _spawn_task(_backfill_hls_for_existing_videos())
     _spawn_task(_media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches))
     sweeper = asyncio.create_task(_streams.sweeper_task())
@@ -713,9 +714,14 @@ async def live_auth_webhook(body: LiveAuthRequest, request: Request):
         logger.info(
             "Live auth rejected (%s): action=%s path=%s protocol=%s ip=%s",
             reason, body.action, body.path, body.protocol, body.ip,
+            extra={"reason": reason, "action": body.action, "path": body.path,
+                   "protocol": body.protocol, "ip": body.ip},
         )
         raise HTTPException(401, "Invalid stream key")
-    logger.info("Live auth accepted: ip=%s protocol=%s", body.ip, body.protocol)
+    logger.info(
+        "Live auth accepted: ip=%s protocol=%s", body.ip, body.protocol,
+        extra={"ip": body.ip, "protocol": body.protocol},
+    )
     return {"ok": True}
 
 
@@ -979,6 +985,7 @@ async def admin_diagnostics(request: Request):
         },
         "transcode": {
             "concurrency_limit": TRANSCODE_CONCURRENCY,
+            "gpu": _media.get_gpu_health(),
         },
         "hls": {
             "backfill_running": HLS_BACKFILL_LOCK.locked(),
@@ -1306,10 +1313,8 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
     if existing:
         logger.info(
             "Reusing active upload session: %s match=%s slot=%s next_index=%d",
-            existing["id"],
-            match_id,
-            slot,
-            existing["next_index"],
+            existing["id"], match_id, slot, existing["next_index"],
+            extra={"session_id": existing["id"], "match_id": match_id, "slot": slot},
         )
         return _uploads.session_payload(existing)
 
@@ -1352,11 +1357,9 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
 
     logger.info(
         "Chunked upload session created: %s match=%s slot=%s size=%d chunks=%d",
-        session_id,
-        match_id,
-        slot,
-        size_bytes,
-        total_chunks,
+        session_id, match_id, slot, size_bytes, total_chunks,
+        extra={"session_id": session_id, "match_id": match_id, "slot": slot,
+               "size_bytes": size_bytes, "total_chunks": total_chunks},
     )
     return {
         "session_id": session_id,
@@ -1506,10 +1509,8 @@ async def complete_upload_session(session_id: str, request: Request):
 
     logger.info(
         "Chunked upload complete: %s match=%s slot=%s size=%d",
-        session_id,
-        match_id,
-        slot,
-        actual_size,
+        session_id, match_id, slot, actual_size,
+        extra={"session_id": session_id, "match_id": match_id, "slot": slot, "size_bytes": actual_size},
     )
     _spawn_transcode(match_id, slot, raw_path, final_path)
     return {"ok": True, "status": "transcoding", "slot": slot, "size_mb": round(actual_size / 1e6, 1)}
@@ -1537,10 +1538,8 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     raw_path = vid_dir / f"{slot}_raw{ext}"
     logger.info(
         "Upload started: %s/%s filename=%s max_size_bytes=%d",
-        match_id,
-        slot,
-        fname,
-        MAX_UPLOAD_SIZE_BYTES,
+        match_id, slot, fname, MAX_UPLOAD_SIZE_BYTES,
+        extra={"match_id": match_id, "slot": slot, "filename": fname},
     )
     started_at = time.time()
     try:
@@ -1553,10 +1552,8 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     elapsed = round(time.time() - started_at, 2)
     logger.info(
         "Upload saved: %s/%s (%s MB in %ss) — starting transcode",
-        match_id,
-        slot,
-        size_mb,
-        elapsed,
+        match_id, slot, size_mb, elapsed,
+        extra={"match_id": match_id, "slot": slot, "size_mb": size_mb, "elapsed_s": elapsed},
     )
 
     await _set_video_status(match_id, slot, "transcoding", None)
@@ -1879,6 +1876,8 @@ async def serve_logo(match_id: str, team: str):
         raise HTTPException(404, "No logo uploaded")
 
     logo_path = VIDEOS_DIR / match_id / logo_name
+    if VIDEOS_DIR.resolve() not in logo_path.resolve().parents:
+        raise HTTPException(400, "Invalid path")
     if not logo_path.is_file():
         raise HTTPException(404, "Logo file not found")
 
@@ -1895,6 +1894,8 @@ async def serve_logo(match_id: str, team: str):
 @app.get("/api/matches/{match_id}/thumbnail")
 async def serve_thumbnail(match_id: str):
     thumb_path = VIDEOS_DIR / match_id / "thumb.jpg"
+    if VIDEOS_DIR.resolve() not in thumb_path.resolve().parents:
+        raise HTTPException(400, "Invalid path")
     if not thumb_path.is_file():
         raise HTTPException(404, "No thumbnail available")
     # Validate against mtime so admins regenerating the thumbnail see the new
