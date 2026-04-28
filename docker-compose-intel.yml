@@ -63,6 +63,27 @@ services:
     #          device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
     #          capabilities: [gpu, video]
 
+  # Caddy — reverse proxy for the replay app. The big win: Caddy serves VOD
+  # HLS .ts/.m4s segments directly from the bind-mounted /data volume using
+  # sendfile(), which saturates 10 GbE far better than uvicorn can. All other
+  # routes pass through to the replay app on :8090. See ./Caddyfile.
+  #
+  # Bind /data read-only so a misconfiguration in Caddy can't write into the
+  # replay app's data tree.
+  caddy:
+    image: caddy:2-alpine
+    container_name: replay-caddy
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /mnt/apps_ssd/apps/replay:/data:ro
+      - replay_caddy_data:/data/caddy
+      - replay_caddy_config:/config
+    depends_on:
+      - replay
+    restart: unless-stopped
+
   # MediaMTX — RTMP ingest (camera push) → LL-HLS output (browser playback).
   # Only RTMP (1935) is exposed publicly; HLS and the control API stay on the
   # internal compose network and are reverse-proxied by `replay` so viewers and
@@ -152,5 +173,12 @@ configs:
         '~^live/[^/]+$':
           source: publisher
 
-#volumes:
-# replay_data:
+volumes:
+  # Caddy persists ACME state and its own config here. Tiny — kept on the
+  # default Docker volume root rather than the SSD bind, since none of it is
+  # performance-sensitive.
+  replay_caddy_data:
+  replay_caddy_config:
+
+# replay_data is intentionally not declared here — the replay service uses a
+# host bind-mount at /mnt/apps_ssd/apps/replay rather than a named volume.

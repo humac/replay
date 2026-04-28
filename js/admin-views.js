@@ -33,11 +33,246 @@ export const adminViewsMixin = {
         // Live streaming card (admin only)
         if (typeof this.renderLiveSettingsCard === 'function') this.renderLiveSettingsCard();
 
+        // Performance Tuning card (admin only — needs the tuning_knobs schema
+        // which is only returned by the admin settings endpoint).
+        if (this.isAdmin()) this.renderTuningKnobsCard();
+
         // Show user management for admins
         const userCard = document.getElementById('user-management-card');
         if (userCard) {
             userCard.style.display = this.isAdmin() ? 'block' : 'none';
             if (this.isAdmin()) this.renderUsersList();
+        }
+    },
+
+    // ===== PERFORMANCE TUNING =====
+    async renderTuningKnobsCard() {
+        const card = document.getElementById('tuning-knobs-card');
+        const grid = document.getElementById('tuning-knobs-grid');
+        if (!card || !grid) return;
+
+        // Pull the admin settings payload (knob schema lives there, not in the
+        // public bootstrap). Cache on the app object so the preset buttons can
+        // re-use it without an extra fetch.
+        let payload;
+        try {
+            const resp = await this.authFetch('/api/admin/settings', { headers: this.getAuthHeaders() });
+            if (!resp.ok) throw new Error('Failed to load tuning settings');
+            payload = await resp.json();
+        } catch (err) {
+            grid.innerHTML = `<div class="session-empty">${this.esc(err.message)}</div>`;
+            return;
+        }
+        this._tuningPayload = payload;
+        const settings = payload.settings || {};
+        const knobs = payload.tuning_knobs || {};
+
+        const order = [
+            'transcode_concurrency', 'replay_hwaccel', 'hls_segment_duration',
+            'max_upload_size_bytes', 'upload_chunk_size_bytes',
+            'min_free_disk_bytes', 'upload_disk_headroom_multiplier',
+            'stale_upload_session_seconds', 'video_stream_chunk_bytes',
+            'hls_variant_presets',
+            'live_hls_variant', 'live_record_enabled', 'live_transcode_enabled',
+        ];
+        const html = order.filter((key) => knobs[key]).map((key) => {
+            const spec = knobs[key];
+            const value = settings[key] ?? '';
+            const restart = spec.restart
+                ? '<span class="status-pill warn">Restart required</span>'
+                : '';
+            return `
+                <div class="form-group" data-tuning-key="${key}">
+                    <label for="tuning-${key}">
+                        ${this.esc(spec.label || key)}
+                        ${restart}
+                    </label>
+                    ${this.tuningKnobInput(key, spec, value)}
+                    <div class="form-help">${this.esc(spec.help || '')}</div>
+                </div>
+            `;
+        }).join('');
+        grid.innerHTML = html;
+
+        // Audit list
+        const auditList = document.getElementById('tuning-audit-list');
+        if (auditList) {
+            const entries = payload.audit || [];
+            auditList.innerHTML = entries.length
+                ? entries.map((e) => `
+                    <div class="session-item">
+                        <div class="session-title-row">
+                            <strong>${this.esc(e.key)}</strong>
+                            <span class="status-pill neutral">${this.esc(e.actor || 'system')}</span>
+                        </div>
+                        <div class="session-meta">
+                            <span>${this.esc(e.ts)}</span>
+                            <span>${this.esc(e.old_value ?? '∅')} → ${this.esc(e.new_value)}</span>
+                        </div>
+                    </div>
+                `).join('')
+                : '<div class="session-empty">No tuning changes yet.</div>';
+        }
+
+        // Wire preset buttons (idempotent — replaces handlers on re-render)
+        const card2 = document.getElementById('tuning-knobs-card');
+        if (card2) {
+            card2.querySelectorAll('[data-tuning-preset]').forEach((btn) => {
+                btn.onclick = () => this.applyTuningPreset(btn.dataset.tuningPreset);
+            });
+        }
+    },
+
+    tuningKnobInput(key, spec, value) {
+        const id = `tuning-${key}`;
+        if (spec.kind === 'bool') {
+            return `
+                <label class="checkbox-label">
+                    <input type="checkbox" id="${id}" data-tuning-input="${key}" data-tuning-kind="bool" ${value === '1' ? 'checked' : ''}>
+                    Enable
+                </label>
+            `;
+        }
+        if (spec.kind === 'enum') {
+            const opts = (spec.choices || []).map((c) => `<option value="${this.esc(c)}" ${c === value ? 'selected' : ''}>${this.esc(c)}</option>`).join('');
+            return `<select id="${id}" data-tuning-input="${key}" data-tuning-kind="enum">${opts}</select>`;
+        }
+        if (spec.kind === 'json') {
+            // Variant ladder gets its own structured editor; everything else
+            // falls back to a JSON textarea.
+            if (key === 'hls_variant_presets') {
+                return this.renderHlsLadderEditor(value);
+            }
+            return `<textarea id="${id}" data-tuning-input="${key}" data-tuning-kind="json" rows="6">${this.esc(value)}</textarea>`;
+        }
+        // int / float
+        const min = spec.min ?? '';
+        const max = spec.max ?? '';
+        const step = spec.kind === 'float' ? 'any' : '1';
+        return `<input type="number" id="${id}" data-tuning-input="${key}" data-tuning-kind="${spec.kind}" min="${min}" max="${max}" step="${step}" value="${this.esc(value)}">`;
+    },
+
+    renderHlsLadderEditor(rawValue) {
+        let rows = [];
+        try {
+            const parsed = JSON.parse(rawValue || '[]');
+            if (Array.isArray(parsed)) rows = parsed;
+        } catch (_) { /* leave empty */ }
+        const headers = ['Enabled', 'Name', 'Height', 'Width', 'Video kbps', 'Maxrate', 'Bufsize', 'Audio kbps', 'Bandwidth'];
+        const tableHead = headers.map((h) => `<th>${h}</th>`).join('');
+        const body = rows.map((r, idx) => `
+            <tr data-ladder-row="${idx}">
+                <td><input type="checkbox" data-ladder-field="enabled" ${r.enabled !== false ? 'checked' : ''}></td>
+                <td><input type="text" data-ladder-field="name" value="${this.esc(r.name || '')}" maxlength="12" size="6"></td>
+                <td><input type="number" data-ladder-field="height" value="${this.esc(r.height ?? '')}" min="240" max="2160" step="2" size="5"></td>
+                <td><input type="number" data-ladder-field="width" value="${this.esc(r.width ?? '')}" min="320" max="3840" step="2" size="5"></td>
+                <td><input type="text" data-ladder-field="video_bitrate" value="${this.esc(r.video_bitrate || '')}" size="6"></td>
+                <td><input type="text" data-ladder-field="maxrate" value="${this.esc(r.maxrate || '')}" size="6"></td>
+                <td><input type="text" data-ladder-field="bufsize" value="${this.esc(r.bufsize || '')}" size="6"></td>
+                <td><input type="text" data-ladder-field="audio_bitrate" value="${this.esc(r.audio_bitrate || '')}" size="5"></td>
+                <td><input type="number" data-ladder-field="bandwidth" value="${this.esc(r.bandwidth ?? '')}" size="9"></td>
+            </tr>
+        `).join('');
+        return `
+            <div class="ladder-editor" data-tuning-input="hls_variant_presets" data-tuning-kind="json">
+                <table class="ladder-table">
+                    <thead><tr>${tableHead}</tr></thead>
+                    <tbody>${body}</tbody>
+                </table>
+            </div>
+        `;
+    },
+
+    collectTuningKnobs() {
+        const out = {};
+        const card = document.getElementById('tuning-knobs-card');
+        if (!card) return out;
+        card.querySelectorAll('[data-tuning-input]').forEach((el) => {
+            const key = el.dataset.tuningInput;
+            const kind = el.dataset.tuningKind;
+            if (kind === 'bool') {
+                out[key] = el.checked ? '1' : '0';
+            } else if (kind === 'json' && el.classList.contains('ladder-editor')) {
+                const rows = [];
+                el.querySelectorAll('[data-ladder-row]').forEach((tr) => {
+                    const row = {};
+                    tr.querySelectorAll('[data-ladder-field]').forEach((f) => {
+                        const field = f.dataset.ladderField;
+                        if (field === 'enabled') row.enabled = f.checked;
+                        else if (field === 'height' || field === 'width' || field === 'bandwidth') row[field] = Number(f.value || 0);
+                        else row[field] = f.value;
+                    });
+                    rows.push(row);
+                });
+                out[key] = JSON.stringify(rows);
+            } else if (kind === 'json') {
+                out[key] = el.value;
+            } else {
+                out[key] = el.value;
+            }
+        });
+        return out;
+    },
+
+    async applyTuningPreset(preset) {
+        const presets = {
+            'conservative': {
+                transcode_concurrency: '2',
+                replay_hwaccel: 'auto',
+                hls_segment_duration: '6',
+                live_hls_variant: 'mpegts',
+                live_record_enabled: '0',
+                live_transcode_enabled: '0',
+            },
+            'balanced-10g': {
+                transcode_concurrency: '4',
+                replay_hwaccel: 'qsv',
+                hls_segment_duration: '4',
+                video_stream_chunk_bytes: String(2 * 1024 * 1024),
+                upload_chunk_size_bytes: String(32 * 1024 * 1024),
+            },
+            'live-first': {
+                transcode_concurrency: '2',
+                replay_hwaccel: 'qsv',
+                hls_segment_duration: '4',
+                live_hls_variant: 'lowLatency',
+                live_record_enabled: '1',
+                live_transcode_enabled: '1',
+            },
+        };
+        const body = presets[preset];
+        if (!body) return;
+        const ok = await this.confirmAction({
+            title: 'Apply tuning preset',
+            message: `Apply the "${preset}" preset? This updates several settings at once.`,
+            confirmLabel: 'Apply preset',
+        });
+        if (!ok) return;
+        await this.saveTuningKnobs(body, `Applied preset: ${preset}`);
+    },
+
+    async saveTuningKnobs(body, successMessage) {
+        try {
+            const resp = await this.authFetch('/api/admin/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                const detail = err.detail;
+                const msg = (detail && typeof detail === 'object' && detail.errors)
+                    ? Object.entries(detail.errors).map(([k, v]) => `${k}: ${v}`).join('; ')
+                    : (typeof detail === 'string' ? detail : 'Failed to save tuning knobs');
+                throw new Error(msg);
+            }
+            const payload = await resp.json();
+            this._tuningPayload = payload;
+            await this.loadAppSettings(true);
+            await this.renderTuningKnobsCard();
+            this.showSuccess(successMessage || 'Tuning saved.');
+        } catch (err) {
+            this.showError(err.message);
         }
     },
 
@@ -208,6 +443,7 @@ export const adminViewsMixin = {
             live_enabled: document.getElementById('settings-live-enabled')?.checked ?? true,
             live_rtmp_public_url: document.getElementById('settings-live-rtmp-public-url')?.value.trim() || '',
             live_offline_message: document.getElementById('settings-live-offline-message')?.value.trim() || '',
+            ...this.collectTuningKnobs(),
         };
 
         const restore = this.btnLoading(submitBtn, 'Saving...');
@@ -219,7 +455,11 @@ export const adminViewsMixin = {
             });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || 'Failed to save settings');
+                const detail = err.detail;
+                const msg = (detail && typeof detail === 'object' && detail.errors)
+                    ? Object.entries(detail.errors).map(([k, v]) => `${k}: ${v}`).join('; ')
+                    : (typeof detail === 'string' ? detail : 'Failed to save settings');
+                throw new Error(msg);
             }
             this.setAppSettingsPayload(await resp.json());
             await this.uploadSettingsAsset('settings-app-logo', 'logo');
@@ -1038,5 +1278,186 @@ export const adminViewsMixin = {
         } catch (e) {
             this.showError(e.message);
         }
+    },
+
+    // ===== PERFORMANCE TUNING PANEL =====
+    _perfTimer: null,
+    _perfPayload: null,
+
+    startPerformanceTuningPolling() {
+        if (!this.isAdmin?.()) return;
+        // Wire buttons once.
+        const card = document.getElementById('performance-tuning-card');
+        if (card && !card.dataset.wired) {
+            card.dataset.wired = '1';
+            document.getElementById('perf-refresh-btn')?.addEventListener('click', () => this.refreshPerformanceTuning());
+            document.getElementById('perf-capture-btn')?.addEventListener('click', () => this.startPerformanceCapture());
+            document.getElementById('perf-copy-btn')?.addEventListener('click', () => this.copyPerformanceSnapshot());
+            document.getElementById('perf-download-btn')?.addEventListener('click', () => this.downloadPerformanceSnapshot());
+        }
+        this.refreshPerformanceTuning();
+        if (this._perfTimer) return;
+        this._perfTimer = setInterval(() => {
+            const sysSection = document.querySelector('.admin-section[data-admin-section="system"]');
+            if (!sysSection || !sysSection.classList.contains('is-active')) {
+                this.stopPerformanceTuningPolling();
+                return;
+            }
+            this.refreshPerformanceTuning();
+        }, 5000);
+    },
+
+    stopPerformanceTuningPolling() {
+        if (this._perfTimer) { clearInterval(this._perfTimer); this._perfTimer = null; }
+    },
+
+    async refreshPerformanceTuning() {
+        if (!this.authToken) return;
+        try {
+            const resp = await this.authFetch('/api/admin/performance', { headers: this.getAuthHeaders() });
+            if (!resp.ok) throw new Error('Failed to load performance');
+            this._perfPayload = await resp.json();
+            this.renderPerformanceTuning();
+        } catch (err) {
+            const grid = document.getElementById('perf-grid');
+            if (grid) grid.innerHTML = `<div class="session-empty">${this.esc(err.message)}</div>`;
+        }
+    },
+
+    renderPerformanceTuning() {
+        const p = this._perfPayload;
+        const grid = document.getElementById('perf-grid');
+        if (!grid || !p) return;
+
+        const fmtMbps = (bps) => bps ? `${(bps / 1_000_000).toFixed(2)} Mbps` : '0 Mbps';
+        const fmtBytes = (b) => {
+            if (!b && b !== 0) return '—';
+            const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+            let i = 0; let v = b;
+            while (v >= 1024 && i < u.length - 1) { v /= 1024; i += 1; }
+            return `${v.toFixed(1)} ${u[i]}`;
+        };
+
+        const t = p.throughput || {};
+        const last = t.last || {};
+        const host = p.host || {};
+        const tx = p.transcode || {};
+        const cap = (t.capture && t.capture.fast)
+            ? `<span class="status-pill warn">capture ${t.capture.remaining_seconds}s left</span>` : '';
+        const ssd = p.disk?.ssd;
+
+        const tiles = [
+            { label: 'Live throughput', value: fmtMbps(last.bps_live_out || 0), note: `30s avg ${fmtMbps(t.avg_live_bps_30s)} · ${last.active_live || 0} viewers` },
+            { label: 'VOD throughput', value: fmtMbps(last.bps_vod_out || 0), note: `30s avg ${fmtMbps(t.avg_vod_bps_30s)} · ${last.active_vod || 0} sessions` },
+            { label: 'NIC TX / RX', value: host.net ? `${fmtMbps(host.net.bps_tx)} / ${fmtMbps(host.net.bps_rx)}` : '—', note: 'Host NIC totals' },
+            { label: 'CPU', value: host.cpu_percent != null ? `${host.cpu_percent.toFixed(0)}%` : '—', note: host.loadavg ? `load ${host.loadavg.map(l => l.toFixed(2)).join(' / ')}` : `${host.cpu_count || '?'} cores` },
+            { label: 'Memory', value: host.memory ? `${host.memory.percent.toFixed(0)}%` : '—', note: host.memory ? `${fmtBytes(host.memory.used)} / ${fmtBytes(host.memory.total)}` : '' },
+            { label: 'iGPU busy', value: host.intel_gpu_busy_pct != null ? `${host.intel_gpu_busy_pct}%` : '—', note: 'Intel i915 sysfs' },
+            { label: 'SSD free', value: ssd ? fmtBytes(ssd.free) : '—', note: ssd ? `of ${fmtBytes(ssd.total)}` : '' },
+            { label: 'Encoder pipeline', value: `${tx.concurrency_limit || 0} max`, note: `GPU ${tx.gpu?.succeeded || 0}✓ / ${tx.gpu?.failed || 0}✗` },
+        ];
+
+        grid.innerHTML = tiles.map((tile) => `
+            <div class="diagnostic-card">
+                <span class="diagnostic-label">${this.esc(tile.label)}</span>
+                <strong class="diagnostic-value">${this.esc(tile.value)}</strong>
+                ${tile.note ? `<span class="diagnostic-note">${this.esc(tile.note)}</span>` : ''}
+            </div>
+        `).join('') + (cap ? `<div class="diagnostic-card">${cap}</div>` : '');
+
+        const rtList = document.getElementById('perf-rt-list');
+        if (rtList) {
+            const rows = (tx.recent || []);
+            rtList.innerHTML = rows.length
+                ? rows.map((h) => `
+                    <div class="session-item">
+                        <div class="session-title-row">
+                            <strong>${this.esc(h.match_id)} / ${this.esc(h.slot)}</strong>
+                            <span class="status-pill ${h.rt_factor < 1 ? 'ready' : 'neutral'}">${h.rt_factor}× realtime</span>
+                            <span class="status-pill neutral">${this.esc(h.hwaccel)}</span>
+                        </div>
+                        <div class="session-meta">
+                            <span>${h.source_seconds ? Math.round(h.source_seconds) + 's source' : ''}</span>
+                            <span>${h.wall_seconds.toFixed(1)}s wall</span>
+                            <span>${h.variant_count || 0} variants</span>
+                        </div>
+                    </div>
+                `).join('')
+                : '<div class="session-empty">No transcodes recorded yet.</div>';
+        }
+
+        const sessList = document.getElementById('perf-sessions-list');
+        if (sessList) {
+            const sessions = p.active_sessions || [];
+            sessList.innerHTML = sessions.length
+                ? sessions.map((s) => `
+                    <div class="session-item">
+                        <div class="session-title-row">
+                            <strong>${this.esc(s.kind)} ${this.esc(s.match_id || '')}/${this.esc(s.slot || '')}</strong>
+                            <span class="status-pill neutral">${this.esc(s.geo?.country_code || '')} ${this.esc(s.ip)}</span>
+                        </div>
+                        <div class="session-meta">
+                            <span>${fmtBytes(s.bytes_sent)}</span>
+                            <span>${Math.round(s.duration_seconds || 0)}s</span>
+                            <span>idle ${Math.round(s.idle_seconds || 0)}s</span>
+                        </div>
+                    </div>
+                `).join('')
+                : '<div class="session-empty">No active streaming sessions.</div>';
+        }
+    },
+
+    async startPerformanceCapture() {
+        try {
+            const resp = await this.authFetch('/api/admin/performance/capture', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify({ seconds: 60 }),
+            });
+            if (!resp.ok) throw new Error('Failed to start capture');
+            this.showInfo?.('Capture started — sampling at 1 Hz for 60 s.');
+            this.refreshPerformanceTuning();
+        } catch (err) {
+            this.showError(err.message);
+        }
+    },
+
+    _buildPerfBundle() {
+        // Bundle the latest payload + a redaction note so a coding agent has
+        // enough context to tune. IPs in active_sessions are passed through
+        // as-is (admin already sees them on the page); strip if you don't
+        // want to share them.
+        if (!this._perfPayload) return null;
+        return {
+            generated_at: new Date().toISOString(),
+            note: 'Replay performance snapshot. Tuning knobs and counters; client IPs are intentionally not redacted in this admin-only export.',
+            payload: this._perfPayload,
+        };
+    },
+
+    async copyPerformanceSnapshot() {
+        const bundle = this._buildPerfBundle();
+        if (!bundle) { this.showError('No performance data loaded yet.'); return; }
+        try {
+            await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+            this.showSuccess('Snapshot copied to clipboard.');
+        } catch (_) {
+            this.showError('Could not access clipboard.');
+        }
+    },
+
+    downloadPerformanceSnapshot() {
+        const bundle = this._buildPerfBundle();
+        if (!bundle) { this.showError('No performance data loaded yet.'); return; }
+        const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `replay-perf-${ts}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
     },
 };

@@ -32,7 +32,7 @@ import streams as _streams
 import uploads as _uploads
 from models import (
     CreateMatchRequest, CreateUploadSessionRequest, CreateUserRequest,
-    LiveAuthRequest, LoginRequest, UnblockStreamRequest,
+    LiveAuthRequest, LoginRequest, StartCaptureRequest, UnblockStreamRequest,
     UpdateMatchRequest, UpdateUserRequest,
 )
 
@@ -95,8 +95,11 @@ async def lifespan(application: FastAPI):
     _db.migrate_json_to_sqlite(MATCHES_FILE)
     _db.backfill_slugs()
     _settings.init(APP_ASSETS_DIR, STATIC_DIR)
+    # Resize the transcode semaphore to whatever the settings table says
+    # (which itself reflects the env-var fallback on first boot).
+    await TRANSCODE_SEMAPHORE.resize(current_transcode_concurrency())
     await _sweep_orphaned_transcodes()
-    _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
+    _uploads.cleanup_stale_sessions(current_stale_upload_session_seconds())
     _spawn_task(_backfill_hls_for_existing_videos())
     _spawn_task(_media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches))
     sweeper = asyncio.create_task(_streams.sweeper_task())
@@ -114,59 +117,130 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="Replay", lifespan=lifespan)
 
-MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", str(12 * 1024 * 1024 * 1024)))
-UPLOAD_CHUNK_SIZE_BYTES = int(os.environ.get("UPLOAD_CHUNK_SIZE_BYTES", str(16 * 1024 * 1024)))
-TRANSCODE_CONCURRENCY = max(1, int(os.environ.get("TRANSCODE_CONCURRENCY", "2")))
-MIN_FREE_DISK_BYTES = int(os.environ.get("MIN_FREE_DISK_BYTES", str(20 * 1024 * 1024 * 1024)))
-UPLOAD_DISK_HEADROOM_MULTIPLIER = float(os.environ.get("UPLOAD_DISK_HEADROOM_MULTIPLIER", "2.2"))
-STALE_UPLOAD_SESSION_SECONDS = int(os.environ.get("STALE_UPLOAD_SESSION_SECONDS", str(6 * 60 * 60)))
-VIDEO_STREAM_CHUNK_BYTES = int(os.environ.get("VIDEO_STREAM_CHUNK_BYTES", str(1024 * 1024)))
-HLS_SEGMENT_DURATION = int(os.environ.get("HLS_SEGMENT_DURATION", "6"))
 # Shared secret MediaMTX sends in X-Internal-Secret when calling /api/live/auth.
 # Configure via mediamtx.yml authHTTPHeaders. If unset the endpoint is open
 # (backwards-compatible) but logs a warning on first request.
 LIVE_AUTH_SECRET = os.environ.get("LIVE_AUTH_SECRET", "")
-TRANSCODE_SEMAPHORE = asyncio.Semaphore(TRANSCODE_CONCURRENCY)
+
+# All other tuning knobs are now stored in the settings table (with env-var
+# fallback on first boot — see settings.TUNING_KNOBS). Read them via the
+# helpers below. _DEFAULT_TRANSCODE_CONCURRENCY is only used for the initial
+# semaphore size at import time; the actual size tracks the setting via
+# `ResizableSemaphore.resize()` whenever the admin updates it.
+_DEFAULT_TRANSCODE_CONCURRENCY = max(
+    1, int(os.environ.get("TRANSCODE_CONCURRENCY", "2"))
+)
+
+
+class ResizableSemaphore:
+    """Semaphore whose limit can grow or shrink at runtime.
+
+    Widening: release the wrapped semaphore (n_new - n_old) extra times so
+    additional waiters proceed. Narrowing: stash a "shrink debt" counter and
+    swallow that many releases inside `release()` until we're back at the new
+    limit. In-flight holders are never disturbed — they just complete normally.
+    """
+
+    def __init__(self, n: int):
+        n = max(1, int(n))
+        self._inner = asyncio.Semaphore(n)
+        self._n = n
+        self._shrink_debt = 0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        await self._inner.acquire()
+
+    def release(self) -> None:
+        if self._shrink_debt > 0:
+            self._shrink_debt -= 1
+            return
+        self._inner.release()
+
+    async def __aenter__(self):
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.release()
+
+    @property
+    def limit(self) -> int:
+        return self._n
+
+    async def resize(self, new_n: int) -> None:
+        new_n = max(1, int(new_n))
+        async with self._lock:
+            delta = new_n - self._n
+            if delta > 0:
+                for _ in range(delta):
+                    self._inner.release()
+            elif delta < 0:
+                self._shrink_debt += -delta
+            self._n = new_n
+
+
+TRANSCODE_SEMAPHORE = ResizableSemaphore(_DEFAULT_TRANSCODE_CONCURRENCY)
 MATCHES_LOCK = asyncio.Lock()
 HLS_BACKFILL_LOCK = asyncio.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Tuning knob accessors — read live values from the settings table.
+# Each call hits `_settings.load_unlocked()` which is a single SELECT against
+# the settings table; cheap, and means UI changes take effect immediately.
+# ---------------------------------------------------------------------------
+
+def _settings_snapshot() -> dict[str, str]:
+    return _settings.load_unlocked()
+
+
+def current_max_upload_size_bytes() -> int:
+    return _settings.get_int(_settings_snapshot(), "max_upload_size_bytes", 12 * 1024 * 1024 * 1024)
+
+
+def current_upload_chunk_size_bytes() -> int:
+    return _settings.get_int(_settings_snapshot(), "upload_chunk_size_bytes", 16 * 1024 * 1024)
+
+
+def current_transcode_concurrency() -> int:
+    return _settings.get_int(_settings_snapshot(), "transcode_concurrency", 2)
+
+
+def current_min_free_disk_bytes() -> int:
+    return _settings.get_int(_settings_snapshot(), "min_free_disk_bytes", 20 * 1024 * 1024 * 1024)
+
+
+def current_upload_disk_headroom_multiplier() -> float:
+    return _settings.get_float(_settings_snapshot(), "upload_disk_headroom_multiplier", 2.2)
+
+
+def current_stale_upload_session_seconds() -> int:
+    return _settings.get_int(_settings_snapshot(), "stale_upload_session_seconds", 6 * 60 * 60)
+
+
+def current_video_stream_chunk_bytes() -> int:
+    return _settings.get_int(_settings_snapshot(), "video_stream_chunk_bytes", 1024 * 1024)
+
+
+def current_hls_segment_duration() -> int:
+    return _settings.get_int(_settings_snapshot(), "hls_segment_duration", 6)
+
+
+def current_hls_variant_presets() -> list[dict]:
+    return _settings.get_hls_variant_presets(_settings_snapshot())
+
+
+def current_replay_hwaccel() -> str:
+    return _settings.get_str(_settings_snapshot(), "replay_hwaccel", "auto")
 
 # Per-IP rate limit for /api/live/auth to prevent log-spam from scanners.
 _live_auth_attempts: dict[str, list[float]] = {}
 _LIVE_AUTH_RATE_LIMIT = 30
 _LIVE_AUTH_RATE_WINDOW = 60.0
 
-HLS_VARIANT_PRESETS = [
-    {
-        "name": "1080p",
-        "height": 1080,
-        "width": 1920,
-        "video_bitrate": "6000k",
-        "maxrate": "6800k",
-        "bufsize": "12000k",
-        "audio_bitrate": "160k",
-        "bandwidth": 7000000,
-    },
-    {
-        "name": "720p",
-        "height": 720,
-        "width": 1280,
-        "video_bitrate": "3200k",
-        "maxrate": "3600k",
-        "bufsize": "7200k",
-        "audio_bitrate": "128k",
-        "bandwidth": 3800000,
-    },
-    {
-        "name": "480p",
-        "height": 480,
-        "width": 854,
-        "video_bitrate": "1400k",
-        "maxrate": "1600k",
-        "bufsize": "3200k",
-        "audio_bitrate": "128k",
-        "bandwidth": 1800000,
-    },
-]
+# HLS variant ladder is now stored in the settings table; read it via
+# `current_hls_variant_presets()` whenever a transcode is about to start.
 
 # ---------------------------------------------------------------------------
 # Async wrappers around module functions (lock-protected)
@@ -178,14 +252,21 @@ async def _load_settings() -> dict[str, str]:
         return _settings.load_unlocked()
 
 
-async def _save_settings(updates: dict[str, str]) -> dict[str, str]:
+async def _save_settings(updates: dict[str, str], *, actor: str | None = None) -> dict[str, str]:
     async with MATCHES_LOCK:
-        return _settings.save_unlocked(updates)
+        return _settings.save_unlocked(updates, actor=actor)
 
 
 async def _public_settings_payload() -> dict:
     settings = await _load_settings()
     return _settings.public_payload(settings)
+
+
+async def _admin_settings_payload() -> dict:
+    settings = await _load_settings()
+    payload = _settings.admin_payload(settings)
+    payload["audit"] = _settings.list_audit_entries(20)
+    return payload
 
 
 async def _render_index_html() -> str:
@@ -352,7 +433,10 @@ def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 def _required_free_bytes(size_bytes: int) -> int:
-    return max(MIN_FREE_DISK_BYTES, int(math.ceil(size_bytes * UPLOAD_DISK_HEADROOM_MULTIPLIER)))
+    return max(
+        current_min_free_disk_bytes(),
+        int(math.ceil(size_bytes * current_upload_disk_headroom_multiplier())),
+    )
 
 
 def _disk_stats_payload(required_bytes: int | None = None) -> dict:
@@ -361,9 +445,9 @@ def _disk_stats_payload(required_bytes: int | None = None) -> dict:
         "total_bytes": total,
         "used_bytes": used,
         "free_bytes": free,
-        "min_free_bytes": MIN_FREE_DISK_BYTES,
+        "min_free_bytes": current_min_free_disk_bytes(),
         "required_bytes": required_bytes,
-        "upload_headroom_multiplier": UPLOAD_DISK_HEADROOM_MULTIPLIER,
+        "upload_headroom_multiplier": current_upload_disk_headroom_multiplier(),
         "enough_space": required_bytes is None or free >= required_bytes,
     }
 
@@ -385,15 +469,20 @@ def _ensure_disk_space(size_bytes: int):
 # Helpers — Media pipeline (delegated to media.py)
 # ---------------------------------------------------------------------------
 
-_MEDIA_KWARGS = dict(
-    videos_dir=VIDEOS_DIR,
-    hls_segment_duration=HLS_SEGMENT_DURATION,
-    hls_variant_presets=HLS_VARIANT_PRESETS,
-)
+def _media_kwargs() -> dict:
+    """Snapshot the live tuning settings for a single media call. Called per-job
+    so admin edits to segment duration / ladder / hwaccel take effect on the
+    next transcode without a restart."""
+    return dict(
+        videos_dir=VIDEOS_DIR,
+        hls_segment_duration=current_hls_segment_duration(),
+        hls_variant_presets=current_hls_variant_presets(),
+        hwaccel_preference=current_replay_hwaccel(),
+    )
 
 
 async def _build_hls_assets(source_mp4: Path, match_id: str, slot: str) -> bool:
-    return await _media.build_hls_assets(source_mp4, match_id, slot, **_MEDIA_KWARGS)
+    return await _media.build_hls_assets(source_mp4, match_id, slot, **_media_kwargs())
 
 
 async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
@@ -419,16 +508,16 @@ async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
 
     await _media.transcode_video(
         match_id, slot, src, dest,
-        **_MEDIA_KWARGS,
+        **_media_kwargs(),
         transcode_semaphore=TRANSCODE_SEMAPHORE,
-        transcode_concurrency=TRANSCODE_CONCURRENCY,
+        transcode_concurrency=current_transcode_concurrency(),
         set_video_status=_set_video_status,
     )
 
 
 async def _backfill_hls_for_existing_videos() -> dict:
     return await _media.backfill_hls_for_existing_videos(
-        **_MEDIA_KWARGS,
+        **_media_kwargs(),
         hls_backfill_lock=HLS_BACKFILL_LOCK,
         load_matches=_load_matches,
         ready_slots_missing_hls=_ready_slots_missing_hls,
@@ -520,19 +609,33 @@ async def get_public_settings():
 @app.get("/api/admin/settings")
 async def get_admin_settings(request: Request):
     _auth.require_role(request, "admin")
-    return await _public_settings_payload()
+    return await _admin_settings_payload()
 
 
 @app.put("/api/admin/settings")
 async def update_admin_settings(request: Request):
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     body = await request.json()
-    updates = {
-        key: _settings.normalize_value(key, value)
-        for key, value in body.items()
-        if key in _settings.EDITABLE_APP_SETTING_KEYS
-    }
-    settings = await _save_settings(updates)
+    updates: dict[str, str] = {}
+    errors: dict[str, str] = {}
+    for key, value in body.items():
+        if key not in _settings.EDITABLE_APP_SETTING_KEYS:
+            continue
+        try:
+            updates[key] = _settings.normalize_value(key, value)
+        except ValueError as exc:
+            errors[key] = str(exc)
+    if errors:
+        raise HTTPException(400, {"message": "Invalid settings", "errors": errors})
+
+    actor = user.get("username") if isinstance(user, dict) else None
+    settings = await _save_settings(updates, actor=actor)
+
+    # Apply live-reloadable side effects (semaphore resize). Other knobs are
+    # picked up on the next call site read — see current_*() helpers.
+    if "transcode_concurrency" in updates:
+        await TRANSCODE_SEMAPHORE.resize(_settings.get_int(settings, "transcode_concurrency", 2))
+
     return {
         "ok": True,
         "settings": settings,
@@ -540,6 +643,10 @@ async def update_admin_settings(request: Request):
             "logo_url": _settings.app_asset_url("logo", settings),
             "favicon_url": _settings.app_asset_url("favicon", settings),
         },
+        "tuning_knobs": {
+            key: dict(spec) for key, spec in _settings.TUNING_KNOBS.items()
+        },
+        "audit": _settings.list_audit_entries(20),
     }
 
 
@@ -926,10 +1033,11 @@ def _cached_disk_usage_by_match() -> list[dict]:
 @app.get("/api/admin/diagnostics")
 async def admin_diagnostics(request: Request):
     _auth.require_role(request, "admin")
-    _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
+    stale_seconds = current_stale_upload_session_seconds()
+    _uploads.cleanup_stale_sessions(stale_seconds)
 
     matches = await _load_matches()
-    upload_sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, ("active", "completed", "cancelled", "replaced"))[:12]
+    upload_sessions = _uploads.list_session_views(stale_seconds, ("active", "completed", "cancelled", "replaced"))[:12]
     hls_missing_slots = _ready_slots_missing_hls(matches)
     transcoding_count = sum(
         1
@@ -986,12 +1094,12 @@ async def admin_diagnostics(request: Request):
         "disk": _disk_stats_payload(),
         "disk_usage_by_match": disk_by_match,
         "upload_limits": {
-            "max_upload_size_bytes": MAX_UPLOAD_SIZE_BYTES,
-            "chunk_size_bytes": UPLOAD_CHUNK_SIZE_BYTES,
-            "stale_upload_session_seconds": STALE_UPLOAD_SESSION_SECONDS,
+            "max_upload_size_bytes": current_max_upload_size_bytes(),
+            "chunk_size_bytes": current_upload_chunk_size_bytes(),
+            "stale_upload_session_seconds": stale_seconds,
         },
         "transcode": {
-            "concurrency_limit": TRANSCODE_CONCURRENCY,
+            "concurrency_limit": current_transcode_concurrency(),
             "gpu": _media.get_gpu_health(),
         },
         "hls": {
@@ -1002,6 +1110,193 @@ async def admin_diagnostics(request: Request):
         "active_jobs": active_jobs,
         "recent_errors": recent_errors,
     }
+
+
+# ---------------------------------------------------------------------------
+# Performance Tuning panel — host signals, throughput rollups, transcode RT
+# ---------------------------------------------------------------------------
+
+try:
+    import psutil as _psutil  # type: ignore
+except Exception:  # pragma: no cover — psutil is in requirements.txt
+    _psutil = None
+
+# NIC byte counters from the previous /api/admin/performance call. Used to
+# compute per-NIC bytes-per-second deltas without forcing the caller to poll.
+_perf_prev_net: dict = {"ts": 0.0, "tx": 0, "rx": 0}
+
+# Previous iGPU busy reading per engine — required because i915's `busy`
+# sysfs file is a monotonic ns-since-boot counter. A single read is
+# meaningless; only the delta between two reads taken `dt` seconds apart
+# yields a real busy %. None on first call (returns None to the caller).
+_perf_prev_gpu: dict = {"ts": 0.0, "engines": {}}  # name → ns-since-boot
+
+
+def _intel_gpu_busy_pct() -> float | None:
+    """Estimate iGPU busy % by diffing two reads of the i915 per-engine
+    `busy` sysfs counter. Returns None if the sysfs files don't exist
+    (non-Intel host) or this is the first call (no previous sample to
+    diff against).
+
+    Pattern matches the NIC bps delta a few lines down: cache the last
+    reading on the module, compute (curr - prev) / (now - prev_ts) on the
+    next call, and clamp to [0, 100].
+    """
+    base = Path("/sys/class/drm/card0/engine")
+    if not base.exists():
+        return None
+    now = time.time()
+    curr: dict[str, int] = {}
+    for engine_dir in base.iterdir():
+        busy_file = engine_dir / "busy"
+        if busy_file.is_file():
+            try:
+                curr[engine_dir.name] = int(busy_file.read_text().strip())
+            except (OSError, ValueError):
+                continue
+    if not curr:
+        return None
+
+    prev = _perf_prev_gpu
+    prev_engines = prev.get("engines") or {}
+    dt = now - prev.get("ts", 0.0)
+    # Update the cache before any early-return so the *next* call has a
+    # baseline to diff against.
+    _perf_prev_gpu.update(ts=now, engines=curr)
+
+    if not prev_engines or dt <= 0:
+        return None
+
+    # Average per-engine busy ratios. Each engine's `busy` advances by at
+    # most `dt * 1e9` ns (one full second of GPU time per wall second), so
+    # delta_ns / (dt * 1e9) gives a 0..1 fraction; multiply by 100.
+    ratios: list[float] = []
+    for name, ns in curr.items():
+        prev_ns = prev_engines.get(name)
+        if prev_ns is None:
+            continue  # engine appeared mid-flight; wait for next call
+        delta = max(0, ns - prev_ns)
+        pct = (delta / (dt * 1_000_000_000.0)) * 100.0
+        ratios.append(min(100.0, max(0.0, pct)))
+    if not ratios:
+        return None
+    return round(sum(ratios) / len(ratios), 1)
+
+
+def _host_signals() -> dict:
+    """Snapshot of CPU/RAM/swap/load/NIC. Falls back gracefully if psutil
+    is missing (returns just `os.getloadavg`)."""
+    out: dict = {}
+    try:
+        out["loadavg"] = list(os.getloadavg())
+    except (OSError, AttributeError):
+        out["loadavg"] = None
+
+    if _psutil is None:
+        out["psutil_available"] = False
+        return out
+
+    out["psutil_available"] = True
+    out["cpu_percent"] = _psutil.cpu_percent(interval=None)
+    out["cpu_count"] = _psutil.cpu_count(logical=True)
+    vm = _psutil.virtual_memory()
+    out["memory"] = {
+        "total": vm.total, "available": vm.available, "used": vm.used,
+        "percent": vm.percent,
+    }
+    sm = _psutil.swap_memory()
+    out["swap"] = {"total": sm.total, "used": sm.used, "percent": sm.percent}
+
+    # Per-NIC bytes; fold into a single tx/rx delta for the panel.
+    try:
+        now = time.time()
+        net = _psutil.net_io_counters(pernic=False)
+        prev = _perf_prev_net
+        delta_seconds = max(0.001, now - prev["ts"]) if prev["ts"] else None
+        out["net"] = {
+            "bytes_sent_total": net.bytes_sent,
+            "bytes_recv_total": net.bytes_recv,
+        }
+        if delta_seconds is not None:
+            out["net"]["bps_tx"] = round(max(0, net.bytes_sent - prev["tx"]) * 8 / delta_seconds, 1)
+            out["net"]["bps_rx"] = round(max(0, net.bytes_recv - prev["rx"]) * 8 / delta_seconds, 1)
+        _perf_prev_net.update(ts=now, tx=net.bytes_sent, rx=net.bytes_recv)
+    except Exception:
+        out["net"] = None
+
+    out["intel_gpu_busy_pct"] = _intel_gpu_busy_pct()
+    return out
+
+
+def _disk_pools() -> dict:
+    """Free/used for the SSD (DATA_DIR) plus the originals dir if it differs."""
+    pools: dict = {}
+    try:
+        total, used, free = shutil.disk_usage(DATA_DIR)
+        pools["ssd"] = {"path": str(DATA_DIR), "total": total, "used": used, "free": free}
+    except OSError:
+        pools["ssd"] = None
+    return pools
+
+
+@app.get("/api/admin/performance")
+async def admin_performance(request: Request):
+    """Aggregated throughput + host + transcode signals for the Performance
+    Tuning panel. Single round-trip per refresh; bundles cleanly for export."""
+    _auth.require_role(request, "admin")
+
+    settings = await _load_settings()
+    history = _media.get_transcode_history()
+    samples = _streams.get_throughput_samples()
+    capture = _streams.capture_status()
+    active_sessions = [s.to_dict() for s in _streams.registry.list_active()]
+
+    # Tail-summary: last sample's bps and the trailing average over ~30 s.
+    last = samples[-1] if samples else None
+    tail_window = samples[-30:] if samples else []
+    avg_live_bps = sum(s.get("bps_live_out", 0) for s in tail_window) / max(1, len(tail_window))
+    avg_vod_bps = sum(s.get("bps_vod_out", 0) for s in tail_window) / max(1, len(tail_window))
+
+    # Recent transcode realtime factors — newest first for display.
+    recent_rt = [h for h in reversed(history) if h.get("rt_factor") is not None][:10]
+
+    redacted_settings = {
+        # Tuning knobs only — never leak the full settings table here. Stream
+        # key is already stripped because admin_payload omits PRIVATE_SETTING_KEYS.
+        key: settings.get(key, "")
+        for key in _settings.TUNING_KNOBS.keys()
+    }
+
+    return {
+        "ts": _now_ms(),
+        "host": _host_signals(),
+        "disk": _disk_pools(),
+        "throughput": {
+            "samples": samples,
+            "last": last,
+            "avg_live_bps_30s": round(avg_live_bps, 1),
+            "avg_vod_bps_30s": round(avg_vod_bps, 1),
+            "capture": capture,
+        },
+        "transcode": {
+            "concurrency_limit": current_transcode_concurrency(),
+            "gpu": _media.get_gpu_health(),
+            "recent": recent_rt,
+            "history_size": len(history),
+        },
+        "active_sessions": active_sessions,
+        "tuning_settings": redacted_settings,
+    }
+
+
+@app.post("/api/admin/performance/capture")
+async def admin_performance_capture(request: Request, body: StartCaptureRequest | None = None):
+    """Start a high-frequency capture window. The sweeper samples at 1 Hz
+    instead of the regular interval for `body.seconds` seconds. Body is
+    optional; default 60 s, validated to [5, 600] by the Pydantic model."""
+    _auth.require_role(request, "admin")
+    seconds = body.seconds if body is not None else 60.0
+    return _streams.start_capture_window(seconds=seconds)
 
 
 @app.post("/api/admin/backfill-hls")
@@ -1303,15 +1598,17 @@ async def delete_match(match_id: str, request: Request):
 @app.post("/api/matches/{match_id}/upload-video/session")
 async def create_upload_session(match_id: str, request: Request, body: CreateUploadSessionRequest):
     _auth.require_role(request, "admin", "uploader")
-    _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
+    stale_seconds = current_stale_upload_session_seconds()
+    _uploads.cleanup_stale_sessions(stale_seconds)
     slot = request.query_params.get("slot", "full")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "slot must be full, first_half, or second_half")
 
     filename = body.filename.strip()
     size_bytes = body.size_bytes
-    if size_bytes > MAX_UPLOAD_SIZE_BYTES:
-        raise HTTPException(413, f"Uploaded file exceeds max size of {MAX_UPLOAD_SIZE_BYTES} bytes")
+    max_upload = current_max_upload_size_bytes()
+    if size_bytes > max_upload:
+        raise HTTPException(413, f"Uploaded file exceeds max size of {max_upload} bytes")
 
     ext = Path(filename).suffix.lower()
     if ext not in (".mp4", ".mkv"):
@@ -1340,7 +1637,7 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
     raw_path.unlink(missing_ok=True)
 
     session_id = uuid.uuid4().hex
-    chunk_size = UPLOAD_CHUNK_SIZE_BYTES
+    chunk_size = current_upload_chunk_size_bytes()
     total_chunks = max(1, math.ceil(size_bytes / chunk_size))
     now = time.time()
 
@@ -1386,11 +1683,12 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
 async def list_upload_sessions(request: Request):
     _auth.require_role(request, "admin", "uploader")
     status_param = (request.query_params.get("status") or "active").strip().lower()
+    stale_seconds = current_stale_upload_session_seconds()
     if status_param == "all":
-        sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, None)
+        sessions = _uploads.list_session_views(stale_seconds, None)
     else:
         statuses = tuple(part.strip() for part in status_param.split(",") if part.strip())[:8]
-        sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, statuses or ("active",))
+        sessions = _uploads.list_session_views(stale_seconds, statuses or ("active",))
     return {"sessions": sessions}
 
 
@@ -1457,7 +1755,7 @@ async def get_upload_session(session_id: str, request: Request):
     row = _uploads.get_session(session_id)
     if not row:
         raise HTTPException(404, "Upload session not found")
-    return _uploads.session_view(row, STALE_UPLOAD_SESSION_SECONDS)
+    return _uploads.session_view(row, current_stale_upload_session_seconds())
 
 
 @app.delete("/api/uploads/sessions/{session_id}")
@@ -1466,13 +1764,13 @@ async def cancel_upload_session(session_id: str, request: Request):
     row = _uploads.mark_session_status(session_id, "cancelled")
     if not row:
         raise HTTPException(404, "Upload session not found")
-    return {"ok": True, "session": _uploads.session_view(row, STALE_UPLOAD_SESSION_SECONDS)}
+    return {"ok": True, "session": _uploads.session_view(row, current_stale_upload_session_seconds())}
 
 
 @app.post("/api/uploads/sessions/cleanup")
 async def cleanup_upload_sessions(request: Request):
     _auth.require_role(request, "admin")
-    cleaned = _uploads.cleanup_stale_sessions(STALE_UPLOAD_SESSION_SECONDS)
+    cleaned = _uploads.cleanup_stale_sessions(current_stale_upload_session_seconds())
     expired = _uploads.cleanup_old_completed_sessions()
     orphaned = _uploads.cleanup_orphaned_raw_files(VIDEOS_DIR)
     return {
@@ -1549,14 +1847,15 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     vid_dir.mkdir(parents=True, exist_ok=True)
 
     raw_path = vid_dir / f"{slot}_raw{ext}"
+    max_upload = current_max_upload_size_bytes()
     logger.info(
         "Upload started: %s/%s filename=%s max_size_bytes=%d",
-        match_id, slot, fname, MAX_UPLOAD_SIZE_BYTES,
+        match_id, slot, fname, max_upload,
         extra={"match_id": match_id, "slot": slot, "filename": fname},
     )
     started_at = time.time()
     try:
-        bytes_written = await _save_upload_file(file, raw_path, max_size_bytes=MAX_UPLOAD_SIZE_BYTES)
+        bytes_written = await _save_upload_file(file, raw_path, max_size_bytes=max_upload)
     except HTTPException:
         raw_path.unlink(missing_ok=True)
         raise
@@ -1699,7 +1998,9 @@ async def stream_hls_master(match_id: str, slot: str, request: Request):
     return FileResponse(
         str(master_path),
         media_type="application/vnd.apple.mpegurl",
-        headers={"Cache-Control": "public, max-age=3600, immutable"},
+        # Playlists must NOT be `immutable` — re-transcode rewrites them.
+        # 60s revalidation matches the live HLS proxy policy in live.py.
+        headers={"Cache-Control": "public, max-age=60, must-revalidate"},
     )
 
 
@@ -1731,15 +2032,20 @@ async def stream_hls_asset(match_id: str, slot: str, asset_path: str, request: R
         pass
 
     media_type = "application/octet-stream"
+    cache_header = "public, max-age=31536000, immutable"
     if target_path.suffix == ".m3u8":
         media_type = "application/vnd.apple.mpegurl"
+        # Variant playlists revalidate too — see master.m3u8 above.
+        cache_header = "public, max-age=60, must-revalidate"
     elif target_path.suffix == ".ts":
         media_type = "video/mp2t"
+    elif target_path.suffix in (".m4s", ".mp4"):
+        media_type = "video/mp4"
 
     return FileResponse(
         str(target_path),
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=3600, immutable"},
+        headers={"Cache-Control": cache_header},
     )
 
 
@@ -1789,6 +2095,8 @@ def _range_file_response(
                 request.headers.get("user-agent", ""),
             )
 
+        chunk_bytes = current_video_stream_chunk_bytes()
+
         def _iter_range():
             with open(file_path, "rb") as f:
                 f.seek(start)
@@ -1796,7 +2104,7 @@ def _range_file_response(
                 while remaining > 0:
                     if session is not None and session.cancel.is_set():
                         break
-                    chunk = f.read(min(VIDEO_STREAM_CHUNK_BYTES, remaining))
+                    chunk = f.read(min(chunk_bytes, remaining))
                     if not chunk:
                         break
                     remaining -= len(chunk)

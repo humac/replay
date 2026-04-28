@@ -174,3 +174,155 @@ async def test_dashboard_data_endpoints_reachable(client, auth_headers):
     streams_data = streams.json()
     assert isinstance(streams_data.get("active"), list)
     assert isinstance(streams_data.get("blocks"), list)
+
+
+# ---------------------------------------------------------------------------
+# Performance Tuning panel — /api/admin/performance + /capture
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_performance_endpoint_shape(client, auth_headers):
+    """The Performance Tuning admin endpoint returns the keys the frontend
+    panel reads in renderPerformanceTuning()."""
+    resp = await client.get("/api/admin/performance", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Top-level shape consumed by the panel.
+    for key in ("ts", "host", "disk", "throughput", "transcode", "active_sessions", "tuning_settings"):
+        assert key in data, f"missing top-level key: {key}"
+
+    # Throughput sub-shape.
+    tp = data["throughput"]
+    assert "samples" in tp
+    assert "capture" in tp
+    assert isinstance(tp["samples"], list)
+    assert isinstance(tp["capture"], dict)
+    assert "fast" in tp["capture"]
+    assert "remaining_seconds" in tp["capture"]
+
+    # Transcode sub-shape.
+    tx = data["transcode"]
+    assert "concurrency_limit" in tx
+    assert "gpu" in tx
+    assert "recent" in tx
+    assert isinstance(tx["recent"], list)
+
+    # Tuning settings echo back the keys (no values leaked beyond them).
+    assert isinstance(data["tuning_settings"], dict)
+    assert "transcode_concurrency" in data["tuning_settings"]
+
+
+@pytest.mark.asyncio
+async def test_performance_endpoint_admin_only(client, auth_headers):
+    """Non-admin users cannot read /api/admin/performance."""
+    await client.post("/api/users", json={
+        "username": "viewer_perf_test",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    resp = await client.post("/api/login", json={
+        "username": "viewer_perf_test",
+        "password": "password123",
+    })
+    viewer_headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
+    resp = await client.get("/api/admin/performance", headers=viewer_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_capture_endpoint_default_seconds(client, auth_headers):
+    """POST without a body starts the capture with the default 60 s."""
+    resp = await client.post("/api/admin/performance/capture", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["fast"] is True
+    # Default is 60s; allow a small slack for clock granularity.
+    assert 55 <= data["remaining_seconds"] <= 60
+
+
+@pytest.mark.asyncio
+async def test_capture_endpoint_validates_range(client, auth_headers):
+    """The Pydantic model rejects out-of-range seconds with 422."""
+    # Below minimum (5 s).
+    resp = await client.post(
+        "/api/admin/performance/capture",
+        json={"seconds": 1},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+    # Above maximum (600 s).
+    resp = await client.post(
+        "/api/admin/performance/capture",
+        json={"seconds": 99999},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_capture_endpoint_admin_only(client, auth_headers):
+    """Non-admins can't start a capture window."""
+    await client.post("/api/users", json={
+        "username": "viewer_capture_test",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    resp = await client.post("/api/login", json={
+        "username": "viewer_capture_test",
+        "password": "password123",
+    })
+    viewer_headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
+    resp = await client.post("/api/admin/performance/capture", headers=viewer_headers)
+    assert resp.status_code == 403
+
+
+def test_intel_gpu_busy_returns_none_without_sysfs(tmp_path, monkeypatch):
+    """On hosts without /sys/class/drm/card0/engine, helper returns None
+    rather than the previous always-100% fake value."""
+    import server
+
+    # Reset the per-engine cache so prior test runs don't leak in.
+    server._perf_prev_gpu.update(ts=0.0, engines={})
+    # Point the helper at a non-existent base via monkeypatching Path? The
+    # helper hardcodes the path, so we just rely on the file not existing
+    # in the test environment. Both macOS dev and Linux CI without an
+    # Intel iGPU should miss this dir.
+    from pathlib import Path as _Path
+    if _Path("/sys/class/drm/card0/engine").exists():
+        pytest.skip("test host has an Intel iGPU; skipping null-path assertion")
+    assert server._intel_gpu_busy_pct() is None
+
+
+def test_intel_gpu_busy_diff_pattern(tmp_path, monkeypatch):
+    """With two simulated reads of the per-engine `busy` counter, the helper
+    returns a delta-derived percentage instead of the broken absolute value.
+
+    Simulates an engine that advanced 0.5 s of GPU time across 1 s of wall
+    time — should report ~50 % busy."""
+    import server
+    import time as _time
+
+    fake_engine = tmp_path / "engine" / "rcs0"
+    fake_engine.mkdir(parents=True)
+    busy_file = fake_engine / "busy"
+
+    monkeypatch.setattr(
+        "server.Path",
+        lambda p: tmp_path / "engine" if p == "/sys/class/drm/card0/engine" else server.Path(p),
+    )
+    server._perf_prev_gpu.update(ts=0.0, engines={})
+
+    # First call seeds the cache; returns None because there's no prior.
+    busy_file.write_text("0")
+    assert server._intel_gpu_busy_pct() is None
+
+    # Pretend a second elapsed and 5e8 ns (0.5 s) of GPU time accumulated.
+    server._perf_prev_gpu["ts"] = _time.time() - 1.0
+    busy_file.write_text(str(500_000_000))
+    pct = server._intel_gpu_busy_pct()
+    assert pct is not None
+    assert 40.0 <= pct <= 60.0, f"expected ~50%, got {pct}"

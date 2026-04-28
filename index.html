@@ -698,6 +698,28 @@
                                 </div>
                             </div>
 
+                            <div class="options-card mt-4" id="tuning-knobs-card">
+                                <div class="admin-card-head">
+                                    <h3>Performance Tuning</h3>
+                                    <span class="admin-card-kicker">Encoder, uploads, live</span>
+                                </div>
+                                <p class="admin-panel-copy">
+                                    Knobs that used to live in env vars. Most apply on the next call;
+                                    a few (segment duration, live HLS variant, recording, live transcode)
+                                    require a process or MediaMTX restart and are flagged as such.
+                                </p>
+                                <div class="admin-panel-actions">
+                                    <button type="button" class="btn-secondary" data-tuning-preset="conservative">Conservative</button>
+                                    <button type="button" class="btn-secondary" data-tuning-preset="balanced-10g">Balanced 10 GbE</button>
+                                    <button type="button" class="btn-secondary" data-tuning-preset="live-first">Live-first</button>
+                                </div>
+                                <div id="tuning-knobs-grid" class="form-grid"></div>
+                                <div class="diagnostics-section mt-4">
+                                    <div class="diagnostics-section-title">Recent changes</div>
+                                    <div id="tuning-audit-list" class="session-list"></div>
+                                </div>
+                            </div>
+
                             <div class="form-actions mt-4">
                                 <button type="submit" id="settings-submit-btn" class="btn-primary">Save Settings</button>
                             </div>
@@ -741,6 +763,33 @@
                                     <div class="diagnostics-section-title">This Browser Can Resume</div>
                                     <div id="local-upload-sessions-list" class="session-list"></div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div class="options-card admin-ops-card mt-4" id="performance-tuning-card">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <h3>Performance Tuning</h3>
+                                    <p class="admin-panel-copy">
+                                        Live throughput, host load, iGPU activity, and transcode realtime factor.
+                                        Use the snapshot button to copy a redacted JSON bundle into a coding agent.
+                                    </p>
+                                </div>
+                                <div class="admin-panel-actions">
+                                    <button type="button" class="btn-secondary" id="perf-refresh-btn">Refresh</button>
+                                    <button type="button" class="btn-secondary" id="perf-capture-btn">Start 60-s capture</button>
+                                    <button type="button" class="btn-secondary" id="perf-copy-btn">Copy snapshot</button>
+                                    <button type="button" class="btn-secondary" id="perf-download-btn">Download JSON</button>
+                                </div>
+                            </div>
+                            <div id="perf-grid" class="diagnostics-grid"></div>
+                            <div class="diagnostics-section mt-3">
+                                <div class="diagnostics-section-title">Recent Transcodes (realtime factor)</div>
+                                <div id="perf-rt-list" class="session-list"></div>
+                            </div>
+                            <div class="diagnostics-section mt-3">
+                                <div class="diagnostics-section-title">Active Streaming Throughput</div>
+                                <div id="perf-sessions-list" class="session-list"></div>
                             </div>
                         </div>
                     </section>

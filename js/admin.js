@@ -142,8 +142,10 @@ export const adminMixin = {
                 break;
             case 'system':
                 this.refreshAdminDiagnostics?.();
+                this.startPerformanceTuningPolling?.();
                 break;
         }
+        if (section !== 'system') this.stopPerformanceTuningPolling?.();
     },
 
     startAdminStatusPolling() {

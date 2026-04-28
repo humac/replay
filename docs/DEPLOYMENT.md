@@ -28,29 +28,79 @@ Requires Python 3.10+ and `ffmpeg`/`ffprobe` on PATH.
 
 ## Environment Variables
 
+Most performance/upload knobs that used to live as env vars are now editable
+from the admin Settings page (under "Performance Tuning"). The env vars below
+are still read on **first boot only** — if no DB row exists yet, the env value
+seeds the setting, then the env var is ignored. Edit through the UI thereafter.
+
+**Env-only (boot-time):**
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ADMIN_USER` | `admin` | Env-var superadmin username |
 | `ADMIN_PASS` | (none) | Env-var superadmin password |
 | `REPLAY_PORT` | `8090` | HTTP listen port |
 | `REPLAY_DATA_DIR` | `/tank/replay` | Root data directory (DB + videos) |
-| `MAX_UPLOAD_SIZE_BYTES` | 12 GB | Max upload file size |
-| `UPLOAD_CHUNK_SIZE_BYTES` | 16 MB | Chunked upload piece size |
-| `TRANSCODE_CONCURRENCY` | `2` | Max simultaneous transcode jobs |
-| `VIDEO_STREAM_CHUNK_BYTES` | 1 MB | Video streaming chunk size |
-| `HLS_SEGMENT_DURATION` | `6` | HLS segment length in seconds |
-| `MIN_FREE_DISK_BYTES` | 20 GB | Minimum free disk to accept uploads |
-| `UPLOAD_DISK_HEADROOM_MULTIPLIER` | `2.2` | Upload size × this = required free space |
-| `STALE_UPLOAD_SESSION_SECONDS` | 6 hours | Idle upload session timeout |
 | `ALLOWED_ORIGINS` | (empty) | Comma-separated hostnames for login origin check |
 | `LOG_FORMAT` | `json` | `json` or `text` |
 | `LOG_LEVEL` | `INFO` | Python log level |
-| `GEOIP_DB_PATH` | `<REPLAY_DATA_DIR>/app_assets/GeoLite2-City.mmdb` | Path to MaxMind GeoLite2 City DB used by the admin "Active streaming connections" panel |
+| `GEOIP_DB_PATH` | `<REPLAY_DATA_DIR>/app_assets/GeoLite2-City.mmdb` | Path to MaxMind GeoLite2 City DB |
+| `MEDIAMTX_HLS_URL` | `http://mediamtx:8888` | Internal LL-HLS address |
+| `MEDIAMTX_API_URL` | `http://mediamtx:9997` | Internal control API |
+| `TRUSTED_PROXY` | `cloudflare` | `cloudflare` or `none` (see streams.py) |
+| `LIVE_AUTH_SECRET` | (empty) | Shared secret MediaMTX sends in `X-Internal-Secret` |
 
-## Reverse Proxy (Nginx / Caddy)
+**First-boot fallback (otherwise edited in admin Settings → Performance Tuning):**
 
-Replay serves its own static assets; place a reverse proxy in front for TLS
-and caching.  Important headers to pass through:
+| Variable | Maps to setting | Default |
+|----------|-----------------|---------|
+| `TRANSCODE_CONCURRENCY` | `transcode_concurrency` | `2` |
+| `REPLAY_HWACCEL` | `replay_hwaccel` (`auto`/`qsv`/`vaapi`/`nvenc`/`cpu`) | `auto` |
+| `HLS_SEGMENT_DURATION` | `hls_segment_duration` | `6` |
+| `MAX_UPLOAD_SIZE_BYTES` | `max_upload_size_bytes` | 12 GiB |
+| `UPLOAD_CHUNK_SIZE_BYTES` | `upload_chunk_size_bytes` | 16 MiB |
+| `VIDEO_STREAM_CHUNK_BYTES` | `video_stream_chunk_bytes` | 1 MiB |
+| `MIN_FREE_DISK_BYTES` | `min_free_disk_bytes` | 20 GiB |
+| `UPLOAD_DISK_HEADROOM_MULTIPLIER` | `upload_disk_headroom_multiplier` | `2.2` |
+| `STALE_UPLOAD_SESSION_SECONDS` | `stale_upload_session_seconds` | 21600 (6 h) |
+
+The admin Settings page also exposes `hls_variant_presets` (the ABR ladder),
+`live_hls_variant`, `live_record_enabled`, and `live_transcode_enabled`, which
+have no env-var equivalent. Knobs flagged "Restart required" persist
+immediately but only take effect on the next process restart (or on the next
+new transcode for ladder/segment-duration changes).
+
+**Tuning presets** (one click in the Settings page):
+
+- **Conservative** — current defaults, safe baseline.
+- **Balanced 10 GbE** — `transcode_concurrency=4`, `replay_hwaccel=qsv`,
+  `hls_segment_duration=4`, larger chunk sizes. Recommended for the
+  Terramaster F6-424 Max with Iris Xe + 10 GbE LAN.
+- **Live-first** — `replay_hwaccel=qsv`, `live_hls_variant=lowLatency`,
+  `live_record_enabled=1`, `live_transcode_enabled=1`. Favors live ingest.
+
+## Reverse Proxy (Caddy — bundled)
+
+A `Caddyfile` and `caddy` compose service ship with the project. Caddy
+terminates port 80 and:
+
+- Serves VOD HLS `.ts/.m4s/.mp4` segments and variant playlists **directly
+  from the `/data` bind-mount via `sendfile()`** — drops Python out of the
+  hot path so 10 GbE LAN delivery is achievable.
+- Reverse-proxies everything else (live HLS proxy at `/api/live/hls/*`, MP4
+  ranges, all `/api/*` admin endpoints, the SPA shell) to the replay app on
+  `:8090`.
+- Mirrors the cache policy the replay app uses for HLS: playlists
+  `public, max-age=60, must-revalidate`, segments
+  `public, max-age=31536000, immutable`.
+
+The bind-mount is read-only inside the Caddy container.
+
+For TLS / WAN, run Caddy behind Cloudflare Tunnel (existing setup) or
+front it with a TLS terminator. Don't enable Caddy's automatic HTTPS in
+homelab unless you've fronted DNS-01 with your provider.
+
+If you prefer Nginx, important headers to pass through:
 
 ```
 proxy_set_header Host $host;
@@ -59,7 +109,7 @@ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto $scheme;
 ```
 
-Set `client_max_body_size` to match `MAX_UPLOAD_SIZE_BYTES` (or larger) if
+Set `client_max_body_size` to match `max_upload_size_bytes` (or larger) if
 using non-chunked uploads.  Chunked uploads send small pieces so this is
 usually not an issue.
 

@@ -50,6 +50,23 @@ services:
               device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
               capabilities: [gpu, video]
 
+  # Caddy — reverse proxy. Serves VOD HLS .ts segments directly from the
+  # /data volume (sendfile, saturates 10 GbE) and reverse-proxies everything
+  # else to the replay app on :8090. See ./Caddyfile.
+  caddy:
+    image: caddy:2-alpine
+    container_name: replay-caddy
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - replay_data:/data:ro
+      - replay_caddy_data:/data/caddy
+      - replay_caddy_config:/config
+    depends_on:
+      - replay
+    restart: unless-stopped
+
   # MediaMTX — RTMP ingest (camera push) → LL-HLS output (browser playback).
   # Only RTMP (1935) is exposed publicly; HLS and the control API stay on the
   # internal compose network and are reverse-proxied by `replay` so viewers and
@@ -94,3 +111,5 @@ services:
 
 volumes:
   replay_data:
+  replay_caddy_data:
+  replay_caddy_config:
