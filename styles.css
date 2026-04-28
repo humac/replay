@@ -2152,6 +2152,12 @@ button {
     .game-matchup {
         gap: 0.9rem;
     }
+    .score-reveal-chip-large {
+        padding: 0.3rem 0.7rem;
+        min-height: 32px;
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+    }
     .game-meta-row {
         flex-direction: column;
         gap: 1rem;
