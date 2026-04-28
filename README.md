@@ -27,19 +27,51 @@ After adding a match, the season view displays cards with team logos, score, dat
 
 ## Quick Start
 
-### Prerequisites
+### Run locally (Mac, no Docker)
 
-- Python 3.11+
-- ffmpeg (for MKV remux support)
+**1. Install prerequisites**
 
-### Install & Run
+```bash
+brew install python@3.11 ffmpeg
+```
+
+Verify both are available:
+
+```bash
+python3 --version   # 3.11+
+ffmpeg -version
+ffprobe -version
+```
+
+**2. Install Python dependencies**
 
 ```bash
 pip install -r requirements.txt
+```
+
+**3. Configure environment**
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local` — at minimum set:
+
+- `ADMIN_PASS` — required, the server refuses to start without it
+- `REPLAY_DATA_DIR` — change from `/data` to a writable local path, e.g. `~/replay-data`
+- `REPLAY_HWACCEL=cpu` — disables NVENC/VAAPI GPU detection (not available on Mac)
+
+**4. Create the data directory and start**
+
+```bash
+mkdir -p ~/replay-data
+source .env.local
 python server.py
 ```
 
-Open [http://localhost:8090](http://localhost:8090) in your browser.
+Open [http://localhost:8090](http://localhost:8090) and log in with `admin` / your `ADMIN_PASS`.
+
+> **Note:** Live streaming (RTMP → LL-HLS) requires the `mediamtx` sidecar from Docker Compose and is not available in the bare-metal setup. Transcoding falls back to `libx264` automatically when `REPLAY_HWACCEL=cpu`.
 
 ### Run with Docker
 
