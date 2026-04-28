@@ -890,14 +890,6 @@ export const adminViewsMixin = {
         const restore = this.btnLoading(submitBtn, editId ? 'Updating...' : 'Creating...');
 
         try {
-            if (!editId && format === 'full' && !fullFile) {
-                throw new Error('Please choose a full-match video file before creating the match.');
-            }
-
-            if (!editId && format === 'two_halves' && !firstFile && !secondFile) {
-                throw new Error('Please choose at least one half video before creating the match.');
-            }
-
             const filesToValidate = [];
             if (format === 'full' && fullFile) filesToValidate.push(fullFile);
             if (format === 'two_halves' && firstFile) filesToValidate.push(firstFile);

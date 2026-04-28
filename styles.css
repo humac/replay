@@ -1440,6 +1440,14 @@ button {
     font-weight: 700;
 }
 
+.label-optional {
+    font-size: 0.72rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    opacity: 0.65;
+}
+
 .form-group input[type="text"],
 .form-group input[type="date"],
 .form-group input[type="time"],
