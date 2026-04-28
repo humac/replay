@@ -910,11 +910,16 @@ export const adminViewsMixin = {
 
             let match;
             if (editId) {
+                const headers = { 'Content-Type': 'application/json', ...this.getAuthHeaders() };
+                if (this._editMatchETag) headers['If-Match'] = `"${this._editMatchETag}"`;
                 const resp = await this.authFetch(`/api/matches/${editId}`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                    headers,
                     body: JSON.stringify(matchData),
                 });
+                if (resp.status === 409) {
+                    throw new Error('Match was modified by another user. Reload the page and try again.');
+                }
                 if (!resp.ok) {
                     const err = await resp.json().catch(() => ({}));
                     throw new Error(err.detail || 'Failed to update match');
@@ -983,6 +988,7 @@ export const adminViewsMixin = {
         if (this.authToken) this.refreshAdminDiagnostics();
 
         document.getElementById('edit-match-id').value = match.id;
+        this._editMatchETag = match.updated_at || null;
         document.getElementById('f-home-team').value = match.home_team || '';
         document.getElementById('f-away-team').value = match.away_team || '';
         document.getElementById('f-date').value = match.date || '';
@@ -1014,6 +1020,7 @@ export const adminViewsMixin = {
 
     cancelEdit() {
         document.getElementById('edit-match-id').value = '';
+        this._editMatchETag = null;
         document.getElementById('add-match-form').reset();
         document.getElementById('form-heading').textContent = 'Add New Match';
         document.getElementById('submit-btn').textContent = 'Create Match';
