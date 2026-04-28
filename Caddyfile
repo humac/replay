@@ -124,9 +124,21 @@
 	# `file_server` will return 404 (same user-visible behavior as the
 	# replay app's own 404).
 	#
-	# CSP `script-src 'none'` is emitted unconditionally — it's a no-op
-	# for PNG/JPG/WebP (browsers ignore CSP on non-HTML/SVG responses)
-	# but prevents stored XSS via user-uploaded SVG logos.
+	# Stored-XSS hardening for user-uploaded SVG logos:
+	#   - CSP `script-src 'none'` blocks inline <script> when an SVG is
+	#     loaded directly or via <object>/<iframe>.
+	#   - `X-Content-Type-Options: nosniff` keeps browsers from
+	#     re-interpreting an `image/<x>` body as HTML/SVG when the
+	#     extension and content disagree.
+	#   - `Content-Disposition: inline` mirrors the FastAPI `serve_logo`
+	#     hardening so behavior is identical whether Caddy short-circuits
+	#     or the request falls through to the app.
+	# All three headers are no-ops for PNG/JPG/WebP (browsers ignore
+	# CSP on non-HTML/SVG responses) so emitting them unconditionally
+	# is safe and keeps the config simple. Logo upload is admin/uploader-
+	# gated, so this is defense-in-depth — a compromised account or a
+	# careless paste of a third-party SVG should not be able to execute
+	# script in the replay app's origin.
 	@match_logo {
 		path_regexp match_logo ^/api/matches/([^/]+)/logo/(home|away)/?$
 	}
@@ -136,6 +148,8 @@
 		header Cache-Control "public, max-age=300, must-revalidate"
 		header Access-Control-Allow-Origin "*"
 		header Content-Security-Policy "script-src 'none'"
+		header X-Content-Type-Options "nosniff"
+		header Content-Disposition "inline"
 		file_server
 	}
 

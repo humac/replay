@@ -299,6 +299,8 @@ configs:
       		header Cache-Control "public, max-age=300, must-revalidate"
       		header Access-Control-Allow-Origin "*"
       		header Content-Security-Policy "script-src 'none'"
+      		header X-Content-Type-Options "nosniff"
+      		header Content-Disposition "inline"
       		file_server
       	}
 
