@@ -120,9 +120,9 @@ Findings from a full-project security / correctness / quality pass after Milesto
 - [ ] **m4.** Stream block TTL uses wall-clock time (`time.time()`), not monotonic. NTP backward-jump can permanently strand a block.
 - [ ] **m5.** HLS session keying by `(ip, ua)` permanently under-counts viewers behind carrier-grade NAT. Document, don't fix.
 - [x] **m6.** Defense-in-depth: add `.resolve()` containment checks on `serve_thumbnail` (`server.py:1752`) and `serve_logo` (`server.py:1725`).
-- [ ] **m7.** 401-handling pattern repeats 6+ times across `views.js`/`live.js`/`admin.js`. Fix: a `fetchJson(url, opts)` helper handling 401/403 in one place.
-- [ ] **m8.** `loadMatches` on transient network error sets `this.matches = []`, blanking the UI. Preserve previous list and surface a "couldn't refresh" toast.
-- [ ] **m9.** History routing: `editMatch` silently no-ops if a deleted match is restored from history. Fall through to `showAdminView('matches')` if match is gone.
+- [x] **m7.** 401-handling pattern repeats 6+ times across `views.js`/`live.js`/`admin.js`. Fix: a `fetchJson(url, opts)` helper handling 401/403 in one place.
+- [x] **m8.** `loadMatches` on transient network error sets `this.matches = []`, blanking the UI. Preserve previous list and surface a "couldn't refresh" toast.
+- [x] **m9.** History routing: `editMatch` silently no-ops if a deleted match is restored from history. Fall through to `showAdminView('matches')` if match is gone.
 - [ ] **m10.** `team-stats-grid` sub-grid coupling with `grid-column: 1/-1` on inner children is implicit. Add a comment in the CSS block.
 
 ---

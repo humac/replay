@@ -27,7 +27,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
 - `js/utils.js`: pure utility functions (esc, formatDate, statusLabel, etc.)
-- `js/api.js`: auth, data loading, settings, transcode polling
+- `js/api.js`: auth, data loading, settings, transcode polling; `authFetch(url, opts)` wraps `fetch` and handles 401 (clears session, shows login modal, throws) — use it for all authenticated requests instead of repeating the 401 boilerplate
 - `js/player.js`: AirPlay, Chromecast, HLS playback, position/speed memory, keyboard shortcuts, match navigation
 - `js/uploads.js`: chunked upload sessions, resume logic
 - `js/views.js`: season view, game view, match form, settings form, admin diagnostics renderers (consumed by `js/admin.js`); `updateTranscodeBadges()` for targeted badge-only updates during transcode polling (avoids full grid re-render)

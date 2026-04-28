@@ -178,14 +178,9 @@ export const adminMixin = {
         }
         try {
             const [diagResp, streamsResp] = await Promise.all([
-                fetch('/api/admin/diagnostics', { headers: this.getAuthHeaders() }),
-                fetch('/api/admin/streams', { headers: this.getAuthHeaders() }),
+                this.authFetch('/api/admin/diagnostics', { headers: this.getAuthHeaders() }),
+                this.authFetch('/api/admin/streams', { headers: this.getAuthHeaders() }),
             ]);
-            if (diagResp.status === 401 || streamsResp.status === 401) {
-                this.setLoggedOut();
-                sessionStorage.removeItem('replay_admin_token');
-                return;
-            }
             const diag = diagResp.ok ? await diagResp.json() : null;
             const streams = streamsResp.ok ? await streamsResp.json() : null;
             this.renderAdminStatusStrip({ diag, streams });

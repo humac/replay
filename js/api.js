@@ -9,6 +9,17 @@ export const apiMixin = {
         return headers;
     },
 
+    async authFetch(url, opts = {}) {
+        const resp = await fetch(url, opts);
+        if (resp.status === 401) {
+            this.setLoggedOut();
+            sessionStorage.removeItem('replay_admin_token');
+            this.showLoginModal();
+            throw new Error('Session expired. Please log in again.');
+        }
+        return resp;
+    },
+
     async checkAuth() {
         const token = sessionStorage.getItem('replay_admin_token');
         if (!token) {
@@ -131,12 +142,14 @@ export const apiMixin = {
     },
 
     async loadMatches() {
+        const hadData = this.matches.length > 0;
         try {
             const resp = await fetch('/api/matches');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             this.matches = await resp.json();
         } catch (e) {
             console.error('Failed to load matches', e);
-            this.matches = [];
+            if (hadData) this.showInfo("Couldn't refresh matches — showing last known data.");
         }
     },
 

@@ -250,17 +250,11 @@ export const viewsMixin = {
         if (!input || !input.files[0]) return;
         const form = new FormData();
         form.append('file', input.files[0]);
-        const resp = await fetch(`/api/admin/settings/asset?kind=${kind}`, {
+        const resp = await this.authFetch(`/api/admin/settings/asset?kind=${kind}`, {
             method: 'POST',
             headers: this.getAuthHeaders(),
             body: form,
         });
-        if (resp.status === 401) {
-            this.setLoggedOut();
-            sessionStorage.removeItem('replay_admin_token');
-            this.showLoginModal();
-            throw new Error('Session expired. Please log in again.');
-        }
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
             throw new Error(err.detail || `Failed to upload ${kind}`);
@@ -296,17 +290,11 @@ export const viewsMixin = {
 
         const restore = this.btnLoading(submitBtn, 'Saving...');
         try {
-            const resp = await fetch('/api/admin/settings', {
+            const resp = await this.authFetch('/api/admin/settings', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
                 body: JSON.stringify(body),
             });
-            if (resp.status === 401) {
-                this.setLoggedOut();
-                sessionStorage.removeItem('replay_admin_token');
-                this.showLoginModal();
-                throw new Error('Session expired. Please log in again.');
-            }
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
                 throw new Error(err.detail || 'Failed to save settings');
@@ -339,15 +327,9 @@ export const viewsMixin = {
         if (localList) localList.innerHTML = '<div class="session-empty">Checking resumable uploads...</div>';
 
         try {
-            const resp = await fetch('/api/admin/diagnostics', {
+            const resp = await this.authFetch('/api/admin/diagnostics', {
                 headers: this.getAuthHeaders(),
             });
-            if (resp.status === 401) {
-                this.setLoggedOut();
-                sessionStorage.removeItem('replay_admin_token');
-                this.showLoginModal();
-                return;
-            }
             if (!resp.ok) throw new Error('Failed to load diagnostics');
             this.diagnostics = await resp.json();
             this.renderAdminDiagnostics();
@@ -1006,30 +988,18 @@ export const viewsMixin = {
 
             let match;
             if (editId) {
-                const resp = await fetch(`/api/matches/${editId}`, {
+                const resp = await this.authFetch(`/api/matches/${editId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
                     body: JSON.stringify(matchData),
                 });
-                if (resp.status === 401) {
-                    this.setLoggedOut();
-                    sessionStorage.removeItem('replay_admin_token');
-                    this.showLoginModal();
-                    throw new Error('Session expired. Please log in again.');
-                }
                 match = await resp.json();
             } else {
-                const resp = await fetch('/api/matches', {
+                const resp = await this.authFetch('/api/matches', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
                     body: JSON.stringify(matchData),
                 });
-                if (resp.status === 401) {
-                    this.setLoggedOut();
-                    sessionStorage.removeItem('replay_admin_token');
-                    this.showLoginModal();
-                    throw new Error('Session expired. Please log in again.');
-                }
                 if (!resp.ok) {
                     const err = await resp.json();
                     throw new Error(err.detail || 'Failed to create match');
@@ -1078,7 +1048,10 @@ export const viewsMixin = {
 
     editMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         const match = this.matches.find(m => m.id === matchId);
-        if (!match) return;
+        if (!match) {
+            this.showAdminView('matches', { pushHistory });
+            return;
+        }
 
         this.showAdminView('matches', { pushHistory: false, scrollTop: false });
         if (this.authToken) this.refreshAdminDiagnostics();
@@ -1132,13 +1105,7 @@ export const viewsMixin = {
         if (!ok) return;
 
         try {
-            const resp = await fetch(`/api/matches/${matchId}`, { method: 'DELETE', headers: this.getAuthHeaders() });
-            if (resp.status === 401) {
-                this.setLoggedOut();
-                sessionStorage.removeItem('replay_admin_token');
-                this.showLoginModal();
-                throw new Error('Session expired. Please log in again.');
-            }
+            const resp = await this.authFetch(`/api/matches/${matchId}`, { method: 'DELETE', headers: this.getAuthHeaders() });
             if (!resp.ok) throw new Error('Failed to delete');
             await this.loadMatches();
             this.renderSeasonView();
