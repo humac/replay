@@ -1316,21 +1316,33 @@ async def admin_match_errors(match_id: str, request: Request):
 
 @app.post("/api/admin/matches/{match_id}/slots/{slot}/retry")
 async def admin_retry_transcode(match_id: str, slot: str, request: Request):
-    """Retry a failed transcode from the existing MP4 or raw upload file."""
+    """Re-transcode a slot from the existing MP4 or raw upload file.
+
+    Default mode: only `error` slots can be retried. Pass `?force=true` to
+    retranscode a `ready` slot — useful for picking up new encoder settings
+    (QSV, 1440p tier, audio bitrate) on already-completed matches without a
+    fresh upload. `transcoding` slots are always rejected.
+    """
     user = _auth.require_role(request, "admin")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
+    force = (request.query_params.get("force") or "").strip().lower() in {"1", "true", "yes", "on"}
 
-    # CAS: status 'error' → 'transcoding' inside the lock so concurrent retries
-    # are rejected before either reaches the filesystem.
+    # CAS: status 'error' (or 'ready' with ?force) → 'transcoding' inside the
+    # lock so concurrent retries are rejected before either reaches the FS.
     async with MATCHES_LOCK:
         matches = _db.load_matches_unlocked()
         match = _db.find_match(matches, match_id)
         if not match:
             raise HTTPException(404, "Match not found")
         current_status = _get_video_status(match, slot)
-        if current_status != "error":
-            raise HTTPException(409, f"Slot status is '{current_status}', must be 'error' to retry")
+        allowed = {"error"} if not force else {"error", "ready"}
+        if current_status not in allowed:
+            hint = "" if force else " (pass ?force=true to re-transcode a ready slot)"
+            raise HTTPException(
+                409,
+                f"Slot status is '{current_status}', must be {sorted(allowed)} to retry{hint}",
+            )
         match.setdefault("video_status", {})[slot] = "transcoding"
         _db.save_matches_unlocked(matches)
 
@@ -1374,8 +1386,16 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
         )
 
     _spawn_transcode(match_id, slot, src, final_path)
-    logger.info("admin.action", extra={"action": "retry_transcode", "actor": user["username"], "target_id": match_id, "slot": slot})
-    return {"ok": True, "status": "transcoding", "source": src.name}
+    logger.info(
+        "admin.action",
+        extra={
+            "action": "retry_transcode" if not force else "force_retranscode",
+            "actor": user["username"],
+            "target_id": match_id,
+            "slot": slot,
+        },
+    )
+    return {"ok": True, "status": "transcoding", "source": src.name, "forced": force}
 
 
 @app.post("/api/admin/matches/{match_id}/slots/{slot}/regenerate-hls")

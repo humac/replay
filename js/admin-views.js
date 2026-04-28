@@ -939,7 +939,7 @@ export const adminViewsMixin = {
     async regenerateHls(matchId, slot) {
         const ok = await this.confirmAction({
             title: 'Regenerate HLS',
-            message: `Rebuild the HLS variant ladder for ${this.slotLabel(slot)}?`,
+            message: `Rebuild the HLS variant ladder for ${this.slotLabel(slot)}? Uses the existing MP4 — no re-encode.`,
             confirmLabel: 'Regenerate',
         });
         if (!ok) return;
@@ -954,9 +954,86 @@ export const adminViewsMixin = {
             }
             this.showSuccess(`HLS regenerated for ${slot}.`);
             await this.refreshAdminDiagnostics();
+            await this.renderLibraryMaintenance?.();
         } catch (error) {
             this.showError(error.message);
         }
+    },
+
+    async forceRetranscode(matchId, slot) {
+        const ok = await this.confirmAction({
+            title: 'Re-transcode slot',
+            message: `Re-encode the ${this.slotLabel(slot)} slot from scratch? This is multi-minute per match. Use it to pick up new encoder settings (QSV, 1440p, audio bitrate).`,
+            confirmLabel: 'Re-transcode',
+            danger: true,
+        });
+        if (!ok) return;
+        try {
+            const resp = await fetch(
+                `/api/admin/matches/${matchId}/slots/${slot}/retry?force=true`,
+                { method: 'POST', headers: this.getAuthHeaders() },
+            );
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Re-transcode failed to start');
+            }
+            this.showSuccess(`Re-transcode started for ${slot}.`);
+            await this.refreshAdminDiagnostics();
+            await this.renderLibraryMaintenance?.();
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async renderLibraryMaintenance() {
+        // /admin/system is admin-only via routing (ADMIN_ONLY_SECTIONS in
+        // admin.js), so this code only runs for admin users — the markup
+        // never reaches a viewer/uploader. Defensive isAdmin check is
+        // belt-and-braces against future routing changes.
+        if (!this.isAdmin?.()) return;
+        const card = document.getElementById('library-maintenance-card');
+        const list = document.getElementById('lib-ready-slots-list');
+        if (!card || !list) return;
+
+        // One-time wire of the refresh button.
+        if (!card.dataset.wired) {
+            card.dataset.wired = '1';
+            document.getElementById('lib-refresh-btn')?.addEventListener('click', () => this.renderLibraryMaintenance());
+        }
+
+        const matches = this.matches || [];
+        const rows = [];
+        for (const m of matches) {
+            const vs = m.video_status || {};
+            for (const slot of ['full', 'first_half', 'second_half']) {
+                if (vs[slot] === 'ready') {
+                    rows.push({ match: m, slot });
+                }
+            }
+        }
+        if (!rows.length) {
+            list.innerHTML = '<div class="session-empty">No ready slots in the library.</div>';
+            return;
+        }
+        list.innerHTML = rows.map(({ match, slot }) => `
+            <div class="session-item">
+                <div class="session-main">
+                    <div class="session-title-row">
+                        <strong>${this.esc(match.home_team)} vs ${this.esc(match.away_team)}</strong>
+                        <span class="status-pill ready">${this.slotLabel(slot)}</span>
+                    </div>
+                    <div class="session-meta">${this.esc(match.id)}${match.date ? ' • ' + this.esc(match.date) : ''}</div>
+                </div>
+                <div class="session-actions">
+                    <button type="button" class="mini-action-btn"
+                            onclick="app.regenerateHls('${this.esc(match.id)}', '${this.esc(slot)}')"
+                            title="Rebuild HLS variants only — fast, no re-encode">Regen HLS</button>
+                    <button type="button" class="mini-action-btn"
+                            onclick="app.forceRetranscode('${this.esc(match.id)}', '${this.esc(slot)}')"
+                            title="Full re-encode from existing MP4 — multi-minute">Re-transcode</button>
+                </div>
+            </div>
+        `).join('');
     },
 
     async exportDatabase() {

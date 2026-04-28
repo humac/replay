@@ -792,6 +792,27 @@
                                 <div id="perf-sessions-list" class="session-list"></div>
                             </div>
                         </div>
+
+                        <div class="options-card admin-ops-card mt-4" id="library-maintenance-card">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <h3>Library Maintenance</h3>
+                                    <p class="admin-panel-copy">
+                                        Re-run the encoder or just the HLS step on already-ready matches —
+                                        useful for picking up new ABR ladder, QSV, or audio-bitrate settings
+                                        without a fresh upload. Re-transcode is multi-minute per match;
+                                        regen HLS is faster.
+                                    </p>
+                                </div>
+                                <div class="admin-panel-actions">
+                                    <button type="button" class="btn-secondary" id="lib-refresh-btn">Refresh list</button>
+                                </div>
+                            </div>
+                            <div class="diagnostics-section mt-3">
+                                <div class="diagnostics-section-title">Ready Slots</div>
+                                <div id="lib-ready-slots-list" class="session-list"></div>
+                            </div>
+                        </div>
                     </section>
                 </div>
             </div>
