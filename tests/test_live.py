@@ -167,6 +167,72 @@ async def test_live_status_keeps_active_when_segments_fresh(client, monkeypatch)
     assert data["ready"] is True
 
 
+async def test_live_status_skips_segment_age_when_path_missing(client, monkeypatch):
+    """When MediaMTX has no path for the configured stream key (camera
+    offline), check_publisher_active must return immediately without
+    fetching the HLS playlist. Hitting MediaMTX for a non-existent
+    playlist used to add ~2s to every poll while the stream was offline."""
+    import live as _live
+
+    async def fake_list_paths():
+        # MediaMTX is reachable but the live/<key> path doesn't exist yet
+        # — typical state when no publisher has connected.
+        return True, []
+
+    age_calls: list[str] = []
+
+    async def fake_age(stream_key):
+        age_calls.append(stream_key)
+        return None
+
+    import settings as _settings
+    _settings.save_unlocked({"live_stream_key": "test-secret-123"})
+    monkeypatch.setattr(_live, "_list_paths", fake_list_paths)
+    monkeypatch.setattr(_live, "_last_segment_age", fake_age)
+
+    resp = await client.get("/api/live/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["active"] is False
+    assert data["ready"] is False
+    # The whole point of the optimization: don't fetch the HLS playlist
+    # for a path MediaMTX has never created.
+    assert age_calls == [], (
+        f"_last_segment_age must not run when the path is absent; got calls: {age_calls}"
+    )
+
+
+async def test_live_status_skips_segment_age_when_path_not_ready(client, monkeypatch):
+    """When the path exists but isn't ready (publisher just connected,
+    no HLS segments cut yet), skip the segment-age fetch — there's nothing
+    to fetch and we'd just be waiting for a 404."""
+    import live as _live
+
+    async def fake_list_paths():
+        return True, [{
+            "name": _live.stream_path("test-secret-123"),
+            "ready": False,                     # path exists but not ready
+            "source": {"type": "rtmpConn", "id": "x"},
+            "tracks": [],
+            "bytesReceived": 0,
+        }]
+
+    age_calls: list[str] = []
+
+    async def fake_age(stream_key):
+        age_calls.append(stream_key)
+        return None
+
+    import settings as _settings
+    _settings.save_unlocked({"live_stream_key": "test-secret-123"})
+    monkeypatch.setattr(_live, "_list_paths", fake_list_paths)
+    monkeypatch.setattr(_live, "_last_segment_age", fake_age)
+
+    resp = await client.get("/api/live/status")
+    assert resp.status_code == 200
+    assert age_calls == [], "segment-age fetch is wasted before the path is ready"
+
+
 # ---------------------------------------------------------------------------
 # _last_segment_age — direct parser tests
 # ---------------------------------------------------------------------------
