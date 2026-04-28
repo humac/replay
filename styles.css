@@ -3956,12 +3956,18 @@ button {
     opacity: 0.95;
 }
 
-/* Mobile: chip wraps to its own row inside the detail row */
+/* Mobile: chip sizes to content and visually matches .match-detail-pill */
 @media (max-width: 520px) {
-    .score-reveal-chip {
+    .score-reveal-chip,
+    .score-reveal-chip-large {
         margin-left: 0;
-        flex-basis: 100%;
-        justify-content: center;
+        flex-basis: auto;
+        align-self: center;
+        padding: 0.38rem 0.72rem;
+        min-height: 0;
+        font-size: 0.68rem;
+        letter-spacing: 0.12em;
+        white-space: nowrap;
     }
 }
 
