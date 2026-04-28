@@ -187,7 +187,14 @@ def _migrate_v4(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE upload_sessions ADD COLUMN first_chunk_hash TEXT")
 
 
-_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4]
+def _migrate_v5(conn: sqlite3.Connection):
+    """Add updated_at column to matches table."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(matches)").fetchall()}
+    if "updated_at" not in cols:
+        conn.execute("ALTER TABLE matches ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+
+
+_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4, _migrate_v5]
 
 
 def _run_migrations(conn: sqlite3.Connection):
@@ -245,6 +252,7 @@ def row_to_match(row: sqlite3.Row) -> dict:
         "away_logo": row["away_logo"],
         "created_at": row["created_at"] or "",
         "slug": row["slug"] or "",
+        "updated_at": row["updated_at"] or "",
     }
 
 
@@ -253,8 +261,9 @@ def upsert_match(conn: sqlite3.Connection, match: dict):
         """
         INSERT INTO matches (
             id, home_team, away_team, date, time, location, score_home, score_away,
-            format, videos_json, video_status_json, home_logo, away_logo, created_at, slug
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            format, videos_json, video_status_json, home_logo, away_logo, created_at, slug,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             home_team=excluded.home_team,
             away_team=excluded.away_team,
@@ -269,7 +278,8 @@ def upsert_match(conn: sqlite3.Connection, match: dict):
             home_logo=excluded.home_logo,
             away_logo=excluded.away_logo,
             created_at=excluded.created_at,
-            slug=excluded.slug
+            slug=excluded.slug,
+            updated_at=excluded.updated_at
         """,
         (
             match["id"],
@@ -287,6 +297,7 @@ def upsert_match(conn: sqlite3.Connection, match: dict):
             match.get("away_logo"),
             match.get("created_at", ""),
             match.get("slug", ""),
+            match.get("updated_at", ""),
         ),
     )
 

@@ -6,6 +6,7 @@ import { apiMixin } from './js/api.js';
 import { playerMixin } from './js/player.js';
 import { uploadsMixin } from './js/uploads.js';
 import { viewsMixin } from './js/views.js';
+import { adminViewsMixin } from './js/admin-views.js';
 import { uiMixin } from './js/ui.js';
 import { liveMixin } from './js/live.js';
 import { adminMixin } from './js/admin.js';
@@ -340,6 +341,7 @@ const app = {
     ...playerMixin,
     ...uploadsMixin,
     ...viewsMixin,
+    ...adminViewsMixin,
     ...uiMixin,
     ...liveMixin,
     ...adminMixin,

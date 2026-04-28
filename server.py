@@ -42,6 +42,13 @@ from models import (
 
 logger = _log.setup("replay")
 
+
+def _now_ms() -> str:
+    """Return current UTC time as ISO-8601 with millisecond precision, e.g. 2026-01-02T03:04:05.678Z."""
+    t = time.time()
+    ms = int(t * 1000) % 1000
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + f".{ms:03d}Z"
+
 DATA_DIR = Path(os.environ.get("REPLAY_DATA_DIR", "/tank/replay"))
 
 # ---------------------------------------------------------------------------
@@ -1216,6 +1223,7 @@ async def create_match(request: Request, body: CreateMatchRequest):
         "home_logo": None,
         "away_logo": None,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "updated_at": _now_ms(),
         "slug": "",
     }
 
@@ -1240,6 +1248,10 @@ async def update_match(match_id: str, request: Request, body: UpdateMatchRequest
         if not match:
             raise HTTPException(404, "Match not found")
 
+        if_match = request.headers.get("if-match", "").strip('"')
+        if if_match and if_match != match.get("updated_at", ""):
+            raise HTTPException(409, "Match was modified by another user. Reload and try again.")
+
         slug_fields_changed = False
         for key, value in updates.items():
             if key in ("home_team", "away_team", "date") and value != match.get(key):
@@ -1251,6 +1263,7 @@ async def update_match(match_id: str, request: Request, body: UpdateMatchRequest
             with _db.connect() as conn:
                 match["slug"] = _db.ensure_unique_slug(conn, slug_base, exclude_id=match["id"])
 
+        match["updated_at"] = _now_ms()
         _db.save_matches_unlocked(matches)
         return match
 
