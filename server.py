@@ -466,16 +466,58 @@ def _required_free_bytes(size_bytes: int) -> int:
     )
 
 
+def _pool_stats(path: Path) -> dict | None:
+    """`shutil.disk_usage` wrapped + tagged. None if the path can't be stat'd
+    (e.g. a temporarily unavailable bind mount). Used by both the upload
+    pre-flight guard and the diagnostics endpoints."""
+    try:
+        total, used, free = shutil.disk_usage(path)
+    except OSError:
+        return None
+    return {"path": str(path), "total": total, "used": used, "free": free}
+
+
 def _disk_stats_payload(required_bytes: int | None = None) -> dict:
-    total, used, free = shutil.disk_usage(DATA_DIR)
+    """Per-pool free space + the headroom guard the uploader must satisfy.
+
+    The guard targets `ORIGINALS_DIR` (where raw uploads + finished MP4s
+    actually land — see PR #18 storage tiering). On legacy single-volume
+    layouts ORIGINALS_DIR aliases VIDEOS_DIR, so this is just one pool.
+    The historical top-level `free_bytes` / `enough_space` keys are kept
+    pointing at the originals pool so existing callers (admin diagnostics
+    UI, the transcode pre-flight) get the right answer without code
+    changes.
+    """
+    ssd = _pool_stats(DATA_DIR)
+    # Walk the cold pool only when it differs from DATA_DIR. ORIGINALS_DIR
+    # may live anywhere under or outside DATA_DIR; resolved-path equality
+    # catches symlink aliasing too.
+    pools: dict = {"ssd": ssd}
+    cold = None
+    try:
+        same_pool = ORIGINALS_DIR.resolve() == DATA_DIR.resolve()
+    except OSError:
+        same_pool = False
+    if not same_pool:
+        cold = _pool_stats(ORIGINALS_DIR)
+        pools["originals"] = cold
+
+    # Target pool for an upload is the cold pool when tiered, else SSD.
+    target = cold if cold is not None else ssd
+    target_free = target["free"] if target else 0
+    target_total = target["total"] if target else 0
+    target_used = target["used"] if target else 0
+
     return {
-        "total_bytes": total,
-        "used_bytes": used,
-        "free_bytes": free,
+        "total_bytes": target_total,
+        "used_bytes": target_used,
+        "free_bytes": target_free,
         "min_free_bytes": current_min_free_disk_bytes(),
         "required_bytes": required_bytes,
         "upload_headroom_multiplier": current_upload_disk_headroom_multiplier(),
-        "enough_space": required_bytes is None or free >= required_bytes,
+        "enough_space": required_bytes is None or target_free >= required_bytes,
+        "target_pool": "originals" if cold is not None else "ssd",
+        "pools": pools,
     }
 
 
@@ -483,10 +525,11 @@ def _ensure_disk_space(size_bytes: int):
     required_bytes = _required_free_bytes(size_bytes)
     stats = _disk_stats_payload(required_bytes)
     if stats["free_bytes"] < required_bytes:
+        pool_label = stats.get("target_pool", "ssd")
         raise HTTPException(
             507,
             (
-                f"Insufficient free disk space for upload. "
+                f"Insufficient free disk space on the {pool_label} pool for upload. "
                 f"Need about {required_bytes} bytes free and only have {stats['free_bytes']} bytes."
             ),
         )
@@ -1273,14 +1316,14 @@ def _host_signals() -> dict:
 
 
 def _disk_pools() -> dict:
-    """Free/used for the SSD (DATA_DIR) plus the originals dir if it differs."""
-    pools: dict = {}
-    try:
-        total, used, free = shutil.disk_usage(DATA_DIR)
-        pools["ssd"] = {"path": str(DATA_DIR), "total": total, "used": used, "free": free}
-    except OSError:
-        pools["ssd"] = None
-    return pools
+    """Free/used for the SSD (DATA_DIR) plus the originals dir if it differs.
+
+    Mirrors the `pools` sub-dict in `_disk_stats_payload` so the Performance
+    Tuning panel surfaces cold-pool capacity alongside the SSD pool. When
+    ORIGINALS_DIR aliases DATA_DIR (single-volume layout), only `ssd` is
+    populated.
+    """
+    return _disk_stats_payload()["pools"]
 
 
 @app.get("/api/admin/performance")
