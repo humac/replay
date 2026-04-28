@@ -241,7 +241,7 @@ export const apiMixin = {
         this._pollTimer = setInterval(async () => {
             await this.loadMatches();
             await this.fetchTranscodeProgress();
-            this.renderSeasonView();
+            this.updateTranscodeBadges();
 
             if (this.activeMatchId) {
                 const match = this.matches.find(m => m.id === this.activeMatchId);

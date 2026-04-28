@@ -22,7 +22,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
 - `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation (capped at 2 simultaneous variants via `_hls_semaphore`), thumbnail extraction; `get_all_transcode_progress()` returns all active jobs; `cancel_active_transcodes()` terminates in-flight ffmpegs on shutdown
 - `live.py`: MediaMTX bridge — HLS reverse proxy, RTMP-publish auth webhook validation, control-API status query
-- `streams.py`: in-memory active streaming-connection registry, Cloudflare-aware client-IP resolver, optional offline GeoLite2 lookup, and admin kill/blocklist support
+- `streams.py`: in-memory active streaming-connection registry, client-IP resolver (honors `CF-Connecting-IP`/`X-Forwarded-For` when `TRUSTED_PROXY=cloudflare`; returns peer address otherwise), optional offline GeoLite2 lookup, and admin kill/blocklist support
 - `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, live auth webhook, and admin stream unblock
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
@@ -30,7 +30,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `js/api.js`: auth, data loading, settings, transcode polling
 - `js/player.js`: AirPlay, Chromecast, HLS playback, position/speed memory, keyboard shortcuts, match navigation
 - `js/uploads.js`: chunked upload sessions, resume logic
-- `js/views.js`: season view, game view, match form, settings form, admin diagnostics renderers (consumed by `js/admin.js`)
+- `js/views.js`: season view, game view, match form, settings form, admin diagnostics renderers (consumed by `js/admin.js`); `updateTranscodeBadges()` for targeted badge-only updates during transcode polling (avoids full grid re-render)
 - `js/live.js`: Watch Live view (HLS.js player + status polling), AirPlay/Chromecast hand-off for the live feed, and admin live config card
 - `js/admin.js`: unified `/admin/*` dashboard mixin — sub-routing, sidebar, status strip polling, role gating, overview KPI tiles
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
@@ -74,6 +74,9 @@ Most relevant variables:
 - `LOG_LEVEL` — `INFO` (default), `DEBUG`, `WARNING`, etc.
 - `MEDIAMTX_HLS_URL` — internal address of the MediaMTX sidecar's HLS port (default `http://mediamtx:8888`)
 - `MEDIAMTX_API_URL` — internal address of the MediaMTX control API (default `http://mediamtx:9997`)
+- `TRUSTED_PROXY` — `cloudflare` (default) or `none`; controls whether `client_ip()` in `streams.py` honors `CF-Connecting-IP`/`X-Forwarded-For`. Set to `none` for bare deployments not behind Cloudflare.
+- `LIVE_AUTH_SECRET` — shared secret MediaMTX sends in `X-Internal-Secret` when calling `/api/live/auth`. Configure the same value in `mediamtx.yml`'s `authHTTPHeaders`. If unset, the endpoint is open to all network callers (only safe when firewalled).
+- `LIVE_STALE_SEGMENT_AGE_SECONDS` — stream flips to offline when no new HLS segment has been cut for this many seconds (default 90)
 
 ## Project Constraints
 
@@ -120,5 +123,5 @@ After frontend changes, sanity-check:
 - Admin recovery endpoints: retry transcode (`POST .../retry`), regenerate HLS (`POST .../regenerate-hls`), verify assets (`GET .../verify`), export DB (`POST /api/admin/export-database`).
 - Live streaming (RTMP ingest → LL-HLS) is provided by a `mediamtx` sidecar in compose. Stream-key auth runs through `POST /api/live/auth` (called by MediaMTX); browsers always reach LL-HLS via the proxy at `/api/live/hls/*` so they only ever talk to the replay origin. The stream key is private (never returned by `/api/settings`) and is rotated via `POST /api/admin/live/rotate-key`.
 - AirPlay and Chromecast for the Watch Live feed live alongside the replay-player implementation. `js/live.js::initLiveRemotePlayback` binds the `live-video` element + `airplay-btn-live` / `cast-btn-live` buttons; `js/player.js::onCastConnected` and `setupCastFramework` are view-aware and route the live HLS URL (`application/x-mpegURL` + `streamType=LIVE`) when the live view is active.
-- Active streaming connections (live HLS proxy + VOD HLS + VOD MP4) are tracked in `streams.py`'s in-memory `StreamRegistry`. Admin endpoints `GET /api/admin/streams`, `POST /api/admin/streams/{id}/kill`, and `DELETE /api/admin/streams/blocks` power the "Active Streaming Connections" card in admin diagnostics. Killing a stream cancels its iterator and adds a 5-minute `(ip, kind, match_id, slot)` blocklist entry. Use `streams.client_ip(request)` to resolve client IPs everywhere — it honors `CF-Connecting-IP` / `True-Client-IP` / `X-Forwarded-For` for Cloudflare and reverse-proxy deployments.
+- Active streaming connections (live HLS proxy + VOD HLS + VOD MP4) are tracked in `streams.py`'s in-memory `StreamRegistry`. Admin endpoints `GET /api/admin/streams`, `POST /api/admin/streams/{id}/kill`, and `DELETE /api/admin/streams/blocks` power the "Active Streaming Connections" card in admin diagnostics. Killing a stream cancels its iterator and adds a 5-minute `(ip, kind, match_id, slot)` blocklist entry. Use `streams.client_ip(request)` to resolve client IPs everywhere — behavior is gated by `TRUSTED_PROXY`: `"cloudflare"` (default) honors `CF-Connecting-IP` / `True-Client-IP` / `X-Forwarded-For`; `"none"` always returns the direct peer address.
 - **After every code change**, update the relevant markdown files (`ROADMAP.md`, `AGENTS.md`, `CLAUDE.md`) to reflect what changed — new files, completed roadmap items, new conventions, updated guidance. Keep these files as the living source of truth.

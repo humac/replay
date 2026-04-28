@@ -29,16 +29,21 @@ logger = _log.setup("replay")
 # Client IP resolution
 # ---------------------------------------------------------------------------
 
-# Header precedence: Cloudflare gives us CF-Connecting-IP unconditionally when
-# a request flows through CF (CDN or tunnel), and that's the deployment we
-# care about. True-Client-IP is the enterprise variant. X-Forwarded-For is
-# the generic fallback (we only trust the leftmost hop). If none are set we
-# use the ASGI peer address.
+# TRUSTED_PROXY controls whether IP-spoofable headers are honoured.
+# "cloudflare" (default): trust CF-Connecting-IP / True-Client-IP / X-Forwarded-For.
+# "none": ignore proxy headers and use the ASGI peer address directly.
+# A bare deployment without Cloudflare must set TRUSTED_PROXY=none, otherwise
+# an attacker can rotate X-Forwarded-For to bypass per-IP rate limits.
+TRUSTED_PROXY = os.environ.get("TRUSTED_PROXY", "cloudflare").strip().lower()
+
 _IP_HEADERS = ("cf-connecting-ip", "true-client-ip")
 
 
 def client_ip(request: Request) -> str:
-    """Resolve the client's real IP for a request behind Cloudflare or a proxy."""
+    """Resolve the client's real IP for a request."""
+    peer = request.client.host if request.client else "unknown"
+    if TRUSTED_PROXY != "cloudflare":
+        return peer
     headers = request.headers
     for name in _IP_HEADERS:
         val = headers.get(name)
@@ -50,7 +55,7 @@ def client_ip(request: Request) -> str:
         first = fwd.split(",", 1)[0].strip()
         if first:
             return first
-    return request.client.host if request.client else "unknown"
+    return peer
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 Findings from a full-project security / correctness / quality pass after Milestones 8 (Admin Dashboard) and 9 (Score De-emphasis) shipped. Tick boxes as items are addressed.
 
-**Verdict:** ~~Request changes~~ C1–C7 all fixed 2026-04-27 — Critical items resolved. M4, M5, M7, M8, M13 fixed 2026-04-27 — next-sprint items resolved.
+**Verdict:** ~~Request changes~~ C1–C7 all fixed 2026-04-27 — Critical items resolved. M4, M5, M7, M8, M13 fixed 2026-04-27 — next-sprint items resolved. M2, M3, M6, M16 fixed 2026-04-27 — security hardening sprint resolved.
 
 **Overall:** Solid foundation with thoughtful operational details (orphan sweepers, range-request cancellation, structured logger plumbing). Three classes of issue need attention: stored XSS in attribute contexts because `esc()` doesn't escape quotes, read-modify-write races around match writes, and default `admin`/`admin` credentials in production. Plus a sprawl of fire-and-forget `asyncio.create_task` calls that swallow exceptions.
 
@@ -46,11 +46,11 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - Today protected by server-side validation (username regex, slot enum, server-generated UUIDs); every new field that misses validation becomes XSS.
   - Fix: unify `esc()` covering `< > & " '`. (Same root cause as C1; this captures the rest of the surface.)
 
-- [ ] **M2. Login rate limit trusts spoofable headers when not behind Cloudflare** — `auth.py:107–119`
+- [x] **M2. Login rate limit trusts spoofable headers when not behind Cloudflare** — `auth.py:107–119`
   - `client_ip()` honors `CF-Connecting-IP` / `X-Forwarded-For` unconditionally. A bare deployment lets an attacker rotate the header to bypass the 5/min cap.
   - Fix: explicit `TRUSTED_PROXY` env (`cloudflare`/`none`); only honor headers when peer is in an allowlisted CIDR.
 
-- [ ] **M3. `/api/live/auth` is unauthenticated and unrate-limited** — `server.py:634`
+- [x] **M3. `/api/live/auth` is unauthenticated and unrate-limited** — `server.py:634`
   - 144-bit key is brute-force-infeasible, but the endpoint is public. Could be used for rejection-log spam / mild amplification.
   - Fix: restrict to MediaMTX peer IP (compose service IP) OR require shared-secret header configured in `mediamtx.yml`'s `authHTTPHeaders`.
 
@@ -62,7 +62,7 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - SIGTERM during a transcode leaves ffmpeg writing a half-MP4. `_sweep_orphaned_transcodes` flips status to `error` on next start but doesn't unlink the partial file.
   - Fix: track child `Process` handles in `media._transcode_progress`; terminate on shutdown; orphan sweep deletes partial dest files.
 
-- [ ] **M6. `/api/matches` is unbounded; SPA always uses no-args branch** — `server.py:1070–1076`, `js/api.js:133–141`
+- [x] **M6. `/api/matches` is unbounded; SPA always uses no-args branch** — `server.py:1070–1076`, `js/api.js:133–141`
   - Pagination exists in `db.search_matches` but client never invokes it. ~1000 matches × ~1KB = ~1MB JSON every transcode poll tick.
   - Fix: cap no-args path at ~500 most-recent; migrate client to paginated queries with infinite scroll.
 
@@ -102,7 +102,7 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - `MATCHES_LOCK` only serializes within one process; no version/etag check. With `exclude_unset=True` it's a partial merge — small blast radius, but a deliberate field-clear by admin A can be lost.
   - Fix: `If-Match` ETag with `updated_at`; return 409 on mismatch.
 
-- [ ] **M16. `renderSeasonView` re-renders entire grid on every transcode poll** — `js/views.js:1148–1260`, `js/api.js:244`
+- [x] **M16. `renderSeasonView` re-renders entire grid on every transcode poll** — `js/views.js:1148–1260`, `js/api.js:244`
   - 5s poll calls `renderSeasonView` unconditionally. With 100+ cards: 30–80ms DOM thrash every tick; nukes `:hover` state.
   - Fix: stop calling `renderSeasonView` from the poller; update only badge/chip elements for matches whose status changed.
 
