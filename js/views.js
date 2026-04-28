@@ -993,6 +993,10 @@ export const viewsMixin = {
                     headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
                     body: JSON.stringify(matchData),
                 });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || 'Failed to update match');
+                }
                 match = await resp.json();
             } else {
                 const resp = await this.authFetch('/api/matches', {

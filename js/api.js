@@ -147,9 +147,13 @@ export const apiMixin = {
             const resp = await fetch('/api/matches');
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             this.matches = await resp.json();
+            this._matchLoadErrorShown = false;
         } catch (e) {
             console.error('Failed to load matches', e);
-            if (hadData) this.showInfo("Couldn't refresh matches — showing last known data.");
+            if (hadData && !this._matchLoadErrorShown) {
+                this._matchLoadErrorShown = true;
+                this.showInfo("Couldn't refresh matches — showing last known data.");
+            }
         }
     },
 
