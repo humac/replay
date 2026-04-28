@@ -7,8 +7,11 @@ services:
     # Uncomment to build locally instead of pulling from GHCR:
     #build: .
     container_name: replay
-    ports:
-      - "8090:8090"
+    # No public `ports:` — Caddy is the single entry point. Other compose
+    # services reach this app via the service name `replay:8090` on the
+    # internal network. `expose:` documents the port without publishing it.
+    expose:
+      - "8090"
     env_file:
       - .env.local
     # The image's default UID 10001 can't write to a host bind-mounted /data
@@ -63,18 +66,23 @@ services:
     #          device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
     #          capabilities: [gpu, video]
 
-  # Caddy — reverse proxy for the replay app. The big win: Caddy serves VOD
-  # HLS .ts/.m4s segments directly from the bind-mounted /data volume using
-  # sendfile(), which saturates 10 GbE far better than uvicorn can. All other
-  # routes pass through to the replay app on :8090. See ./Caddyfile.
+  # Caddy — single public entry point for the stack. Caddy serves VOD HLS
+  # .ts/.m4s segments directly from the bind-mounted /data volume using
+  # sendfile() (saturates 10 GbE far better than uvicorn can) and reverse-
+  # proxies everything else to the replay app on the internal network.
+  # See ./Caddyfile.
   #
-  # Bind /data read-only so a misconfiguration in Caddy can't write into the
-  # replay app's data tree.
+  # Host-published port is 8090 (the same port the replay app used to bind
+  # directly) so existing clients, Cloudflare Tunnel rules, and bookmarks
+  # keep working unchanged. Caddy listens on :80 inside the container.
+  #
+  # Bind /data read-only so a misconfiguration in Caddy can't write into
+  # the replay app's data tree.
   caddy:
     image: caddy:2-alpine
     container_name: replay-caddy
     ports:
-      - "80:80"
+      - "8090:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /mnt/apps_ssd/apps/replay:/data:ro

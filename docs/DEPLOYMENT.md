@@ -81,20 +81,31 @@ new transcode for ladder/segment-duration changes).
 
 ## Reverse Proxy (Caddy — bundled)
 
-A `Caddyfile` and `caddy` compose service ship with the project. Caddy
-terminates port 80 and:
+A `Caddyfile` and `caddy` compose service ship with the project. Caddy is
+the **single public entry point** — the host publishes `8090:80` (port
+`8090` on the host, port `80` inside the Caddy container), and the replay
+app sits on the internal compose network only (`expose: "8090"`, no
+`ports:` mapping).
+
+Caddy:
 
 - Serves VOD HLS `.ts/.m4s/.mp4` segments and variant playlists **directly
   from the `/data` bind-mount via `sendfile()`** — drops Python out of the
   hot path so 10 GbE LAN delivery is achievable.
 - Reverse-proxies everything else (live HLS proxy at `/api/live/hls/*`, MP4
-  ranges, all `/api/*` admin endpoints, the SPA shell) to the replay app on
-  `:8090`.
+  ranges, all `/api/*` admin endpoints, the SPA shell) to the replay app at
+  `replay:8090` on the internal network.
 - Mirrors the cache policy the replay app uses for HLS: playlists
   `public, max-age=60, must-revalidate`, segments
   `public, max-age=31536000, immutable`.
 
 The bind-mount is read-only inside the Caddy container.
+
+The host port `8090` was chosen so existing Cloudflare Tunnel rules,
+bookmarks, and the `mediamtx → replay:8090` internal call keep working
+unchanged. To reach a different host port, edit the `caddy.ports` mapping
+in your compose file (e.g. `"443:80"` once you front Caddy with a TLS
+terminator).
 
 For TLS / WAN, run Caddy behind Cloudflare Tunnel (existing setup) or
 front it with a TLS terminator. Don't enable Caddy's automatic HTTPS in

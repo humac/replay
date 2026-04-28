@@ -10,14 +10,23 @@
 #     The replay container's data volume is mounted read-only here.
 #   - Everything else (including /api/live/hls/* which proxies MediaMTX, the
 #     SPA shell, /api/admin/*, MP4 downloads, settings PUTs) → reverse-proxied
-#     to the replay app on port 8090.
+#     to the replay app on the internal compose network at replay:8090.
+#
+# Ports:
+#   - Caddy listens on :80 inside its container.
+#   - The compose file publishes that as 8090 on the host (8090:80) so the
+#     stack remains reachable at the same `:8090` address it always was —
+#     existing Cloudflare Tunnel rules, bookmarks, and the
+#     MEDIAMTX → replay:8090 internal call all keep working.
+#   - The replay app no longer publishes its own port; it sits on the
+#     internal compose network only. Caddy is the single public entry point.
 #
 # Note: The .ts/.m4s/.mp4 segments are content-addressed (immutable), so we
 # slap a 1-year cache header on them. Variant + master playlists revalidate
 # every 60s — same policy the replay app applies for the same files. Caddy
 # serving them is faster but the headers must match.
 #
-# TLS: This file targets the in-LAN case (port 80). For WAN, run behind
+# TLS: This file targets the in-LAN case (plain HTTP). For WAN, run behind
 # Cloudflare Tunnel or front this with a TLS terminator. Don't enable Caddy's
 # automatic HTTPS in homelab unless you've fronted DNS-01 with your provider.
 
