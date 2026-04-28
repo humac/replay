@@ -2415,7 +2415,14 @@ async def serve_logo(match_id: str, team: str):
     media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                    ".svg": "image/svg+xml", ".webp": "image/webp"}
     mt = media_types.get(logo_path.suffix.lower(), "image/png")
-    headers = {}
+    # Stored-XSS hardening for user-uploaded SVGs. Logos are write-gated
+    # to admin/uploader, so this is defense-in-depth — a compromised
+    # uploader account or a careless paste of a third-party SVG should
+    # not be able to execute script in the replay app's origin. Caddy
+    # serves these files directly when present (Caddyfile @match_logo);
+    # this fallback path must keep the same headers so behavior is
+    # identical regardless of who answers the request.
+    headers = {"X-Content-Type-Options": "nosniff"}
     if logo_path.suffix.lower() == ".svg":
         headers["Content-Security-Policy"] = "script-src 'none'"
         headers["Content-Disposition"] = f"inline; filename=\"{logo_path.name}\""
