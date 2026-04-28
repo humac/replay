@@ -932,7 +932,7 @@ async def admin_diagnostics(request: Request):
     # Recent errors from DB
     recent_errors = _db.get_video_errors(limit=10)
 
-    disk_by_match = _cached_disk_usage_by_match()
+    disk_by_match = await asyncio.to_thread(_cached_disk_usage_by_match)
 
     return {
         "counts": {
