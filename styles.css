@@ -3953,6 +3953,8 @@ button {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 1rem;
+    /* span all columns of the parent .team-stats-grid so the effort-tile
+       sub-grid occupies a full row rather than a single auto-fit cell */
     grid-column: 1 / -1;
 }
 

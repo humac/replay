@@ -354,6 +354,16 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Sprint — Minor Hardening ✅ COMPLETE (2026-04-27)
+
+**Goal:** close out m1, m3, m4, m5, m10 from the post-M9 code review — the last five open minor items.
+
+- **m1 — Document env-var admin bypass** (`auth.py`): added a docstring note to `authenticate_user` explaining that the env-var superadmin always takes precedence over the DB `enabled` flag. Operators should avoid reusing the same username as a disabled DB account.
+- **m3 — Cap `?status=` list** (`server.py`): `[:8]` slice on the parsed statuses tuple in `list_upload_sessions` prevents pathologically long comma-separated inputs.
+- **m4 — Monotonic block TTL** (`streams.py`): switched `block()`, `is_blocked()`, `list_blocks()`, and `sweep()` from `time.time()` to `time.monotonic()` for expiry arithmetic. `list_blocks()` converts back to wall clock for the API response so `expires_at` remains human-readable. NTP backward jumps can no longer permanently strand a block entry.
+- **m5 — Document CGN under-counting** (`streams.py`): added a docstring note to `StreamRegistry` explaining that `(ip, ua)` session keying deliberately under-counts viewers behind carrier-grade NAT, and why this isn't worth fixing.
+- **m10 — CSS comment** (`styles.css`): added an explanatory comment on `.team-stat-grid-tiles { grid-column: 1 / -1 }` clarifying that it spans the full width of the parent `.team-stats-grid` row.
+
 ## Sprint — Frontend Polish ✅ COMPLETE (2026-04-27)
 
 **Goal:** address m7, m8, m9 from the post-M9 code review — consolidated auth error handling, resilient match list refresh, and safe history fallback.

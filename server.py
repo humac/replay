@@ -1376,7 +1376,7 @@ async def list_upload_sessions(request: Request):
     if status_param == "all":
         sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, None)
     else:
-        statuses = tuple(part.strip() for part in status_param.split(",") if part.strip())
+        statuses = tuple(part.strip() for part in status_param.split(",") if part.strip())[:8]
         sessions = _uploads.list_session_views(STALE_UPLOAD_SESSION_SECONDS, statuses or ("active",))
     return {"sessions": sessions}
 
