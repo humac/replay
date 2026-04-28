@@ -20,7 +20,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `auth.py`: multi-user authentication, token management, password hashing (scrypt), role-based access, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
-- `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation, thumbnail extraction
+- `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation (capped at 2 simultaneous variants via `_hls_semaphore`), thumbnail extraction; `get_all_transcode_progress()` returns all active jobs; `cancel_active_transcodes()` terminates in-flight ffmpegs on shutdown
 - `live.py`: MediaMTX bridge — HLS reverse proxy, RTMP-publish auth webhook validation, control-API status query
 - `streams.py`: in-memory active streaming-connection registry, Cloudflare-aware client-IP resolver, optional offline GeoLite2 lookup, and admin kill/blocklist support
 - `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, live auth webhook, and admin stream unblock
@@ -66,7 +66,7 @@ Most relevant variables:
 - `REPLAY_DATA_DIR`
 - `MAX_UPLOAD_SIZE_BYTES`
 - `UPLOAD_CHUNK_SIZE_BYTES`
-- `TRANSCODE_CONCURRENCY`
+- `TRANSCODE_CONCURRENCY` — max simultaneous transcode jobs (default 2); `_hls_semaphore` in `media.py` caps HLS variant ffmpegs at 2 independently
 - `VIDEO_STREAM_CHUNK_BYTES`
 - `HLS_SEGMENT_DURATION`
 - `ALLOWED_ORIGINS` — optional comma-separated hostnames for login origin validation
