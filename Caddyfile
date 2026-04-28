@@ -45,15 +45,37 @@
 
 	# ---- VOD HLS direct serve (the hot path) ----
 	# Match: /api/matches/{match_id}/hls/{slot}/...
-	@vod_hls_segment {
-		path_regexp vod_hls ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.(ts|m4s|mp4))$
+	#
+	# Split into two matchers so we can emit the right Content-Type
+	# per format. Caddy's built-in MIME table maps `.ts` to
+	# `text/vnd.trolltech.linguist` (Qt translation files) — wrong for
+	# MPEG-TS HLS segments, and most players are forgiving so playback
+	# works anyway, but the header should match what the replay app
+	# emits (video/mp2t for .ts, video/mp4 for .m4s/.mp4 fMP4 segments).
+	@vod_hls_segment_ts {
+		path_regexp vod_hls_ts ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.ts)$
 	}
-	handle @vod_hls_segment {
+	handle @vod_hls_segment_ts {
 		# Strip the API prefix to map onto the on-disk layout.
 		# /api/matches/X/hls/Y/Z.ts  →  /videos/X/hls/Y/Z.ts
-		rewrite * /videos/{re.vod_hls.1}/hls/{re.vod_hls.2}/{re.vod_hls.3}
+		rewrite * /videos/{re.vod_hls_ts.1}/hls/{re.vod_hls_ts.2}/{re.vod_hls_ts.3}
 		header Cache-Control "public, max-age=31536000, immutable"
 		header Access-Control-Allow-Origin "*"
+		header Content-Type "video/mp2t"
+		root * /data
+		file_server {
+			precompressed br gzip
+		}
+	}
+
+	@vod_hls_segment_mp4 {
+		path_regexp vod_hls_mp4 ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.(m4s|mp4))$
+	}
+	handle @vod_hls_segment_mp4 {
+		rewrite * /videos/{re.vod_hls_mp4.1}/hls/{re.vod_hls_mp4.2}/{re.vod_hls_mp4.3}
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Access-Control-Allow-Origin "*"
+		header Content-Type "video/mp4"
 		root * /data
 		file_server {
 			precompressed br gzip
