@@ -16,7 +16,6 @@ test suite can point at fake endpoints.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 import time
@@ -145,13 +144,17 @@ async def check_publisher_active(stream_key: str) -> dict:
     XbotGo Falcon) stops recording but leaves the RTMP socket open with
     audio-only data flowing — MediaMTX keeps the path "ready" but stops
     producing playable video segments.
+
+    Order of operations:
+      1. Hit ``/v3/paths/list`` first. If the target path isn't there, return
+         immediately — there's no point fetching the HLS playlist for a path
+         that doesn't exist on MediaMTX.
+      2. Only when the path exists AND is ready, fan out the segment-age
+         check. Skipping the playlist GET when the camera is offline cuts
+         /api/live/status latency from ~2s (httpx waiting for a 404 on a
+         path MediaMTX has never created) to ~30ms.
     """
-    # Fan out the path-list and segment-age queries concurrently — they're
-    # independent and both hit the same internal MediaMTX, so awaiting in
-    # parallel halves the wall time of every status poll.
-    (reachable, items), age = await asyncio.gather(
-        _list_paths(), _last_segment_age(stream_key)
-    )
+    reachable, items = await _list_paths()
     if not reachable:
         return {"active": False, "ready": False, "reachable": False}
 
@@ -159,6 +162,14 @@ async def check_publisher_active(stream_key: str) -> dict:
     match = next((p for p in items if (p.get("name") or "") == target), None)
     if match is None:
         return {"active": False, "ready": False, "reachable": True}
+
+    # Only ask for segment age once we know MediaMTX has a path — otherwise
+    # the HLS playlist GET will hang/404 while no publisher is connected.
+    age = (
+        await _last_segment_age(stream_key)
+        if match.get("ready")
+        else None
+    )
 
     result = {
         "active": bool(match.get("ready") or match.get("source")),
