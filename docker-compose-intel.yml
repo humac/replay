@@ -250,6 +250,18 @@ configs:
               file_server
           }
 
+          @match_thumbnail {
+              path_regexp match_thumb ^/api/matches/([^/]+)/thumbnail/?$
+          }
+          handle @match_thumbnail {
+              rewrite * /videos/{re.match_thumb.1}/thumb.jpg
+              header Cache-Control "no-cache, must-revalidate"
+              header Access-Control-Allow-Origin "*"
+              header Content-Type "image/jpeg"
+              root * /data
+              file_server
+          }
+
           handle {
               reverse_proxy replay:8090 {
                   flush_interval -1
