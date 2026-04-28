@@ -88,11 +88,103 @@ DB_FILE = DATA_DIR / "replay.db"
 VIDEOS_DIR = DATA_DIR / "videos"
 APP_ASSETS_DIR = DATA_DIR / "app_assets"
 
+# Optional staging directory for the SPA's static assets (script.js, styles.css,
+# js/, logo.png). When set, the replay container populates this directory on
+# startup so Caddy — which can't read from /app on the replay container — can
+# bind-mount it read-only and serve /static/* via sendfile() instead of paying
+# uvicorn's overhead per request. See `_stage_static_assets` and the
+# `replay_static` named volume in docker-compose-intel.yml.
+STATIC_EXPORT_DIR = (
+    Path(os.environ["REPLAY_STATIC_EXPORT_DIR"])
+    if os.environ.get("REPLAY_STATIC_EXPORT_DIR")
+    else None
+)
+
+# Files / dirs (relative to STATIC_DIR) that the SPA needs at /static/*.
+# Anything outside this allowlist stays on the replay app (Python endpoint
+# still serves it). Whitelisting keeps us from accidentally shipping things
+# like .env, *.py, or replay.db into Caddy's serving root.
+#
+# `index.html` is intentionally NOT exported — the SPA shell goes through
+# the FastAPI rendering route at `/`, `/match/...`, etc., not `/static/`.
+_STATIC_EXPORT_PATHS = (
+    "script.js",
+    "styles.css",
+    "logo.png",
+    "js",           # whole directory (utils.js, api.js, etc.)
+)
+
 # Cold storage for raw uploads + finished MP4s. Set REPLAY_ORIGINALS_DIR to a
 # bind mount on a separate (cheaper, larger) pool to keep the SSD pool free
 # for HLS segments + thumbnails. When unset, falls back to VIDEOS_DIR for the
 # legacy single-volume layout (no migration required for existing deploys).
 ORIGINALS_DIR = Path(os.environ.get("REPLAY_ORIGINALS_DIR") or str(VIDEOS_DIR))
+
+def _stage_static_assets() -> dict:
+    """Copy the SPA's static assets from STATIC_DIR to STATIC_EXPORT_DIR.
+
+    No-op when REPLAY_STATIC_EXPORT_DIR is unset (single-container layout
+    where uvicorn serves /static/* directly). When set, runs at startup and
+    syncs each entry in `_STATIC_EXPORT_PATHS` over to the export directory,
+    preserving mtimes via shutil.copy2 so subsequent runs only re-copy what
+    actually changed.
+
+    The export directory becomes a shared named volume; Caddy mounts it
+    read-only at /srv/static and serves /static/* via sendfile().
+
+    Returns a small dict for logging — copy/skip counts + the export root.
+    """
+    if STATIC_EXPORT_DIR is None:
+        return {"enabled": False}
+    STATIC_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    src_root = STATIC_DIR.resolve()
+    dst_root = STATIC_EXPORT_DIR.resolve()
+    copied = 0
+    skipped = 0
+
+    def _sync_file(src: Path, dst: Path) -> None:
+        nonlocal copied, skipped
+        try:
+            src_st = src.stat()
+        except FileNotFoundError:
+            # Allowlisted path that doesn't exist in this build (e.g. an
+            # asset that was renamed) — silently skip rather than fail boot.
+            return
+        try:
+            dst_st = dst.stat()
+        except FileNotFoundError:
+            dst_st = None
+        # Re-copy when sizes or mtimes diverge. Cheaper than reading both
+        # files to byte-compare; "good enough" because dst is owned only
+        # by this process.
+        if (dst_st is not None and dst_st.st_size == src_st.st_size
+                and int(dst_st.st_mtime) == int(src_st.st_mtime)):
+            skipped += 1
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        copied += 1
+
+    for rel in _STATIC_EXPORT_PATHS:
+        src = src_root / rel
+        dst = dst_root / rel
+        if src.is_dir():
+            for child in src.rglob("*"):
+                if not child.is_file():
+                    continue
+                rel_child = child.relative_to(src_root)
+                _sync_file(child, dst_root / rel_child)
+        elif src.is_file():
+            _sync_file(src, dst)
+
+    return {
+        "enabled": True,
+        "export_dir": str(STATIC_EXPORT_DIR),
+        "copied": copied,
+        "skipped": skipped,
+    }
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -110,6 +202,14 @@ async def lifespan(application: FastAPI):
     # path from VIDEOS_DIR), the host side is a bind mount and the
     # mountpoint inside the container needs to exist before first write.
     ORIGINALS_DIR.mkdir(parents=True, exist_ok=True)
+    # Stage SPA static assets to the shared volume Caddy serves. No-op when
+    # REPLAY_STATIC_EXPORT_DIR is unset (single-container layout).
+    static_report = _stage_static_assets()
+    if static_report.get("enabled"):
+        logger.info(
+            "Staged static assets to %s (copied=%d, skipped=%d)",
+            static_report["export_dir"], static_report["copied"], static_report["skipped"],
+        )
     _spawn_task(_backfill_hls_for_existing_videos())
     _spawn_task(_media.backfill_thumbnails(
         videos_dir=VIDEOS_DIR, originals_dir=ORIGINALS_DIR, load_matches=_load_matches,
