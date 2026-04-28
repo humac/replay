@@ -148,8 +148,14 @@ def cleanup_old_completed_sessions(max_age_seconds: int = 7 * 24 * 3600) -> int:
         return cursor.rowcount
 
 
-def cleanup_orphaned_raw_files(videos_dir: Path) -> list[str]:
-    """Remove raw upload files that don't belong to any active upload session."""
+def cleanup_orphaned_raw_files(videos_dir: Path, originals_dir: Path | None = None) -> list[str]:
+    """Remove raw upload files that don't belong to any active upload session.
+
+    Walks both `videos_dir` (legacy single-volume layout) and `originals_dir`
+    (tiered layout where raw uploads live on the cold pool). Passing the same
+    path for both — or omitting `originals_dir` — collapses to the original
+    single-tree behavior.
+    """
     with _db.connect() as conn:
         active_raw_paths = {
             row["raw_path"]
@@ -159,21 +165,30 @@ def cleanup_orphaned_raw_files(videos_dir: Path) -> list[str]:
         }
 
     removed: list[str] = []
-    if not videos_dir.is_dir():
-        return removed
-
-    for match_dir in videos_dir.iterdir():
-        if not match_dir.is_dir():
+    seen_roots: set = set()
+    roots = [videos_dir]
+    if originals_dir is not None and originals_dir != videos_dir:
+        roots.append(originals_dir)
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
             continue
-        for f in match_dir.iterdir():
-            if f.name.startswith(("full_raw", "first_half_raw", "second_half_raw")):
-                if str(f) not in active_raw_paths:
-                    try:
-                        f.unlink()
-                        removed.append(str(f))
-                        logger.info("Removed orphaned raw file: %s", f)
-                    except OSError:
-                        pass
+        if resolved in seen_roots or not root.is_dir():
+            continue
+        seen_roots.add(resolved)
+        for match_dir in root.iterdir():
+            if not match_dir.is_dir():
+                continue
+            for f in match_dir.iterdir():
+                if f.name.startswith(("full_raw", "first_half_raw", "second_half_raw")):
+                    if str(f) not in active_raw_paths:
+                        try:
+                            f.unlink()
+                            removed.append(str(f))
+                            logger.info("Removed orphaned raw file: %s", f)
+                        except OSError:
+                            pass
     return removed
 
 

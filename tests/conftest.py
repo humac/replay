@@ -38,6 +38,9 @@ async def client(data_dir, monkeypatch):
     monkeypatch.setattr(server, "DB_FILE", data_dir / "replay.db")
     monkeypatch.setattr(server, "VIDEOS_DIR", data_dir / "videos")
     monkeypatch.setattr(server, "APP_ASSETS_DIR", data_dir / "app_assets")
+    # Default to the un-tiered single-volume layout for tests; tiered tests
+    # set their own ORIGINALS_DIR explicitly via monkeypatch.setattr.
+    monkeypatch.setattr(server, "ORIGINALS_DIR", data_dir / "videos")
 
     # Re-init DB module with test paths
     _db.init(data_dir, data_dir / "replay.db", data_dir / "app_assets")

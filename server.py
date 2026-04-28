@@ -88,6 +88,12 @@ DB_FILE = DATA_DIR / "replay.db"
 VIDEOS_DIR = DATA_DIR / "videos"
 APP_ASSETS_DIR = DATA_DIR / "app_assets"
 
+# Cold storage for raw uploads + finished MP4s. Set REPLAY_ORIGINALS_DIR to a
+# bind mount on a separate (cheaper, larger) pool to keep the SSD pool free
+# for HLS segments + thumbnails. When unset, falls back to VIDEOS_DIR for the
+# legacy single-volume layout (no migration required for existing deploys).
+ORIGINALS_DIR = Path(os.environ.get("REPLAY_ORIGINALS_DIR") or str(VIDEOS_DIR))
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup/shutdown lifecycle."""
@@ -100,8 +106,14 @@ async def lifespan(application: FastAPI):
     await TRANSCODE_SEMAPHORE.resize(current_transcode_concurrency())
     await _sweep_orphaned_transcodes()
     _uploads.cleanup_stale_sessions(current_stale_upload_session_seconds())
+    # Make sure the originals directory exists. When tiered (different
+    # path from VIDEOS_DIR), the host side is a bind mount and the
+    # mountpoint inside the container needs to exist before first write.
+    ORIGINALS_DIR.mkdir(parents=True, exist_ok=True)
     _spawn_task(_backfill_hls_for_existing_videos())
-    _spawn_task(_media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches))
+    _spawn_task(_media.backfill_thumbnails(
+        videos_dir=VIDEOS_DIR, originals_dir=ORIGINALS_DIR, load_matches=_load_matches,
+    ))
     sweeper = asyncio.create_task(_streams.sweeper_task())
     try:
         yield
@@ -409,6 +421,21 @@ def _slot_hls_master_path(match_id: str, slot: str) -> Path:
     return _media.slot_hls_master_path(VIDEOS_DIR, match_id, slot)
 
 
+def _slot_mp4_path(match_id: str, slot: str) -> Path:
+    """Finished MP4 path. Lives on the cold pool (ORIGINALS_DIR) when tiered."""
+    return _media.slot_mp4_path(ORIGINALS_DIR, match_id, slot)
+
+
+def _slot_raw_path(match_id: str, slot: str, ext: str) -> Path:
+    """Raw upload destination for a slot. Cold pool when tiered."""
+    return _media.slot_raw_path(ORIGINALS_DIR, match_id, slot, ext)
+
+
+def _find_slot_raw_path(match_id: str, slot: str) -> Path | None:
+    """Existing raw upload (.mp4 then .mkv), or None."""
+    return _media.find_slot_raw_path(ORIGINALS_DIR, match_id, slot)
+
+
 def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
     missing = []
     for match in matches:
@@ -416,12 +443,12 @@ def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
         for slot in slots:
             if _get_video_status(match, slot) != "ready":
                 continue
-            mp4_path = VIDEOS_DIR / match["id"] / f"{slot}.mp4"
+            mp4_path = _slot_mp4_path(match["id"], slot)
             if not mp4_path.is_file():
                 continue
             # Use verify_slot_assets so a partially-written master.m3u8 (from
             # a prior interrupted HLS build) is treated as missing, not complete.
-            report = _media.verify_slot_assets(VIDEOS_DIR, match["id"], slot)
+            report = _media.verify_slot_assets(VIDEOS_DIR, match["id"], slot, originals_dir=ORIGINALS_DIR)
             if report["hls_complete"]:
                 continue
             missing.append((match["id"], slot))
@@ -439,16 +466,58 @@ def _required_free_bytes(size_bytes: int) -> int:
     )
 
 
+def _pool_stats(path: Path) -> dict | None:
+    """`shutil.disk_usage` wrapped + tagged. None if the path can't be stat'd
+    (e.g. a temporarily unavailable bind mount). Used by both the upload
+    pre-flight guard and the diagnostics endpoints."""
+    try:
+        total, used, free = shutil.disk_usage(path)
+    except OSError:
+        return None
+    return {"path": str(path), "total": total, "used": used, "free": free}
+
+
 def _disk_stats_payload(required_bytes: int | None = None) -> dict:
-    total, used, free = shutil.disk_usage(DATA_DIR)
+    """Per-pool free space + the headroom guard the uploader must satisfy.
+
+    The guard targets `ORIGINALS_DIR` (where raw uploads + finished MP4s
+    actually land — see PR #18 storage tiering). On legacy single-volume
+    layouts ORIGINALS_DIR aliases VIDEOS_DIR, so this is just one pool.
+    The historical top-level `free_bytes` / `enough_space` keys are kept
+    pointing at the originals pool so existing callers (admin diagnostics
+    UI, the transcode pre-flight) get the right answer without code
+    changes.
+    """
+    ssd = _pool_stats(DATA_DIR)
+    # Walk the cold pool only when it differs from DATA_DIR. ORIGINALS_DIR
+    # may live anywhere under or outside DATA_DIR; resolved-path equality
+    # catches symlink aliasing too.
+    pools: dict = {"ssd": ssd}
+    cold = None
+    try:
+        same_pool = ORIGINALS_DIR.resolve() == DATA_DIR.resolve()
+    except OSError:
+        same_pool = False
+    if not same_pool:
+        cold = _pool_stats(ORIGINALS_DIR)
+        pools["originals"] = cold
+
+    # Target pool for an upload is the cold pool when tiered, else SSD.
+    target = cold if cold is not None else ssd
+    target_free = target["free"] if target else 0
+    target_total = target["total"] if target else 0
+    target_used = target["used"] if target else 0
+
     return {
-        "total_bytes": total,
-        "used_bytes": used,
-        "free_bytes": free,
+        "total_bytes": target_total,
+        "used_bytes": target_used,
+        "free_bytes": target_free,
         "min_free_bytes": current_min_free_disk_bytes(),
         "required_bytes": required_bytes,
         "upload_headroom_multiplier": current_upload_disk_headroom_multiplier(),
-        "enough_space": required_bytes is None or free >= required_bytes,
+        "enough_space": required_bytes is None or target_free >= required_bytes,
+        "target_pool": "originals" if cold is not None else "ssd",
+        "pools": pools,
     }
 
 
@@ -456,10 +525,11 @@ def _ensure_disk_space(size_bytes: int):
     required_bytes = _required_free_bytes(size_bytes)
     stats = _disk_stats_payload(required_bytes)
     if stats["free_bytes"] < required_bytes:
+        pool_label = stats.get("target_pool", "ssd")
         raise HTTPException(
             507,
             (
-                f"Insufficient free disk space for upload. "
+                f"Insufficient free disk space on the {pool_label} pool for upload. "
                 f"Need about {required_bytes} bytes free and only have {stats['free_bytes']} bytes."
             ),
         )
@@ -518,6 +588,7 @@ async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
 async def _backfill_hls_for_existing_videos() -> dict:
     return await _media.backfill_hls_for_existing_videos(
         **_media_kwargs(),
+        originals_dir=ORIGINALS_DIR,
         hls_backfill_lock=HLS_BACKFILL_LOCK,
         load_matches=_load_matches,
         ready_slots_missing_hls=_ready_slots_missing_hls,
@@ -1012,19 +1083,35 @@ _diag_disk_cache: dict = {"ts": 0.0, "data": []}
 
 
 def _cached_disk_usage_by_match() -> list[dict]:
-    """Walk VIDEOS_DIR to tally per-match disk use, cached for 60 s."""
+    """Walk VIDEOS_DIR + ORIGINALS_DIR to tally per-match disk use, cached
+    for 60 s. When tiered (different paths), totals are summed across both
+    trees so the admin sees the true on-disk footprint of each match."""
     now = time.time()
     if now - _diag_disk_cache["ts"] < 60:
         return _diag_disk_cache["data"]
-    result: list[dict] = []
-    if VIDEOS_DIR.is_dir():
-        for d in VIDEOS_DIR.iterdir():
-            if d.is_dir():
+    totals: dict[str, int] = {}
+    seen_roots: set = set()
+    for root in (VIDEOS_DIR, ORIGINALS_DIR):
+        try:
+            resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved in seen_roots or not root.is_dir():
+            continue
+        seen_roots.add(resolved)
+        for d in root.iterdir():
+            if not d.is_dir():
+                continue
+            try:
                 total = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                if total > 0:
-                    result.append({"match_id": d.name, "bytes": total})
-        result.sort(key=lambda x: x["bytes"], reverse=True)
-        result = result[:5]
+            except OSError:
+                continue
+            if total > 0:
+                totals[d.name] = totals.get(d.name, 0) + total
+    result = sorted(
+        ({"match_id": k, "bytes": v} for k, v in totals.items()),
+        key=lambda x: x["bytes"], reverse=True,
+    )[:5]
     _diag_disk_cache["ts"] = now
     _diag_disk_cache["data"] = result
     return result
@@ -1229,14 +1316,14 @@ def _host_signals() -> dict:
 
 
 def _disk_pools() -> dict:
-    """Free/used for the SSD (DATA_DIR) plus the originals dir if it differs."""
-    pools: dict = {}
-    try:
-        total, used, free = shutil.disk_usage(DATA_DIR)
-        pools["ssd"] = {"path": str(DATA_DIR), "total": total, "used": used, "free": free}
-    except OSError:
-        pools["ssd"] = None
-    return pools
+    """Free/used for the SSD (DATA_DIR) plus the originals dir if it differs.
+
+    Mirrors the `pools` sub-dict in `_disk_stats_payload` so the Performance
+    Tuning panel surfaces cold-pool capacity alongside the SSD pool. When
+    ORIGINALS_DIR aliases DATA_DIR (single-volume layout), only `ssd` is
+    populated.
+    """
+    return _disk_stats_payload()["pools"]
 
 
 @app.get("/api/admin/performance")
@@ -1346,22 +1433,17 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
         match.setdefault("video_status", {})[slot] = "transcoding"
         _db.save_matches_unlocked(matches)
 
-    vid_dir = VIDEOS_DIR / match_id
-    final_path = vid_dir / f"{slot}.mp4"
+    final_path = _slot_mp4_path(match_id, slot)
 
-    # Prefer raw upload file if it still exists; otherwise use the MP4
-    src = None
-    for ext in (".mp4", ".mkv"):
-        raw = vid_dir / f"{slot}_raw{ext}"
-        if raw.is_file():
-            src = raw
-            break
+    # Prefer raw upload file if it still exists; otherwise re-stage the
+    # existing MP4 as a raw file. Both live on ORIGINALS_DIR.
+    src = _find_slot_raw_path(match_id, slot)
     if src is None and final_path.is_file():
         # Re-transcode from the existing MP4. Promote it to a raw-named path
         # first so source and destination are distinct — transcode_video does
         # `dest.unlink(missing_ok=True)` before invoking ffmpeg, which would
         # otherwise delete its own input.
-        raw_promoted = vid_dir / f"{slot}_raw.mp4"
+        raw_promoted = _slot_raw_path(match_id, slot, ".mp4")
         try:
             final_path.rename(raw_promoted)
         except OSError as exc:
@@ -1409,7 +1491,7 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
     if not match:
         raise HTTPException(404, "Match not found")
 
-    mp4_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+    mp4_path = _slot_mp4_path(match_id, slot)
     if not mp4_path.is_file():
         raise HTTPException(404, "MP4 file not found on disk")
 
@@ -1442,7 +1524,7 @@ async def admin_regenerate_thumbnail(match_id: str, request: Request):
     chosen_slot = None
     for slot in slot_order:
         if _get_video_status(match, slot) == "ready":
-            mp4_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+            mp4_path = _slot_mp4_path(match_id, slot)
             if mp4_path.is_file():
                 chosen_slot = slot
                 break
@@ -1452,7 +1534,7 @@ async def admin_regenerate_thumbnail(match_id: str, request: Request):
             "No ready slot available — request a specific slot or wait for a transcode to complete",
         )
 
-    mp4_path = VIDEOS_DIR / match_id / f"{chosen_slot}.mp4"
+    mp4_path = _slot_mp4_path(match_id, chosen_slot)
     thumb_path = VIDEOS_DIR / match_id / "thumb.jpg"
     thumb_path.unlink(missing_ok=True)
     ok = await _media.generate_thumbnail(mp4_path, thumb_path)
@@ -1475,7 +1557,7 @@ async def admin_verify_assets(match_id: str, request: Request):
         status = _get_video_status(match, slot)
         if status == "none":
             continue
-        report = _media.verify_slot_assets(VIDEOS_DIR, match_id, slot)
+        report = _media.verify_slot_assets(VIDEOS_DIR, match_id, slot, originals_dir=ORIGINALS_DIR)
         report["status"] = status
         slots[slot] = report
     return {"match_id": match_id, "slots": slots}
@@ -1604,9 +1686,12 @@ async def delete_match(match_id: str, request: Request):
             if task:
                 task.cancel()
 
-    vid_dir = VIDEOS_DIR / match_id
-    if vid_dir.exists():
-        shutil.rmtree(str(vid_dir))
+    # Remove both the hot-path tree (HLS, thumbnail) and the cold-path tree
+    # (raw uploads + finished MP4). When tiered they're separate volumes;
+    # when collapsed they're the same path and the second rmtree is a no-op.
+    for d in {VIDEOS_DIR / match_id, ORIGINALS_DIR / match_id}:
+        if d.exists():
+            shutil.rmtree(str(d))
     logger.info("admin.action", extra={"action": "delete_match", "actor": user["username"], "target_id": match_id})
     return {"ok": True}
 
@@ -1651,9 +1736,12 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
     _ensure_disk_space(size_bytes)
     _uploads.cancel_conflicting_sessions(match_id, slot)
 
-    vid_dir = VIDEOS_DIR / match_id
-    vid_dir.mkdir(parents=True, exist_ok=True)
-    raw_path = vid_dir / f"{slot}_raw{ext}"
+    # Raw upload lands on the cold pool (ORIGINALS_DIR). Make sure the per-
+    # match directory there exists first; the SSD-side videos directory is
+    # also ensured because thumbnails + HLS still write to it post-transcode.
+    (ORIGINALS_DIR / match_id).mkdir(parents=True, exist_ok=True)
+    (VIDEOS_DIR / match_id).mkdir(parents=True, exist_ok=True)
+    raw_path = _slot_raw_path(match_id, slot, ext)
     raw_path.unlink(missing_ok=True)
 
     session_id = uuid.uuid4().hex
@@ -1792,7 +1880,7 @@ async def cleanup_upload_sessions(request: Request):
     _auth.require_role(request, "admin")
     cleaned = _uploads.cleanup_stale_sessions(current_stale_upload_session_seconds())
     expired = _uploads.cleanup_old_completed_sessions()
-    orphaned = _uploads.cleanup_orphaned_raw_files(VIDEOS_DIR)
+    orphaned = _uploads.cleanup_orphaned_raw_files(VIDEOS_DIR, originals_dir=ORIGINALS_DIR)
     return {
         "ok": True,
         "cleaned_session_ids": cleaned,
@@ -1822,7 +1910,7 @@ async def complete_upload_session(session_id: str, request: Request):
 
     match_id = row["match_id"]
     slot = row["slot"]
-    final_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+    final_path = _slot_mp4_path(match_id, slot)
 
     # CAS: only the first concurrent /complete call wins; the conditional UPDATE
     # ensures exactly one caller transitions 'active' → 'completed' and spawns
@@ -1863,10 +1951,12 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     if ext not in (".mp4", ".mkv"):
         raise HTTPException(400, "Only .mp4 and .mkv files are supported")
 
-    vid_dir = VIDEOS_DIR / match_id
-    vid_dir.mkdir(parents=True, exist_ok=True)
+    # Raw upload + finished MP4 live on the cold pool (ORIGINALS_DIR);
+    # HLS + thumbnails will land on VIDEOS_DIR after transcode.
+    (ORIGINALS_DIR / match_id).mkdir(parents=True, exist_ok=True)
+    (VIDEOS_DIR / match_id).mkdir(parents=True, exist_ok=True)
 
-    raw_path = vid_dir / f"{slot}_raw{ext}"
+    raw_path = _slot_raw_path(match_id, slot, ext)
     max_upload = current_max_upload_size_bytes()
     logger.info(
         "Upload started: %s/%s filename=%s max_size_bytes=%d",
@@ -1890,7 +1980,7 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
 
     await _set_video_status(match_id, slot, "transcoding", None)
 
-    final_path = vid_dir / f"{slot}.mp4"
+    final_path = _slot_mp4_path(match_id, slot)
     _spawn_transcode(match_id, slot, raw_path, final_path)
 
     return {"ok": True, "slot": slot, "size_mb": size_mb, "status": "transcoding"}
@@ -1914,7 +2004,7 @@ async def stream_video(match_id: str, slot: str, request: Request):
     if status == "error":
         raise HTTPException(500, "Video processing failed — check server logs")
 
-    vid_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+    vid_path = _slot_mp4_path(match_id, slot)
     if not vid_path.is_file():
         raise HTTPException(404, "Video not found")
 
@@ -1966,7 +2056,7 @@ async def download_video(match_id: str, slot: str, request: Request):
     if status == "error":
         raise HTTPException(500, "Video processing failed")
 
-    vid_path = VIDEOS_DIR / match_id / f"{slot}.mp4"
+    vid_path = _slot_mp4_path(match_id, slot)
     if not vid_path.is_file():
         raise HTTPException(404, "Video not found")
 

@@ -148,7 +148,19 @@ async def cancel_active_transcodes():
 
 
 # ---------------------------------------------------------------------------
-# HLS path helpers
+# Path helpers
+#
+# The replay app keeps two trees on disk:
+#   - `videos_dir` (always the SSD pool): hot path. HLS variants + segments
+#     for every match plus per-match thumbnails. Many small random reads on
+#     every viewer hit, so it lives on fast storage.
+#   - `originals_dir` (configurable via REPLAY_ORIGINALS_DIR; defaults to
+#     `videos_dir`): cold path. Raw uploads (`<slot>_raw.{mp4,mkv}`) and
+#     finished, transcoded MP4s (`<slot>.mp4`). Large, written once, read
+#     rarely — ideal for an HDD pool. Setting `originals_dir` to a separate
+#     bind mount lets the SSD hold many more "hot" matches without filling
+#     up. When unset, both trees collide and the layout matches the
+#     pre-tiering behavior (everything on one volume).
 # ---------------------------------------------------------------------------
 
 def slot_hls_dir(videos_dir: Path, match_id: str, slot: str) -> Path:
@@ -157,6 +169,31 @@ def slot_hls_dir(videos_dir: Path, match_id: str, slot: str) -> Path:
 
 def slot_hls_master_path(videos_dir: Path, match_id: str, slot: str) -> Path:
     return slot_hls_dir(videos_dir, match_id, slot) / "master.m3u8"
+
+
+def match_originals_dir(originals_dir: Path, match_id: str) -> Path:
+    """Per-match cold storage: raw uploads + finished MP4."""
+    return originals_dir / match_id
+
+
+def slot_mp4_path(originals_dir: Path, match_id: str, slot: str) -> Path:
+    """Finished, transcoded MP4 for a slot."""
+    return match_originals_dir(originals_dir, match_id) / f"{slot}.mp4"
+
+
+def slot_raw_path(originals_dir: Path, match_id: str, slot: str, ext: str) -> Path:
+    """Raw upload destination for a slot (before transcode). `ext` includes
+    the leading dot, e.g. '.mp4' or '.mkv'."""
+    return match_originals_dir(originals_dir, match_id) / f"{slot}_raw{ext}"
+
+
+def find_slot_raw_path(originals_dir: Path, match_id: str, slot: str) -> Path | None:
+    """Return the existing raw upload file for *slot*, trying .mp4 then .mkv."""
+    for ext in (".mp4", ".mkv"):
+        p = slot_raw_path(originals_dir, match_id, slot, ext)
+        if p.is_file():
+            return p
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -847,9 +884,17 @@ async def generate_thumbnail(
 async def backfill_thumbnails(
     *,
     videos_dir: Path,
+    originals_dir: Path | None = None,
     load_matches,
 ) -> dict:
-    """Generate thumbnails for matches that have ready videos but no thumb.jpg."""
+    """Generate thumbnails for matches that have ready videos but no thumb.jpg.
+
+    Thumbnails go on the SSD `videos_dir` (every match-card render hits one).
+    Source MP4s live on `originals_dir`; falls back to `videos_dir` for the
+    legacy single-volume layout.
+    """
+    if originals_dir is None:
+        originals_dir = videos_dir
     matches = await load_matches()
     generated = 0
     skipped = 0
@@ -865,7 +910,7 @@ async def backfill_thumbnails(
         videos = match.get("videos", {})
         for slot in ("full", "first_half", "second_half"):
             if vs.get(slot) == "ready" and videos.get(slot):
-                mp4_path = videos_dir / match_id / f"{slot}.mp4"
+                mp4_path = slot_mp4_path(originals_dir, match_id, slot)
                 if mp4_path.is_file():
                     ok = await generate_thumbnail(mp4_path, thumb_path)
                     if ok:
@@ -888,12 +933,19 @@ def verify_slot_assets(
     videos_dir: Path,
     match_id: str,
     slot: str,
+    originals_dir: Path | None = None,
 ) -> dict:
     """Check that expected media assets exist for a slot.
 
     Returns a dict with mp4_exists, mp4_size, hls_complete, missing_variants.
+
+    `videos_dir` holds HLS; `originals_dir` (defaults to `videos_dir`) holds
+    the finished MP4. The split lets the SSD pool drop large MP4 files when
+    REPLAY_ORIGINALS_DIR is configured.
     """
-    mp4_path = videos_dir / match_id / f"{slot}.mp4"
+    if originals_dir is None:
+        originals_dir = videos_dir
+    mp4_path = slot_mp4_path(originals_dir, match_id, slot)
     mp4_exists = mp4_path.is_file()
     mp4_size = mp4_path.stat().st_size if mp4_exists else 0
 
@@ -926,6 +978,7 @@ def verify_slot_assets(
 async def backfill_hls_for_existing_videos(
     *,
     videos_dir: Path,
+    originals_dir: Path | None = None,
     hls_segment_duration: int,
     hls_variant_presets: list[dict],
     hls_backfill_lock: asyncio.Lock,
@@ -937,6 +990,8 @@ async def backfill_hls_for_existing_videos(
 ) -> dict:
     if hls_backfill_lock.locked():
         return {"started": False, "reason": "already-running", "processed": 0, "generated": 0}
+    if originals_dir is None:
+        originals_dir = videos_dir
 
     # Delay at startup so fresh uploads get priority on the transcode semaphore
     if startup_delay > 0:
@@ -954,7 +1009,7 @@ async def backfill_hls_for_existing_videos(
         generated = 0
 
         for match_id, slot in candidates:
-            mp4_path = videos_dir / match_id / f"{slot}.mp4"
+            mp4_path = slot_mp4_path(originals_dir, match_id, slot)
             try:
                 ok = await build_hls_assets(mp4_path, match_id, slot, **hls_kwargs)
                 if ok:

@@ -414,3 +414,15 @@ On phones the season header stacked the team badge, title/intro block and Watch 
   - **Frontend panel** under `/admin/system`: `.diagnostic-card` KPI tiles refreshed every 5 s, plus recent-transcodes and active-sessions lists. Reuses existing styles.
   - **Snapshot export**: copy-to-clipboard + JSON download buttons bundle the latest `/api/admin/performance` payload for sharing with a coding agent.
   - **`psutil` added to `requirements.txt`** for the host-signals helper; gracefully degrades if missing.
+
+## Sprint — Storage Tiering (TrueNAS two-pool layout) ✅ COMPLETE (2026-04-28)
+
+**Goal:** stop the SSD pool filling up with raw uploads + finished MP4s. The hot path (HLS variants + thumbnails) stays on the SSD, while cold assets move to a configurable second volume — typically a dedicated ZFS dataset on the HDD pool.
+
+- **`REPLAY_ORIGINALS_DIR` env var** (`server.py`): when set, points at a separate filesystem for `<match-id>/<slot>.mp4` (finished, transcoded) and `<match-id>/<slot>_raw.{mp4,mkv}` (raw uploads). Defaults to `VIDEOS_DIR` so existing single-volume deployments are unchanged. The directory is mkdir'd at startup so a fresh bind mount inside the container "just works."
+- **`media.py` helpers**: `match_originals_dir`, `slot_mp4_path`, `slot_raw_path`, `find_slot_raw_path`. All paths flow through these so future call sites pick up the split for free.
+- **Server-side wiring**: chunked upload session creator + legacy single-shot upload + `/retry` (with `?force=true`) + `/regenerate-hls` + `/regenerate-thumbnail` + `/verify` + MP4 stream + MP4 download + delete-match + HLS backfill + thumbnail backfill all read/write through the helpers. Per-match disk-usage walker tallies bytes across both trees so the admin Diagnostics shows the true footprint.
+- **`uploads.cleanup_orphaned_raw_files`** walks both `videos_dir` and `originals_dir` (de-duplicated by resolved path) so a stale raw file in either tree gets removed.
+- **Compose**: `docker-compose-intel.yml` now sets `REPLAY_ORIGINALS_DIR=/originals/videos` and bind-mounts the recommended HDD path `/mnt/tank/media/replay → /originals`. Disabling tiering = comment out the env var + bind mount.
+- **Tests** (`tests/test_uploads.py` + `tests/conftest.py`): two new tests confirm the chunked upload session writes its `raw_path` into `ORIGINALS_DIR` when tiered, and into `VIDEOS_DIR` (alias) when un-tiered. Conftest adds an `ORIGINALS_DIR == VIDEOS_DIR` default so all existing tests keep passing without modification. 132/132 pass.
+- **Capacity model** (per the user's actual pool sizing): SSD pool at 197 GiB used / 678 GiB free comfortably holds 130–200 hot matches' HLS + thumbnails (~3.5–5 GB per match across 3 variants). HDD pool at 21 TiB used / 10 TiB free absorbs 2,500+ matches of cold archive. ZFS ARC + the 32 GB host RAM cache the working set transparently for cold reads.

@@ -41,6 +41,7 @@ seeds the setting, then the env var is ignored. Edit through the UI thereafter.
 | `ADMIN_PASS` | (none) | Env-var superadmin password |
 | `REPLAY_PORT` | `8090` | HTTP listen port |
 | `REPLAY_DATA_DIR` | `/tank/replay` | Root data directory (DB + videos) |
+| `REPLAY_ORIGINALS_DIR` | `<REPLAY_DATA_DIR>/videos` | Cold-storage path for raw uploads + finished MP4s. Set to a separate volume to keep the SSD pool free for HLS. See "Storage tiering" below. |
 | `ALLOWED_ORIGINS` | (empty) | Comma-separated hostnames for login origin check |
 | `LOG_FORMAT` | `json` | `json` or `text` |
 | `LOG_LEVEL` | `INFO` | Python log level |
@@ -259,6 +260,91 @@ Data lives under `REPLAY_DATA_DIR`:
 
 In Docker Compose the default config uses a named volume `replay_data`
 mounted at `/data`.
+
+### Storage tiering (recommended for multi-volume hosts)
+
+Setting `REPLAY_ORIGINALS_DIR` splits the on-disk layout in two so the
+hot path (HLS variants + thumbnails) stays on a fast volume and the
+cold path (raw uploads + finished MP4s) lives on a larger/slower one.
+
+```
+<REPLAY_DATA_DIR>/                    # SSD pool (hot)
+├── replay.db
+├── app_assets/
+└── videos/
+    └── <match-id>/
+        ├── thumb.jpg
+        └── hls/
+            └── <slot>/...
+
+<REPLAY_ORIGINALS_DIR>/               # HDD pool (cold)
+└── <match-id>/
+    ├── full.mp4                # finished, transcoded
+    ├── first_half.mp4
+    ├── second_half.mp4
+    └── full_raw.{mp4,mkv}      # raw upload (deleted after transcode)
+```
+
+**Why split:** the SSD pool is small (e.g. 678 GiB on a typical TrueNAS
+apps dataset) and gets eaten by raw uploads + originals at ~1–4 GB per
+match. HLS segments + thumbnails — the actual hot data that every viewer
+hits — are tiny by comparison (~3–5 GB of HLS per match across the
+default ladder). Splitting them lets the SSD hold 130–200 hot matches
+without filling up; cold MP4s on the HDD pool are cached transparently
+by ZFS ARC for the working set.
+
+**Recommended TrueNAS dataset:**
+
+```bash
+zfs create -o recordsize=1M -o compression=lz4 -o atime=off tank/media/replay
+```
+
+- `recordsize=1M` matches large sequential MP4 reads/writes.
+- `compression=lz4` is essentially free; H.264 doesn't compress but ZFS
+  metadata + sidecar files do.
+- `atime=off` saves a write per read.
+
+**Compose (already configured in `docker-compose-intel.yml`):**
+
+```yaml
+services:
+  replay:
+    environment:
+      REPLAY_ORIGINALS_DIR: /originals/videos
+    volumes:
+      - /mnt/apps_ssd/apps/replay:/data           # SSD: hot path
+      - /mnt/tank/media/replay:/originals          # HDD: cold path
+```
+
+Caddy still bind-mounts `/data:ro` only — it serves HLS straight off the
+SSD. The cold pool is read by the replay app for MP4 streams + transcode
+input, and is small-traffic compared to HLS segment fan-out.
+
+**Migrating an existing single-volume deployment:**
+
+After enabling `REPLAY_ORIGINALS_DIR` and creating the new dataset,
+move existing matches' MP4s + raw files off the SSD:
+
+```bash
+# Run on the host. Replace paths to match your bind-mount config.
+SSD=/mnt/apps_ssd/apps/replay/videos
+HDD=/mnt/tank/media/replay/videos
+mkdir -p "$HDD"
+for m in "$SSD"/*/; do
+    match_id=$(basename "$m")
+    mkdir -p "$HDD/$match_id"
+    # Move raws + finished MP4s; keep HLS + thumbnail on SSD.
+    mv "$m"*.mp4 "$m"*_raw.* "$HDD/$match_id/" 2>/dev/null || true
+done
+```
+
+Restart the replay container after the move. The new path resolution
+picks up the cold-pool location automatically; no DB rewrite needed.
+
+**To disable tiering:** unset `REPLAY_ORIGINALS_DIR` (or remove it from
+compose) and `mv` everything back into `<REPLAY_DATA_DIR>/videos/`.
+The default behavior aliases `ORIGINALS_DIR` to `VIDEOS_DIR` so a
+single-volume deploy "just works."
 
 ## Backup
 
