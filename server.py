@@ -1001,7 +1001,15 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
         # `dest.unlink(missing_ok=True)` before invoking ffmpeg, which would
         # otherwise delete its own input.
         raw_promoted = vid_dir / f"{slot}_raw.mp4"
-        final_path.rename(raw_promoted)
+        try:
+            final_path.rename(raw_promoted)
+        except OSError as exc:
+            await _set_video_status(match_id, slot, "error", None, error_info={
+                "error_code": "retry_rename_failed",
+                "reason": str(exc),
+                "details": f"Failed to stage {final_path.name} → {raw_promoted.name} for retry",
+            })
+            raise HTTPException(500, "Failed to stage source file for retry") from exc
         src = raw_promoted
 
     if src is None:
