@@ -2,7 +2,7 @@
 
 Findings from a full-project security / correctness / quality pass after Milestones 8 (Admin Dashboard) and 9 (Score De-emphasis) shipped. Tick boxes as items are addressed.
 
-**Verdict:** ~~Request changes~~ C1–C7 all fixed 2026-04-27 — Critical items resolved. Major items next.
+**Verdict:** ~~Request changes~~ C1–C7 all fixed 2026-04-27 — Critical items resolved. M4, M5, M7, M8, M13 fixed 2026-04-27 — next-sprint items resolved.
 
 **Overall:** Solid foundation with thoughtful operational details (orphan sweepers, range-request cancellation, structured logger plumbing). Three classes of issue need attention: stored XSS in attribute contexts because `esc()` doesn't escape quotes, read-modify-write races around match writes, and default `admin`/`admin` credentials in production. Plus a sprawl of fire-and-forget `asyncio.create_task` calls that swallow exceptions.
 
@@ -54,11 +54,11 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - 144-bit key is brute-force-infeasible, but the endpoint is public. Could be used for rejection-log spam / mild amplification.
   - Fix: restrict to MediaMTX peer IP (compose service IP) OR require shared-secret header configured in `mediamtx.yml`'s `authHTTPHeaders`.
 
-- [ ] **M4. Background tasks fire-and-forget; exceptions silently dropped** — `server.py:59–62, 965, 1380, 1431`
+- [x] **M4. Background tasks fire-and-forget; exceptions silently dropped** — `server.py:59–62, 965, 1380, 1431`
   - `asyncio.create_task(...)` with no reference, no `add_done_callback`, no awaited cleanup. GC can collect; SIGTERM leaves orphan ffmpegs.
   - Fix: module-level `_background_tasks: set[asyncio.Task]` + `add_done_callback(self.discard)`; `await gather(*pending)` in `lifespan` shutdown.
 
-- [ ] **M5. `lifespan` shutdown cancels only the sweeper** — `server.py:51–67`
+- [x] **M5. `lifespan` shutdown cancels only the sweeper** — `server.py:51–67`
   - SIGTERM during a transcode leaves ffmpeg writing a half-MP4. `_sweep_orphaned_transcodes` flips status to `error` on next start but doesn't unlink the partial file.
   - Fix: track child `Process` handles in `media._transcode_progress`; terminate on shutdown; orphan sweep deletes partial dest files.
 
@@ -66,11 +66,11 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - Pagination exists in `db.search_matches` but client never invokes it. ~1000 matches × ~1KB = ~1MB JSON every transcode poll tick.
   - Fix: cap no-args path at ~500 most-recent; migrate client to paginated queries with infinite scroll.
 
-- [ ] **M7. Match deletion does not cascade** — `server.py:1143–1160`
+- [x] **M7. Match deletion does not cascade** — `server.py:1143–1160`
   - `upload_sessions` rows orphaned forever; `video_errors` rows orphaned forever; in-flight `_transcode_video` task isn't cancelled.
   - Fix: `DELETE FROM upload_sessions WHERE match_id=?`, `DELETE FROM video_errors WHERE match_id=?`, cancel any tracked task for that match.
 
-- [ ] **M8. Upload session resume can produce a Frankenstein file** — `js/uploads.js:45–75`, `server.py:1188–1248`
+- [x] **M8. Upload session resume can produce a Frankenstein file** — `js/uploads.js:45–75`, `server.py:1188–1248`
   - `find_active_session` matches on `(match_id, slot, size, ext)`. Two browsers picking different files of identical size and extension interleave chunks into one corrupt MP4.
   - Fix: hash first chunk on bind, store on session row; reject mismatched first-chunk hashes.
 
@@ -90,7 +90,7 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - Each failed GPU attempt logs a warning, but no aggregated counter. Broken VAAPI silently drops every transcode to CPU at 5× elapsed time.
   - Fix: counter pair `gpu_attempts_failed` / `gpu_attempts_succeeded` exposed via `/api/admin/diagnostics`.
 
-- [ ] **M13. Audit log gap on destructive admin actions** — `server.py:809, 1143, 722, 924, 969, 990, 910, 1050, 787`
+- [x] **M13. Audit log gap on destructive admin actions** — `server.py:809, 1143, 722, 924, 969, 990, 910, 1050, 787`
   - None of `delete_user`, `delete_match`, `unblock_stream`, `retry_transcode`, `regenerate_hls`, `regenerate_thumbnail`, `backfill_hls`, `export_database`, `update_user` log who did what to which target.
   - Fix: `logger.info("admin.action", extra={"action": ..., "actor": user["username"], "target_id": ...})`.
 

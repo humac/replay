@@ -6,6 +6,7 @@ Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 80
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -42,6 +43,24 @@ from models import (
 logger = _log.setup("replay")
 
 DATA_DIR = Path(os.environ.get("REPLAY_DATA_DIR", "/tank/replay"))
+
+# ---------------------------------------------------------------------------
+# Background task registry (M4)
+# ---------------------------------------------------------------------------
+
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_task(coro) -> asyncio.Task:
+    """Create a tracked background task; log exceptions and auto-discard on completion."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    def _on_done(t: asyncio.Task):
+        _background_tasks.discard(t)
+        if not t.cancelled() and (exc := t.exception()):
+            logger.error("Background task failed: %s", exc, exc_info=exc)
+    task.add_done_callback(_on_done)
+    return task
 STATIC_DIR = Path(__file__).parent
 MATCHES_FILE = DATA_DIR / "matches.json"
 DB_FILE = DATA_DIR / "replay.db"
@@ -56,15 +75,19 @@ async def lifespan(application: FastAPI):
     _db.backfill_slugs()
     _settings.init(APP_ASSETS_DIR, STATIC_DIR)
     await _sweep_orphaned_transcodes()
-    asyncio.create_task(_backfill_hls_for_existing_videos())
-    asyncio.create_task(
-        _media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches)
-    )
+    _spawn_task(_backfill_hls_for_existing_videos())
+    _spawn_task(_media.backfill_thumbnails(videos_dir=VIDEOS_DIR, load_matches=_load_matches))
     sweeper = asyncio.create_task(_streams.sweeper_task())
     try:
         yield
     finally:
         sweeper.cancel()
+        await _media.cancel_active_transcodes()
+        pending = [t for t in _background_tasks if not t.done()]
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 app = FastAPI(title="Replay", lifespan=lifespan)
@@ -725,9 +748,10 @@ async def admin_kill_stream(session_id: str, request: Request):
 @app.delete("/api/admin/streams/blocks")
 async def admin_unblock_stream(payload: UnblockStreamRequest, request: Request):
     """Admin: clear a kill-block early so the affected viewer can rejoin."""
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     key = (payload.ip, payload.kind, payload.match_id or "", payload.slot or "")
     cleared = _streams.registry.unblock(key)
+    logger.info("admin.action", extra={"action": "unblock_stream", "actor": user["username"], "target_ip": payload.ip, "kind": payload.kind})
     return {"ok": True, "cleared": cleared}
 
 
@@ -789,7 +813,7 @@ async def create_user(request: Request, body: CreateUserRequest):
 
 @app.patch("/api/users/{user_id}")
 async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
-    _auth.require_role(request, "admin")
+    actor = _auth.require_role(request, "admin")
     user = _db.get_user_by_id(user_id)
     if not user:
         raise HTTPException(404, "User not found")
@@ -806,14 +830,16 @@ async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
         return {"ok": True}
     _db.update_user(user_id, **updates)
     updated = _db.get_user_by_id(user_id)
+    logger.info("admin.action", extra={"action": "update_user", "actor": actor["username"], "target_id": user_id, "fields": list(updates)})
     return {"ok": True, "user": {k: v for k, v in updated.items() if k != "password_hash"}}
 
 
 @app.delete("/api/users/{user_id}")
 async def delete_user(user_id: str, request: Request):
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     if not _db.delete_user(user_id):
         raise HTTPException(404, "User not found")
+    logger.info("admin.action", extra={"action": "delete_user", "actor": user["username"], "target_id": user_id})
     return {"ok": True}
 
 
@@ -912,8 +938,9 @@ async def admin_diagnostics(request: Request):
 
 @app.post("/api/admin/backfill-hls")
 async def admin_backfill_hls(request: Request):
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     result = await _backfill_hls_for_existing_videos()
+    logger.info("admin.action", extra={"action": "backfill_hls", "actor": user["username"]})
     return {"ok": True, **result}
 
 
@@ -927,7 +954,7 @@ async def admin_match_errors(match_id: str, request: Request):
 @app.post("/api/admin/matches/{match_id}/slots/{slot}/retry")
 async def admin_retry_transcode(match_id: str, slot: str, request: Request):
     """Retry a failed transcode from the existing MP4 or raw upload file."""
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
@@ -975,14 +1002,15 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
             "No source file found — neither raw upload nor MP4 exists on disk",
         )
 
-    asyncio.create_task(_transcode_video(match_id, slot, src, final_path))
+    _spawn_task(_transcode_video(match_id, slot, src, final_path))
+    logger.info("admin.action", extra={"action": "retry_transcode", "actor": user["username"], "target_id": match_id, "slot": slot})
     return {"ok": True, "status": "transcoding", "source": src.name}
 
 
 @app.post("/api/admin/matches/{match_id}/slots/{slot}/regenerate-hls")
 async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
     """Regenerate HLS assets from an existing MP4 without re-transcoding."""
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
@@ -997,6 +1025,7 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
     ok = await _build_hls_assets(mp4_path, match_id, slot)
     if not ok:
         raise HTTPException(500, "HLS generation failed")
+    logger.info("admin.action", extra={"action": "regenerate_hls", "actor": user["username"], "target_id": match_id, "slot": slot})
     return {"ok": True, "slot": slot}
 
 
@@ -1009,7 +1038,7 @@ async def admin_regenerate_thumbnail(match_id: str, request: Request):
     as the startup backfill task: full > first_half > second_half. This
     overwrites the existing thumb.jpg on disk.
     """
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
@@ -1038,6 +1067,7 @@ async def admin_regenerate_thumbnail(match_id: str, request: Request):
     ok = await _media.generate_thumbnail(mp4_path, thumb_path)
     if not ok:
         raise HTTPException(500, "Thumbnail generation failed")
+    logger.info("admin.action", extra={"action": "regenerate_thumbnail", "actor": user["username"], "target_id": match_id, "slot": chosen_slot})
     return {"ok": True, "slot": chosen_slot}
 
 
@@ -1063,10 +1093,11 @@ async def admin_verify_assets(match_id: str, request: Request):
 @app.post("/api/admin/export-database")
 async def admin_export_database(request: Request):
     """Download the SQLite database file as a backup."""
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     if not DB_FILE.is_file():
         raise HTTPException(404, "Database file not found")
     date_str = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    logger.info("admin.action", extra={"action": "export_database", "actor": user["username"]})
     return FileResponse(
         str(DB_FILE),
         media_type="application/x-sqlite3",
@@ -1155,7 +1186,7 @@ async def update_match(match_id: str, request: Request, body: UpdateMatchRequest
 
 @app.delete("/api/matches/{match_id}")
 async def delete_match(match_id: str, request: Request):
-    _auth.require_role(request, "admin")
+    user = _auth.require_role(request, "admin")
     async with MATCHES_LOCK:
         matches = _db.load_matches_unlocked()
         match = _db.find_match(matches, match_id)
@@ -1165,10 +1196,15 @@ async def delete_match(match_id: str, request: Request):
         # find this match_id after this point, making the subsequent rmtree safe.
         matches = [m for m in matches if m["id"] != match_id]
         _db.save_matches_unlocked(matches)
+        with _db.connect() as conn:
+            conn.execute("DELETE FROM upload_sessions WHERE match_id = ?", (match_id,))
+            conn.execute("DELETE FROM video_errors WHERE match_id = ?", (match_id,))
+            conn.commit()
 
     vid_dir = VIDEOS_DIR / match_id
     if vid_dir.exists():
         shutil.rmtree(str(vid_dir))
+    logger.info("admin.action", extra={"action": "delete_match", "actor": user["username"], "target_id": match_id})
     return {"ok": True}
 
 
@@ -1197,7 +1233,8 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
     if not match:
         raise HTTPException(404, "Match not found")
 
-    existing = _uploads.find_active_session(match_id, slot, size_bytes, ext)
+    first_chunk_hash = body.first_chunk_hash or None
+    existing = _uploads.find_active_session(match_id, slot, size_bytes, ext, first_chunk_hash)
     if existing:
         logger.info(
             "Reusing active upload session: %s match=%s slot=%s next_index=%d",
@@ -1226,8 +1263,8 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
             """
             INSERT INTO upload_sessions (
                 id, match_id, slot, ext, raw_path, size_bytes, chunk_size,
-                total_chunks, next_index, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)
+                total_chunks, next_index, status, created_at, updated_at, first_chunk_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?, ?)
             """,
             (
                 session_id,
@@ -1240,6 +1277,7 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
                 total_chunks,
                 now,
                 now,
+                first_chunk_hash,
             ),
         )
         conn.commit()
@@ -1300,6 +1338,17 @@ async def upload_session_chunk(session_id: str, request: Request):
         raise HTTPException(400, "empty chunk body")
     if len(data) > row["chunk_size"]:
         raise HTTPException(400, "chunk exceeds session chunk_size")
+
+    # Defense-in-depth: verify that the first chunk belongs to the same file that
+    # created this session. Guards against two uploaders who both passed the same
+    # (size, ext) fingerprint to bind — unlikely but conceivable.
+    if index == 0 and row["first_chunk_hash"]:
+        actual = hashlib.sha256(data[:65536]).hexdigest()
+        if actual != row["first_chunk_hash"]:
+            raise HTTPException(
+                409,
+                "First-chunk fingerprint mismatch — this session belongs to a different file",
+            )
 
     raw_path = Path(row["raw_path"])
     await _append_bytes_file(raw_path, data)
@@ -1394,7 +1443,7 @@ async def complete_upload_session(session_id: str, request: Request):
         slot,
         actual_size,
     )
-    asyncio.create_task(_transcode_video(match_id, slot, raw_path, final_path))
+    _spawn_task(_transcode_video(match_id, slot, raw_path, final_path))
     return {"ok": True, "status": "transcoding", "slot": slot, "size_mb": round(actual_size / 1e6, 1)}
 
 @app.post("/api/matches/{match_id}/upload-video")

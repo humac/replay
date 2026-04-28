@@ -54,10 +54,11 @@ export const uploadsMixin = {
         }
 
         if (!session) {
+            const firstChunkHash = await this._hashFirstChunk(file);
             const sessionResp = await fetch(`/api/matches/${matchId}/upload-video/session?slot=${slot}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
-                body: JSON.stringify({ filename: file.name, size_bytes: file.size }),
+                body: JSON.stringify({ filename: file.name, size_bytes: file.size, first_chunk_hash: firstChunkHash }),
             });
             if (!sessionResp.ok) {
                 const err = await sessionResp.json().catch(() => ({}));
@@ -208,6 +209,18 @@ export const uploadsMixin = {
             });
             if (!resp.ok) return null;
             return await resp.json();
+        } catch {
+            return null;
+        }
+    },
+
+    async _hashFirstChunk(file) {
+        const HASH_WINDOW = 65536;
+        try {
+            const slice = file.slice(0, Math.min(file.size, HASH_WINDOW));
+            const buf = await slice.arrayBuffer();
+            const digest = await crypto.subtle.digest('SHA-256', buf);
+            return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
         } catch {
             return null;
         }
