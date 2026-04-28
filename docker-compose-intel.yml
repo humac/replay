@@ -290,6 +290,18 @@ configs:
       		file_server
       	}
 
+      	@match_logo {
+      		path_regexp match_logo ^/api/matches/([^/]+)/logo/(home|away)/?$
+      	}
+      	handle @match_logo {
+      		root * /data
+      		try_files /videos/{re.match_logo.1}/{re.match_logo.2}_logo.png /videos/{re.match_logo.1}/{re.match_logo.2}_logo.jpg /videos/{re.match_logo.1}/{re.match_logo.2}_logo.jpeg /videos/{re.match_logo.1}/{re.match_logo.2}_logo.svg /videos/{re.match_logo.1}/{re.match_logo.2}_logo.webp
+      		header Cache-Control "public, max-age=300, must-revalidate"
+      		header Access-Control-Allow-Origin "*"
+      		header Content-Security-Policy "script-src 'none'"
+      		file_server
+      	}
+
       	handle_path /static/* {
       		header Cache-Control "public, max-age=60, must-revalidate"
       		root * /srv/static

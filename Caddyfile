@@ -112,6 +112,33 @@
 		file_server
 	}
 
+	# ---- Match logos → static serve from /data ----
+	# Two logos per match (home + away), 6+ matches on the season view
+	# = ~12 logo fetches on first paint, each was ~50 ms through uvicorn.
+	# The replay app's upload endpoint (server.py upload_logo) already
+	# writes them with canonical filenames `<team>_logo.<ext>`, so Caddy
+	# can probe the disk for whichever extension exists.
+	#
+	# `try_files` as a directive rewrites the request URI to whichever
+	# candidate exists on disk; if none do, the directive is a no-op and
+	# `file_server` will return 404 (same user-visible behavior as the
+	# replay app's own 404).
+	#
+	# CSP `script-src 'none'` is emitted unconditionally — it's a no-op
+	# for PNG/JPG/WebP (browsers ignore CSP on non-HTML/SVG responses)
+	# but prevents stored XSS via user-uploaded SVG logos.
+	@match_logo {
+		path_regexp match_logo ^/api/matches/([^/]+)/logo/(home|away)/?$
+	}
+	handle @match_logo {
+		root * /data
+		try_files /videos/{re.match_logo.1}/{re.match_logo.2}_logo.png /videos/{re.match_logo.1}/{re.match_logo.2}_logo.jpg /videos/{re.match_logo.1}/{re.match_logo.2}_logo.jpeg /videos/{re.match_logo.1}/{re.match_logo.2}_logo.svg /videos/{re.match_logo.1}/{re.match_logo.2}_logo.webp
+		header Cache-Control "public, max-age=300, must-revalidate"
+		header Access-Control-Allow-Origin "*"
+		header Content-Security-Policy "script-src 'none'"
+		file_server
+	}
+
 	# ---- SPA static assets (script.js, styles.css, js/*, logo.png) ----
 	# Replay's lifespan startup populates /srv/static from /app on the replay
 	# container; Caddy mounts the same named volume read-only here. Same
