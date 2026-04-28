@@ -121,3 +121,31 @@ This is normal behavior — the server automatically falls back to CPU
 Remove NVIDIA settings from `docker-compose.yml` and `.env.local`.
 Transcoding uses `libx264` with `-preset medium -crf 23` — slower but
 works everywhere.
+
+## UI / Frontend
+
+### "Reveal Score" chip looks oversized on mobile
+
+The match card and game-detail page expose a "Reveal Score" chip when
+a match has a final score that is still hidden. On narrow viewports,
+the chip can balloon into a circular blob if it stretches to the full
+row width and its label wraps to two lines.
+
+The fix lives in `styles.css` under the `@media (max-width: 520px)`
+block near `.score-reveal-chip`. Both `.score-reveal-chip` and
+`.score-reveal-chip-large` are sized to content (`flex-basis: auto`,
+`align-self: center`), padded to match `.match-detail-pill`
+(`padding: 0.38rem 0.72rem`), and pinned to a single line
+(`white-space: nowrap`). The game-page button label is also kept
+short ("Reveal score" rather than "Reveal final score") in
+`js/views.js` so it doesn't run out of room — the longer phrasing
+is preserved in the `aria-label` for accessibility.
+
+If the chip ever drifts back to looking out-of-proportion on mobile,
+check that:
+
+- The `@media (max-width: 520px)` rule still targets both class
+  variants (`.score-reveal-chip, .score-reveal-chip-large`).
+- No newer rule reintroduces `flex-basis: 100%` or removes
+  `white-space: nowrap`.
+- The button label in `js/views.js` is still the short form.
