@@ -94,6 +94,123 @@ async def test_retry_no_source(client, auth_headers, data_dir):
 
 
 @pytest.mark.asyncio
+async def test_retry_ready_without_force_rejected(client, auth_headers):
+    """Without ?force=true, a ready slot can't be retried."""
+    import db as _db
+    await client.post("/api/matches", json={
+        "home_team": "A", "away_team": "B",
+    }, headers=auth_headers)
+    matches = (await client.get("/api/matches")).json()
+    match_id = matches[0]["id"]
+
+    with _db.connect() as conn:
+        m = _db.get_match_by_id(match_id)
+        m["video_status"]["full"] = "ready"
+        _db.upsert_match(conn, m)
+        conn.commit()
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/retry",
+        headers=auth_headers,
+    )
+    # 409 because status is 'ready', not 'error'.
+    assert resp.status_code == 409
+    detail = resp.json().get("detail", "")
+    # The error message should hint at the ?force=true escape hatch.
+    assert "force" in detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_retry_ready_with_force_accepts(client, auth_headers, data_dir):
+    """With ?force=true, a ready slot CAN be retried — but it'll 404 if no
+    source file is on disk. We assert we get past the status guard (i.e.
+    not 409) and into the source-file check (404), proving force=true was
+    honored without actually kicking off a real ffmpeg job in the test.
+    """
+    import db as _db
+    await client.post("/api/matches", json={
+        "home_team": "A", "away_team": "B",
+    }, headers=auth_headers)
+    matches = (await client.get("/api/matches")).json()
+    match_id = matches[0]["id"]
+
+    with _db.connect() as conn:
+        m = _db.get_match_by_id(match_id)
+        m["video_status"]["full"] = "ready"
+        _db.upsert_match(conn, m)
+        conn.commit()
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/retry?force=true",
+        headers=auth_headers,
+    )
+    # We passed the status gate (force=true allowed ready). The next step
+    # tries to find a source file on disk — there isn't one in this test —
+    # so 404 is the expected outcome.
+    assert resp.status_code == 404
+    assert "source" in resp.json().get("detail", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_retry_transcoding_always_rejected(client, auth_headers):
+    """Even with force=true, a transcoding slot can't be retried."""
+    import db as _db
+    await client.post("/api/matches", json={
+        "home_team": "A", "away_team": "B",
+    }, headers=auth_headers)
+    matches = (await client.get("/api/matches")).json()
+    match_id = matches[0]["id"]
+
+    with _db.connect() as conn:
+        m = _db.get_match_by_id(match_id)
+        m["video_status"]["full"] = "transcoding"
+        _db.upsert_match(conn, m)
+        conn.commit()
+
+    # Without force.
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/retry",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 409
+
+    # With force — still rejected.
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/retry?force=true",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_retry_force_admin_only(client, auth_headers):
+    """Non-admins can't trigger force re-transcode (or any retry)."""
+    await client.post("/api/users", json={
+        "username": "viewer_force_test",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    resp = await client.post("/api/login", json={
+        "username": "viewer_force_test",
+        "password": "password123",
+    })
+    viewer_headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
+    # Create a match as admin.
+    await client.post("/api/matches", json={
+        "home_team": "A", "away_team": "B",
+    }, headers=auth_headers)
+    matches = (await client.get("/api/matches")).json()
+    match_id = matches[0]["id"]
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/retry?force=true",
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_verify_assets(client, auth_headers, data_dir):
     """Verify assets endpoint returns slot report."""
     await client.post("/api/matches", json={
