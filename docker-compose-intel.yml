@@ -91,8 +91,13 @@ services:
       XDG_CONFIG_HOME: /srv/caddy-config
     ports:
       - "8090:80"
+    # Caddyfile is shipped via `configs:` (see below) instead of a host
+    # bind-mount, so Komodo and similar deployers that only ship the compose
+    # file (without the repo on disk) work out of the box.
+    configs:
+      - source: caddy_config
+        target: /etc/caddy/Caddyfile
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /mnt/apps_ssd/apps/replay:/data:ro
       - replay_caddy_data:/srv/caddy-data
       - replay_caddy_config:/srv/caddy-config
@@ -188,6 +193,72 @@ configs:
       paths:
         '~^live/[^/]+$':
           source: publisher
+
+  # Inlined Caddyfile so this stack is self-contained — Komodo only needs to
+  # ship the compose file, no sibling Caddyfile on the host.
+  #
+  # CANONICAL SOURCE: ./Caddyfile in the repo. If you edit the Caddy config,
+  # edit that file first and copy the body into the `content:` block below.
+  # docker-compose.yml (NVIDIA variant) still bind-mounts ./Caddyfile
+  # directly, so keeping the repo copy authoritative avoids drift.
+  caddy_config:
+    content: |
+      {
+          auto_https off
+          admin off
+          servers {
+              max_header_size 64KB
+          }
+      }
+
+      :80 {
+          encode zstd gzip
+
+          @vod_hls_segment {
+              path_regexp vod_hls ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.(ts|m4s|mp4))$
+          }
+          handle @vod_hls_segment {
+              rewrite * /videos/{re.vod_hls.1}/hls/{re.vod_hls.2}/{re.vod_hls.3}
+              header Cache-Control "public, max-age=31536000, immutable"
+              header Access-Control-Allow-Origin "*"
+              root * /data
+              file_server {
+                  precompressed br gzip
+              }
+          }
+
+          @vod_hls_playlist {
+              path_regexp vod_hls_pl ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.m3u8)$
+          }
+          handle @vod_hls_playlist {
+              rewrite * /videos/{re.vod_hls_pl.1}/hls/{re.vod_hls_pl.2}/{re.vod_hls_pl.3}
+              header Cache-Control "public, max-age=60, must-revalidate"
+              header Access-Control-Allow-Origin "*"
+              header Content-Type "application/vnd.apple.mpegurl"
+              root * /data
+              file_server
+          }
+
+          handle {
+              reverse_proxy replay:8090 {
+                  flush_interval -1
+                  transport http {
+                      read_buffer 64KB
+                      write_buffer 64KB
+                  }
+                  header_up Host {host}
+                  header_up X-Real-IP {remote_host}
+                  header_up X-Forwarded-For {remote_host}
+                  header_up X-Forwarded-Proto {scheme}
+              }
+          }
+
+          log {
+              output stdout
+              format console
+              level INFO
+          }
+      }
 
 volumes:
   # Caddy persists ACME state and its own config here. Tiny — kept on the
