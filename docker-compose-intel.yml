@@ -76,18 +76,26 @@ services:
   # directly) so existing clients, Cloudflare Tunnel rules, and bookmarks
   # keep working unchanged. Caddy listens on :80 inside the container.
   #
-  # Bind /data read-only so a misconfiguration in Caddy can't write into
-  # the replay app's data tree.
+  # /data is mounted read-only so a misconfiguration in Caddy can't write
+  # into the replay app's data tree. Caddy's own persistence (ACME state,
+  # config snapshot) lives at /srv/caddy-data and /srv/caddy-config —
+  # outside /data — because Docker can't create a writable mountpoint
+  # inside a read-only mount (mkdirat returns EROFS during runc start).
   caddy:
     image: caddy:2-alpine
     container_name: replay-caddy
+    # The caddy image picks up these XDG vars for its data + config dirs,
+    # so pointing them at /srv keeps everything outside the read-only /data.
+    environment:
+      XDG_DATA_HOME: /srv/caddy-data
+      XDG_CONFIG_HOME: /srv/caddy-config
     ports:
       - "8090:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /mnt/apps_ssd/apps/replay:/data:ro
-      - replay_caddy_data:/data/caddy
-      - replay_caddy_config:/config
+      - replay_caddy_data:/srv/caddy-data
+      - replay_caddy_config:/srv/caddy-config
     depends_on:
       - replay
     restart: unless-stopped
