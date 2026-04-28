@@ -26,6 +26,22 @@
         };
     </script>
     <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1" defer></script>
+
+    <!-- Module preload hints. Without these, the browser only discovers
+         js/utils.js, js/api.js, etc. *after* it parses script.js, which
+         serializes the cold-load fetches into a cascade. Preload tags let
+         all 9 modules start fetching as soon as the parser sees the head,
+         so the cold-load round-trips run in parallel with script.js itself. -->
+    <link rel="modulepreload" href="/static/js/utils.js">
+    <link rel="modulepreload" href="/static/js/api.js">
+    <link rel="modulepreload" href="/static/js/player.js">
+    <link rel="modulepreload" href="/static/js/uploads.js">
+    <link rel="modulepreload" href="/static/js/views.js">
+    <link rel="modulepreload" href="/static/js/admin-views.js">
+    <link rel="modulepreload" href="/static/js/ui.js">
+    <link rel="modulepreload" href="/static/js/live.js">
+    <link rel="modulepreload" href="/static/js/admin.js">
+
     <script type="module" src="/static/script.js?v=20260427a"></script>
 </head>
 <body>

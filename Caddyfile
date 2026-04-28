@@ -72,6 +72,45 @@
         file_server
     }
 
+    # ---- Match thumbnails → static serve from /data ----
+    # The season view fetches a thumbnail per match card (typically 6+ images
+    # on first paint). Going through uvicorn was ~80 ms per file; Caddy's
+    # sendfile-based file_server brings each one to <5 ms. The replay app
+    # still owns the regenerate-thumbnail admin endpoint; only the public
+    # GET is short-circuited here.
+    @match_thumbnail {
+        path_regexp match_thumb ^/api/matches/([^/]+)/thumbnail/?$
+    }
+    handle @match_thumbnail {
+        rewrite * /videos/{re.match_thumb.1}/thumb.jpg
+        header Cache-Control "no-cache, must-revalidate"
+        header Access-Control-Allow-Origin "*"
+        header Content-Type "image/jpeg"
+        root * /data
+        file_server
+    }
+
+    # ---- SPA static assets (script.js, styles.css, js/*, logo.png) ----
+    # Replay's lifespan startup populates /srv/static from /app on the replay
+    # container; Caddy mounts the same named volume read-only here. Same
+    # sendfile() benefit as HLS — uvicorn was paying Python per-request
+    # overhead on every JS module fetch.
+    #
+    # `handle_path /static/*` strips the /static/ prefix so file_server
+    # resolves against the export root directly. Adding a new SPA asset
+    # also requires adding it to `_STATIC_EXPORT_PATHS` in server.py;
+    # otherwise Caddy will 404 it (loud, easy to diagnose).
+    handle_path /static/* {
+        # 60s revalidation matches the production HLS-playlist policy and
+        # keeps in-session navigation fast while still picking up new
+        # bundles after a deploy. ETags (mtime-based) drive 304s.
+        header Cache-Control "public, max-age=60, must-revalidate"
+        root * /srv/static
+        file_server {
+            precompressed br gzip
+        }
+    }
+
     # ---- Everything else → replay app ----
     handle {
         reverse_proxy replay:8090 {

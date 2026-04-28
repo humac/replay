@@ -29,6 +29,13 @@ services:
       # out (and remove the /originals bind mount below) to fall back to the
       # legacy single-volume layout. See docs/DEPLOYMENT.md "Storage tiering".
       REPLAY_ORIGINALS_DIR: /originals/videos
+      # Static-asset staging path. The replay container's lifespan copies
+      # script.js / styles.css / js/* / logo.png from /app here on every
+      # boot; the caddy container mounts the same `replay_static` named
+      # volume read-only at /srv/static and serves /static/* via sendfile.
+      # Drops Python out of the per-JS-module fetch path. See server.py
+      # `_stage_static_assets`.
+      REPLAY_STATIC_EXPORT_DIR: /srv/static
       TMPDIR: /tmp/ffmpeg
       MAX_UPLOAD_SIZE_BYTES: 12884901888
       TRANSCODE_CONCURRENCY: 2
@@ -45,6 +52,9 @@ services:
       # compression=lz4 atime=off` (see docs/DEPLOYMENT.md). Comment out
       # together with the REPLAY_ORIGINALS_DIR env above to disable tiering.
       - /mnt/tank/media/replay:/originals
+      # Shared static-asset volume; populated by the replay container on
+      # boot, served read-only by caddy.
+      - replay_static:/srv/static
       # Intel GPU (VAAPI / QSV) — uncomment to expose the iGPU render node
       - /dev/dri:/dev/dri
     # Intel GPU (VAAPI / QSV) — uncomment to pass the render device through
@@ -112,6 +122,9 @@ services:
       - /mnt/apps_ssd/apps/replay:/data:ro
       - replay_caddy_data:/srv/caddy-data
       - replay_caddy_config:/srv/caddy-config
+      # Shared static-asset volume; replay populates it on boot, caddy
+      # serves /static/* directly from it via sendfile().
+      - replay_static:/srv/static:ro
     depends_on:
       - replay
     restart: unless-stopped
@@ -250,6 +263,26 @@ configs:
               file_server
           }
 
+          @match_thumbnail {
+              path_regexp match_thumb ^/api/matches/([^/]+)/thumbnail/?$
+          }
+          handle @match_thumbnail {
+              rewrite * /videos/{re.match_thumb.1}/thumb.jpg
+              header Cache-Control "no-cache, must-revalidate"
+              header Access-Control-Allow-Origin "*"
+              header Content-Type "image/jpeg"
+              root * /data
+              file_server
+          }
+
+          handle_path /static/* {
+              header Cache-Control "public, max-age=60, must-revalidate"
+              root * /srv/static
+              file_server {
+                  precompressed br gzip
+              }
+          }
+
           handle {
               reverse_proxy replay:8090 {
                   flush_interval -1
@@ -277,6 +310,10 @@ volumes:
   # performance-sensitive.
   replay_caddy_data:
   replay_caddy_config:
+  # Static-asset staging volume. The replay container populates it on boot
+  # (script.js / styles.css / js/* / logo.png copied from /app); caddy mounts
+  # it read-only and serves /static/* via sendfile(). Tiny (~10–50 KB total).
+  replay_static:
 
 # replay_data is intentionally not declared here — the replay service uses a
 # host bind-mount at /mnt/apps_ssd/apps/replay rather than a named volume.
