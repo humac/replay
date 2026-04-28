@@ -1149,6 +1149,19 @@ export const viewsMixin = {
     },
 
     // ===== SEASON VIEW =====
+    updateTranscodeBadges() {
+        document.querySelectorAll('.match-card[data-match-id]').forEach(card => {
+            const m = this.matches.find(x => x.id === card.dataset.matchId);
+            if (!m) return;
+            const metaEl = card.querySelector('.match-meta');
+            if (!metaEl) return;
+            const isTranscoding = this.matchTranscoding(m);
+            metaEl.innerHTML = isTranscoding
+                ? `<span class="badge processing">${this.matchProgressLabel(m)}</span>`
+                : '';
+        });
+    },
+
     renderSeasonView() {
         const grid = document.getElementById('matches-grid');
         if (!grid) return;
@@ -1175,6 +1188,7 @@ export const viewsMixin = {
         sorted.forEach(m => {
             const card = document.createElement('div');
             card.className = 'match-card';
+            card.dataset.matchId = m.id;
             card.onclick = () => this.openMatch(m.id);
 
             const homeLogo = m.home_logo

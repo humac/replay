@@ -114,9 +114,18 @@ UPLOAD_DISK_HEADROOM_MULTIPLIER = float(os.environ.get("UPLOAD_DISK_HEADROOM_MUL
 STALE_UPLOAD_SESSION_SECONDS = int(os.environ.get("STALE_UPLOAD_SESSION_SECONDS", str(6 * 60 * 60)))
 VIDEO_STREAM_CHUNK_BYTES = int(os.environ.get("VIDEO_STREAM_CHUNK_BYTES", str(1024 * 1024)))
 HLS_SEGMENT_DURATION = int(os.environ.get("HLS_SEGMENT_DURATION", "6"))
+# Shared secret MediaMTX sends in X-Internal-Secret when calling /api/live/auth.
+# Configure via mediamtx.yml authHTTPHeaders. If unset the endpoint is open
+# (backwards-compatible) but logs a warning on first request.
+LIVE_AUTH_SECRET = os.environ.get("LIVE_AUTH_SECRET", "")
 TRANSCODE_SEMAPHORE = asyncio.Semaphore(TRANSCODE_CONCURRENCY)
 MATCHES_LOCK = asyncio.Lock()
 HLS_BACKFILL_LOCK = asyncio.Lock()
+
+# Per-IP rate limit for /api/live/auth to prevent log-spam from scanners.
+_live_auth_attempts: dict[str, list[float]] = {}
+_LIVE_AUTH_RATE_LIMIT = 30
+_LIVE_AUTH_RATE_WINDOW = 60.0
 
 HLS_VARIANT_PRESETS = [
     {
@@ -672,12 +681,28 @@ async def live_hls_proxy(asset_path: str, request: Request):
 
 
 @app.post("/api/live/auth")
-async def live_auth_webhook(body: LiveAuthRequest):
+async def live_auth_webhook(body: LiveAuthRequest, request: Request):
     """Webhook MediaMTX calls to authorise an RTMP publish.
 
     Reads/api/etc. are excluded in mediamtx.yml so this only ever sees
     publish attempts.  Allow if the path matches the configured stream key.
     """
+    ip = _streams.client_ip(request)
+    now = time.time()
+    attempts = _live_auth_attempts.get(ip, [])
+    attempts = [t for t in attempts if now - t < _LIVE_AUTH_RATE_WINDOW]
+    if len(attempts) >= _LIVE_AUTH_RATE_LIMIT:
+        raise HTTPException(429, "Too many requests")
+    attempts.append(now)
+    _live_auth_attempts[ip] = attempts
+
+    if LIVE_AUTH_SECRET:
+        if request.headers.get("x-internal-secret") != LIVE_AUTH_SECRET:
+            raise HTTPException(401, "Unauthorized")
+    elif not hasattr(live_auth_webhook, "_warned"):
+        live_auth_webhook._warned = True
+        logger.warning("LIVE_AUTH_SECRET is not set; /api/live/auth is publicly accessible")
+
     key = await _stream_key()
     payload = body.model_dump()
     allowed, reason = _live.validate_publish_auth(payload, key)
@@ -1152,7 +1177,9 @@ async def list_matches(q: str | None = None, page: int | None = None, limit: int
         clamped_limit = max(1, min(limit or 50, 200))
         matches, total = _db.search_matches(q=q, page=page or 1, limit=clamped_limit)
         return {"matches": [_enrich_match(m) for m in matches], "total": total, "page": page or 1, "limit": clamped_limit}
-    return await _load_matches()
+    # No query params: return the 500 most-recent matches to bound payload size.
+    async with MATCHES_LOCK:
+        return [_enrich_match(m) for m in _db.load_matches_unlocked(limit=500)]
 
 
 @app.post("/api/matches")

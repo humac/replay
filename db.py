@@ -291,11 +291,17 @@ def upsert_match(conn: sqlite3.Connection, match: dict):
     )
 
 
-def load_matches_unlocked() -> list[dict]:
+def load_matches_unlocked(limit: int | None = None) -> list[dict]:
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM matches ORDER BY created_at DESC, id DESC"
-        ).fetchall()
+        if limit is not None:
+            rows = conn.execute(
+                "SELECT * FROM matches ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM matches ORDER BY created_at DESC, id DESC"
+            ).fetchall()
         return [row_to_match(row) for row in rows]
 
 
