@@ -4,8 +4,10 @@ services:
     # Uncomment to build locally instead of pulling from GHCR:
     build: .
     container_name: replay
-    ports:
-      - "8090:8090"
+    # No public `ports:` — Caddy is the single entry point. Other compose
+    # services reach this app via `replay:8090` on the internal network.
+    expose:
+      - "8090"
     env_file:
       - .env.local
     environment:
@@ -50,14 +52,19 @@ services:
               device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
               capabilities: [gpu, video]
 
-  # Caddy — reverse proxy. Serves VOD HLS .ts segments directly from the
-  # /data volume (sendfile, saturates 10 GbE) and reverse-proxies everything
-  # else to the replay app on :8090. See ./Caddyfile.
+  # Caddy — single public entry point. Serves VOD HLS .ts/.m4s segments
+  # directly from /data via sendfile() (saturates 10 GbE) and reverse-
+  # proxies everything else to the replay app on the internal network.
+  # See ./Caddyfile.
+  #
+  # Host-published port is 8090 (the same port the replay app used to bind
+  # directly) so existing clients, Cloudflare Tunnel rules, and bookmarks
+  # keep working unchanged. Caddy listens on :80 inside the container.
   caddy:
     image: caddy:2-alpine
     container_name: replay-caddy
     ports:
-      - "80:80"
+      - "8090:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - replay_data:/data:ro
