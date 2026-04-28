@@ -354,6 +354,14 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Sprint — Frontend Polish ✅ COMPLETE (2026-04-27)
+
+**Goal:** address m7, m8, m9 from the post-M9 code review — consolidated auth error handling, resilient match list refresh, and safe history fallback.
+
+- **m7 — `authFetch` helper** (`js/api.js`): added `authFetch(url, opts)` to `apiMixin`. On a 401 response it clears auth state, removes the session token, shows the login modal, and throws. Replaced 6 identical 401-handling boilerplate blocks across `js/views.js` (uploadSettingsAsset, handleSettingsSubmit, refreshAdminDiagnostics, handleMatchFormSubmit×2, deleteMatch) and 1 in `js/admin.js` (status strip polling). Future callers get the behaviour for free.
+- **m8 — Resilient `loadMatches`** (`js/api.js`): network or non-2xx errors no longer blank `this.matches`. If the list was previously populated, it is preserved and a `showInfo` toast surfaces "Couldn't refresh matches — showing last known data." to the user. On the very first load failure (no prior data) the behaviour is unchanged (empty grid, no toast).
+- **m9 — `editMatch` history fallback** (`js/views.js`): when `editMatch(matchId)` is called for a match that no longer exists in `this.matches` (e.g. back-navigation after a delete), it now calls `showAdminView('matches', { pushHistory })` instead of silently no-opping. The user lands on the matches list rather than a blank form.
+
 ## Sprint — Ops Quality ✅ COMPLETE (2026-04-27)
 
 **Goal:** address M12, M14, m2, and m6 from the post-M9 code review — GPU health visibility, structured logging, stale upload session cleanup on startup, and path containment.
