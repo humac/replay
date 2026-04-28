@@ -50,6 +50,9 @@ DATA_DIR = Path(os.environ.get("REPLAY_DATA_DIR", "/tank/replay"))
 
 _background_tasks: set[asyncio.Task] = set()
 
+# Transcode tasks keyed by "{match_id}/{slot}" so delete_match can cancel them.
+_transcode_tasks: dict[str, asyncio.Task] = {}
+
 
 def _spawn_task(coro) -> asyncio.Task:
     """Create a tracked background task; log exceptions and auto-discard on completion."""
@@ -61,6 +64,17 @@ def _spawn_task(coro) -> asyncio.Task:
             logger.error("Background task failed: %s", exc, exc_info=exc)
     task.add_done_callback(_on_done)
     return task
+
+
+def _spawn_transcode(match_id: str, slot: str, src, dest) -> asyncio.Task:
+    """Spawn a tracked transcode task, registering it for per-match cancellation."""
+    key = f"{match_id}/{slot}"
+    task = _spawn_task(_transcode_video(match_id, slot, src, dest))
+    _transcode_tasks[key] = task
+    task.add_done_callback(lambda _: _transcode_tasks.pop(key, None))
+    return task
+
+
 STATIC_DIR = Path(__file__).parent
 MATCHES_FILE = DATA_DIR / "matches.json"
 DB_FILE = DATA_DIR / "replay.db"
@@ -741,7 +755,7 @@ async def admin_kill_stream(session_id: str, request: Request):
     killed = _streams.registry.kill(session_id)
     if not killed:
         raise HTTPException(404, "Session not found")
-    logger.info("Stream %s killed by %s", session_id, user["username"])
+    logger.info("admin.action", extra={"action": "kill_stream", "actor": user["username"], "target_id": session_id})
     return {"ok": True, "killed": True}
 
 
@@ -1002,7 +1016,7 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
             "No source file found — neither raw upload nor MP4 exists on disk",
         )
 
-    _spawn_task(_transcode_video(match_id, slot, src, final_path))
+    _spawn_transcode(match_id, slot, src, final_path)
     logger.info("admin.action", extra={"action": "retry_transcode", "actor": user["username"], "target_id": match_id, "slot": slot})
     return {"ok": True, "status": "transcoding", "source": src.name}
 
@@ -1200,6 +1214,10 @@ async def delete_match(match_id: str, request: Request):
             conn.execute("DELETE FROM upload_sessions WHERE match_id = ?", (match_id,))
             conn.execute("DELETE FROM video_errors WHERE match_id = ?", (match_id,))
             conn.commit()
+        for slot in ("full", "first_half", "second_half"):
+            task = _transcode_tasks.pop(f"{match_id}/{slot}", None)
+            if task:
+                task.cancel()
 
     vid_dir = VIDEOS_DIR / match_id
     if vid_dir.exists():
@@ -1443,7 +1461,7 @@ async def complete_upload_session(session_id: str, request: Request):
         slot,
         actual_size,
     )
-    _spawn_task(_transcode_video(match_id, slot, raw_path, final_path))
+    _spawn_transcode(match_id, slot, raw_path, final_path)
     return {"ok": True, "status": "transcoding", "slot": slot, "size_mb": round(actual_size / 1e6, 1)}
 
 @app.post("/api/matches/{match_id}/upload-video")
@@ -1494,7 +1512,7 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     await _set_video_status(match_id, slot, "transcoding", None)
 
     final_path = vid_dir / f"{slot}.mp4"
-    asyncio.create_task(_transcode_video(match_id, slot, raw_path, final_path))
+    _spawn_transcode(match_id, slot, raw_path, final_path)
 
     return {"ok": True, "slot": slot, "size_mb": size_mb, "status": "transcoding"}
 
