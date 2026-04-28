@@ -18,11 +18,11 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `server.py`: API routes, SPA serving, async lock wrappers, entrypoint
 - `db.py`: SQLite connection pool, schema migrations, match CRUD helpers
 - `auth.py`: multi-user authentication, token management, password hashing (scrypt), role-based access, login rate limiting, origin validation
-- `settings.py`: app settings persistence, rendering helpers
+- `settings.py`: app settings persistence, rendering helpers, `TUNING_KNOBS` schema (typed validation + range clamps for performance/upload/encoder knobs), env-fallback-on-first-load, `settings_audit` write helper, typed read helpers (`get_int`/`get_float`/`get_bool`/`get_str`/`get_hls_variant_presets`)
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
-- `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation (capped at 2 simultaneous variants via `_hls_semaphore`), thumbnail extraction; `get_all_transcode_progress()` returns all active jobs; `get_gpu_health()` returns session-lifetime GPU encode counters (`succeeded`/`failed`); `cancel_active_transcodes()` terminates in-flight ffmpegs on shutdown
+- `media.py`: ffmpeg/ffprobe probing, transcoding (QSV / NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` — overridable via the `replay_hwaccel` admin setting or the legacy `REPLAY_HWACCEL` env var) with real-time progress tracking, resilient QSV→VAAPI→CPU fallback chain, HLS variant generation (capped at 2 simultaneous variants via `_hls_semaphore`), thumbnail extraction; `get_all_transcode_progress()` returns all active jobs; `get_gpu_health()` returns session-lifetime GPU encode counters (per-method + aggregate `succeeded`/`failed`); `_transcode_history` ring buffer feeds the Performance Tuning panel with realtime-factor data; `cancel_active_transcodes()` terminates in-flight ffmpegs on shutdown
 - `live.py`: MediaMTX bridge — HLS reverse proxy, RTMP-publish auth webhook validation, control-API status query
-- `streams.py`: in-memory active streaming-connection registry, client-IP resolver (honors `CF-Connecting-IP`/`X-Forwarded-For` when `TRUSTED_PROXY=cloudflare`; returns peer address otherwise), optional offline GeoLite2 lookup, and admin kill/blocklist support
+- `streams.py`: in-memory active streaming-connection registry, client-IP resolver (honors `CF-Connecting-IP`/`X-Forwarded-For` when `TRUSTED_PROXY=cloudflare`; returns peer address otherwise), optional offline GeoLite2 lookup, admin kill/blocklist support, and a 600-entry `_throughput_samples` ring buffer fed by `sweeper_task` (1 Hz during a 60-s capture window via `start_capture_window()`, otherwise the sweeper interval)
 - `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, live auth webhook, and admin stream unblock
 - `log.py`: structured JSON logging (configurable via `LOG_FORMAT` env var)
 - `script.js`: ES module entry point — state, init, navigation, event binding, mixin assembly
@@ -31,7 +31,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `js/player.js`: AirPlay, Chromecast, HLS playback, position/speed memory, keyboard shortcuts, match navigation
 - `js/uploads.js`: chunked upload sessions, resume logic
 - `js/views.js`: public view rendering — season view, game view, score reveal, team stats; `updateTranscodeBadges()` for targeted badge-only updates during transcode polling (avoids full grid re-render)
-- `js/admin-views.js`: admin view renderers and action methods extracted from views.js — settings form, users list, match form (create/edit/delete), admin diagnostics renderers (consumed by `js/admin.js`)
+- `js/admin-views.js`: admin view renderers and action methods extracted from views.js — settings form, users list, match form (create/edit/delete), admin diagnostics renderers (consumed by `js/admin.js`), Performance Tuning panel (`renderPerformanceTuning`, `refreshPerformanceTuning`, `startPerformanceTuningPolling`/`stopPerformanceTuningPolling`, `copyPerformanceSnapshot`/`downloadPerformanceSnapshot`, capture-window starter), and Tuning Knobs settings card (`renderTuningKnobsCard`, `applyTuningPreset`, `collectTuningKnobs`)
 - `js/live.js`: Watch Live view (HLS.js player + status polling), AirPlay/Chromecast hand-off for the live feed, and admin live config card
 - `js/admin.js`: unified `/admin/*` dashboard mixin — sub-routing, sidebar, status strip polling, role gating, overview KPI tiles
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
@@ -40,6 +40,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live)
 - `docker-compose.yml`: local container runtime — defines `replay` and the `mediamtx` sidecar
 - `mediamtx.yml`: MediaMTX config (RTMP ingest, LL-HLS output, external auth webhook)
+- `Caddyfile`: reverse proxy that serves VOD HLS `.ts/.m4s/.mp4` segments + variant playlists directly from `/data` via `sendfile()` and proxies all other routes to the replay app on `:8090`. Drops Python out of the segment-serving hot path so 10 GbE LAN delivery is achievable.
 - `.env.example`: deployment configuration template
 
 ## Common Commands
@@ -65,11 +66,12 @@ Most relevant variables:
 - `ADMIN_PASS`
 - `REPLAY_PORT`
 - `REPLAY_DATA_DIR`
-- `MAX_UPLOAD_SIZE_BYTES`
-- `UPLOAD_CHUNK_SIZE_BYTES`
-- `TRANSCODE_CONCURRENCY` — max simultaneous transcode jobs (default 2); `_hls_semaphore` in `media.py` caps HLS variant ffmpegs at 2 independently
-- `VIDEO_STREAM_CHUNK_BYTES`
-- `HLS_SEGMENT_DURATION`
+- `MAX_UPLOAD_SIZE_BYTES` *(legacy — first-boot fallback only; live value is the `max_upload_size_bytes` setting in the admin Settings page)*
+- `UPLOAD_CHUNK_SIZE_BYTES` *(legacy — see `upload_chunk_size_bytes` setting)*
+- `TRANSCODE_CONCURRENCY` *(legacy — first-boot fallback. Live value is `transcode_concurrency`; resized in-process via `ResizableSemaphore.resize()` on save. `_hls_semaphore` in `media.py` still caps HLS variant ffmpegs at 2 independently.)*
+- `VIDEO_STREAM_CHUNK_BYTES` *(legacy — see `video_stream_chunk_bytes` setting)*
+- `HLS_SEGMENT_DURATION` *(legacy — see `hls_segment_duration` setting; new transcodes only)*
+- `REPLAY_HWACCEL` *(legacy — see `replay_hwaccel` setting; values: auto/qsv/vaapi/nvenc/cpu)*
 - `ALLOWED_ORIGINS` — optional comma-separated hostnames for login origin validation
 - `LOG_FORMAT` — `json` (default) or `text` for human-readable logs
 - `LOG_LEVEL` — `INFO` (default), `DEBUG`, `WARNING`, etc.
@@ -125,4 +127,5 @@ After frontend changes, sanity-check:
 - Live streaming (RTMP ingest → LL-HLS) is provided by a `mediamtx` sidecar in compose. Stream-key auth runs through `POST /api/live/auth` (called by MediaMTX); browsers always reach LL-HLS via the proxy at `/api/live/hls/*` so they only ever talk to the replay origin. The stream key is private (never returned by `/api/settings`) and is rotated via `POST /api/admin/live/rotate-key`.
 - AirPlay and Chromecast for the Watch Live feed live alongside the replay-player implementation. `js/live.js::initLiveRemotePlayback` binds the `live-video` element + `airplay-btn-live` / `cast-btn-live` buttons; `js/player.js::onCastConnected` and `setupCastFramework` are view-aware and route the live HLS URL (`application/x-mpegURL` + `streamType=LIVE`) when the live view is active.
 - Active streaming connections (live HLS proxy + VOD HLS + VOD MP4) are tracked in `streams.py`'s in-memory `StreamRegistry`. Admin endpoints `GET /api/admin/streams`, `POST /api/admin/streams/{id}/kill`, and `DELETE /api/admin/streams/blocks` power the "Active Streaming Connections" card in admin diagnostics. Killing a stream cancels its iterator and adds a 5-minute `(ip, kind, match_id, slot)` blocklist entry. Block TTL uses `time.monotonic()` (not wall clock) so NTP jumps cannot permanently strand an entry; `list_blocks()` converts back to wall-clock epoch for the API response. Use `streams.client_ip(request)` to resolve client IPs everywhere — behavior is gated by `TRUSTED_PROXY`: `"cloudflare"` (default) honors `CF-Connecting-IP` / `True-Client-IP` / `X-Forwarded-For`; `"none"` always returns the direct peer address.
+- The Performance Tuning admin panel (under `/admin/system`) is powered by `GET /api/admin/performance`, which aggregates host signals (psutil), throughput rollups from `streams._throughput_samples`, transcode realtime factors from `media._transcode_history`, GPU stats counters, and active sessions. Refreshes every 5 s while the system view is active. `POST /api/admin/performance/capture` flips the sweeper to 1 Hz sampling for 60 s. The panel includes copy-to-clipboard and download-as-JSON buttons that bundle the latest payload for sharing with a coding agent. Also under `/admin/settings`: `renderTuningKnobsCard()` renders the typed editor for the `TUNING_KNOBS` schema with three one-click presets (Conservative / Balanced 10 GbE / Live-first); changes are recorded in the `settings_audit` table and `transcode_concurrency` resizes the in-process semaphore live.
 - **After every code change**, update the relevant markdown files (`ROADMAP.md`, `AGENTS.md`, `CLAUDE.md`) to reflect what changed — new files, completed roadmap items, new conventions, updated guidance. Keep these files as the living source of truth.

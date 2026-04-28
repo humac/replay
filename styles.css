@@ -4110,3 +4110,66 @@ button {
         gap: 0.6rem;
     }
 }
+
+/* ----- Performance Tuning admin card ----------------------------------- */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem 1.2rem;
+    margin-top: 1rem;
+}
+
+.form-help {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+
+.ladder-editor {
+    overflow-x: auto;
+    padding: 0.4rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+}
+
+.ladder-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.ladder-table th,
+.ladder-table td {
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ladder-table th {
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.ladder-table input[type="text"],
+.ladder-table input[type="number"] {
+    padding: 0.3rem 0.45rem;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    color: var(--text-main);
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+}
+
+.status-pill.warn {
+    background: rgba(255, 165, 0, 0.18);
+    color: #ffb454;
+    border: 1px solid rgba(255, 165, 0, 0.3);
+    margin-left: 0.5rem;
+    font-size: 0.65rem;
+    padding: 0.1rem 0.45rem;
+}

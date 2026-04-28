@@ -391,6 +391,86 @@ class StreamRegistry:
 registry = StreamRegistry()
 
 
+# ---------------------------------------------------------------------------
+# Throughput sampling — used by the Performance Tuning admin panel.
+#
+# A small ring buffer of {ts, live_bps_in, live_bps_out, vod_bps_out,
+# active_sessions} samples. Two cadences:
+#   - "slow"  → sampled every `interval_seconds` from sweeper_task (~10 s)
+#   - "fast"  → during a 60-s capture window, sampled every 1 s
+#
+# Capture mode is started by an admin via /api/admin/performance/capture and
+# auto-disengages after the configured window.
+# ---------------------------------------------------------------------------
+
+from collections import deque as _deque
+
+_throughput_samples: _deque = _deque(maxlen=600)  # 1 hour at 6/min, or 10 min at 60/min
+_capture_state = {
+    "fast": False,        # True while inside the 1-Hz window
+    "expires_mono": 0.0,  # monotonic deadline; sweeper drops back to slow
+}
+_last_session_bytes: dict[str, int] = {}  # session_id -> last seen total bytes
+
+
+def _throughput_sample(now_wall: float) -> dict:
+    """Compute one sample by diffing per-session byte counters since the
+    previous sample. Stored counters are session-lifetime totals, so this is
+    a delta-of-deltas pattern rather than a per-interval reset."""
+    live_in = 0  # we don't currently track ingress on live publishers here
+    live_out_delta = 0
+    vod_out_delta = 0
+    active_live = 0
+    active_vod = 0
+    seen_ids: set[str] = set()
+    for sess in registry.list_active():
+        seen_ids.add(sess.id)
+        prev = _last_session_bytes.get(sess.id, 0)
+        delta = max(0, sess.bytes_sent - prev)
+        _last_session_bytes[sess.id] = sess.bytes_sent
+        if sess.kind == "live":
+            live_out_delta += delta
+            active_live += 1
+        else:
+            vod_out_delta += delta
+            active_vod += 1
+    # Drop entries for sessions that vanished so the dict doesn't grow unbounded.
+    for sid in list(_last_session_bytes.keys()):
+        if sid not in seen_ids:
+            _last_session_bytes.pop(sid, None)
+    return {
+        "ts": now_wall,
+        "live_bps_in": live_in,
+        "live_bps_out_delta": live_out_delta,
+        "vod_bps_out_delta": vod_out_delta,
+        "active_live": active_live,
+        "active_vod": active_vod,
+    }
+
+
+def get_throughput_samples(limit: int | None = None) -> list[dict]:
+    samples = list(_throughput_samples)
+    if limit is not None and limit > 0:
+        return samples[-limit:]
+    return samples
+
+
+def start_capture_window(seconds: float = 60.0) -> dict:
+    _capture_state["fast"] = True
+    _capture_state["expires_mono"] = time.monotonic() + max(5.0, min(600.0, seconds))
+    return capture_status()
+
+
+def capture_status() -> dict:
+    if _capture_state["fast"] and time.monotonic() >= _capture_state["expires_mono"]:
+        _capture_state["fast"] = False
+    remaining = max(0.0, _capture_state["expires_mono"] - time.monotonic()) if _capture_state["fast"] else 0.0
+    return {
+        "fast": _capture_state["fast"],
+        "remaining_seconds": round(remaining, 1),
+    }
+
+
 async def wrap_iter(body, session: StreamSession):
     """Wrap an async byte iterator so the registry sees bytes_sent + kills.
 
@@ -427,11 +507,24 @@ def wrap_sync_iter(body, session: StreamSession):
 
 
 async def sweeper_task(interval_seconds: float = 5.0) -> None:
-    """Background coroutine that prunes idle sessions and expired blocks."""
+    """Background coroutine: prunes idle sessions, expires blocks, and feeds
+    the throughput-sampling ring buffer used by the Performance Tuning panel.
+
+    Cadence: every `interval_seconds` normally; during a capture window we
+    sample at 1 Hz so the export has higher-resolution data to analyze.
+    """
     while True:
         try:
-            await asyncio.sleep(interval_seconds)
+            # capture_status() handles auto-expiry of the fast window.
+            cap = capture_status()
+            sleep_for = 1.0 if cap["fast"] else interval_seconds
+            await asyncio.sleep(sleep_for)
             registry.sweep()
+            sample = _throughput_sample(time.time())
+            sample["interval_seconds"] = sleep_for
+            sample["bps_live_out"] = round(sample["live_bps_out_delta"] * 8 / sleep_for, 1)
+            sample["bps_vod_out"] = round(sample["vod_bps_out_delta"] * 8 / sleep_for, 1)
+            _throughput_samples.append(sample)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # pragma: no cover — keep loop alive on bugs

@@ -194,7 +194,28 @@ def _migrate_v5(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE matches ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
 
 
-_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4, _migrate_v5]
+def _migrate_v6(conn: sqlite3.Connection):
+    """Add settings_audit table — one row per admin-driven settings change.
+
+    Used by the admin Settings page so a coding agent (or the user) can
+    review and roll back recent tuning changes."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            key TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT NOT NULL,
+            actor TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_settings_audit_ts ON settings_audit(ts DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_settings_audit_key ON settings_audit(key)")
+
+
+_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4, _migrate_v5, _migrate_v6]
 
 
 def _run_migrations(conn: sqlite3.Connection):

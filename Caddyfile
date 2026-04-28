@@ -1,0 +1,87 @@
+# Caddy reverse proxy for the replay stack.
+#
+# Why: FastAPI/uvicorn serving every HLS .ts segment becomes the bottleneck
+# before disk or ffmpeg do, especially on a 10 GbE LAN. Caddy's file_server
+# uses sendfile() and easily saturates 10 GbE on segment reads.
+#
+# Routing:
+#   - VOD HLS segments + variant playlists  → served as static files from
+#     /data/videos/<match>/hls/ (the same directory the replay app writes to).
+#     The replay container's data volume is mounted read-only here.
+#   - Everything else (including /api/live/hls/* which proxies MediaMTX, the
+#     SPA shell, /api/admin/*, MP4 downloads, settings PUTs) → reverse-proxied
+#     to the replay app on port 8090.
+#
+# Note: The .ts/.m4s/.mp4 segments are content-addressed (immutable), so we
+# slap a 1-year cache header on them. Variant + master playlists revalidate
+# every 60s — same policy the replay app applies for the same files. Caddy
+# serving them is faster but the headers must match.
+#
+# TLS: This file targets the in-LAN case (port 80). For WAN, run behind
+# Cloudflare Tunnel or front this with a TLS terminator. Don't enable Caddy's
+# automatic HTTPS in homelab unless you've fronted DNS-01 with your provider.
+
+{
+    auto_https off
+    admin off
+    # Larger body limit for chunked uploads — must match max_upload_size_bytes
+    # in the replay settings table (default 12 GiB).
+    servers {
+        max_header_size 64KB
+    }
+}
+
+:80 {
+    encode zstd gzip
+
+    # ---- VOD HLS direct serve (the hot path) ----
+    # Match: /api/matches/{match_id}/hls/{slot}/...
+    @vod_hls_segment {
+        path_regexp vod_hls ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.(ts|m4s|mp4))$
+    }
+    handle @vod_hls_segment {
+        # Strip the API prefix to map onto the on-disk layout.
+        # /api/matches/X/hls/Y/Z.ts  →  /videos/X/hls/Y/Z.ts
+        rewrite * /videos/{re.vod_hls.1}/hls/{re.vod_hls.2}/{re.vod_hls.3}
+        header Cache-Control "public, max-age=31536000, immutable"
+        header Access-Control-Allow-Origin "*"
+        root * /data
+        file_server {
+            precompressed br gzip
+        }
+    }
+
+    @vod_hls_playlist {
+        path_regexp vod_hls_pl ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.m3u8)$
+    }
+    handle @vod_hls_playlist {
+        rewrite * /videos/{re.vod_hls_pl.1}/hls/{re.vod_hls_pl.2}/{re.vod_hls_pl.3}
+        header Cache-Control "public, max-age=60, must-revalidate"
+        header Access-Control-Allow-Origin "*"
+        header Content-Type "application/vnd.apple.mpegurl"
+        root * /data
+        file_server
+    }
+
+    # ---- Everything else → replay app ----
+    handle {
+        reverse_proxy replay:8090 {
+            # Stream video bodies without buffering the whole upload into RAM.
+            flush_interval -1
+            transport http {
+                read_buffer 64KB
+                write_buffer 64KB
+            }
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}

@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import time
+from collections import deque
 from pathlib import Path
 
 import log as _log
@@ -21,17 +22,26 @@ logger = _log.setup("replay")
 # Path probed to detect an Intel iGPU render node. Overridable for tests.
 VAAPI_RENDER_NODE = "/dev/dri/renderD128"
 
+# Valid REPLAY_HWACCEL choices, in preference order when "auto" is selected.
+# `qsv` and `vaapi` both target the Intel render node but use different
+# ffmpeg pipelines — QSV is faster and lower-CPU on Iris Xe / Arc but
+# requires the iHD driver; VAAPI works more broadly.
+HWACCEL_CHOICES = ("auto", "qsv", "vaapi", "nvenc", "cpu")
 
-def select_hwaccel() -> str:
+
+def select_hwaccel(preference: str | None = None) -> str:
     """Pick the hardware encoder to attempt before falling back to CPU.
 
-    Returns one of "nvenc", "vaapi", "cpu". Honors the REPLAY_HWACCEL env
-    var ("auto" | "nvenc" | "vaapi" | "cpu"); auto-detects when unset/auto.
+    Returns one of "qsv", "nvenc", "vaapi", "cpu". When *preference* is
+    provided (typically the live setting value), it overrides the env var.
     """
-    choice = (os.environ.get("REPLAY_HWACCEL") or "auto").strip().lower()
-    if choice in ("nvenc", "vaapi", "cpu"):
+    raw = preference if preference is not None else os.environ.get("REPLAY_HWACCEL", "auto")
+    choice = (raw or "auto").strip().lower()
+    if choice in ("qsv", "nvenc", "vaapi", "cpu"):
         return choice
-    return "vaapi" if Path(VAAPI_RENDER_NODE).exists() else "nvenc"
+    # auto: prefer the Intel render node when present (covers the typical
+    # Terramaster / NUC / mini-PC deployment); fall back to NVENC otherwise.
+    return "qsv" if Path(VAAPI_RENDER_NODE).exists() else "nvenc"
 
 # ---------------------------------------------------------------------------
 # Transcode progress tracking
@@ -55,10 +65,37 @@ _hls_semaphore = asyncio.Semaphore(2)
 # Exposed via get_gpu_health() for the admin diagnostics endpoint.
 _gpu_stats: dict[str, int] = {"succeeded": 0, "failed": 0}
 
+# Recent transcode results — used by the Performance Tuning panel to compute
+# realtime-factor (wall_seconds / source_seconds). Newest entries last.
+_transcode_history: deque = deque(maxlen=50)
+
 
 def get_gpu_health() -> dict:
     """Return a snapshot of GPU encode attempt counters since last restart."""
     return dict(_gpu_stats)
+
+
+def record_transcode_history(*, match_id: str, slot: str, hwaccel: str,
+                             source_seconds: float | None, wall_seconds: float,
+                             variant_count: int = 0, kind: str = "transcode") -> None:
+    """Append a result to the rolling transcode history. Cheap; safe to call
+    from any thread (deque ops are atomic enough for our usage)."""
+    _transcode_history.append({
+        "match_id": match_id,
+        "slot": slot,
+        "hwaccel": hwaccel,
+        "source_seconds": source_seconds,
+        "wall_seconds": round(wall_seconds, 2),
+        "variant_count": variant_count,
+        "kind": kind,
+        "ended_at": time.time(),
+        "rt_factor": (round(wall_seconds / source_seconds, 3)
+                      if source_seconds and source_seconds > 0 else None),
+    })
+
+
+def get_transcode_history() -> list[dict]:
+    return list(_transcode_history)
 
 
 def get_transcode_progress(match_id: str, slot: str) -> dict | None:
@@ -307,6 +344,7 @@ async def build_hls_assets(
     videos_dir: Path,
     hls_segment_duration: int,
     hls_variant_presets: list[dict],
+    hwaccel_preference: str | None = None,
 ) -> bool:
     width, height = await probe_video_dimensions(source_mp4)
     variants = build_hls_variants(width, height, hls_variant_presets)
@@ -314,7 +352,7 @@ async def build_hls_assets(
     shutil.rmtree(hls_dir, ignore_errors=True)
     hls_dir.mkdir(parents=True, exist_ok=True)
 
-    hwaccel = select_hwaccel()
+    hwaccel = select_hwaccel(hwaccel_preference)
 
     def _cpu_cmd(variant: dict, segment_pattern: Path, playlist_path: Path) -> list[str]:
         return [
@@ -332,6 +370,40 @@ async def build_hls_assets(
             "-g", "48",
             "-keyint_min", "48",
             "-sc_threshold", "0",
+            "-b:v", variant["video_bitrate"],
+            "-maxrate", variant["maxrate"],
+            "-bufsize", variant["bufsize"],
+            "-c:a", "aac",
+            "-b:a", variant["audio_bitrate"],
+            "-ac", "2",
+            "-ar", "48000",
+            "-f", "hls",
+            "-hls_time", str(hls_segment_duration),
+            "-hls_playlist_type", "vod",
+            "-hls_flags", "independent_segments",
+            "-hls_segment_filename", str(segment_pattern),
+            str(playlist_path),
+        ]
+
+    def _qsv_cmd(variant: dict, segment_pattern: Path, playlist_path: Path) -> list[str]:
+        # QSV pipeline on the Intel iGPU (i5-1235U Iris Xe and similar). QSV
+        # bypasses VAAPI's `low_power` quirks and gives ~30-50% higher real-time
+        # factor. `scale_qsv` does the rescale on-GPU end-to-end (unlike the
+        # VAAPI pipeline which has to round-trip through CPU). `-look_ahead 1`
+        # + `-global_quality` produce noticeably better quality than
+        # `h264_vaapi -low_power 1` at the same bitrate.
+        return [
+            "ffmpeg", "-y",
+            "-hwaccel", "qsv",
+            "-hwaccel_device", VAAPI_RENDER_NODE,
+            "-hwaccel_output_format", "qsv",
+            "-i", str(source_mp4),
+            "-vf", f"scale_qsv=-1:{variant['height']}",
+            "-c:v", "h264_qsv",
+            "-preset", "veryslow",
+            "-look_ahead", "1",
+            "-async_depth", "4",
+            "-g", "48",
             "-b:v", variant["video_bitrate"],
             "-maxrate", variant["maxrate"],
             "-bufsize", variant["bufsize"],
@@ -396,6 +468,31 @@ async def build_hls_assets(
             str(playlist_path),
         ]
 
+    async def _try(method: str, cmd: list[str], variant_dir: Path, variant: dict) -> tuple[bool, str]:
+        """Run an ffmpeg attempt, recording GPU success/failure stats and
+        scrubbing the variant directory on failure so the next method starts
+        clean."""
+        ok, err = await run_ffmpeg(cmd)
+        if method != "cpu":
+            stat_key = f"{method}_succeeded" if ok else f"{method}_failed"
+            _gpu_stats[stat_key] = _gpu_stats.get(stat_key, 0) + 1
+            # Keep the legacy aggregate counters in sync for the existing UI.
+            _gpu_stats["succeeded" if ok else "failed"] += 1
+        if ok:
+            logger.info(
+                "HLS variant %s/%s/%s done (%s)", match_id, slot, variant["name"], method,
+                extra={"match_id": match_id, "slot": slot, "variant": variant["name"], "hwaccel": method},
+            )
+        else:
+            logger.warning(
+                "HLS variant %s/%s/%s %s failed: %s",
+                match_id, slot, variant["name"], method, err,
+                extra={"match_id": match_id, "slot": slot, "variant": variant["name"], "hwaccel": method},
+            )
+            shutil.rmtree(variant_dir, ignore_errors=True)
+            variant_dir.mkdir(parents=True, exist_ok=True)
+        return ok, err
+
     async def _generate_variant(variant: dict) -> dict | None:
         async with _hls_semaphore:
             variant_dir = hls_dir / variant["name"]
@@ -403,30 +500,27 @@ async def build_hls_assets(
             playlist_path = variant_dir / "index.m3u8"
             segment_pattern = variant_dir / "segment_%03d.ts"
 
-            if hwaccel == "vaapi":
-                ok, err = await run_ffmpeg(_vaapi_cmd(variant, segment_pattern, playlist_path))
-                if ok:
-                    _gpu_stats["succeeded"] += 1
-                    logger.info(
-                        "HLS variant %s/%s/%s done (vaapi)", match_id, slot, variant["name"],
-                        extra={"match_id": match_id, "slot": slot, "variant": variant["name"], "hwaccel": "vaapi"},
-                    )
-                    return variant
-                _gpu_stats["failed"] += 1
-                logger.warning(
-                    "HLS variant %s/%s/%s VAAPI failed, falling back to CPU: %s",
-                    match_id, slot, variant["name"], err,
-                    extra={"match_id": match_id, "slot": slot, "variant": variant["name"], "hwaccel": "vaapi"},
-                )
-                shutil.rmtree(variant_dir, ignore_errors=True)
-                variant_dir.mkdir(parents=True, exist_ok=True)
+            # Build the chain of attempts. Each is a (method, cmd_factory)
+            # tuple so we can stop at the first success.
+            chain: list[tuple[str, list[str]]] = []
+            if hwaccel == "qsv":
+                chain.append(("qsv", _qsv_cmd(variant, segment_pattern, playlist_path)))
+                chain.append(("vaapi", _vaapi_cmd(variant, segment_pattern, playlist_path)))
+            elif hwaccel == "vaapi":
+                chain.append(("vaapi", _vaapi_cmd(variant, segment_pattern, playlist_path)))
+            # CPU is always the final fallback unless explicitly requested.
+            chain.append(("cpu", _cpu_cmd(variant, segment_pattern, playlist_path)))
 
-            ok, err = await run_ffmpeg(_cpu_cmd(variant, segment_pattern, playlist_path))
-            if not ok:
-                logger.warning("HLS variant generation failed %s/%s/%s: %s", match_id, slot, variant['name'], err)
-                return None
-            logger.info("HLS variant %s/%s/%s done (cpu)", match_id, slot, variant['name'])
-            return variant
+            last_err = ""
+            for method, cmd in chain:
+                ok, last_err = await _try(method, cmd, variant_dir, variant)
+                if ok:
+                    return variant
+            logger.warning(
+                "HLS variant %s/%s/%s exhausted all methods: %s",
+                match_id, slot, variant["name"], last_err,
+            )
+            return None
 
     results = await asyncio.gather(*[_generate_variant(v) for v in variants])
     generated_variants = [v for v in results if v is not None]
@@ -465,9 +559,10 @@ async def transcode_video(
     videos_dir: Path,
     hls_segment_duration: int,
     hls_variant_presets: list[dict],
-    transcode_semaphore: asyncio.Semaphore,
+    transcode_semaphore,
     transcode_concurrency: int,
     set_video_status,
+    hwaccel_preference: str | None = None,
 ):
     """Background task: transcode *src* -> *dest* (H.264 / AAC, faststart).
 
@@ -494,6 +589,7 @@ async def transcode_video(
     def _on_progress(pct: int):
         _set_transcode_progress(match_id, slot, pct, "transcoding")
 
+    transcode_started_at = time.time()
     try:
         async with transcode_semaphore:
             logger.info("Transcode acquired for %s/%s (max concurrency=%d)", match_id, slot, transcode_concurrency)
@@ -534,77 +630,122 @@ async def transcode_video(
                     await _maybe_generate_thumb(dest)
                     clear_transcode_progress(match_id, slot)
                     await set_video_status(match_id, slot, "ready", dest.name)
+                    record_transcode_history(
+                        match_id=match_id, slot=slot, hwaccel="remux",
+                        source_seconds=duration_s,
+                        wall_seconds=time.time() - transcode_started_at,
+                        kind="remux",
+                    )
                     logger.info("Remux done: %s/%s (hls=%s)", match_id, slot, hls_ok)
                     return
                 remux_err = err
                 logger.warning("Remux failed, will transcode: %s", err)
 
-            # --- 2. GPU transcode (NVENC or VAAPI) ---
-            hwaccel = select_hwaccel()
-            if hwaccel == "nvenc":
-                gpu_cmd = [
-                    "ffmpeg", "-y",
-                    "-hwaccel", "cuda",
-                    "-i", str(src),
-                    "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
-                    "-cq", "23", "-b:v", "0",
-                    "-c:a", "aac", "-b:a", "128k",
-                    "-movflags", "+faststart",
-                    str(dest),
-                ]
-            elif hwaccel == "vaapi":
-                # `format=nv12|vaapi,hwupload` covers both GPU-decoded and
-                # software-decoded inputs — VAAPI decode silently falls back to
-                # CPU for codecs the iGPU can't handle, and the encoder needs
-                # frames on the GPU either way.
-                #
-                # `-low_power 1` targets VAEntrypointEncSliceLP. Required on
-                # low-power Intel iGPUs (N-series / Atom / Celeron / J-series)
-                # which only expose the LP encode entrypoint; full-power iGPUs
-                # (Iris, Xe) support both, so this is safe to always set.
-                gpu_cmd = [
-                    "ffmpeg", "-y",
-                    "-hwaccel", "vaapi",
-                    "-hwaccel_device", VAAPI_RENDER_NODE,
-                    "-hwaccel_output_format", "vaapi",
-                    "-i", str(src),
-                    "-vf", "format=nv12|vaapi,hwupload",
-                    "-c:v", "h264_vaapi", "-low_power", "1", "-qp", "23",
-                    "-c:a", "aac", "-b:a", "128k",
-                    "-movflags", "+faststart",
-                    str(dest),
-                ]
-            else:  # "cpu" — skip the GPU attempt entirely
-                gpu_cmd = None
+            # --- 2. GPU transcode (QSV → VAAPI → NVENC) ---
+            hwaccel = select_hwaccel(hwaccel_preference)
 
-            if gpu_cmd is not None:
+            qsv_cmd = [
+                "ffmpeg", "-y",
+                "-hwaccel", "qsv",
+                "-hwaccel_device", VAAPI_RENDER_NODE,
+                "-hwaccel_output_format", "qsv",
+                "-i", str(src),
+                "-c:v", "h264_qsv",
+                "-preset", "veryslow",
+                "-look_ahead", "1",
+                "-async_depth", "4",
+                "-global_quality", "21",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                str(dest),
+            ]
+            nvenc_cmd = [
+                "ffmpeg", "-y",
+                "-hwaccel", "cuda",
+                "-i", str(src),
+                "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
+                "-cq", "23", "-b:v", "0",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                str(dest),
+            ]
+            # `format=nv12|vaapi,hwupload` covers both GPU-decoded and
+            # software-decoded inputs — VAAPI decode silently falls back to
+            # CPU for codecs the iGPU can't handle, and the encoder needs
+            # frames on the GPU either way. `-low_power 1` targets
+            # VAEntrypointEncSliceLP for low-power iGPUs.
+            vaapi_cmd = [
+                "ffmpeg", "-y",
+                "-hwaccel", "vaapi",
+                "-hwaccel_device", VAAPI_RENDER_NODE,
+                "-hwaccel_output_format", "vaapi",
+                "-i", str(src),
+                "-vf", "format=nv12|vaapi,hwupload",
+                "-c:v", "h264_vaapi", "-low_power", "1", "-qp", "23",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                str(dest),
+            ]
+
+            # Build a chain so a transient QSV failure falls back to VAAPI
+            # before reaching CPU. The user's explicit preference picks the
+            # head of the chain.
+            chain: list[tuple[str, list[str]]] = []
+            if hwaccel == "qsv":
+                chain.append(("qsv", qsv_cmd))
+                chain.append(("vaapi", vaapi_cmd))
+            elif hwaccel == "vaapi":
+                chain.append(("vaapi", vaapi_cmd))
+            elif hwaccel == "nvenc":
+                chain.append(("nvenc", nvenc_cmd))
+            # "cpu" → empty chain, jump straight to CPU fallback.
+
+            ok = False
+            gpu_err = "skipped (hwaccel=cpu)" if not chain else ""
+            used_method = ""
+            for method, cmd in chain:
                 logger.info(
-                    "GPU transcode %s/%s (%s)", match_id, slot, hwaccel,
-                    extra={"match_id": match_id, "slot": slot, "hwaccel": hwaccel},
+                    "GPU transcode %s/%s (%s)", match_id, slot, method,
+                    extra={"match_id": match_id, "slot": slot, "hwaccel": method},
                 )
-                _set_transcode_progress(match_id, slot, 0, f"transcoding (GPU/{hwaccel})")
+                _set_transcode_progress(match_id, slot, 0, f"transcoding (GPU/{method})")
                 ok, gpu_err = await run_ffmpeg(
-                    gpu_cmd, on_progress=_on_progress, duration_s=duration_s,
+                    cmd, on_progress=_on_progress, duration_s=duration_s,
                 )
-            else:
-                ok, gpu_err = False, "skipped (REPLAY_HWACCEL=cpu)"
+                stat_key = f"{method}_succeeded" if ok else f"{method}_failed"
+                _gpu_stats[stat_key] = _gpu_stats.get(stat_key, 0) + 1
+                _gpu_stats["succeeded" if ok else "failed"] += 1
+                if ok:
+                    used_method = method
+                    break
+                logger.warning(
+                    "%s transcode failed: %s", method, gpu_err,
+                    extra={"match_id": match_id, "slot": slot, "hwaccel": method},
+                )
+                # Discard partial output before next attempt — ffmpeg may have
+                # written a truncated MP4.
+                dest.unlink(missing_ok=True)
+
             if ok:
-                _gpu_stats["succeeded"] += 1
                 src.unlink(missing_ok=True)
                 _set_transcode_progress(match_id, slot, 95, "generating HLS")
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
                 await _maybe_generate_thumb(dest)
                 clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
+                record_transcode_history(
+                    match_id=match_id, slot=slot, hwaccel=used_method,
+                    source_seconds=duration_s,
+                    wall_seconds=time.time() - transcode_started_at,
+                    kind="gpu",
+                )
                 logger.info(
-                    "GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok,
-                    extra={"match_id": match_id, "slot": slot, "hwaccel": hwaccel, "hls_ok": hls_ok},
+                    "GPU transcode done: %s/%s (%s, hls=%s)", match_id, slot, used_method, hls_ok,
+                    extra={"match_id": match_id, "slot": slot, "hwaccel": used_method, "hls_ok": hls_ok},
                 )
                 return
-            if gpu_cmd is not None:
-                _gpu_stats["failed"] += 1
             logger.warning(
-                "GPU transcode failed, falling back to CPU: %s", gpu_err,
+                "All GPU transcodes failed, falling back to CPU: %s", gpu_err,
                 extra={"match_id": match_id, "slot": slot, "hwaccel": hwaccel},
             )
 
@@ -615,7 +756,7 @@ async def transcode_video(
                 ["ffmpeg", "-y",
                  "-i", str(src),
                  "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                 "-c:a", "aac", "-b:a", "128k",
+                 "-c:a", "aac", "-b:a", "192k",
                  "-movflags", "+faststart",
                  str(dest)],
                 on_progress=_on_progress, duration_s=duration_s,
@@ -627,6 +768,12 @@ async def transcode_video(
                 await _maybe_generate_thumb(dest)
                 clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
+                record_transcode_history(
+                    match_id=match_id, slot=slot, hwaccel="cpu",
+                    source_seconds=duration_s,
+                    wall_seconds=time.time() - transcode_started_at,
+                    kind="cpu",
+                )
                 logger.info(
                     "CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok,
                     extra={"match_id": match_id, "slot": slot, "hls_ok": hls_ok},
@@ -786,6 +933,7 @@ async def backfill_hls_for_existing_videos(
     ready_slots_missing_hls,
     startup_delay: float = 5.0,
     inter_item_delay: float = 1.0,
+    hwaccel_preference: str | None = None,
 ) -> dict:
     if hls_backfill_lock.locked():
         return {"started": False, "reason": "already-running", "processed": 0, "generated": 0}
@@ -798,6 +946,7 @@ async def backfill_hls_for_existing_videos(
         videos_dir=videos_dir,
         hls_segment_duration=hls_segment_duration,
         hls_variant_presets=hls_variant_presets,
+        hwaccel_preference=hwaccel_preference,
     )
     async with hls_backfill_lock:
         matches = await load_matches()
