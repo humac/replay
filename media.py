@@ -50,6 +50,17 @@ _active_procs: set = set()
 # easily reaching 6+ simultaneous ffmpegs on a 2-core host.
 _hls_semaphore = asyncio.Semaphore(2)
 
+# GPU health counters — session-lifetime totals across all encode attempts.
+# Mutated via dict to avoid `global` declarations in nested functions.
+# Exposed via get_gpu_health() for the admin diagnostics endpoint.
+_gpu_stats: dict[str, int] = {"succeeded": 0, "failed": 0}
+
+
+def get_gpu_health() -> dict:
+    """Return a snapshot of GPU encode attempt counters since last restart."""
+    return dict(_gpu_stats)
+
+
 def get_transcode_progress(match_id: str, slot: str) -> dict | None:
     """Return current progress for a transcode job, or None."""
     return _transcode_progress.get(f"{match_id}/{slot}")
@@ -395,10 +406,18 @@ async def build_hls_assets(
             if hwaccel == "vaapi":
                 ok, err = await run_ffmpeg(_vaapi_cmd(variant, segment_pattern, playlist_path))
                 if ok:
-                    logger.info("HLS variant %s/%s/%s done (vaapi)", match_id, slot, variant['name'])
+                    _gpu_stats["succeeded"] += 1
+                    logger.info(
+                        "HLS variant %s/%s/%s done (vaapi)", match_id, slot, variant["name"],
+                        extra={"match_id": match_id, "slot": slot, "variant": variant["name"], "hwaccel": "vaapi"},
+                    )
                     return variant
-                logger.warning("HLS variant %s/%s/%s VAAPI failed, falling back to CPU: %s",
-                               match_id, slot, variant['name'], err)
+                _gpu_stats["failed"] += 1
+                logger.warning(
+                    "HLS variant %s/%s/%s VAAPI failed, falling back to CPU: %s",
+                    match_id, slot, variant["name"], err,
+                    extra={"match_id": match_id, "slot": slot, "variant": variant["name"], "hwaccel": "vaapi"},
+                )
                 shutil.rmtree(variant_dir, ignore_errors=True)
                 variant_dir.mkdir(parents=True, exist_ok=True)
 
@@ -559,7 +578,10 @@ async def transcode_video(
                 gpu_cmd = None
 
             if gpu_cmd is not None:
-                logger.info("GPU transcode %s/%s (%s)", match_id, slot, hwaccel)
+                logger.info(
+                    "GPU transcode %s/%s (%s)", match_id, slot, hwaccel,
+                    extra={"match_id": match_id, "slot": slot, "hwaccel": hwaccel},
+                )
                 _set_transcode_progress(match_id, slot, 0, f"transcoding (GPU/{hwaccel})")
                 ok, gpu_err = await run_ffmpeg(
                     gpu_cmd, on_progress=_on_progress, duration_s=duration_s,
@@ -567,15 +589,24 @@ async def transcode_video(
             else:
                 ok, gpu_err = False, "skipped (REPLAY_HWACCEL=cpu)"
             if ok:
+                _gpu_stats["succeeded"] += 1
                 src.unlink(missing_ok=True)
                 _set_transcode_progress(match_id, slot, 95, "generating HLS")
                 hls_ok = await build_hls_assets(dest, match_id, slot, **hls_kwargs)
                 await _maybe_generate_thumb(dest)
                 clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
-                logger.info("GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
+                logger.info(
+                    "GPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok,
+                    extra={"match_id": match_id, "slot": slot, "hwaccel": hwaccel, "hls_ok": hls_ok},
+                )
                 return
-            logger.warning("GPU transcode failed, falling back to CPU: %s", gpu_err)
+            if gpu_cmd is not None:
+                _gpu_stats["failed"] += 1
+            logger.warning(
+                "GPU transcode failed, falling back to CPU: %s", gpu_err,
+                extra={"match_id": match_id, "slot": slot, "hwaccel": hwaccel},
+            )
 
             # --- 3. CPU fallback (libx264) ---
             logger.info("CPU transcode %s/%s", match_id, slot)
@@ -596,10 +627,16 @@ async def transcode_video(
                 await _maybe_generate_thumb(dest)
                 clear_transcode_progress(match_id, slot)
                 await set_video_status(match_id, slot, "ready", dest.name)
-                logger.info("CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok)
+                logger.info(
+                    "CPU transcode done: %s/%s (hls=%s)", match_id, slot, hls_ok,
+                    extra={"match_id": match_id, "slot": slot, "hls_ok": hls_ok},
+                )
                 return
 
-            logger.error("All transcode methods failed %s/%s: %s", match_id, slot, cpu_err)
+            logger.error(
+                "All transcode methods failed %s/%s: %s", match_id, slot, cpu_err,
+                extra={"match_id": match_id, "slot": slot},
+            )
             clear_transcode_progress(match_id, slot)
             details_parts = []
             if remux_err:

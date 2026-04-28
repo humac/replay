@@ -86,7 +86,7 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - `asyncio.gather(*variants)` spawns 3+ ffmpegs per transcode on top of `TRANSCODE_CONCURRENCY=2`. Six concurrent ffmpegs on a 2-core box thrash.
   - Fix: reuse `transcode_semaphore` inside `_generate_variant`, OR add `HLS_CONCURRENCY` capped at 2.
 
-- [ ] **M12. No "GPU permanently broken" signal** — `media.py:531`
+- [x] **M12. No "GPU permanently broken" signal** — `media.py:531`
   - Each failed GPU attempt logs a warning, but no aggregated counter. Broken VAAPI silently drops every transcode to CPU at 5× elapsed time.
   - Fix: counter pair `gpu_attempts_failed` / `gpu_attempts_succeeded` exposed via `/api/admin/diagnostics`.
 
@@ -94,7 +94,7 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - None of `delete_user`, `delete_match`, `unblock_stream`, `retry_transcode`, `regenerate_hls`, `regenerate_thumbnail`, `backfill_hls`, `export_database`, `update_user` log who did what to which target.
   - Fix: `logger.info("admin.action", extra={"action": ..., "actor": user["username"], "target_id": ...})`.
 
-- [ ] **M14. Structured logging plumbing exists but is unused** — `log.py:23` plus call sites across `server.py / media.py / live.py / uploads.py`
+- [x] **M14. Structured logging plumbing exists but is unused** — `log.py:23` plus call sites across `server.py / media.py / live.py / uploads.py`
   - Only `streams.py` uses `extra={...}`. Everywhere else uses `%s` interpolation, defeating the JSON formatter.
   - Fix: convert high-signal sites (kill, rotate, transcode start/done, upload create/complete, live HLS proxy errors) to `extra=`.
 
@@ -115,11 +115,11 @@ Findings from a full-project security / correctness / quality pass after Milesto
 ## Minor (nice to have)
 
 - [ ] **m1.** Env-var admin path checked before DB `enabled=0` — `auth.py:171`. If a deployer rotates `ADMIN_USER` to a name that exists as a *disabled* DB user, the disabled flag is bypassed. Document or guard.
-- [ ] **m2.** Stale `upload_sessions` rows after server restart sit at `'active'` for 6h. Fix: on startup, mark active sessions older than chunk-idle threshold as `'cancelled'`.
+- [x] **m2.** Stale `upload_sessions` rows after server restart sit at `'active'` for 6h. Fix: on startup, mark active sessions older than chunk-idle threshold as `'cancelled'`.
 - [ ] **m3.** `/api/uploads/sessions?status=...` accepts an unbounded comma-separated list — cap at ~8.
 - [ ] **m4.** Stream block TTL uses wall-clock time (`time.time()`), not monotonic. NTP backward-jump can permanently strand a block.
 - [ ] **m5.** HLS session keying by `(ip, ua)` permanently under-counts viewers behind carrier-grade NAT. Document, don't fix.
-- [ ] **m6.** Defense-in-depth: add `.resolve()` containment checks on `serve_thumbnail` (`server.py:1752`) and `serve_logo` (`server.py:1725`).
+- [x] **m6.** Defense-in-depth: add `.resolve()` containment checks on `serve_thumbnail` (`server.py:1752`) and `serve_logo` (`server.py:1725`).
 - [ ] **m7.** 401-handling pattern repeats 6+ times across `views.js`/`live.js`/`admin.js`. Fix: a `fetchJson(url, opts)` helper handling 401/403 in one place.
 - [ ] **m8.** `loadMatches` on transient network error sets `this.matches = []`, blanking the UI. Preserve previous list and surface a "couldn't refresh" toast.
 - [ ] **m9.** History routing: `editMatch` silently no-ops if a deleted match is restored from history. Fall through to `showAdminView('matches')` if match is gone.

@@ -20,7 +20,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `auth.py`: multi-user authentication, token management, password hashing (scrypt), role-based access, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
-- `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation (capped at 2 simultaneous variants via `_hls_semaphore`), thumbnail extraction; `get_all_transcode_progress()` returns all active jobs; `cancel_active_transcodes()` terminates in-flight ffmpegs on shutdown
+- `media.py`: ffmpeg/ffprobe probing, transcoding (NVENC / VAAPI / CPU, auto-selected via `select_hwaccel()` and overridable with `REPLAY_HWACCEL`) with real-time progress tracking, HLS variant generation (capped at 2 simultaneous variants via `_hls_semaphore`), thumbnail extraction; `get_all_transcode_progress()` returns all active jobs; `get_gpu_health()` returns session-lifetime GPU encode counters (`succeeded`/`failed`); `cancel_active_transcodes()` terminates in-flight ffmpegs on shutdown
 - `live.py`: MediaMTX bridge — HLS reverse proxy, RTMP-publish auth webhook validation, control-API status query
 - `streams.py`: in-memory active streaming-connection registry, client-IP resolver (honors `CF-Connecting-IP`/`X-Forwarded-For` when `TRUSTED_PROXY=cloudflare`; returns peer address otherwise), optional offline GeoLite2 lookup, and admin kill/blocklist support
 - `models.py`: Pydantic v2 request models for login, match CRUD, upload sessions, user management, live auth webhook, and admin stream unblock
@@ -113,7 +113,7 @@ After frontend changes, sanity-check:
 - Match scores are intentionally hidden by default on cards and the game header — the site is a replay library, not a results page. Reveal state lives in `app._revealedScores` (per-session Set, not persisted). When adding new surfaces that show a score, call `app.isMatchScoreRevealed(matchId)` to gate the numerals and emit a `.score-reveal-chip` (or `.score-reveal-chip-large` on the game page) that calls `app.revealMatchScore(matchId, event)`.
 - For caching behavior, be careful with `index.html`, `/static/*`, and Cloudflare-facing asset URLs.
 - When adding or modifying API endpoints, add or update Pydantic models in `models.py` and add corresponding tests in `tests/`.
-- Login is rate-limited (5 attempts/60s per IP). Token cleanup sweeps run automatically.
+- Login is rate-limited (5 attempts/60s per IP). Token cleanup sweeps run automatically. On startup, `lifespan` also calls `_uploads.cleanup_stale_sessions()` to cancel any upload sessions that were left `'active'` across a restart.
 - Three user roles: `admin` (full access), `uploader` (match CRUD + uploads), `viewer` (read-only). Use `_auth.require_role(request, "admin", "uploader")` for role checks. The env-var admin (`ADMIN_USER`/`ADMIN_PASS`) is always a superadmin.
 - Backend logic is organized into focused modules (`db.py`, `auth.py`, `settings.py`, `uploads.py`, `media.py`). Keep `server.py` as the route registration layer; add business logic to the appropriate module.
 - The `MATCHES_LOCK` is an `asyncio.Lock` — all callers that hold it must be async.

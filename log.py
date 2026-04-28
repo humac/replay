@@ -19,10 +19,18 @@ class JSONFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        # Merge any extra structured fields attached to the record
-        for key in ("match_id", "slot", "session_id", "ip", "method", "path"):
-            val = getattr(record, key, None)
-            if val is not None:
+        # Merge all extra structured fields attached to the record, skipping
+        # standard LogRecord attributes that are already captured above or
+        # are internal Python logging bookkeeping.
+        _SKIP = frozenset({
+            "name", "msg", "args", "levelname", "levelno", "pathname",
+            "filename", "module", "exc_info", "exc_text", "stack_info",
+            "lineno", "funcName", "created", "msecs", "relativeCreated",
+            "thread", "threadName", "processName", "process", "message",
+            "taskName",
+        })
+        for key, val in record.__dict__.items():
+            if key not in _SKIP and not key.startswith("_") and val is not None:
                 entry[key] = val
         if record.exc_info and record.exc_info[1]:
             entry["exception"] = self.formatException(record.exc_info)
