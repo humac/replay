@@ -88,3 +88,23 @@ async def test_create_upload_session_mkv(client, auth_headers):
         headers=auth_headers,
     )
     assert resp.status_code == 200
+
+
+async def test_list_sessions_status_filter(client, auth_headers):
+    resp = await client.get("/api/uploads/sessions?status=active", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "sessions" in resp.json()
+
+
+async def test_list_sessions_status_cap(client, auth_headers):
+    # More than 8 comma-separated values must not cause a 500 — excess are silently dropped.
+    many = ",".join(["active"] * 12)
+    resp = await client.get(f"/api/uploads/sessions?status={many}", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "sessions" in resp.json()
+
+
+async def test_list_sessions_all(client, auth_headers):
+    resp = await client.get("/api/uploads/sessions?status=all", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "sessions" in resp.json()
