@@ -180,7 +180,14 @@ def _migrate_v3(conn: sqlite3.Connection):
     )
 
 
-_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3]
+def _migrate_v4(conn: sqlite3.Connection):
+    """Add first_chunk_hash column to upload_sessions for upload fingerprinting."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(upload_sessions)").fetchall()}
+    if "first_chunk_hash" not in cols:
+        conn.execute("ALTER TABLE upload_sessions ADD COLUMN first_chunk_hash TEXT")
+
+
+_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4]
 
 
 def _run_migrations(conn: sqlite3.Connection):

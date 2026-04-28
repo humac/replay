@@ -40,6 +40,10 @@ def select_hwaccel() -> str:
 # Key: "match_id/slot", value: {pct, started_at, updated_at, stage}
 _transcode_progress: dict[str, dict] = {}
 
+# Active ffmpeg subprocesses — populated by run_ffmpeg so cancel_active_transcodes
+# can terminate them on SIGTERM before asyncio task cancellation gets there.
+_active_procs: set = set()
+
 
 def get_transcode_progress(match_id: str, slot: str) -> dict | None:
     """Return current progress for a transcode job, or None."""
@@ -65,6 +69,24 @@ def _set_transcode_progress(match_id: str, slot: str, pct: int, stage: str = "tr
             "updated_at": now,
             "stage": stage,
         }
+
+
+async def cancel_active_transcodes():
+    """Terminate all in-flight ffmpeg subprocesses and wait for them to exit.
+
+    Called from the lifespan shutdown hook so SIGTERM doesn't leave half-written
+    MP4 files on disk that the startup orphan sweep would have to clean up.
+    """
+    procs = list(_active_procs)
+    if not procs:
+        return
+    logger.info("Shutdown: terminating %d active ffmpeg process(es)", len(procs))
+    for proc in procs:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+    await asyncio.gather(*[proc.wait() for proc in procs], return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
@@ -171,36 +193,40 @@ async def run_ffmpeg(cmd: list[str], *, on_progress=None, duration_s: float | No
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stderr_chunks = []
+        _active_procs.add(proc)
+        try:
+            stderr_chunks = []
 
-        async def _read_stderr():
+            async def _read_stderr():
+                while True:
+                    line = await proc.stderr.readline()
+                    if not line:
+                        break
+                    stderr_chunks.append(line)
+
+            stderr_task = asyncio.create_task(_read_stderr())
+
+            # Parse -progress output from stdout
             while True:
-                line = await proc.stderr.readline()
+                line = await proc.stdout.readline()
                 if not line:
                     break
-                stderr_chunks.append(line)
+                text = line.decode(errors="replace").strip()
+                if text.startswith("out_time_us="):
+                    try:
+                        us = int(text.split("=", 1)[1])
+                        pct = min(99, int((us / 1_000_000) / duration_s * 100))
+                        on_progress(pct)
+                    except (ValueError, ZeroDivisionError):
+                        pass
 
-        stderr_task = asyncio.create_task(_read_stderr())
-
-        # Parse -progress output from stdout
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            text = line.decode(errors="replace").strip()
-            if text.startswith("out_time_us="):
-                try:
-                    us = int(text.split("=", 1)[1])
-                    pct = min(99, int((us / 1_000_000) / duration_s * 100))
-                    on_progress(pct)
-                except (ValueError, ZeroDivisionError):
-                    pass
-
-        await stderr_task
-        await proc.wait()
-        stderr = b"".join(stderr_chunks)
-        tail = stderr[-500:].decode(errors="replace") if stderr else ""
-        return proc.returncode == 0, tail
+            await stderr_task
+            await proc.wait()
+            stderr = b"".join(stderr_chunks)
+            tail = stderr[-500:].decode(errors="replace") if stderr else ""
+            return proc.returncode == 0, tail
+        finally:
+            _active_procs.discard(proc)
 
     # Simple mode — no progress tracking
     proc = await asyncio.create_subprocess_exec(
@@ -208,9 +234,13 @@ async def run_ffmpeg(cmd: list[str], *, on_progress=None, duration_s: float | No
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, stderr = await proc.communicate()
-    tail = stderr[-500:].decode(errors="replace") if stderr else ""
-    return proc.returncode == 0, tail
+    _active_procs.add(proc)
+    try:
+        _, stderr = await proc.communicate()
+        tail = stderr[-500:].decode(errors="replace") if stderr else ""
+        return proc.returncode == 0, tail
+    finally:
+        _active_procs.discard(proc)
 
 
 # ---------------------------------------------------------------------------

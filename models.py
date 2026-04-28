@@ -86,9 +86,20 @@ class UpdateMatchRequest(BaseModel):
         return v
 
 
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
 class CreateUploadSessionRequest(BaseModel):
     filename: str = Field("video.mp4", min_length=1, max_length=500)
     size_bytes: int = Field(..., gt=0)
+    first_chunk_hash: Optional[str] = Field(None, max_length=64)
+
+    @field_validator("first_chunk_hash")
+    @classmethod
+    def validate_hash(cls, v: str | None) -> str | None:
+        if v is not None and not _SHA256_RE.match(v):
+            raise ValueError("first_chunk_hash must be a 64-char lowercase hex SHA-256")
+        return v
 
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")

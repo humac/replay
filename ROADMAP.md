@@ -325,3 +325,15 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Team performance panel** — reframed around what was *played*: Matches Played, Goals Scored, Clean Sheets, Replays Available (count of main-team matches with at least one ready slot). The legacy Record / Points / Goal Diff metrics survive behind a "Show record" toggle so users who want them aren't blocked.
 - **Score data is unchanged** — `/api/matches`, the DB schema, and admin entry forms still capture and return scores; this is purely a presentation rework. New helpers `app.revealMatchScore`, `app.isMatchScoreRevealed`, `app.toggleSeasonRecord`, and `app.countAvailableReplays` handle the per-session state and effort-metric counting.
 - **Aesthetic** — quiet by default. Reveal chip is an Oswald uppercase 32-px pill (40-px large variant for the game page), eye SVG icon, accent border on hover. Hidden scores use `var(--text-muted)` at 0.45 opacity. Neutral team-stat tiles drop the colored radial accents from the four primary metrics; accents return on the collapsed record strip as left-edge bars.
+
+---
+
+## Sprint — Code Review Hardening ✅ COMPLETE (2026-04-27)
+
+**Goal:** address the five open next-sprint items from the post-M9 code review.
+
+- **M4 — Background task tracking** (`server.py`): added module-level `_background_tasks` set and `_spawn_task()` helper. Every `create_task` for transcodes and startup backfills now goes through `_spawn_task`, which auto-discards on completion and logs any unhandled exception via `logger.error`.
+- **M5 — Graceful shutdown** (`server.py`, `media.py`): `lifespan` `finally` block now calls `_media.cancel_active_transcodes()` (terminates in-flight ffmpeg subprocesses and awaits their exit) and then cancels + gathers all remaining background tasks. Added `_active_procs` set in `media.py` and `cancel_active_transcodes()` function; `run_ffmpeg` registers/deregisters each subprocess via `try/finally`.
+- **M7 — Match deletion cascade** (`server.py`): `delete_match` now DELETEs orphaned `upload_sessions` and `video_errors` rows inside the same `MATCHES_LOCK` block before `rmtree`.
+- **M8 — Upload fingerprinting** (`db.py`, `models.py`, `uploads.py`, `server.py`, `js/uploads.js`): added `first_chunk_hash` column (migration v4). Client computes SHA-256 of the first 64 KB before calling the session bind endpoint; server stores it and uses it as an additional match key in `find_active_session`. Chunk 0 upload also verifies the hash as defense-in-depth, rejecting any attempt to interleave a different file into an existing session.
+- **M13 — Audit logging** (`server.py`): all nine destructive admin endpoints now emit `logger.info("admin.action", extra={action, actor, target_id, ...})` structured log events: `delete_user`, `update_user`, `delete_match`, `unblock_stream`, `backfill_hls`, `retry_transcode`, `regenerate_hls`, `regenerate_thumbnail`, `export_database`.

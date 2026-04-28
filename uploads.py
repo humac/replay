@@ -55,8 +55,26 @@ def session_view(row: sqlite3.Row, stale_seconds: int) -> dict:
     return payload
 
 
-def find_active_session(match_id: str, slot: str, size_bytes: int, ext: str) -> sqlite3.Row | None:
+def find_active_session(
+    match_id: str, slot: str, size_bytes: int, ext: str,
+    first_chunk_hash: str | None = None,
+) -> sqlite3.Row | None:
     with _db.connect() as conn:
+        if first_chunk_hash:
+            # Strict fingerprint match: only resume a session that was started
+            # with the same file. A NULL hash means the session predates this
+            # feature; don't resume it for a hashed request so we can't be sure
+            # it's the same file.
+            return conn.execute(
+                """
+                SELECT * FROM upload_sessions
+                WHERE match_id = ? AND slot = ? AND size_bytes = ? AND ext = ?
+                  AND status = 'active' AND first_chunk_hash = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (match_id, slot, size_bytes, ext, first_chunk_hash),
+            ).fetchone()
         return conn.execute(
             """
             SELECT * FROM upload_sessions
