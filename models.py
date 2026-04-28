@@ -166,3 +166,13 @@ class UnblockStreamRequest(BaseModel):
     kind: Literal["live", "vod-hls", "vod-mp4"]
     match_id: Optional[str] = None
     slot: Optional[str] = None
+
+
+class StartCaptureRequest(BaseModel):
+    """Admin: start a high-frequency throughput capture window for the
+    Performance Tuning panel. The streams module clamps the value to
+    [5, 600] s, but bound the type/range here so an invalid body fails
+    fast with a 422 instead of slipping through to a float() coercion."""
+    model_config = ConfigDict(extra="forbid")
+
+    seconds: float = Field(60.0, ge=5.0, le=600.0)

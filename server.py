@@ -32,7 +32,7 @@ import streams as _streams
 import uploads as _uploads
 from models import (
     CreateMatchRequest, CreateUploadSessionRequest, CreateUserRequest,
-    LiveAuthRequest, LoginRequest, UnblockStreamRequest,
+    LiveAuthRequest, LoginRequest, StartCaptureRequest, UnblockStreamRequest,
     UpdateMatchRequest, UpdateUserRequest,
 )
 
@@ -1125,31 +1125,62 @@ except Exception:  # pragma: no cover — psutil is in requirements.txt
 # compute per-NIC bytes-per-second deltas without forcing the caller to poll.
 _perf_prev_net: dict = {"ts": 0.0, "tx": 0, "rx": 0}
 
+# Previous iGPU busy reading per engine — required because i915's `busy`
+# sysfs file is a monotonic ns-since-boot counter. A single read is
+# meaningless; only the delta between two reads taken `dt` seconds apart
+# yields a real busy %. None on first call (returns None to the caller).
+_perf_prev_gpu: dict = {"ts": 0.0, "engines": {}}  # name → ns-since-boot
+
 
 def _intel_gpu_busy_pct() -> float | None:
-    """Read Intel i915 sysfs to estimate iGPU busy %. Returns None if the
-    files don't exist (non-Intel host or kernel without busy accounting)."""
+    """Estimate iGPU busy % by diffing two reads of the i915 per-engine
+    `busy` sysfs counter. Returns None if the sysfs files don't exist
+    (non-Intel host) or this is the first call (no previous sample to
+    diff against).
+
+    Pattern matches the NIC bps delta a few lines down: cache the last
+    reading on the module, compute (curr - prev) / (now - prev_ts) on the
+    next call, and clamp to [0, 100].
+    """
     base = Path("/sys/class/drm/card0/engine")
     if not base.exists():
         return None
-    busy = 0.0
-    count = 0
+    now = time.time()
+    curr: dict[str, int] = {}
     for engine_dir in base.iterdir():
         busy_file = engine_dir / "busy"
         if busy_file.is_file():
             try:
-                # i915 reports nanoseconds since boot, not a percent. Without
-                # caching the previous read this is meaningless — but we still
-                # return something signal-shaped so the panel knows the file
-                # exists. The frontend treats this as a coarse indicator only.
-                ns = int(busy_file.read_text().strip())
-                # Convert ns to a 0-100 magnitude for display by taking the
-                # log — a real sample would diff two reads. Cheap.
-                busy += min(100.0, max(0.0, ns / 1_000_000_000_000.0))
-                count += 1
+                curr[engine_dir.name] = int(busy_file.read_text().strip())
             except (OSError, ValueError):
                 continue
-    return round(busy / max(1, count), 1)
+    if not curr:
+        return None
+
+    prev = _perf_prev_gpu
+    prev_engines = prev.get("engines") or {}
+    dt = now - prev.get("ts", 0.0)
+    # Update the cache before any early-return so the *next* call has a
+    # baseline to diff against.
+    _perf_prev_gpu.update(ts=now, engines=curr)
+
+    if not prev_engines or dt <= 0:
+        return None
+
+    # Average per-engine busy ratios. Each engine's `busy` advances by at
+    # most `dt * 1e9` ns (one full second of GPU time per wall second), so
+    # delta_ns / (dt * 1e9) gives a 0..1 fraction; multiply by 100.
+    ratios: list[float] = []
+    for name, ns in curr.items():
+        prev_ns = prev_engines.get(name)
+        if prev_ns is None:
+            continue  # engine appeared mid-flight; wait for next call
+        delta = max(0, ns - prev_ns)
+        pct = (delta / (dt * 1_000_000_000.0)) * 100.0
+        ratios.append(min(100.0, max(0.0, pct)))
+    if not ratios:
+        return None
+    return round(sum(ratios) / len(ratios), 1)
 
 
 def _host_signals() -> dict:
@@ -1259,12 +1290,12 @@ async def admin_performance(request: Request):
 
 
 @app.post("/api/admin/performance/capture")
-async def admin_performance_capture(request: Request):
-    """Start a 60-second high-frequency capture window. The sweeper will
-    sample at 1 Hz instead of every 5 s for that period."""
+async def admin_performance_capture(request: Request, body: StartCaptureRequest | None = None):
+    """Start a high-frequency capture window. The sweeper samples at 1 Hz
+    instead of the regular interval for `body.seconds` seconds. Body is
+    optional; default 60 s, validated to [5, 600] by the Pydantic model."""
     _auth.require_role(request, "admin")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    seconds = float(body.get("seconds", 60))
+    seconds = body.seconds if body is not None else 60.0
     return _streams.start_capture_window(seconds=seconds)
 
 
