@@ -177,11 +177,18 @@ class StreamRegistry:
 
     All operations are O(n) on a typical set (dozens of sessions), so we don't
     bother indexing — simplicity wins over scale here.
+
+    Session keying uses (ip, user_agent) as a proxy for viewer identity.  This
+    deliberately under-counts viewers behind carrier-grade NAT (CGN): multiple
+    subscribers sharing one public IP + the same UA string collapse into a
+    single session.  This is a known limitation — documenting, not fixing,
+    since there is no reliable viewer-identity signal without auth cookies.
     """
 
     def __init__(self) -> None:
         self._sessions: dict[str, StreamSession] = {}
-        # blocklist: {key_tuple: expires_at_epoch}
+        # blocklist: {key_tuple: monotonic expiry} — monotonic so NTP jumps
+        # cannot permanently strand a block entry.
         self._blocks: dict[tuple, float] = {}
 
     # ----- session lifecycle -----
@@ -314,7 +321,7 @@ class StreamRegistry:
     # ----- blocklist -----
 
     def block(self, key: tuple, ttl: int = DEFAULT_BLOCK_TTL) -> None:
-        self._blocks[key] = time.time() + ttl
+        self._blocks[key] = time.monotonic() + ttl
 
     def unblock(self, key: tuple) -> bool:
         return self._blocks.pop(key, None) is not None
@@ -330,25 +337,27 @@ class StreamRegistry:
         expiry = self._blocks.get(key)
         if expiry is None:
             return False
-        if expiry <= time.time():
+        if expiry <= time.monotonic():
             self._blocks.pop(key, None)
             return False
         return True
 
     def list_blocks(self) -> list[dict]:
-        now = time.time()
+        now_mono = time.monotonic()
+        now_wall = time.time()
         out = []
         for (ip, kind, match_id, slot), expiry in list(self._blocks.items()):
-            if expiry <= now:
+            if expiry <= now_mono:
                 self._blocks.pop((ip, kind, match_id, slot), None)
                 continue
+            remaining = expiry - now_mono
             out.append({
                 "ip": ip,
                 "kind": kind,
                 "match_id": match_id or None,
                 "slot": slot or None,
-                "expires_at": expiry,
-                "expires_in_seconds": round(expiry - now, 1),
+                "expires_at": now_wall + remaining,
+                "expires_in_seconds": round(remaining, 1),
             })
         return out
 
@@ -356,17 +365,18 @@ class StreamRegistry:
 
     def sweep(self, idle_seconds: float = HLS_IDLE_SECONDS) -> int:
         """Drop idle HLS sessions and expired blocks. Returns count of pruned sessions."""
-        now = time.time()
+        now_wall = time.time()
+        now_mono = time.monotonic()
         dead: list[str] = []
         for sid, sess in self._sessions.items():
             # MP4 sessions are removed by their handler's try/finally; only
             # touch HLS-style sessions here.
-            if sess.kind in ("live", "vod-hls") and now - sess.last_activity > idle_seconds:
+            if sess.kind in ("live", "vod-hls") and now_wall - sess.last_activity > idle_seconds:
                 dead.append(sid)
         for sid in dead:
             self.unregister(sid)
-        # Prune expired blocks
-        expired_keys = [k for k, exp in self._blocks.items() if exp <= now]
+        # Prune expired blocks (monotonic expiry, unaffected by NTP jumps)
+        expired_keys = [k for k, exp in self._blocks.items() if exp <= now_mono]
         for k in expired_keys:
             self._blocks.pop(k, None)
         return len(dead)

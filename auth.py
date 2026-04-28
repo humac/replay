@@ -171,6 +171,13 @@ def authenticate_user(username: str, password: str) -> dict | None:
     """Authenticate against env-var admin first, then DB users.
 
     Returns user info dict on success, None on failure.
+
+    Note: the env-var superadmin (ADMIN_USER/ADMIN_PASS) is checked before the
+    DB user table and always bypasses the DB ``enabled`` flag.  If a deployer
+    sets ADMIN_USER to a username that also exists as a disabled DB user, the
+    env-var credentials still grant access.  This is intentional — the env-var
+    admin is a break-glass override — but operators should avoid reusing the
+    same name as a DB account.
     """
     # Check env-var superadmin
     if (secrets.compare_digest(username, ADMIN_USER) and

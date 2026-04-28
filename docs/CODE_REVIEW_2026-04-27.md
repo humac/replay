@@ -114,16 +114,16 @@ Findings from a full-project security / correctness / quality pass after Milesto
 
 ## Minor (nice to have)
 
-- [ ] **m1.** Env-var admin path checked before DB `enabled=0` — `auth.py:171`. If a deployer rotates `ADMIN_USER` to a name that exists as a *disabled* DB user, the disabled flag is bypassed. Document or guard.
+- [x] **m1.** Env-var admin path checked before DB `enabled=0` — `auth.py:171`. If a deployer rotates `ADMIN_USER` to a name that exists as a *disabled* DB user, the disabled flag is bypassed. Document or guard.
 - [x] **m2.** Stale `upload_sessions` rows after server restart sit at `'active'` for 6h. Fix: on startup, mark active sessions older than chunk-idle threshold as `'cancelled'`.
-- [ ] **m3.** `/api/uploads/sessions?status=...` accepts an unbounded comma-separated list — cap at ~8.
-- [ ] **m4.** Stream block TTL uses wall-clock time (`time.time()`), not monotonic. NTP backward-jump can permanently strand a block.
-- [ ] **m5.** HLS session keying by `(ip, ua)` permanently under-counts viewers behind carrier-grade NAT. Document, don't fix.
+- [x] **m3.** `/api/uploads/sessions?status=...` accepts an unbounded comma-separated list — cap at ~8.
+- [x] **m4.** Stream block TTL uses wall-clock time (`time.time()`), not monotonic. NTP backward-jump can permanently strand a block.
+- [x] **m5.** HLS session keying by `(ip, ua)` permanently under-counts viewers behind carrier-grade NAT. Document, don't fix.
 - [x] **m6.** Defense-in-depth: add `.resolve()` containment checks on `serve_thumbnail` (`server.py:1752`) and `serve_logo` (`server.py:1725`).
 - [x] **m7.** 401-handling pattern repeats 6+ times across `views.js`/`live.js`/`admin.js`. Fix: a `fetchJson(url, opts)` helper handling 401/403 in one place.
 - [x] **m8.** `loadMatches` on transient network error sets `this.matches = []`, blanking the UI. Preserve previous list and surface a "couldn't refresh" toast.
 - [x] **m9.** History routing: `editMatch` silently no-ops if a deleted match is restored from history. Fall through to `showAdminView('matches')` if match is gone.
-- [ ] **m10.** `team-stats-grid` sub-grid coupling with `grid-column: 1/-1` on inner children is implicit. Add a comment in the CSS block.
+- [x] **m10.** `team-stats-grid` sub-grid coupling with `grid-column: 1/-1` on inner children is implicit. Add a comment in the CSS block.
 
 ---
 
