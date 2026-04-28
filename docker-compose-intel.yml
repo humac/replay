@@ -228,80 +228,81 @@ configs:
   caddy_config:
     content: |
       {
-          auto_https off
-          admin off
-          servers {
-              max_header_size 64KB
-          }
+      	auto_https off
+      	admin off
+      	servers {
+      		max_header_size 64KB
+      	}
       }
 
       :80 {
-          encode zstd gzip
+      	encode zstd gzip
 
-          @vod_hls_segment {
-              path_regexp vod_hls ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.(ts|m4s|mp4))$
-          }
-          handle @vod_hls_segment {
-              rewrite * /videos/{re.vod_hls.1}/hls/{re.vod_hls.2}/{re.vod_hls.3}
-              header Cache-Control "public, max-age=31536000, immutable"
-              header Access-Control-Allow-Origin "*"
-              root * /data
-              file_server {
-                  precompressed br gzip
-              }
-          }
+      	@vod_hls_segment {
+      		path_regexp vod_hls ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.(ts|m4s|mp4))$
+      	}
+      	handle @vod_hls_segment {
+      		rewrite * /videos/{re.vod_hls.1}/hls/{re.vod_hls.2}/{re.vod_hls.3}
+      		header Cache-Control "public, max-age=31536000, immutable"
+      		header Access-Control-Allow-Origin "*"
+      		root * /data
+      		file_server {
+      			precompressed br gzip
+      		}
+      	}
 
-          @vod_hls_playlist {
-              path_regexp vod_hls_pl ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.m3u8)$
-          }
-          handle @vod_hls_playlist {
-              rewrite * /videos/{re.vod_hls_pl.1}/hls/{re.vod_hls_pl.2}/{re.vod_hls_pl.3}
-              header Cache-Control "public, max-age=60, must-revalidate"
-              header Access-Control-Allow-Origin "*"
-              header Content-Type "application/vnd.apple.mpegurl"
-              root * /data
-              file_server
-          }
+      	@vod_hls_playlist {
+      		path_regexp vod_hls_pl ^/api/matches/([^/]+)/hls/([^/]+)/(.+\.m3u8)$
+      	}
+      	handle @vod_hls_playlist {
+      		rewrite * /videos/{re.vod_hls_pl.1}/hls/{re.vod_hls_pl.2}/{re.vod_hls_pl.3}
+      		header Cache-Control "public, max-age=60, must-revalidate"
+      		header Access-Control-Allow-Origin "*"
+      		header Content-Type "application/vnd.apple.mpegurl"
+      		root * /data
+      		file_server
+      	}
 
-          @match_thumbnail {
-              path_regexp match_thumb ^/api/matches/([^/]+)/thumbnail/?$
-          }
-          handle @match_thumbnail {
-              rewrite * /videos/{re.match_thumb.1}/thumb.jpg
-              header Cache-Control "no-cache, must-revalidate"
-              header Access-Control-Allow-Origin "*"
-              header Content-Type "image/jpeg"
-              root * /data
-              file_server
-          }
+      	@match_thumbnail {
+      		path_regexp match_thumb ^/api/matches/([^/]+)/thumbnail/?$
+      	}
+      	handle @match_thumbnail {
+      		rewrite * /videos/{re.match_thumb.1}/thumb.jpg
+      		header Cache-Control "no-cache, must-revalidate"
+      		header Access-Control-Allow-Origin "*"
+      		header Content-Type "image/jpeg"
+      		root * /data
+      		file_server
+      	}
 
-          handle_path /static/* {
-              header Cache-Control "public, max-age=60, must-revalidate"
-              root * /srv/static
-              file_server {
-                  precompressed br gzip
-              }
-          }
+      	handle_path /static/* {
+      		header Cache-Control "public, max-age=60, must-revalidate"
+      		root * /srv/static
+      		file_server {
+      			precompressed br gzip
+      		}
+      	}
 
-          handle {
-              reverse_proxy replay:8090 {
-                  flush_interval -1
-                  transport http {
-                      read_buffer 64KB
-                      write_buffer 64KB
-                  }
-                  header_up Host {host}
-                  header_up X-Real-IP {remote_host}
-                  header_up X-Forwarded-For {remote_host}
-                  header_up X-Forwarded-Proto {scheme}
-              }
-          }
+      	handle {
+      		reverse_proxy replay:8090 {
+      			flush_interval -1
+      			transport http {
+      				read_buffer 64KB
+      				write_buffer 64KB
+      			}
+      			# Preserve original Host so the app sees the public
+      			# hostname instead of "replay:8090". X-Forwarded-For /
+      			# X-Forwarded-Proto are set by reverse_proxy automatically;
+      			# X-Real-IP is not used by streams.client_ip().
+      			header_up Host {host}
+      		}
+      	}
 
-          log {
-              output stdout
-              format console
-              level INFO
-          }
+      	log {
+      		output stdout
+      		format console
+      		level INFO
+      	}
       }
 
 volumes:
