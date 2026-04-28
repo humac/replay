@@ -323,23 +323,44 @@ input, and is small-traffic compared to HLS segment fan-out.
 **Migrating an existing single-volume deployment:**
 
 After enabling `REPLAY_ORIGINALS_DIR` and creating the new dataset,
-move existing matches' MP4s + raw files off the SSD:
+stop the replay container, move existing matches' MP4s + raw files
+off the SSD, then bring the stack back up.
+
+> **Heads-up for zsh users:** TrueNAS's root shell is zsh, and zsh
+> treats an unmatched glob (e.g. `*_raw.*` when no raw files exist) as
+> a hard error — `mv 2>/dev/null || true` doesn't help, because zsh
+> aborts before `mv` runs. The script below uses an explicit
+> existence check (`[ -e "$f" ] || continue`) so empty matches are a
+> safe no-op under any shell.
 
 ```bash
 # Run on the host. Replace paths to match your bind-mount config.
+docker compose stop replay   # avoid moving partial files mid-transcode
+
 SSD=/mnt/apps_ssd/apps/replay/videos
 HDD=/mnt/tank/media/replay/videos
 mkdir -p "$HDD"
+
 for m in "$SSD"/*/; do
     match_id=$(basename "$m")
     mkdir -p "$HDD/$match_id"
-    # Move raws + finished MP4s; keep HLS + thumbnail on SSD.
-    mv "$m"*.mp4 "$m"*_raw.* "$HDD/$match_id/" 2>/dev/null || true
+    # Move finished MP4s + raw uploads, one pattern at a time so an
+    # empty match doesn't trip zsh's NOMATCH on `*_raw.*`. HLS +
+    # thumbnail stay on the SSD.
+    for f in "$m"*.mp4 "$m"*_raw.mp4 "$m"*_raw.mkv; do
+        [ -e "$f" ] || continue
+        mv -v "$f" "$HDD/$match_id/"
+    done
 done
+
+docker compose start replay
 ```
 
-Restart the replay container after the move. The new path resolution
-picks up the cold-pool location automatically; no DB rewrite needed.
+(If you'd rather sidestep zsh's NOMATCH entirely, save the body to a
+`.sh` file with a `#!/bin/bash` shebang and run it that way.)
+
+The new path resolution picks up the cold-pool location automatically
+on container start; no DB rewrite needed.
 
 **To disable tiering:** unset `REPLAY_ORIGINALS_DIR` (or remove it from
 compose) and `mv` everything back into `<REPLAY_DATA_DIR>/videos/`.
