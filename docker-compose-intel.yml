@@ -23,6 +23,12 @@ services:
     environment:
       REPLAY_PORT: 8090
       REPLAY_DATA_DIR: /data
+      # Storage tiering: HLS variants + the SQLite DB live on /data (SSD pool;
+      # hot path, many small random reads). Raw uploads + finished MP4s live
+      # on /originals (HDD pool; large, cold). Comment REPLAY_ORIGINALS_DIR
+      # out (and remove the /originals bind mount below) to fall back to the
+      # legacy single-volume layout. See docs/DEPLOYMENT.md "Storage tiering".
+      REPLAY_ORIGINALS_DIR: /originals/videos
       TMPDIR: /tmp/ffmpeg
       MAX_UPLOAD_SIZE_BYTES: 12884901888
       TRANSCODE_CONCURRENCY: 2
@@ -34,6 +40,11 @@ services:
       MEDIAMTX_API_URL: http://mediamtx:9997
     volumes:
       - /mnt/apps_ssd/apps/replay:/data
+      # Cold-storage volume for raw uploads + finished MP4s. Recommended:
+      # a dedicated ZFS dataset on the HDD pool with `recordsize=1M
+      # compression=lz4 atime=off` (see docs/DEPLOYMENT.md). Comment out
+      # together with the REPLAY_ORIGINALS_DIR env above to disable tiering.
+      - /mnt/tank/media/replay:/originals
       # Intel GPU (VAAPI / QSV) — uncomment to expose the iGPU render node
       - /dev/dri:/dev/dri
     # Intel GPU (VAAPI / QSV) — uncomment to pass the render device through
