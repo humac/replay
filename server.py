@@ -861,6 +861,28 @@ async def delete_user(user_id: str, request: Request):
 # Diagnostics
 # ---------------------------------------------------------------------------
 
+_diag_disk_cache: dict = {"ts": 0.0, "data": []}
+
+
+def _cached_disk_usage_by_match() -> list[dict]:
+    """Walk VIDEOS_DIR to tally per-match disk use, cached for 60 s."""
+    now = time.time()
+    if now - _diag_disk_cache["ts"] < 60:
+        return _diag_disk_cache["data"]
+    result: list[dict] = []
+    if VIDEOS_DIR.is_dir():
+        for d in VIDEOS_DIR.iterdir():
+            if d.is_dir():
+                total = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                if total > 0:
+                    result.append({"match_id": d.name, "bytes": total})
+        result.sort(key=lambda x: x["bytes"], reverse=True)
+        result = result[:5]
+    _diag_disk_cache["ts"] = now
+    _diag_disk_cache["data"] = result
+    return result
+
+
 @app.get("/api/admin/diagnostics")
 async def admin_diagnostics(request: Request):
     _auth.require_role(request, "admin")
@@ -910,16 +932,7 @@ async def admin_diagnostics(request: Request):
     # Recent errors from DB
     recent_errors = _db.get_video_errors(limit=10)
 
-    # Disk usage by match (top 5)
-    disk_by_match = []
-    if VIDEOS_DIR.is_dir():
-        for d in VIDEOS_DIR.iterdir():
-            if d.is_dir():
-                total_size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                if total_size > 0:
-                    disk_by_match.append({"match_id": d.name, "bytes": total_size})
-        disk_by_match.sort(key=lambda x: x["bytes"], reverse=True)
-        disk_by_match = disk_by_match[:5]
+    disk_by_match = _cached_disk_usage_by_match()
 
     return {
         "counts": {
@@ -1555,6 +1568,15 @@ async def stream_video(match_id: str, slot: str, request: Request):
         vid_path, "video/mp4", request,
         match_id=match_id, slot=slot, kind="vod-mp4",
     )
+
+
+@app.get("/api/transcode-progress")
+async def all_transcode_progress():
+    """Return progress for every active transcode job in one request."""
+    return {
+        key: {"active": True, **prog}
+        for key, prog in _media.get_all_transcode_progress().items()
+    }
 
 
 @app.get("/api/matches/{match_id}/transcode-progress/{slot}")

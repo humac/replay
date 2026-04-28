@@ -45,6 +45,11 @@ _transcode_progress: dict[str, dict] = {}
 _active_procs: set = set()
 
 
+# Limit simultaneous HLS variant ffmpeg processes. TRANSCODE_CONCURRENCY=2 allows
+# 2 concurrent transcodes; without this cap each spawns 3+ variants in parallel,
+# easily reaching 6+ simultaneous ffmpegs on a 2-core host.
+_hls_semaphore = asyncio.Semaphore(2)
+
 def get_transcode_progress(match_id: str, slot: str) -> dict | None:
     """Return current progress for a transcode job, or None."""
     return _transcode_progress.get(f"{match_id}/{slot}")
@@ -52,6 +57,11 @@ def get_transcode_progress(match_id: str, slot: str) -> dict | None:
 
 def clear_transcode_progress(match_id: str, slot: str):
     _transcode_progress.pop(f"{match_id}/{slot}", None)
+
+
+def get_all_transcode_progress() -> dict[str, dict]:
+    """Return a snapshot of all active transcode progress entries."""
+    return dict(_transcode_progress)
 
 
 def _set_transcode_progress(match_id: str, slot: str, pct: int, stage: str = "transcoding"):
@@ -376,27 +386,28 @@ async def build_hls_assets(
         ]
 
     async def _generate_variant(variant: dict) -> dict | None:
-        variant_dir = hls_dir / variant["name"]
-        variant_dir.mkdir(parents=True, exist_ok=True)
-        playlist_path = variant_dir / "index.m3u8"
-        segment_pattern = variant_dir / "segment_%03d.ts"
-
-        if hwaccel == "vaapi":
-            ok, err = await run_ffmpeg(_vaapi_cmd(variant, segment_pattern, playlist_path))
-            if ok:
-                logger.info("HLS variant %s/%s/%s done (vaapi)", match_id, slot, variant['name'])
-                return variant
-            logger.warning("HLS variant %s/%s/%s VAAPI failed, falling back to CPU: %s",
-                           match_id, slot, variant['name'], err)
-            shutil.rmtree(variant_dir, ignore_errors=True)
+        async with _hls_semaphore:
+            variant_dir = hls_dir / variant["name"]
             variant_dir.mkdir(parents=True, exist_ok=True)
+            playlist_path = variant_dir / "index.m3u8"
+            segment_pattern = variant_dir / "segment_%03d.ts"
 
-        ok, err = await run_ffmpeg(_cpu_cmd(variant, segment_pattern, playlist_path))
-        if not ok:
-            logger.warning("HLS variant generation failed %s/%s/%s: %s", match_id, slot, variant['name'], err)
-            return None
-        logger.info("HLS variant %s/%s/%s done (cpu)", match_id, slot, variant['name'])
-        return variant
+            if hwaccel == "vaapi":
+                ok, err = await run_ffmpeg(_vaapi_cmd(variant, segment_pattern, playlist_path))
+                if ok:
+                    logger.info("HLS variant %s/%s/%s done (vaapi)", match_id, slot, variant['name'])
+                    return variant
+                logger.warning("HLS variant %s/%s/%s VAAPI failed, falling back to CPU: %s",
+                               match_id, slot, variant['name'], err)
+                shutil.rmtree(variant_dir, ignore_errors=True)
+                variant_dir.mkdir(parents=True, exist_ok=True)
+
+            ok, err = await run_ffmpeg(_cpu_cmd(variant, segment_pattern, playlist_path))
+            if not ok:
+                logger.warning("HLS variant generation failed %s/%s/%s: %s", match_id, slot, variant['name'], err)
+                return None
+            logger.info("HLS variant %s/%s/%s done (cpu)", match_id, slot, variant['name'])
+            return variant
 
     results = await asyncio.gather(*[_generate_variant(v) for v in variants])
     generated_variants = [v for v in results if v is not None]

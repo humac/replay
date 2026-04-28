@@ -74,15 +74,15 @@ Findings from a full-project security / correctness / quality pass after Milesto
   - `find_active_session` matches on `(match_id, slot, size, ext)`. Two browsers picking different files of identical size and extension interleave chunks into one corrupt MP4.
   - Fix: hash first chunk on bind, store on session row; reject mismatched first-chunk hashes.
 
-- [ ] **M9. `/api/admin/diagnostics` walks every video file every call** — `server.py:871–879`
+- [x] **M9. `/api/admin/diagnostics` walks every video file every call** — `server.py:871–879`
   - 100 matches × 4 HLS variants × ~300 segments = 120k+ `stat()` syscalls per refresh; status strip refreshes every 10s.
   - Fix: memoize for 60s with mtime invalidation, OR compute lazily only when System tab is open.
 
-- [ ] **M10. Transcode progress polled with N+1 fetches** — `js/api.js:259–277`
+- [x] **M10. Transcode progress polled with N+1 fetches** — `js/api.js:259–277`
   - One fetch per active transcode every 5s. Diagnostics already has `active_jobs`.
   - Fix: single `/api/transcode-progress` endpoint returning all active jobs.
 
-- [ ] **M11. HLS variant generation has no concurrency cap** — `media.py:371`
+- [x] **M11. HLS variant generation has no concurrency cap** — `media.py:371`
   - `asyncio.gather(*variants)` spawns 3+ ffmpegs per transcode on top of `TRANSCODE_CONCURRENCY=2`. Six concurrent ffmpegs on a 2-core box thrash.
   - Fix: reuse `transcode_semaphore` inside `_generate_variant`, OR add `HLS_CONCURRENCY` capped at 2.
 

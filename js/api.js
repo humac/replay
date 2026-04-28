@@ -257,23 +257,12 @@ export const apiMixin = {
     },
 
     async fetchTranscodeProgress() {
-        const progress = {};
-        const fetches = [];
-        for (const match of this.matches) {
-            const vs = match.video_status || {};
-            for (const [slot, status] of Object.entries(vs)) {
-                if (status === 'transcoding') {
-                    fetches.push(
-                        fetch(`/api/matches/${match.id}/transcode-progress/${slot}`)
-                            .then(r => r.ok ? r.json() : null)
-                            .then(data => { if (data?.active) progress[`${match.id}/${slot}`] = data; })
-                            .catch(() => {})
-                    );
-                }
-            }
+        try {
+            const resp = await fetch('/api/transcode-progress');
+            this.transcodeProgress = resp.ok ? await resp.json() : this.transcodeProgress;
+        } catch {
+            // keep previous progress on transient network error
         }
-        await Promise.all(fetches);
-        this.transcodeProgress = progress;
     },
 
     getSlotProgress(matchId, slot) {
