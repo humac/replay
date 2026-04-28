@@ -691,6 +691,8 @@ async def live_auth_webhook(body: LiveAuthRequest, request: Request):
     now = time.time()
     attempts = _live_auth_attempts.get(ip, [])
     attempts = [t for t in attempts if now - t < _LIVE_AUTH_RATE_WINDOW]
+    if not attempts:
+        _live_auth_attempts.pop(ip, None)
     if len(attempts) >= _LIVE_AUTH_RATE_LIMIT:
         raise HTTPException(429, "Too many requests")
     attempts.append(now)

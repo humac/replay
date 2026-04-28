@@ -14,7 +14,7 @@ Additional guidance for Claude in this repo:
 - Live streaming runs through a `mediamtx` sidecar in compose. Camera-facing surface is RTMP at port 1935; browsers play LL-HLS via the proxy at `/api/live/hls/*`. Never expose MediaMTX's 8888/9997 ports publicly — they stay on the internal compose network.
 - When setting video status to `"error"`, always pass `error_info` dict with `error_code`, `reason`, `details` to `_set_video_status()` so errors are persisted to the `video_errors` table.
 - Admin recovery endpoints live under `/api/admin/matches/{id}/...` — retry, regenerate-hls, verify, errors.
-- Active streaming connections are tracked in `streams.py` and surfaced via `/api/admin/streams` (+ kill/unblock endpoints). Use `streams.client_ip(request)` whenever you need the real client IP — direct `request.client.host` reads through Cloudflare/CF Tunnel return loopback.
+- Active streaming connections are tracked in `streams.py` and surfaced via `/api/admin/streams` (+ kill/unblock endpoints). Use `streams.client_ip(request)` whenever you need the real client IP — direct `request.client.host` reads through Cloudflare/CF Tunnel return loopback. Note: `client_ip()` only honors forwarded headers when `TRUSTED_PROXY=cloudflare` (the default); bare deployments should set `TRUSTED_PROXY=none` so only the direct peer address is used.
 - Use the `lifespan` async context manager for startup/shutdown tasks (not `@app.on_event`).
 - Deployment and troubleshooting docs live in `docs/DEPLOYMENT.md` and `docs/TROUBLESHOOTING.md`.
 
