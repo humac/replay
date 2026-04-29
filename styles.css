@@ -4173,3 +4173,381 @@ button {
     font-size: 0.65rem;
     padding: 0.1rem 0.45rem;
 }
+
+/* ===== Match Library (Admin → Matches) ===== */
+
+.library-header-card .library-header-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.library-header-summary h3 {
+    margin-bottom: 0.25rem;
+}
+
+.library-header-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.library-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.library-filter-bar input[type="search"] {
+    flex: 1 1 240px;
+    min-width: 200px;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-dark);
+    color: var(--text-main);
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+}
+
+.library-filter-bar select {
+    padding: 0.5rem 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-dark);
+    color: var(--text-main);
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+}
+
+.library-filter-bar input:focus,
+.library-filter-bar select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.library-table-card {
+    padding: 0;
+    overflow: hidden;
+}
+
+.library-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.match-library-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.match-library-table thead th {
+    text-align: left;
+    padding: 0.85rem 0.9rem;
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-light);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.match-library-table tbody td {
+    padding: 0.85rem 0.9rem;
+    border-bottom: 1px solid var(--border-light);
+    vertical-align: middle;
+    color: var(--text-main);
+}
+
+.match-library-table .match-row:hover td {
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.match-library-table .match-row.is-error td {
+    box-shadow: inset 3px 0 0 var(--red);
+}
+
+.match-library-table .match-row.is-encoding td {
+    box-shadow: inset 3px 0 0 #ffb454;
+}
+
+.match-library-table .match-row.is-ready td {
+    box-shadow: inset 3px 0 0 #4ade80;
+}
+
+.match-library-table .lib-col-expand,
+.match-library-table .lib-col-menu {
+    width: 1%;
+    white-space: nowrap;
+}
+
+.match-library-table .lib-col-format,
+.match-library-table .lib-col-score,
+.match-library-table .lib-col-updated {
+    white-space: nowrap;
+}
+
+.match-library-table .row-sub {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    margin-top: 0.15rem;
+}
+
+.match-library-table .muted {
+    color: var(--text-muted);
+}
+
+.match-library-table strong {
+    color: var(--text-main);
+}
+
+.row-expand-btn {
+    background: transparent;
+    border: 1px solid var(--border-light);
+    color: var(--text-main);
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+}
+
+.row-expand-btn:hover { border-color: var(--accent); }
+
+.format-pill {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-light);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.slot-pill {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    margin-right: 0.3rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-light);
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+
+.slot-pill.ready {
+    border-color: rgba(74, 222, 128, 0.4);
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.08);
+}
+
+.slot-pill.transcoding {
+    border-color: rgba(255, 165, 0, 0.4);
+    color: #ffb454;
+    background: rgba(255, 165, 0, 0.08);
+}
+
+.slot-pill.error {
+    border-color: rgba(255, 74, 74, 0.45);
+    color: var(--red);
+    background: rgba(255, 74, 74, 0.10);
+}
+
+/* Row action menu */
+
+.row-menu { position: relative; display: inline-block; }
+
+.row-menu-btn {
+    background: transparent;
+    border: 1px solid var(--border-light);
+    color: var(--text-main);
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.row-menu-btn:hover { border-color: var(--accent); }
+
+.row-menu-list {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 5;
+    min-width: 180px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+    padding: 0.35rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.row-menu-list[hidden] { display: none; }
+
+.row-menu-list button {
+    text-align: left;
+    background: transparent;
+    border: 0;
+    color: var(--text-main);
+    padding: 0.5rem 0.65rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.row-menu-list button:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.row-menu-list button.is-danger {
+    color: var(--red);
+}
+
+.row-menu-list button.is-danger:hover {
+    background: rgba(255, 74, 74, 0.10);
+}
+
+/* Expanded diagnostics row */
+
+.match-detail-row td {
+    background: rgba(255, 255, 255, 0.015);
+    padding: 0.5rem 1rem 1.1rem;
+}
+
+.slot-diagnostics-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.slot-diagnostics-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+}
+
+.slot-diagnostics-head code {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.slot-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.7rem;
+}
+
+.slot-card {
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 0.8rem 0.9rem;
+    background: rgba(255, 255, 255, 0.02);
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.slot-card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+}
+
+.slot-card-meta {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    word-break: break-all;
+}
+
+.slot-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+/* Form-style modal */
+
+.app-modal-card.is-form,
+.app-modal-card.is-wide {
+    max-width: 720px;
+    padding: 1.5rem 1.6rem 1.2rem;
+}
+
+.app-modal-body {
+    margin-top: 0.6rem;
+    margin-bottom: 1rem;
+    max-height: min(72vh, 760px);
+    overflow-y: auto;
+    padding-right: 0.4rem;
+}
+
+.app-modal-body .modal-form-section {
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.9rem;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.modal-form-section-head {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-bottom: 0.7rem;
+}
+
+.modal-form-section-head h4 {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 0.95rem;
+    letter-spacing: 0.04em;
+    color: var(--text-main);
+}
+
+.modal-form-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.hidden-form-submit {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    border: 0;
+}
+
+@media (max-width: 768px) {
+    .match-library-table thead { display: none; }
+    .match-library-table tbody td { display: block; padding: 0.4rem 0.9rem; border: 0; }
+    .match-library-table .match-row { display: block; padding: 0.6rem 0; border-bottom: 1px solid var(--border-light); }
+    .match-library-table .lib-col-expand { display: inline-block; padding-right: 0.6rem; }
+    .match-library-table .lib-col-matchup { display: inline-block; }
+    .match-library-table .lib-col-menu { display: block; padding-top: 0.3rem; }
+}

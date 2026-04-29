@@ -239,15 +239,18 @@ export const uploadsMixin = {
             if (pEl) pEl.style.display = 'none';
             if (fEl) fEl.style.width = '0%';
         });
-        ['f-home-logo-state', 'f-away-logo-state', 'f-video-full-state', 'f-video-first-state', 'f-video-second-state'].forEach((id) => {
+        const stateDefaults = {
+            'f-home-logo-state': 'No logo uploaded yet.',
+            'f-away-logo-state': 'No logo uploaded yet.',
+            'f-video-full-state': 'No video uploaded yet.',
+            'f-video-first-state': 'No video uploaded yet.',
+            'f-video-second-state': 'No video uploaded yet.',
+        };
+        Object.entries(stateDefaults).forEach(([id, text]) => {
             const el = document.getElementById(id);
             if (!el) return;
             el.className = 'uploaded-state';
+            el.textContent = text;
         });
-        document.getElementById('f-home-logo-state').textContent = 'No logo uploaded yet.';
-        document.getElementById('f-away-logo-state').textContent = 'No logo uploaded yet.';
-        document.getElementById('f-video-full-state').textContent = 'No video uploaded yet.';
-        document.getElementById('f-video-first-state').textContent = 'No video uploaded yet.';
-        document.getElementById('f-video-second-state').textContent = 'No video uploaded yet.';
     },
 };

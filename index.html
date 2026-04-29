@@ -291,7 +291,7 @@
                     <section class="admin-section" data-admin-section="overview">
                         <div class="overview-kpi-grid" id="overview-kpi-grid"></div>
                         <div class="overview-quick-actions">
-                            <a href="/admin/matches" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('matches')">
+                            <a href="/admin/matches" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('matches');setTimeout(() => app.openAddMatchModal(), 50);">
                                 <span class="overview-quick-glyph">＋</span>
                                 <span class="overview-quick-label"><strong>Add a match</strong><span>Drop in video, fill teams, watch it encode.</span></span>
                             </a>
@@ -312,154 +312,191 @@
 
                     <!-- MATCHES (uploader+) -->
                     <section class="admin-section" data-admin-section="matches">
-                        <form id="add-match-form" onsubmit="event.preventDefault();app.handleFormSubmit()">
-                            <input type="hidden" id="edit-match-id">
-
-                            <div class="options-card">
-                                <div class="admin-card-head">
-                                    <h3 id="form-heading">Add New Match</h3>
-                                    <span class="admin-card-kicker">New entry</span>
+                        <div class="options-card library-header-card">
+                            <div class="library-header-row">
+                                <div class="library-header-summary">
+                                    <h3>Match Library</h3>
+                                    <p class="admin-panel-copy" id="library-summary-line">Loading…</p>
                                 </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Home Team</label>
-                                        <input type="text" id="f-home-team" placeholder="e.g. OSU Steel" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Away Team</label>
-                                        <input type="text" id="f-away-team" placeholder="e.g. OSU Iron" required>
-                                    </div>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Home Team Logo</label>
-                                        <div class="file-upload-row">
-                                            <label for="f-home-logo" class="file-picker-button">Choose File</label>
-                                            <input type="file" id="f-home-logo" accept="image/*" class="file-input file-input-hidden">
-                                            <span class="file-label" id="f-home-logo-label">No file chosen</span>
-                                        </div>
-                                        <div class="uploaded-state" id="f-home-logo-state">No logo uploaded yet.</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Away Team Logo</label>
-                                        <div class="file-upload-row">
-                                            <label for="f-away-logo" class="file-picker-button">Choose File</label>
-                                            <input type="file" id="f-away-logo" accept="image/*" class="file-input file-input-hidden">
-                                            <span class="file-label" id="f-away-logo-label">No file chosen</span>
-                                        </div>
-                                        <div class="uploaded-state" id="f-away-logo-state">No logo uploaded yet.</div>
-                                    </div>
+                                <div class="library-header-actions">
+                                    <button type="button" class="btn-primary" id="add-match-btn" onclick="app.openAddMatchModal()">＋ Add Match</button>
                                 </div>
                             </div>
-
-                            <div class="options-card mt-4">
-                                <div class="admin-card-head">
-                                    <h3>Match Details</h3>
-                                    <span class="admin-card-kicker">Fixture</span>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Date</label>
-                                        <input type="date" id="f-date" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Time</label>
-                                        <input type="time" id="f-time">
-                                    </div>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Location</label>
-                                        <input type="text" id="f-location" placeholder="e.g. Ohio Stadium">
-                                    </div>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Home Score</label>
-                                        <input type="number" id="f-score-home" min="0" placeholder="0">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Away Score</label>
-                                        <input type="number" id="f-score-away" min="0" placeholder="0">
-                                    </div>
-                                </div>
+                            <div class="library-filter-bar">
+                                <input type="search" id="library-search" placeholder="Search team, location, ID…" autocomplete="off">
+                                <select id="library-status-filter" aria-label="Filter by status">
+                                    <option value="">All statuses</option>
+                                    <option value="ready">Ready</option>
+                                    <option value="transcoding">Encoding</option>
+                                    <option value="error">Error</option>
+                                    <option value="none">No video</option>
+                                </select>
+                                <select id="library-format-filter" aria-label="Filter by format">
+                                    <option value="">All formats</option>
+                                    <option value="full">Full match</option>
+                                    <option value="two_halves">Halves</option>
+                                </select>
+                                <select id="library-sort" aria-label="Sort">
+                                    <option value="date_desc">Date (newest)</option>
+                                    <option value="date_asc">Date (oldest)</option>
+                                    <option value="updated_desc">Recently updated</option>
+                                </select>
                             </div>
-
-                            <div class="options-card mt-4">
-                                <div class="admin-card-head">
-                                    <h3>Video</h3>
-                                    <span class="admin-card-kicker">Source</span>
-                                </div>
-                                <div class="form-group">
-                                    <label>Match Format</label>
-                                    <div class="radio-group">
-                                        <label class="radio-label">
-                                            <input type="radio" name="format" value="full" checked onchange="app.toggleFormatFields()"> Full Match (single video)
-                                        </label>
-                                        <label class="radio-label">
-                                            <input type="radio" name="format" value="two_halves" onchange="app.toggleFormatFields()"> Two Halves (separate videos)
-                                        </label>
-                                    </div>
-                                </div>
-
-                                <div id="video-full-group" class="form-group">
-                                    <label>Video File <span class="label-optional">(optional — MP4 or MKV)</span></label>
-                                    <div class="file-upload-row">
-                                        <label for="f-video-full" class="file-picker-button">Choose File</label>
-                                        <input type="file" id="f-video-full" accept=".mp4,.mkv" class="file-input file-input-hidden">
-                                        <span class="file-label" id="f-video-full-label">No file chosen</span>
-                                    </div>
-                                    <div class="uploaded-state" id="f-video-full-state">No video uploaded yet.</div>
-                                    <div class="upload-progress" id="progress-full" style="display:none;">
-                                        <div class="progress-bar"><div class="progress-fill" id="progress-fill-full"></div></div>
-                                        <span class="progress-text" id="progress-text-full">0%</span>
-                                    </div>
-                                </div>
-
-                                <div id="video-halves-group" style="display:none;">
-                                    <div class="form-group">
-                                        <label>1st Half <span class="label-optional">(optional — MP4 or MKV)</span></label>
-                                        <div class="file-upload-row">
-                                            <label for="f-video-first" class="file-picker-button">Choose File</label>
-                                            <input type="file" id="f-video-first" accept=".mp4,.mkv" class="file-input file-input-hidden">
-                                            <span class="file-label" id="f-video-first-label">No file chosen</span>
-                                        </div>
-                                        <div class="uploaded-state" id="f-video-first-state">No video uploaded yet.</div>
-                                        <div class="upload-progress" id="progress-first" style="display:none;">
-                                            <div class="progress-bar"><div class="progress-fill" id="progress-fill-first"></div></div>
-                                            <span class="progress-text" id="progress-text-first">0%</span>
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>2nd Half <span class="label-optional">(optional — MP4 or MKV)</span></label>
-                                        <div class="file-upload-row">
-                                            <label for="f-video-second" class="file-picker-button">Choose File</label>
-                                            <input type="file" id="f-video-second" accept=".mp4,.mkv" class="file-input file-input-hidden">
-                                            <span class="file-label" id="f-video-second-label">No file chosen</span>
-                                        </div>
-                                        <div class="uploaded-state" id="f-video-second-state">No video uploaded yet.</div>
-                                        <div class="upload-progress" id="progress-second" style="display:none;">
-                                            <div class="progress-bar"><div class="progress-fill" id="progress-fill-second"></div></div>
-                                            <span class="progress-text" id="progress-text-second">0%</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-actions mt-4">
-                                <button type="submit" id="submit-btn" class="btn-primary">Create Match</button>
-                                <button type="button" id="cancel-edit-btn" class="btn-secondary" style="display:none;" onclick="app.cancelEdit()">Cancel</button>
-                            </div>
-                        </form>
-
-                        <div class="options-card mt-4">
-                            <div class="admin-card-head">
-                                <h3>Encoding Queue</h3>
-                                <span class="admin-card-kicker">Live</span>
-                            </div>
-                            <p class="admin-panel-copy">Active and stuck transcode jobs across all matches. Retry pulls a failed slot back through the pipeline.</p>
-                            <div id="matches-queue-list" class="session-list"></div>
                         </div>
+
+                        <div class="options-card mt-4 library-table-card">
+                            <div id="library-table-wrap" class="library-table-wrap"></div>
+                        </div>
+
+                        <!-- Hidden template for the Add/Edit Match modal body. The form keeps
+                             every original input id so existing handlers (handleFormSubmit,
+                             toggleFormatFields, uploadFileIfSelected, uploadVideoIfSelected,
+                             editMatch, renderEditAssetStates) work unchanged. -->
+                        <template id="match-form-template">
+                            <form id="add-match-form" onsubmit="event.preventDefault();app.handleFormSubmit()">
+                                <input type="hidden" id="edit-match-id">
+                                <!-- Hidden — kept so existing handlers (handleFormSubmit, cancelEdit)
+                                     can update the heading text without crashing. The visible
+                                     heading comes from the modal title bar. -->
+                                <span id="form-heading" hidden>Add New Match</span>
+
+                                <div class="modal-form-section">
+                                    <div class="modal-form-section-head">
+                                        <span class="modal-form-step">1</span>
+                                        <h4>Teams &amp; logos</h4>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Home Team</label>
+                                            <input type="text" id="f-home-team" placeholder="e.g. OSU Steel" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Away Team</label>
+                                            <input type="text" id="f-away-team" placeholder="e.g. OSU Iron" required>
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Home Team Logo</label>
+                                            <div class="file-upload-row">
+                                                <label for="f-home-logo" class="file-picker-button">Choose File</label>
+                                                <input type="file" id="f-home-logo" accept="image/*" class="file-input file-input-hidden">
+                                                <span class="file-label" id="f-home-logo-label">No file chosen</span>
+                                            </div>
+                                            <div class="uploaded-state" id="f-home-logo-state">No logo uploaded yet.</div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Away Team Logo</label>
+                                            <div class="file-upload-row">
+                                                <label for="f-away-logo" class="file-picker-button">Choose File</label>
+                                                <input type="file" id="f-away-logo" accept="image/*" class="file-input file-input-hidden">
+                                                <span class="file-label" id="f-away-logo-label">No file chosen</span>
+                                            </div>
+                                            <div class="uploaded-state" id="f-away-logo-state">No logo uploaded yet.</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="modal-form-section">
+                                    <div class="modal-form-section-head">
+                                        <span class="modal-form-step">2</span>
+                                        <h4>Fixture</h4>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Date</label>
+                                            <input type="date" id="f-date" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Time</label>
+                                            <input type="time" id="f-time">
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Location</label>
+                                            <input type="text" id="f-location" placeholder="e.g. Ohio Stadium">
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Home Score</label>
+                                            <input type="number" id="f-score-home" min="0" placeholder="0">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Away Score</label>
+                                            <input type="number" id="f-score-away" min="0" placeholder="0">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="modal-form-section">
+                                    <div class="modal-form-section-head">
+                                        <span class="modal-form-step">3</span>
+                                        <h4>Video</h4>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Match Format</label>
+                                        <div class="radio-group">
+                                            <label class="radio-label">
+                                                <input type="radio" name="format" value="full" checked onchange="app.toggleFormatFields()"> Full Match (single video)
+                                            </label>
+                                            <label class="radio-label">
+                                                <input type="radio" name="format" value="two_halves" onchange="app.toggleFormatFields()"> Two Halves (separate videos)
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div id="video-full-group" class="form-group">
+                                        <label>Video File <span class="label-optional">(optional — MP4 or MKV)</span></label>
+                                        <div class="file-upload-row">
+                                            <label for="f-video-full" class="file-picker-button">Choose File</label>
+                                            <input type="file" id="f-video-full" accept=".mp4,.mkv" class="file-input file-input-hidden">
+                                            <span class="file-label" id="f-video-full-label">No file chosen</span>
+                                        </div>
+                                        <div class="uploaded-state" id="f-video-full-state">No video uploaded yet.</div>
+                                        <div class="upload-progress" id="progress-full" style="display:none;">
+                                            <div class="progress-bar"><div class="progress-fill" id="progress-fill-full"></div></div>
+                                            <span class="progress-text" id="progress-text-full">0%</span>
+                                        </div>
+                                    </div>
+
+                                    <div id="video-halves-group" style="display:none;">
+                                        <div class="form-group">
+                                            <label>1st Half <span class="label-optional">(optional — MP4 or MKV)</span></label>
+                                            <div class="file-upload-row">
+                                                <label for="f-video-first" class="file-picker-button">Choose File</label>
+                                                <input type="file" id="f-video-first" accept=".mp4,.mkv" class="file-input file-input-hidden">
+                                                <span class="file-label" id="f-video-first-label">No file chosen</span>
+                                            </div>
+                                            <div class="uploaded-state" id="f-video-first-state">No video uploaded yet.</div>
+                                            <div class="upload-progress" id="progress-first" style="display:none;">
+                                                <div class="progress-bar"><div class="progress-fill" id="progress-fill-first"></div></div>
+                                                <span class="progress-text" id="progress-text-first">0%</span>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>2nd Half <span class="label-optional">(optional — MP4 or MKV)</span></label>
+                                            <div class="file-upload-row">
+                                                <label for="f-video-second" class="file-picker-button">Choose File</label>
+                                                <input type="file" id="f-video-second" accept=".mp4,.mkv" class="file-input file-input-hidden">
+                                                <span class="file-label" id="f-video-second-label">No file chosen</span>
+                                            </div>
+                                            <div class="uploaded-state" id="f-video-second-state">No video uploaded yet.</div>
+                                            <div class="upload-progress" id="progress-second" style="display:none;">
+                                                <div class="progress-bar"><div class="progress-fill" id="progress-fill-second"></div></div>
+                                                <span class="progress-text" id="progress-text-second">0%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Submit button is provided by the modal footer; keep these
+                                     hidden so legacy handlers can still update labels if needed. -->
+                                <button type="submit" id="submit-btn" class="hidden-form-submit" tabindex="-1" aria-hidden="true">Create Match</button>
+                                <button type="button" id="cancel-edit-btn" class="hidden-form-submit" tabindex="-1" aria-hidden="true" onclick="app.cancelEdit()">Cancel</button>
+                            </form>
+                        </template>
                     </section>
 
                     <!-- LIVE -->
@@ -758,14 +795,6 @@
                                 </div>
                             </div>
                             <div id="diagnostics-grid" class="diagnostics-grid"></div>
-                            <div id="active-jobs-section" class="diagnostics-section" style="display:none;">
-                                <div class="diagnostics-section-title">Active Transcode Jobs</div>
-                                <div id="active-jobs-list" class="session-list"></div>
-                            </div>
-                            <div id="failed-slots-section" class="diagnostics-section" style="display:none;">
-                                <div class="diagnostics-section-title">Failed Slots</div>
-                                <div id="failed-slots-list" class="session-list"></div>
-                            </div>
                             <div id="recent-errors-section" class="diagnostics-section" style="display:none;">
                                 <div class="diagnostics-section-title">Recent Errors</div>
                                 <div id="recent-errors-list" class="session-list"></div>
@@ -809,26 +838,6 @@
                             </div>
                         </div>
 
-                        <div class="options-card admin-ops-card mt-4" id="library-maintenance-card">
-                            <div class="admin-panel-head">
-                                <div>
-                                    <h3>Library Maintenance</h3>
-                                    <p class="admin-panel-copy">
-                                        Re-run the encoder or just the HLS step on already-ready matches —
-                                        useful for picking up new ABR ladder, QSV, or audio-bitrate settings
-                                        without a fresh upload. Re-transcode is multi-minute per match;
-                                        regen HLS is faster.
-                                    </p>
-                                </div>
-                                <div class="admin-panel-actions">
-                                    <button type="button" class="btn-secondary" id="lib-refresh-btn">Refresh list</button>
-                                </div>
-                            </div>
-                            <div class="diagnostics-section mt-3">
-                                <div class="diagnostics-section-title">Ready Slots</div>
-                                <div id="lib-ready-slots-list" class="session-list"></div>
-                            </div>
-                        </div>
                     </section>
                 </div>
             </div>
