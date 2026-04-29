@@ -2137,6 +2137,35 @@ async def transcode_progress(match_id: str, slot: str):
     return {"active": True, **progress}
 
 
+@app.post("/api/matches/{match_id}/heartbeat")
+async def vod_playback_heartbeat(match_id: str, request: Request):
+    """Keep a VOD HLS viewer's session warm in the streams registry.
+
+    HLS segments for VOD are served directly by Caddy from the bind-mount
+    (see CLAUDE.md "Caddy reverse proxy serves VOD HLS segments directly"),
+    so segment fetches never reach FastAPI and don't update last_activity.
+    Without a heartbeat, an active viewer is reaped after HLS_IDLE_SECONDS
+    (~15 s) and disappears from the admin UI mid-playback.
+
+    js/player.js pings this every ~10 s while a video is playing. The
+    endpoint just calls registry.touch() — same path the master/variant
+    playlist fetches take — so the session stays current. No body, no
+    side effects, no auth required (viewers are anonymous).
+    """
+    slot = request.query_params.get("slot", "full")
+    if slot not in ("full", "first_half", "second_half"):
+        raise HTTPException(400, "Invalid slot")
+    ip = _streams.client_ip(request)
+    if _streams.registry.is_blocked(ip, "vod-hls", match_id, slot):
+        # Mirror the playlist endpoint's behavior so the player can detect
+        # an admin kill and stop pinging.
+        raise HTTPException(403, "Stream killed by admin")
+    _streams.registry.touch(
+        "vod-hls", match_id, slot, ip, request.headers.get("user-agent", ""),
+    )
+    return {"ok": True}
+
+
 @app.get("/api/matches/{match_id}/download/{slot}")
 async def download_video(match_id: str, slot: str, request: Request):
     if slot not in ("full", "first_half", "second_half"):

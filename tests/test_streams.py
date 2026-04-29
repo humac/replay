@@ -212,3 +212,57 @@ async def test_admin_kill_session_then_unblock(client, auth_headers):
     )
     assert unblock.status_code == 200
     assert unblock.json()["cleared"] is True
+
+
+# ---------------------------------------------------------------------------
+# VOD playback heartbeat — keeps a session warm while Caddy serves segments
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_vod_heartbeat_registers_session(client):
+    """Calling /heartbeat creates a vod-hls session in the registry."""
+    _streams.registry.reset()
+    resp = await client.post("/api/matches/match-abc/heartbeat?slot=full")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    sessions = _streams.registry.list_active()
+    assert len(sessions) == 1
+    s = sessions[0]
+    assert s.kind == "vod-hls"
+    assert s.match_id == "match-abc"
+    assert s.slot == "full"
+
+
+@pytest.mark.asyncio
+async def test_vod_heartbeat_keeps_session_alive(client):
+    """A second heartbeat refreshes last_activity on the same session."""
+    _streams.registry.reset()
+    await client.post("/api/matches/match-abc/heartbeat?slot=full")
+    [first] = _streams.registry.list_active()
+    first_activity = first.last_activity
+    # Force a measurable delta — in real playback heartbeats are 10 s apart.
+    first.last_activity -= 5.0
+    await client.post("/api/matches/match-abc/heartbeat?slot=full")
+    [refreshed] = _streams.registry.list_active()
+    assert refreshed.id == first.id  # same logical session
+    assert refreshed.last_activity > first_activity - 5.0
+
+
+@pytest.mark.asyncio
+async def test_vod_heartbeat_rejects_invalid_slot(client):
+    _streams.registry.reset()
+    resp = await client.post("/api/matches/match-abc/heartbeat?slot=garbage")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_vod_heartbeat_blocked_after_kill(client, auth_headers):
+    """Once an admin kills a VOD session, the heartbeat returns 403."""
+    _streams.registry.reset()
+    # Seed a live session and kill it — that adds the IP to the block list.
+    s = _streams.registry.touch("vod-hls", "match-abc", "full", "127.0.0.1", "ua")
+    kill = await client.post(f"/api/admin/streams/{s.id}/kill", headers=auth_headers)
+    assert kill.status_code == 200
+    # Subsequent heartbeats from the same IP get 403.
+    resp = await client.post("/api/matches/match-abc/heartbeat?slot=full")
+    assert resp.status_code == 403
