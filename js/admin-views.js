@@ -1441,25 +1441,38 @@ export const adminViewsMixin = {
     },
 
     async retryTranscode(matchId, slot) {
+        console.info('[admin] retryTranscode invoked', { matchId, slot });
         const ok = await this.confirmAction({
             title: 'Retry transcode',
             message: `Send ${this.slotLabel(slot)} back through the encoding pipeline?`,
             confirmLabel: 'Retry',
         });
-        if (!ok) return;
+        if (!ok) {
+            console.info('[admin] retryTranscode cancelled by user');
+            return;
+        }
+        const progress = this.showProgress?.(`Starting retry for ${this.slotLabel(slot)}…`);
         try {
-            const resp = await fetch(`/api/admin/matches/${matchId}/slots/${slot}/retry`, {
+            const url = `/api/admin/matches/${matchId}/slots/${slot}/retry`;
+            console.info('[admin] retryTranscode fetch start', url);
+            const resp = await fetch(url, {
                 method: 'POST',
                 headers: this.getAuthHeaders(),
             });
+            console.info('[admin] retryTranscode fetch done', { status: resp.status });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || 'Retry failed');
+                throw new Error(err.detail || `Retry failed (HTTP ${resp.status})`);
             }
-            this.showSuccess(`Retry started for ${slot}.`);
+            this.showSuccess(`Retry started for ${this.slotLabel(slot)}.`);
             await this.refreshAdminDiagnostics();
         } catch (error) {
-            this.showError(error.message);
+            console.error('[admin] retryTranscode error', error);
+            this.showError(error.message || 'Retry failed (no response from server).');
+        } finally {
+            if (progress && typeof progress.remove === 'function') {
+                try { progress.remove(); } catch { /* ignore */ }
+            }
         }
     },
 
@@ -1530,53 +1543,90 @@ export const adminViewsMixin = {
     },
 
     async regenerateHls(matchId, slot) {
+        // Always log entry + exit so an admin opening DevTools can confirm
+        // the click actually fired through to the function. Several
+        // user-reported "nothing happens" reports turned out to be stale
+        // SPA caches; this gives a definitive signal.
+        console.info('[admin] regenerateHls invoked', { matchId, slot });
         const ok = await this.confirmAction({
             title: 'Regenerate HLS',
             message: `Rebuild the HLS variant ladder for ${this.slotLabel(slot)}? Uses the existing MP4 — no re-encode.`,
             confirmLabel: 'Regenerate',
         });
-        if (!ok) return;
+        if (!ok) {
+            console.info('[admin] regenerateHls cancelled by user');
+            return;
+        }
+        // Persistent in-flight toast (showProgress, duration: 0). Even a
+        // "fast" regen sits on the wire 30–60 s for a multi-GB MP4
+        // because the variant ladder re-segments every output. The toast
+        // gives the user something to look at, and a Close button if they
+        // want to dismiss it manually.
+        const progress = this.showProgress?.(`Regenerating HLS for ${this.slotLabel(slot)}… this can take up to a minute on large files.`);
         try {
-            const resp = await fetch(`/api/admin/matches/${matchId}/slots/${slot}/regenerate-hls`, {
+            const url = `/api/admin/matches/${matchId}/slots/${slot}/regenerate-hls`;
+            console.info('[admin] regenerateHls fetch start', url);
+            const resp = await fetch(url, {
                 method: 'POST',
                 headers: this.getAuthHeaders(),
             });
+            console.info('[admin] regenerateHls fetch done', { status: resp.status });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || 'HLS regeneration failed');
+                throw new Error(err.detail || `HLS regeneration failed (HTTP ${resp.status})`);
             }
-            this.showSuccess(`HLS regenerated for ${slot}.`);
+            this.showSuccess(`HLS regenerated for ${this.slotLabel(slot)}.`);
             await this.refreshAdminDiagnostics();
             await this.loadMatches?.();
             this.renderMatchLibraryTable?.();
         } catch (error) {
-            this.showError(error.message);
+            // Network error or HTTP error — surface the message regardless,
+            // and log the full error to the console so the admin can see
+            // CORS / DNS / connection-refused details that don't fit in a
+            // toast.
+            console.error('[admin] regenerateHls error', error);
+            this.showError(error.message || 'HLS regeneration failed (no response from server).');
+        } finally {
+            // Dismiss the persistent in-flight toast.
+            if (progress && typeof progress.remove === 'function') {
+                try { progress.remove(); } catch { /* ignore */ }
+            }
         }
     },
 
     async forceRetranscode(matchId, slot) {
+        console.info('[admin] forceRetranscode invoked', { matchId, slot });
         const ok = await this.confirmAction({
             title: 'Re-transcode slot',
             message: `Re-encode the ${this.slotLabel(slot)} slot from scratch? This is multi-minute per match. Use it to pick up new encoder settings (QSV, 1440p, audio bitrate).`,
             confirmLabel: 'Re-transcode',
             danger: true,
         });
-        if (!ok) return;
+        if (!ok) {
+            console.info('[admin] forceRetranscode cancelled by user');
+            return;
+        }
+        const progress = this.showProgress?.(`Starting re-transcode for ${this.slotLabel(slot)}…`);
         try {
-            const resp = await fetch(
-                `/api/admin/matches/${matchId}/slots/${slot}/retry?force=true`,
-                { method: 'POST', headers: this.getAuthHeaders() },
-            );
+            const url = `/api/admin/matches/${matchId}/slots/${slot}/retry?force=true`;
+            console.info('[admin] forceRetranscode fetch start', url);
+            const resp = await fetch(url, { method: 'POST', headers: this.getAuthHeaders() });
+            console.info('[admin] forceRetranscode fetch done', { status: resp.status });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || 'Re-transcode failed to start');
+                throw new Error(err.detail || `Re-transcode failed to start (HTTP ${resp.status})`);
             }
-            this.showSuccess(`Re-transcode started for ${slot}.`);
+            this.showSuccess(`Re-transcode started for ${this.slotLabel(slot)}. Watch the encoding tile in Performance for progress.`);
             await this.refreshAdminDiagnostics();
             await this.loadMatches?.();
             this.renderMatchLibraryTable?.();
         } catch (error) {
-            this.showError(error.message);
+            console.error('[admin] forceRetranscode error', error);
+            this.showError(error.message || 'Re-transcode failed to start (no response from server).');
+        } finally {
+            if (progress && typeof progress.remove === 'function') {
+                try { progress.remove(); } catch { /* ignore */ }
+            }
         }
     },
 
