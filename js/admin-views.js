@@ -422,6 +422,41 @@ export const adminViewsMixin = {
         this.applyAppSettings();
     },
 
+    // Tuning-only save path used by the Performance section's #tuning-save-btn.
+    // /api/admin/settings PUT accepts partial bodies (server iterates submitted
+    // keys), so omitting branding/copy/live fields leaves them untouched. This
+    // avoids the bug where saving tuning from the Performance section would
+    // PUT empty live form values (HTML defaults) and silently disable live
+    // streaming + clear the configured RTMP URL.
+    async handleTuningSubmit() {
+        const submitBtn = document.getElementById('tuning-save-btn');
+        const body = { ...this.collectTuningKnobs() };
+        const restore = this.btnLoading(submitBtn, 'Saving...');
+        try {
+            const resp = await this.authFetch('/api/admin/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                const detail = err.detail;
+                const msg = (detail && typeof detail === 'object' && detail.errors)
+                    ? Object.entries(detail.errors).map(([k, v]) => `${k}: ${v}`).join('; ')
+                    : (typeof detail === 'string' ? detail : 'Failed to save tuning');
+                throw new Error(msg);
+            }
+            this.setAppSettingsPayload(await resp.json());
+            this.applyAppSettings();
+            this.renderTuningKnobsCard();
+            this.showSuccess('Tuning saved.');
+        } catch (error) {
+            this.showError(error.message);
+        } finally {
+            restore('Save Tuning');
+        }
+    },
+
     async handleSettingsSubmit() {
         const submitBtn = document.getElementById('settings-submit-btn');
         const body = {
@@ -755,9 +790,13 @@ export const adminViewsMixin = {
                 </div>`
             : '';
 
+        // Clickable when admin + viewers > 0 — opens a modal listing the VOD
+        // sessions with Kill buttons. Static pill otherwise.
         const vodViewers = this.vodViewersForMatch?.(match.id) ?? 0;
         const viewersPill = vodViewers
-            ? `<span class="slot-diagnostics-viewers">${vodViewers} viewer${vodViewers === 1 ? '' : 's'} watching now</span>`
+            ? (isAdmin
+                ? `<button type="button" class="slot-diagnostics-viewers is-clickable" onclick="app.openMatchViewersModal('${safeId}')">${vodViewers} viewer${vodViewers === 1 ? '' : 's'} watching now</button>`
+                : `<span class="slot-diagnostics-viewers">${vodViewers} viewer${vodViewers === 1 ? '' : 's'} watching now</span>`)
             : '';
 
         return `
@@ -994,6 +1033,10 @@ export const adminViewsMixin = {
     _liveThroughputSamples: [],
 
     startLiveConsolePolling() {
+        // Reset the rolling sparkline buffer on every entry so the chart
+        // shows only the current session, not a mix of old samples from a
+        // previous visit.
+        this._liveThroughputSamples = [];
         this.refreshLiveConsole();
         if (this._liveConsoleTimer) return;
         this._liveConsoleTimer = setInterval(() => {
@@ -1074,10 +1117,76 @@ export const adminViewsMixin = {
     },
 
     // VOD viewer count for a single match — used by the matches library
-    // expanded row. Reads from the cached this.activeStreams; refreshActiveStreams
-    // is called every 10 s by the status strip so the count is fresh.
+    // expanded row. Reads from the cached this.activeStreams; the status
+    // strip's 10 s `/api/admin/streams` poll also writes that cache (see
+    // refreshAdminStatusStrip in admin.js), so the count stays current
+    // while the user is on any admin section.
     vodViewersForMatch(matchId) {
         return (this.activeStreams || []).filter((s) => s.kind === 'vod' && s.match_id === matchId).length;
+    },
+
+    // Manage-viewers modal for a single match. Lists the active VOD sessions
+    // and exposes Kill on each — restores the kill capability that the
+    // standalone Streams page used to provide. Uses formModal as a generic
+    // container; the "submit" action is just Done (no PUT).
+    async openMatchViewersModal(matchId) {
+        const match = (this.matches || []).find((m) => m.id === matchId);
+        const matchLabel = match ? `${match.home_team || ''} vs ${match.away_team || ''}` : matchId;
+
+        const body = document.createElement('div');
+        body.className = 'match-viewers-modal-body';
+
+        const renderList = () => {
+            const viewers = (this.activeStreams || []).filter((s) => s.kind === 'vod' && s.match_id === matchId);
+            if (!viewers.length) {
+                body.innerHTML = '<div class="session-empty">No active viewers right now.</div>';
+                return;
+            }
+            body.innerHTML = `<div class="session-list">${viewers.map((s) => {
+                const geoBits = [];
+                if (s.geo) {
+                    if (s.geo.city) geoBits.push(s.geo.city);
+                    if (s.geo.country) geoBits.push(s.geo.country);
+                }
+                const geoText = geoBits.length ? geoBits.join(', ') : '—';
+                const dur = this.formatDuration ? this.formatDuration(s.duration_seconds) : `${Math.round(s.duration_seconds)}s`;
+                return `
+                    <div class="session-item">
+                        <div class="session-main">
+                            <div class="session-title-row">
+                                <strong>${this.esc(s.ip)}</strong>
+                                <span class="status-pill">${this.esc(s.slot ? this.slotLabel(s.slot) : 'vod')}</span>
+                            </div>
+                            <div class="session-meta">${this.esc(geoText)} · ${dur} · ${this.formatBytes(s.bytes_sent || 0)}</div>
+                        </div>
+                        <div class="session-actions">
+                            <button type="button" class="mini-action-btn" data-kill-id="${this.esc(s.id)}">Kill</button>
+                        </div>
+                    </div>
+                `;
+            }).join('')}</div>`;
+            body.querySelectorAll('button[data-kill-id]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    await this.killStream(btn.dataset.killId);
+                    // killStream calls refreshActiveStreams on success, which
+                    // updates this.activeStreams. Re-render the modal list.
+                    renderList();
+                });
+            });
+        };
+
+        renderList();
+
+        await this.formModal({
+            title: `Viewers · ${matchLabel}`,
+            kicker: 'Active VOD sessions',
+            body,
+            confirmLabel: 'Done',
+            cancelLabel: 'Close',
+            onSubmit: async (close) => close(true),
+        });
+        // Refresh the matches library row counts on close.
+        this.renderMatchLibraryTable?.();
     },
 
     async killStream(sessionId) {

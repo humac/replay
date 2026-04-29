@@ -4959,4 +4959,24 @@ button {
     font-size: 0.72rem;
     letter-spacing: 0.04em;
     margin-left: auto;
+    /* When rendered as a <button> (admin + viewers > 0) it stays a pill, but
+       gains a hover affordance and pointer cursor so the click is obvious. */
+    font-family: inherit;
+}
+
+.slot-diagnostics-viewers.is-clickable {
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.slot-diagnostics-viewers.is-clickable:hover,
+.slot-diagnostics-viewers.is-clickable:focus-visible {
+    background: rgba(23, 113, 201, 0.22);
+    border-color: rgba(23, 113, 201, 0.55);
+    outline: none;
+}
+
+.match-viewers-modal-body {
+    max-height: 60vh;
+    overflow-y: auto;
 }

@@ -206,6 +206,14 @@ export const adminMixin = {
             ]);
             const diag = diagResp.ok ? await diagResp.json() : null;
             const streams = streamsResp.ok ? await streamsResp.json() : null;
+            // Populate the shared cache so consumers like vodViewersForMatch
+            // (matches library expanded row) and renderActiveStreams (Live
+            // Console) read fresh data on the 10 s status-strip cadence
+            // without having to call refreshActiveStreams themselves.
+            if (streams) {
+                this.activeStreams = streams.active || [];
+                this.streamBlocks = streams.blocks || [];
+            }
             this.renderAdminStatusStrip({ diag, streams });
         } catch (e) {
             console.warn('status strip refresh failed', e);
