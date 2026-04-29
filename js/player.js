@@ -512,6 +512,15 @@ export const playerMixin = {
             this._clearSavedPosition(matchId, slot);
         };
         videoEl.addEventListener('ended', this._onVideoEnded);
+
+        // VOD viewer heartbeat — keep the streams registry session warm
+        // while playback is active. Caddy serves HLS segments directly
+        // from the bind-mount in production, so segment fetches don't
+        // reach FastAPI and last_activity goes stale; without this,
+        // HLS_IDLE_SECONDS (~15 s) reaps the session even though the
+        // user is still watching. POST instead of GET so it doesn't
+        // collide with browser caches or trip preflight on most CDNs.
+        this._startVodHeartbeat(matchId, slot, videoEl);
     },
 
     _stopPositionTracking() {
@@ -523,6 +532,42 @@ export const playerMixin = {
         if (videoEl && this._onVideoEnded) {
             videoEl.removeEventListener('ended', this._onVideoEnded);
             this._onVideoEnded = null;
+        }
+        this._stopVodHeartbeat();
+    },
+
+    _startVodHeartbeat(matchId, slot, videoEl) {
+        this._stopVodHeartbeat();
+        if (!videoEl) return;
+        const intervalSec = 10; // < HLS_IDLE_SECONDS (15) on the backend
+        const ping = async () => {
+            // Only ping while actively playing — paused / ended viewers
+            // shouldn't keep the session alive.
+            if (videoEl.paused || videoEl.ended) return;
+            try {
+                const url = `/api/matches/${encodeURIComponent(matchId)}/heartbeat?slot=${encodeURIComponent(slot)}`;
+                const resp = await fetch(url, { method: 'POST', credentials: 'same-origin' });
+                if (resp.status === 403) {
+                    // Admin killed this stream — stop playback and surface a
+                    // toast (UI parity with the live block path).
+                    videoEl.pause();
+                    this.showError?.('This stream was disconnected by an administrator.');
+                    this._stopVodHeartbeat();
+                }
+            } catch {
+                // Transient network error — try again next tick.
+            }
+        };
+        // Fire one immediately so the registry sees us right after the
+        // first segment fetch, not 10 s later.
+        ping();
+        this._vodHeartbeatInterval = setInterval(ping, intervalSec * 1000);
+    },
+
+    _stopVodHeartbeat() {
+        if (this._vodHeartbeatInterval) {
+            clearInterval(this._vodHeartbeatInterval);
+            this._vodHeartbeatInterval = null;
         }
     },
 
