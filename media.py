@@ -227,13 +227,23 @@ async def probe_codecs(src: Path) -> tuple[str | None, str | None]:
 async def probe_video_dimensions(src: Path) -> tuple[int | None, int | None]:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "ffprobe", "-v", "error", "-print_format", "json",
             "-show_streams", str(src),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await proc.communicate()
+        stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
+            # Previously this silently returned (None, None). Now we log
+            # the ffprobe stderr so a corrupt MP4 / missing codec / bad
+            # path produces a signal in the log stream — otherwise downstream
+            # callers (build_hls_assets, the admin Regen HLS button) just
+            # see a generic failure with no clue why.
+            err_tail = (stderr.decode("utf-8", errors="replace")[-500:] if stderr else "")
+            logger.warning(
+                "ffprobe(%s) failed: rc=%s stderr=%s",
+                src, proc.returncode, err_tail,
+            )
             return None, None
         data = json.loads(stdout)
         for stream in data.get("streams", []):
@@ -241,8 +251,10 @@ async def probe_video_dimensions(src: Path) -> tuple[int | None, int | None]:
                 width = stream.get("width")
                 height = stream.get("height")
                 return int(width) if width else None, int(height) if height else None
+        logger.warning("ffprobe(%s) returned no video streams", src)
         return None, None
-    except Exception:
+    except Exception as exc:
+        logger.warning("ffprobe(%s) raised: %s", src, exc)
         return None, None
 
 
