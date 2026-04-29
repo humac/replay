@@ -4320,8 +4320,17 @@ button {
 
 .match-library-table .lib-col-format,
 .match-library-table .lib-col-score,
-.match-library-table .lib-col-updated {
+.match-library-table .lib-col-watching {
     white-space: nowrap;
+}
+
+/* Watching column — narrow, right-leaning, tabular-nums so the count
+   doesn't shift the column width as it ticks up/down. */
+.match-library-table .lib-col-watching {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    width: 1%;
+    padding-right: 0.5rem;
 }
 
 .slot-pill-stack {
@@ -4981,21 +4990,20 @@ button {
     overflow-y: auto;
 }
 
-/* "● 2 watching" badge that surfaces VOD activity on a collapsed library row
-   so admins notice it without expanding. Compact pill, accent palette,
-   pulses gently to draw the eye. */
+/* Compact "● N" pill for the Watching column — accent palette, pulses
+   gently so live VOD activity catches the eye without being noisy. */
 .library-watching-badge {
     display: inline-flex;
     align-items: center;
-    margin-left: 0.55rem;
+    gap: 0.3rem;
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
     background: rgba(23, 113, 201, 0.14);
     color: var(--accent);
     border: 1px solid rgba(23, 113, 201, 0.35);
-    font-size: 0.7rem;
-    letter-spacing: 0.04em;
+    font-size: 0.72rem;
     font-weight: 500;
+    font-variant-numeric: tabular-nums;
     vertical-align: middle;
     animation: libraryWatchingPulse 2.4s ease-in-out infinite;
 }
@@ -5003,4 +5011,15 @@ button {
 @keyframes libraryWatchingPulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.55; }
+}
+
+/* "Updated <timestamp>" inline note in the expanded slot-diagnostics
+   panel head. Sits between Match ID and the viewers pill. */
+.slot-diagnostics-updated {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text-main);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
 }
