@@ -662,7 +662,7 @@ export const adminViewsMixin = {
                     <th class="lib-col-format">Format</th>
                     <th class="lib-col-slots">Slots</th>
                     <th class="lib-col-score">Score</th>
-                    <th class="lib-col-updated">Updated</th>
+                    <th class="lib-col-watching">Watching</th>
                     <th class="lib-col-menu" aria-label="Actions"></th>
                 </tr>
             </thead>
@@ -685,23 +685,22 @@ export const adminViewsMixin = {
         const score = (match.score_home != null && match.score_away != null)
             ? `${this.esc(match.score_home)}–${this.esc(match.score_away)}`
             : '<span class="muted">—</span>';
-        const updatedLabel = match.updated_at ? this.esc(match.updated_at.replace('T', ' ').slice(0, 16)) : '<span class="muted">—</span>';
         const safeId = this.esc(match.id);
         const thumbHtml = match.has_thumbnail
             ? `<img class="library-thumb" src="/api/matches/${safeId}/thumbnail" alt="" loading="lazy">`
             : `<div class="library-thumb library-thumb-placeholder" aria-hidden="true"></div>`;
-        // Live VOD viewer count for this match — badge visible on the
-        // collapsed row so admins notice activity without expanding every
-        // row. Refreshed on the 10 s status-strip cadence.
+        // Live VOD viewer count for this match. Lives in its own column so
+        // long match names don't crowd the matchup cell. The badge pulses
+        // when active; column is intentionally narrow and right-aligned.
         const vodCount = this.vodViewersForMatch?.(match.id) ?? 0;
-        const watchingBadge = vodCount > 0
-            ? `<span class="library-watching-badge" title="${vodCount} VOD viewer${vodCount === 1 ? '' : 's'} watching">● ${vodCount} watching</span>`
-            : '';
+        const watchingCell = vodCount > 0
+            ? `<span class="library-watching-badge" title="${vodCount} VOD viewer${vodCount === 1 ? '' : 's'} watching">● ${vodCount}</span>`
+            : '<span class="muted">—</span>';
         const matchup = `
             <div class="library-matchup">
                 ${thumbHtml}
                 <div class="library-matchup-text">
-                    <div><strong>${this.esc(match.home_team || '')}</strong> <span class="muted">vs</span> <strong>${this.esc(match.away_team || '')}</strong>${watchingBadge}</div>
+                    <div><strong>${this.esc(match.home_team || '')}</strong> <span class="muted">vs</span> <strong>${this.esc(match.away_team || '')}</strong></div>
                     ${match.location ? `<div class="row-sub">${this.esc(match.location)}</div>` : ''}
                 </div>
             </div>
@@ -717,7 +716,7 @@ export const adminViewsMixin = {
                 <td class="lib-col-format"><span class="format-pill">${formatLabel}</span></td>
                 <td class="lib-col-slots"><div class="slot-pill-stack">${slotPills}</div></td>
                 <td class="lib-col-score">${score}</td>
-                <td class="lib-col-updated">${updatedLabel}</td>
+                <td class="lib-col-watching">${watchingCell}</td>
                 <td class="lib-col-menu">
                     <div class="row-menu">
                         <button type="button" class="row-menu-btn" title="Actions" onclick="app.toggleRowMenu('${safeId}', event)">⋯</button>
@@ -806,11 +805,19 @@ export const adminViewsMixin = {
                 : `<span class="slot-diagnostics-viewers">${vodViewers} viewer${vodViewers === 1 ? '' : 's'} watching now</span>`)
             : '';
 
+        const updatedLabel = match.updated_at
+            ? this.esc(match.updated_at.replace('T', ' ').slice(0, 16))
+            : null;
+        const updatedBlock = updatedLabel
+            ? `<span class="slot-diagnostics-updated"><span class="muted">Updated</span> ${updatedLabel}</span>`
+            : '';
+
         return `
             <div class="slot-diagnostics-panel">
                 <div class="slot-diagnostics-head">
                     <span class="muted">Match ID</span>
                     <code>${safeId}</code>
+                    ${updatedBlock}
                     ${viewersPill}
                 </div>
                 <div class="slot-cards-grid">
