@@ -75,14 +75,45 @@ export const adminViewsMixin = {
             'hls_variant_presets',
             'live_hls_variant', 'live_record_enabled', 'live_transcode_enabled',
         ];
+        // Knobs that should span the whole row of the new multi-column tuning
+        // grid — either because their input is wide (HLS ladder editor =
+        // 9-column table) or because they belong to a logical sub-group
+        // (live flags rendered as a single row of three booleans/enums).
+        const FULLWIDTH_KEYS = new Set(['hls_variant_presets']);
+        // Knobs that should hide their input behind a <details> toggle.
+        // Today only the ladder editor; the JSON textarea fallback is
+        // already compact enough to inline.
+        const COLLAPSIBLE_KEYS = new Set(['hls_variant_presets']);
+
         const html = order.filter((key) => knobs[key]).map((key) => {
             const spec = knobs[key];
             const value = settings[key] ?? '';
             const restart = spec.restart
                 ? '<span class="status-pill warn">Restart required</span>'
                 : '';
+            const classes = ['form-group'];
+            if (FULLWIDTH_KEYS.has(key)) classes.push('form-group-fullwidth');
+            if (COLLAPSIBLE_KEYS.has(key)) {
+                // Wrap the input in <details> so the ladder editor is
+                // collapsed by default. Most admins never touch it; the
+                // collapsed state keeps the Tuning section compact.
+                return `
+                    <div class="${classes.join(' ')}" data-tuning-key="${key}">
+                        <details class="form-group-details">
+                            <summary>
+                                <span class="form-group-summary-label">${this.esc(spec.label || key)}</span>
+                                ${restart}
+                            </summary>
+                            <div class="form-group-details-body">
+                                ${this.tuningKnobInput(key, spec, value)}
+                                <div class="form-help">${this.esc(spec.help || '')}</div>
+                            </div>
+                        </details>
+                    </div>
+                `;
+            }
             return `
-                <div class="form-group" data-tuning-key="${key}">
+                <div class="${classes.join(' ')}" data-tuning-key="${key}">
                     <label for="tuning-${key}">
                         ${this.esc(spec.label || key)}
                         ${restart}
@@ -94,26 +125,25 @@ export const adminViewsMixin = {
         }).join('');
         grid.innerHTML = html;
 
-        // Audit list
+        // Audit list — flat 1-row-per-change.
         const auditList = document.getElementById('tuning-audit-list');
         const auditCountEl = document.getElementById('diag-audit-count');
         if (auditList) {
             const entries = payload.audit || [];
             if (auditCountEl) auditCountEl.textContent = String(entries.length);
             auditList.innerHTML = entries.length
-                ? entries.map((e) => `
-                    <div class="session-item">
-                        <div class="session-title-row">
-                            <strong>${this.esc(e.key)}</strong>
-                            <span class="status-pill neutral">${this.esc(e.actor || 'system')}</span>
+                ? entries.map((e) => {
+                    const when = (e.ts || '').replace('T', ' ').slice(0, 16);
+                    return `
+                        <div class="diag-row">
+                            <span class="diag-row-time">${this.esc(when)}</span>
+                            <span class="diag-row-id">${this.esc(e.key)}</span>
+                            <span class="diag-row-tag">${this.esc(e.actor || 'system')}</span>
+                            <span class="diag-row-meta">${this.esc(e.old_value ?? '∅')} → ${this.esc(e.new_value)}</span>
                         </div>
-                        <div class="session-meta">
-                            <span>${this.esc(e.ts)}</span>
-                            <span>${this.esc(e.old_value ?? '∅')} → ${this.esc(e.new_value)}</span>
-                        </div>
-                    </div>
-                `).join('')
-                : '<div class="session-empty">No tuning changes yet.</div>';
+                    `;
+                }).join('')
+                : '<div class="diag-row-empty">No tuning changes yet.</div>';
         }
 
         // Wire preset buttons (idempotent — replaces handlers on re-render)
@@ -1307,74 +1337,76 @@ export const adminViewsMixin = {
         // is the at-a-glance signal.
         const errorsList = document.getElementById('recent-errors-list');
         const errorsCount = document.getElementById('diag-errors-count');
+        // Recent errors — flat 1-line-per-row layout. Drops the per-item
+        // dark-grey card; rows are separated by a hairline border.
         if (errorsList) {
             if (recent_errors && recent_errors.length) {
-                errorsList.innerHTML = recent_errors.map((e) => `
-                    <div class="session-item">
-                        <div class="session-main">
-                            <div class="session-title-row">
-                                <strong>${this.esc(e.match_id)}</strong>
-                                <span class="status-pill error">${this.esc(e.error_code)}</span>
-                            </div>
-                            <div class="session-meta">${this.slotLabel(e.slot)} • ${this.esc(e.reason)}</div>
-                            ${e.details ? `<div class="session-meta error-details">${this.esc(e.details).substring(0, 200)}</div>` : ''}
-                            <div class="session-meta">${this.esc(e.created_at)}</div>
+                errorsList.innerHTML = recent_errors.map((e) => {
+                    const when = (e.created_at || '').replace('T', ' ').slice(11, 16);
+                    const detailTitle = e.details ? `title="${this.esc(String(e.details).slice(0, 400))}"` : '';
+                    return `
+                        <div class="diag-row diag-row-error" ${detailTitle}>
+                            <span class="diag-row-time">${this.esc(when)}</span>
+                            <span class="diag-row-id">${this.esc(e.match_id || '')}</span>
+                            <span class="diag-row-tag">${this.esc(this.slotLabel(e.slot))}</span>
+                            <span class="diag-row-code">${this.esc(e.error_code || '')}</span>
+                            <span class="diag-row-reason">${this.esc(e.reason || '')}</span>
                         </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             } else {
-                errorsList.innerHTML = '<div class="session-empty">No recent encoder errors.</div>';
+                errorsList.innerHTML = '<div class="diag-row-empty">No recent encoder errors.</div>';
             }
         }
         if (errorsCount) errorsCount.textContent = String((recent_errors || []).length);
 
-        // Upload sessions — server side
+        // Upload sessions — server side, flat 1-row-per-session.
         const uploadCountEl = document.getElementById('diag-uploads-count');
         if (!upload_sessions.length) {
-            serverList.innerHTML = '<div class="session-empty">No recent upload sessions.</div>';
+            serverList.innerHTML = '<div class="diag-row-empty">No recent upload sessions.</div>';
         } else {
-            serverList.innerHTML = upload_sessions.map((session) => `
-                <div class="session-item">
-                    <div class="session-main">
-                        <div class="session-title-row">
-                            <strong>${this.esc(session.match_id)}</strong>
-                            <span class="status-pill ${this.statusClass(session.status)}">${this.statusLabel(session.status)}</span>
-                        </div>
-                        <div class="session-meta">${this.slotLabel(session.slot)} • ${this.formatBytes(session.uploaded_bytes)} / ${this.formatBytes(session.size_bytes)} • ${session.progress_pct}%</div>
-                        <div class="session-meta">Idle ${this.formatAge(session.idle_seconds)}${session.stale ? ' • stale' : ''}</div>
+            serverList.innerHTML = upload_sessions.map((session) => {
+                const sizeStr = `${this.formatBytes(session.uploaded_bytes)} / ${this.formatBytes(session.size_bytes)}`;
+                const cancelBtn = session.status === 'active'
+                    ? `<button type="button" class="mini-action-btn" onclick="app.cancelUploadSession('${this.esc(session.session_id)}')">Cancel</button>`
+                    : '';
+                return `
+                    <div class="diag-row">
+                        <span class="diag-row-id">${this.esc(session.match_id || '')}</span>
+                        <span class="diag-row-tag">${this.esc(this.slotLabel(session.slot))}</span>
+                        <span class="status-pill ${this.statusClass(session.status)}">${this.statusLabel(session.status)}</span>
+                        <span class="diag-row-meta">${sizeStr} · ${session.progress_pct}%${session.stale ? ' · stale' : ''}</span>
+                        <span class="diag-row-time">idle ${this.formatAge(session.idle_seconds)}</span>
+                        <span class="diag-row-action">${cancelBtn}</span>
                     </div>
-                    <div class="session-actions">
-                        ${session.status === 'active' ? `<button type="button" class="mini-action-btn" onclick="app.cancelUploadSession('${this.esc(session.session_id)}')">Cancel</button>` : ''}
-                    </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
         if (uploadCountEl) uploadCountEl.textContent = String(upload_sessions.length);
 
         localList.innerHTML = this.renderLocalResumeSessions();
     },
 
+    // Resumable uploads kept in this browser's localStorage. Almost always
+    // empty in practice; collapse the previous 2-column grid down to a
+    // single trailing summary line so it doesn't dominate the accordion.
     renderLocalResumeSessions() {
         const entries = Object.entries(this.getSavedUploadSessions());
-        if (!entries.length) {
-            return '<div class="session-empty">No resumable uploads saved in this browser.</div>';
-        }
-
-        return entries.map(([key, session]) => `
-            <div class="session-item">
-                <div class="session-main">
-                    <div class="session-title-row">
-                        <strong>${this.esc(session.file_name || session.match_id)}</strong>
-                        <span class="status-pill resume">Resume</span>
-                    </div>
-                    <div class="session-meta">${this.esc(session.match_id)} • ${this.slotLabel(session.slot)} • ${this.formatBytes(session.size_bytes || 0)}</div>
-                    <div class="session-meta">Re-open this match form, select the same file, and submit again.</div>
-                </div>
-                <div class="session-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.clearLocalResumeSession(decodeURIComponent('${encodeURIComponent(key)}'))">Clear</button>
-                </div>
+        if (!entries.length) return '';
+        const noun = `${entries.length} resumable upload${entries.length === 1 ? '' : 's'}`;
+        // Build a tooltip with the per-entry details so power users can
+        // still see what's queued without taking up vertical space.
+        const tooltip = entries.map(([, session]) => {
+            const file = session.file_name || session.match_id || 'upload';
+            return `${file} · ${session.match_id} · ${this.slotLabel(session.slot)} · ${this.formatBytes(session.size_bytes || 0)}`;
+        }).join('\n');
+        const firstKey = entries[0][0];
+        return `
+            <div class="local-resume-line" title="${this.esc(tooltip)}">
+                <span>${noun} from this browser. Re-open the match form and re-select the file to resume.</span>
+                <button type="button" class="mini-action-btn" onclick="app.clearLocalResumeSession(decodeURIComponent('${encodeURIComponent(firstKey)}'))">Clear oldest</button>
             </div>
-        `).join('');
+        `;
     },
 
     async cleanupStaleUploads() {
@@ -2067,6 +2099,8 @@ export const adminViewsMixin = {
             </div>
         `).join('') + (cap ? `<div class="diagnostic-card">${cap}</div>` : '');
 
+        // Recent transcodes — flat 1-row-per-entry; rt-factor pill + hwaccel
+        // tag are the at-a-glance signal, dimensions are secondary.
         const rtList = document.getElementById('perf-rt-list');
         const rtCountEl = document.getElementById('diag-transcodes-count');
         if (rtList) {
@@ -2074,22 +2108,18 @@ export const adminViewsMixin = {
             if (rtCountEl) rtCountEl.textContent = String(rows.length);
             rtList.innerHTML = rows.length
                 ? rows.map((h) => `
-                    <div class="session-item">
-                        <div class="session-title-row">
-                            <strong>${this.esc(h.match_id)} / ${this.esc(h.slot)}</strong>
-                            <span class="status-pill ${h.rt_factor < 1 ? 'ready' : 'neutral'}">${h.rt_factor}× realtime</span>
-                            <span class="status-pill neutral">${this.esc(h.hwaccel)}</span>
-                        </div>
-                        <div class="session-meta">
-                            <span>${h.source_seconds ? Math.round(h.source_seconds) + 's source' : ''}</span>
-                            <span>${h.wall_seconds.toFixed(1)}s wall</span>
-                            <span>${h.variant_count || 0} variants</span>
-                        </div>
+                    <div class="diag-row">
+                        <span class="diag-row-id">${this.esc(h.match_id)}</span>
+                        <span class="diag-row-tag">${this.esc(h.slot)}</span>
+                        <span class="status-pill ${h.rt_factor < 1 ? 'ready' : 'neutral'}">${h.rt_factor}× realtime</span>
+                        <span class="diag-row-tag">${this.esc(h.hwaccel)}</span>
+                        <span class="diag-row-meta">${h.source_seconds ? Math.round(h.source_seconds) + 's src · ' : ''}${h.wall_seconds.toFixed(1)}s wall · ${h.variant_count || 0} var</span>
                     </div>
                 `).join('')
-                : '<div class="session-empty">No transcodes recorded yet.</div>';
+                : '<div class="diag-row-empty">No transcodes recorded yet.</div>';
         }
 
+        // Active streaming sessions — flat 1-row-per-session.
         const sessList = document.getElementById('perf-sessions-list');
         const sessCountEl = document.getElementById('diag-sessions-count');
         if (sessList) {
@@ -2097,19 +2127,15 @@ export const adminViewsMixin = {
             if (sessCountEl) sessCountEl.textContent = String(sessions.length);
             sessList.innerHTML = sessions.length
                 ? sessions.map((s) => `
-                    <div class="session-item">
-                        <div class="session-title-row">
-                            <strong>${this.esc(s.kind)} ${this.esc(s.match_id || '')}/${this.esc(s.slot || '')}</strong>
-                            <span class="status-pill neutral">${this.esc(s.geo?.country_code || '')} ${this.esc(s.ip)}</span>
-                        </div>
-                        <div class="session-meta">
-                            <span>${fmtBytes(s.bytes_sent)}</span>
-                            <span>${Math.round(s.duration_seconds || 0)}s</span>
-                            <span>idle ${Math.round(s.idle_seconds || 0)}s</span>
-                        </div>
+                    <div class="diag-row">
+                        <span class="diag-row-tag">${this.esc(s.kind)}</span>
+                        <span class="diag-row-id">${this.esc(s.match_id || '')}${s.slot ? ' / ' + this.esc(s.slot) : ''}</span>
+                        <span class="diag-row-meta">${this.esc(s.geo?.country_code || '')} ${this.esc(s.ip)}</span>
+                        <span class="diag-row-meta">${fmtBytes(s.bytes_sent)} · ${Math.round(s.duration_seconds || 0)}s</span>
+                        <span class="diag-row-time">idle ${Math.round(s.idle_seconds || 0)}s</span>
                     </div>
                 `).join('')
-                : '<div class="session-empty">No active streaming sessions.</div>';
+                : '<div class="diag-row-empty">No active streaming sessions.</div>';
         }
     },
 

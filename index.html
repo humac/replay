@@ -806,48 +806,48 @@
                          upload sessions, recent transcodes, audit) are collapsed accordions
                          at the bottom — count pill closed, expand to see detail. -->
                     <section class="admin-section" data-admin-section="performance">
-                        <div class="performance-grid">
-                            <div class="performance-read">
-                                <div class="options-card admin-ops-card" id="performance-tuning-card">
-                                    <div class="admin-panel-head">
-                                        <div>
-                                            <h3>Encoder &amp; Host</h3>
-                                            <p class="admin-panel-copy">
-                                                Live + VOD throughput, host load, iGPU activity, and transcode realtime factor — refreshes every 5 s.
-                                            </p>
-                                        </div>
-                                        <div class="admin-panel-actions">
-                                            <button type="button" class="btn-secondary" id="perf-refresh-btn">Refresh</button>
-                                            <button type="button" class="btn-secondary" id="perf-capture-btn">60-s capture</button>
-                                            <button type="button" class="btn-secondary" id="perf-copy-btn">Copy snapshot</button>
-                                            <button type="button" class="btn-secondary" id="perf-download-btn">Download</button>
-                                        </div>
-                                    </div>
-                                    <div id="perf-grid" class="diagnostics-grid"></div>
+                        <!-- Encoder & Host (full width) — the live signal the
+                             operator watches when changing a tuning knob. -->
+                        <div class="options-card admin-ops-card" id="performance-tuning-card">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <h3>Encoder &amp; Host</h3>
+                                    <p class="admin-panel-copy">
+                                        Live + VOD throughput, host load, iGPU activity, and transcode realtime factor — refreshes every 5 s.
+                                    </p>
+                                </div>
+                                <div class="admin-panel-actions">
+                                    <button type="button" class="btn-head" id="perf-refresh-btn">Refresh</button>
+                                    <button type="button" class="btn-head" id="perf-capture-btn">60-s capture</button>
+                                    <button type="button" class="btn-head" id="perf-copy-btn">Copy snapshot</button>
+                                    <button type="button" class="btn-head" id="perf-download-btn">Download</button>
                                 </div>
                             </div>
+                            <div id="perf-grid" class="diagnostics-grid"></div>
+                        </div>
 
-                            <aside class="performance-knobs">
-                                <div class="options-card mt-0" id="tuning-knobs-card">
-                                    <div class="admin-card-head">
-                                        <h3>Tuning Knobs</h3>
-                                        <span class="admin-card-kicker">Encoder, uploads, live</span>
-                                    </div>
+                        <!-- Tuning Knobs (full width) — multi-column grid; the
+                             HLS variant ladder collapses behind a <details>
+                             toggle, the rest are scalar one-liners. -->
+                        <div class="options-card admin-ops-card mt-4" id="tuning-knobs-card">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <h3>Tuning Knobs</h3>
                                     <p class="admin-panel-copy">
                                         Most apply on the next call; a few (segment duration, live HLS variant, recording, live transcode)
                                         require a process or MediaMTX restart and are flagged.
                                     </p>
-                                    <div class="admin-panel-actions tuning-presets">
-                                        <button type="button" class="btn-secondary" data-tuning-preset="conservative">Conservative</button>
-                                        <button type="button" class="btn-secondary" data-tuning-preset="balanced-10g">Balanced 10 GbE</button>
-                                        <button type="button" class="btn-secondary" data-tuning-preset="live-first">Live-first</button>
-                                    </div>
-                                    <div id="tuning-knobs-grid" class="form-grid"></div>
-                                    <div class="form-actions mt-3">
-                                        <button type="button" id="tuning-save-btn" class="btn-primary" onclick="app.handleTuningSubmit()">Save Tuning</button>
-                                    </div>
                                 </div>
-                            </aside>
+                                <div class="admin-panel-actions tuning-presets">
+                                    <button type="button" class="btn-head" data-tuning-preset="conservative">Conservative</button>
+                                    <button type="button" class="btn-head" data-tuning-preset="balanced-10g">Balanced 10 GbE</button>
+                                    <button type="button" class="btn-head" data-tuning-preset="live-first">Live-first</button>
+                                </div>
+                            </div>
+                            <div id="tuning-knobs-grid" class="tuning-knobs-grid"></div>
+                            <div class="form-actions mt-3">
+                                <button type="button" id="tuning-save-btn" class="btn-primary" onclick="app.handleTuningSubmit()">Save Tuning</button>
+                            </div>
                         </div>
 
                         <div class="options-card admin-ops-card mt-4" id="admin-ops-card">
@@ -857,10 +857,10 @@
                                     <p class="admin-panel-copy">Disk headroom, encoding queue, and cleanup controls for interrupted jobs.</p>
                                 </div>
                                 <div class="admin-panel-actions">
-                                    <button type="button" class="btn-secondary" id="refresh-diagnostics-btn">Refresh</button>
-                                    <button type="button" class="btn-secondary" id="backfill-hls-btn">Backfill HLS</button>
-                                    <button type="button" class="btn-secondary" id="cleanup-uploads-btn">Cleanup uploads</button>
-                                    <button type="button" class="btn-secondary" id="export-db-btn">Export DB</button>
+                                    <button type="button" class="btn-head" id="refresh-diagnostics-btn">Refresh</button>
+                                    <button type="button" class="btn-head" id="backfill-hls-btn">Backfill HLS</button>
+                                    <button type="button" class="btn-head" id="cleanup-uploads-btn">Cleanup uploads</button>
+                                    <button type="button" class="btn-head" id="export-db-btn">Export DB</button>
                                 </div>
                             </div>
                             <div id="diagnostics-grid" class="diagnostics-grid"></div>
@@ -884,16 +884,11 @@
                                         <span class="diag-accordion-title">Upload sessions</span>
                                         <span class="diag-accordion-count" id="diag-uploads-count">0</span>
                                     </summary>
-                                    <div class="diagnostics-columns">
-                                        <div class="diagnostics-section">
-                                            <div class="diagnostics-section-title">Server</div>
-                                            <div id="upload-sessions-list" class="session-list"></div>
-                                        </div>
-                                        <div class="diagnostics-section">
-                                            <div class="diagnostics-section-title">This browser</div>
-                                            <div id="local-upload-sessions-list" class="session-list"></div>
-                                        </div>
-                                    </div>
+                                    <!-- Server-side upload sessions, rendered as flat 1-line rows -->
+                                    <div id="upload-sessions-list" class="session-list"></div>
+                                    <!-- Trailing single-line summary for resumable uploads kept by THIS browser
+                                         (almost always empty; previously took an entire 2nd column). -->
+                                    <div id="local-upload-sessions-list" class="local-resume-summary"></div>
                                 </details>
 
                                 <details class="diag-accordion" id="diag-transcodes">
