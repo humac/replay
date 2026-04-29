@@ -4264,32 +4264,74 @@ button {
     color: var(--text-main);
 }
 
-.match-library-table .match-row:hover td {
+.match-library-table .library-row:hover td {
     background: rgba(255, 255, 255, 0.025);
 }
 
-.match-library-table .match-row.is-error td {
+/* Only error rows get a colored stripe — ready/encoding stay neutral so the
+   table doesn't drown in green/amber when most matches are healthy. The pill
+   in the Slots column is the per-row signal. */
+.match-library-table .library-row.is-error td {
     box-shadow: inset 3px 0 0 var(--red);
-}
-
-.match-library-table .match-row.is-encoding td {
-    box-shadow: inset 3px 0 0 #ffb454;
-}
-
-.match-library-table .match-row.is-ready td {
-    box-shadow: inset 3px 0 0 #4ade80;
 }
 
 .match-library-table .lib-col-expand,
 .match-library-table .lib-col-menu {
-    width: 1%;
+    width: 36px;
     white-space: nowrap;
+    text-align: center;
+}
+
+.match-library-table .lib-col-date {
+    width: 110px;
+    white-space: nowrap;
+}
+
+.match-library-table .lib-col-matchup {
+    width: auto;
+    min-width: 220px;
+}
+
+.match-library-table .lib-col-slots {
+    min-width: 160px;
 }
 
 .match-library-table .lib-col-format,
 .match-library-table .lib-col-score,
 .match-library-table .lib-col-updated {
     white-space: nowrap;
+}
+
+.slot-pill-stack {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+}
+
+.library-matchup {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+}
+
+.library-matchup-text {
+    min-width: 0;
+}
+
+.library-thumb {
+    width: 56px;
+    height: 32px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid var(--border-light);
+    flex-shrink: 0;
+    background: var(--bg-card);
+    display: block;
+}
+
+.library-thumb-placeholder {
+    background: rgba(255, 255, 255, 0.03);
 }
 
 .match-library-table .row-sub {
@@ -4334,7 +4376,6 @@ button {
 .slot-pill {
     display: inline-block;
     padding: 0.2rem 0.55rem;
-    margin-right: 0.3rem;
     border-radius: 999px;
     border: 1px solid var(--border-light);
     background: rgba(255, 255, 255, 0.04);
@@ -4343,22 +4384,25 @@ button {
     color: var(--text-muted);
 }
 
+/* Slot-pill palette mirrors .status-pill (styles.css:1173) so the new admin
+   table reads as part of the same design system rather than introducing a
+   second green/amber/red. */
 .slot-pill.ready {
-    border-color: rgba(74, 222, 128, 0.4);
-    color: #4ade80;
-    background: rgba(74, 222, 128, 0.08);
+    background: rgba(34, 197, 94, 0.12);
+    color: #7be3a0;
+    border-color: rgba(34, 197, 94, 0.28);
 }
 
 .slot-pill.transcoding {
-    border-color: rgba(255, 165, 0, 0.4);
-    color: #ffb454;
-    background: rgba(255, 165, 0, 0.08);
+    background: rgba(255, 170, 0, 0.14);
+    color: #ffaa00;
+    border-color: rgba(255, 170, 0, 0.30);
 }
 
 .slot-pill.error {
-    border-color: rgba(255, 74, 74, 0.45);
-    color: var(--red);
-    background: rgba(255, 74, 74, 0.10);
+    background: rgba(255, 74, 74, 0.14);
+    color: #ff8f8f;
+    border-color: rgba(255, 74, 74, 0.30);
 }
 
 /* Row action menu */
@@ -4421,7 +4465,7 @@ button {
 
 /* Expanded diagnostics row */
 
-.match-detail-row td {
+.library-detail-row td {
     background: rgba(255, 255, 255, 0.015);
     padding: 0.5rem 1rem 1.1rem;
 }
@@ -4494,6 +4538,28 @@ button {
     max-height: min(72vh, 760px);
     overflow-y: auto;
     padding-right: 0.4rem;
+    /* Custom scrollbar — never expose unstyled native browser chrome inside
+       a styled modal. Firefox uses scrollbar-width/-color; WebKit uses the
+       ::-webkit-scrollbar pseudo-elements below. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.app-modal-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.app-modal-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.app-modal-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 4px;
+}
+
+.app-modal-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
 }
 
 .app-modal-body .modal-form-section {
@@ -4546,7 +4612,7 @@ button {
 @media (max-width: 768px) {
     .match-library-table thead { display: none; }
     .match-library-table tbody td { display: block; padding: 0.4rem 0.9rem; border: 0; }
-    .match-library-table .match-row { display: block; padding: 0.6rem 0; border-bottom: 1px solid var(--border-light); }
+    .match-library-table .library-row { display: block; padding: 0.6rem 0; border-bottom: 1px solid var(--border-light); }
     .match-library-table .lib-col-expand { display: inline-block; padding-right: 0.6rem; }
     .match-library-table .lib-col-matchup { display: inline-block; }
     .match-library-table .lib-col-menu { display: block; padding-top: 0.3rem; }
