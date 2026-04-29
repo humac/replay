@@ -86,6 +86,7 @@ function openAppModal({
     kicker = null,              // override kicker label
     size = null,                // 'form' | 'wide' — adds .is-{size} class to card
     onSubmit = null,            // async (closeFn) => void; called when user confirms a form modal
+    onMount = null,             // (card) => void; called once the modal DOM is in the document
 } = {}) {
     return new Promise((resolve) => {
         if (_activeModal) _activeModal.close(null);
@@ -198,6 +199,17 @@ function openAppModal({
         document.addEventListener('keydown', onKey);
 
         _activeModal = { close, card };
+
+        // onMount fires after the DOM is in the document but before the user
+        // has had a chance to interact. Callers use this to seed form fields,
+        // wire change listeners, or otherwise prepare the live DOM. Awaiting
+        // openAppModal()'s Promise would be too late — the Promise only
+        // resolves on close.
+        if (typeof onMount === 'function') {
+            try { onMount(card); }
+            catch (err) { console.error('modal onMount failed', err); }
+        }
+
         // Focus handling — confirm by default, cancel for destructive prompts.
         setTimeout(() => {
             if (kind === 'form') {
@@ -243,7 +255,7 @@ export const uiMixin = {
      * whatever value the onSubmit handler passes to its close() callback, or
      * `null` if the user cancels / dismisses.
      */
-    formModal({ title, kicker, message = '', body, confirmLabel = 'Save', cancelLabel = 'Cancel', onSubmit, size = 'form' } = {}) {
+    formModal({ title, kicker, message = '', body, confirmLabel = 'Save', cancelLabel = 'Cancel', onSubmit, onMount, size = 'form' } = {}) {
         return openAppModal({
             kind: 'form',
             title,
@@ -253,6 +265,7 @@ export const uiMixin = {
             confirmLabel,
             cancelLabel,
             onSubmit,
+            onMount,
             size,
         });
     },

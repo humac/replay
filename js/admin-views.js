@@ -1497,6 +1497,7 @@ export const adminViewsMixin = {
             this.renderMatchLibraryTable?.();
 
             this.checkTranscodePolling();
+            return true;
 
         } catch (e) {
             if (document.getElementById('edit-match-id').value) {
@@ -1507,6 +1508,7 @@ export const adminViewsMixin = {
                 ? ' The match record was created. Re-submit this form to resume any incomplete upload for the same selected file.'
                 : '';
             this.showError(e.message + resumeHint);
+            return false;
         } finally {
             const btnLabel = document.getElementById('edit-match-id').value ? 'Update Match' : 'Create Match';
             restore(btnLabel);
@@ -1616,60 +1618,68 @@ export const adminViewsMixin = {
             confirmLabel,
             cancelLabel: 'Cancel',
             size: 'wide',
+            // onMount runs synchronously after the modal DOM is appended but
+            // before the user can interact. This is where we wire change
+            // listeners and seed edit-mode field values — doing it after the
+            // formModal `await` would be too late, since that Promise resolves
+            // only when the modal is already closed.
+            onMount: () => {
+                this._wireMountedFormFileLabels();
+                if (isEdit) {
+                    const m = match;
+                    const setVal = (id, v) => {
+                        const el = document.getElementById(id);
+                        if (el) el.value = v;
+                    };
+                    setVal('edit-match-id', m.id);
+                    this._editMatchETag = m.updated_at || null;
+                    setVal('f-home-team', m.home_team || '');
+                    setVal('f-away-team', m.away_team || '');
+                    setVal('f-date', m.date || '');
+                    setVal('f-time', m.time || '');
+                    setVal('f-location', m.location || '');
+                    setVal('f-score-home', m.score_home != null ? m.score_home : '');
+                    setVal('f-score-away', m.score_away != null ? m.score_away : '');
+                    const formatRadio = document.querySelector(`input[name="format"][value="${m.format || 'full'}"]`);
+                    if (formatRadio) formatRadio.checked = true;
+                    this.toggleFormatFields();
+                    this.resetFileLabels();
+                    this.renderEditAssetStates(m);
+                    const heading = document.getElementById('form-heading');
+                    if (heading) heading.textContent = 'Edit Match';
+                    const submit = document.getElementById('submit-btn');
+                    if (submit) submit.textContent = 'Update Match';
+                } else {
+                    this.toggleFormatFields();
+                    this.resetFileLabels();
+                }
+            },
             onSubmit: async (close) => {
                 const before = this.matches?.length || 0;
-                try {
-                    await this.handleFormSubmit();
-                } catch (err) {
-                    // handleFormSubmit handles its own error toasts; re-throw to keep modal open.
-                    return;
+                // handleFormSubmit returns true on success, false on caught
+                // error (it surfaces its own error toasts). Anything that
+                // would have gone unhandled comes through as a thrown
+                // exception — treat that as a failure too and keep the
+                // modal open so the user can retry.
+                let ok = false;
+                try { ok = await this.handleFormSubmit(); }
+                catch (err) {
+                    console.error('match form submit threw', err);
+                    this.showError(err?.message || 'Submit failed');
+                    ok = false;
                 }
-                // handleFormSubmit clears the form / resets edit state on success.
-                // Detect success: the hidden #edit-match-id should now be cleared.
-                const stillOpen = document.getElementById('edit-match-id');
-                if (!stillOpen || !stillOpen.value) {
-                    close(true);
-                    this.renderMatchLibraryTable();
-                    if (!isEdit && (this.matches?.length || 0) > before) {
-                        this.showInfo('Match added — encoding will continue in the background.');
-                    }
+                if (!ok) return;
+                close(true);
+                this.renderMatchLibraryTable();
+                if (!isEdit && (this.matches?.length || 0) > before) {
+                    this.showInfo('Match added — encoding will continue in the background.');
                 }
             },
         });
 
-        // Modal DOM was just appended — wire file inputs and seed values.
-        this._wireMountedFormFileLabels();
-
-        if (isEdit) {
-            const m = match;
-            document.getElementById('edit-match-id').value = m.id;
-            this._editMatchETag = m.updated_at || null;
-            document.getElementById('f-home-team').value = m.home_team || '';
-            document.getElementById('f-away-team').value = m.away_team || '';
-            document.getElementById('f-date').value = m.date || '';
-            document.getElementById('f-time').value = m.time || '';
-            document.getElementById('f-location').value = m.location || '';
-            document.getElementById('f-score-home').value = m.score_home != null ? m.score_home : '';
-            document.getElementById('f-score-away').value = m.score_away != null ? m.score_away : '';
-            const formatRadio = document.querySelector(`input[name="format"][value="${m.format || 'full'}"]`);
-            if (formatRadio) formatRadio.checked = true;
-            this.toggleFormatFields();
-            this.resetFileLabels();
-            this.renderEditAssetStates(m);
-            const heading = document.getElementById('form-heading');
-            if (heading) heading.textContent = 'Edit Match';
-            const submit = document.getElementById('submit-btn');
-            if (submit) submit.textContent = 'Update Match';
-        } else {
-            this.toggleFormatFields();
-            this.resetFileLabels();
-        }
-
-        // After modal closes (any path), make sure transient state is gone.
-        // The formModal Promise resolves when the user dismisses or onSubmit
-        // calls close(); we already ran cancelEdit-style cleanup in
-        // handleFormSubmit on success, but for cancel paths we need to clear
-        // the hidden field so the next opener starts fresh.
+        // Post-close cleanup. cancelEdit's lookups are null-safe so detached
+        // DOM is fine; renderMatchLibraryTable refreshes the table for the
+        // user-cancelled path (the success path already refreshes inline).
         this.cancelEdit();
         this.renderMatchLibraryTable();
     },
