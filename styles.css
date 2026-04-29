@@ -1739,19 +1739,51 @@ button {
 }
 
 .btn-primary, .btn-secondary, .btn-danger {
-    /* Tightened from 0.95rem/1.6rem → 0.55rem/1rem so buttons stop
-       dominating cards and admin rails. Still ≥32 px tall so the
-       tap target meets the WCAG mobile guideline. */
-    padding: 0.55rem 1rem;
+    /* Stepped twice from the original 0.95rem/1.6rem (#36 first, then #37).
+       0.45rem/0.85rem keeps Save/Cancel ≥30 px tall so mobile tap targets
+       are fine, but the global primary tier no longer dominates cards. */
+    padding: 0.45rem 0.85rem;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     font-family: var(--font-heading);
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+}
+
+/* Section-head action button — quieter than the primary tier so it sits
+   alongside data without competing with it. Used by every button inside
+   an .admin-panel-head action row across the admin: Refresh, 60-s capture,
+   Copy snapshot, Download (Performance · Encoder & Host); Refresh,
+   Backfill HLS, Cleanup uploads, Export DB (Performance · Disk &
+   Diagnostics); the three Tuning preset buttons; etc. Visually identical
+   to .mini-action-btn but applied at section-head level. */
+.btn-head {
+    padding: 0.32rem 0.7rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-light);
+    background: transparent;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.btn-head:hover {
+    border-color: var(--accent);
+    background: rgba(23, 113, 201, 0.08);
+}
+
+.btn-head:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
 }
 
 .btn-primary {
@@ -1889,19 +1921,22 @@ button {
 
 .diagnostics-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.9rem;
+    /* Tighter tile minimum so 8 perf tiles fit on a single row at desktop
+       width (8 × 140 = 1120 px). The full-width Encoder & Host card now
+       gives them the room. */
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.7rem;
     margin-bottom: 1.25rem;
 }
 
 .diagnostic-card {
-    padding: 1rem 1.05rem;
-    border-radius: 12px;
-    background: rgba(0, 0, 0, 0.26);
+    padding: 0.85rem 0.95rem;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.18);
     border: 1px solid rgba(255,255,255,0.08);
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
+    gap: 0.25rem;
 }
 
 .diagnostic-card.danger {
@@ -1909,7 +1944,7 @@ button {
 }
 
 .diagnostic-label {
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-muted);
@@ -1918,13 +1953,15 @@ button {
 
 .diagnostic-value {
     font-family: var(--font-heading);
-    font-size: 1.5rem;
+    font-size: 1.7rem;
     letter-spacing: 0.04em;
+    /* Bumped from 1.5 → 1.7 rem so the metric reads as the primary
+       focus when an admin is watching the tile during a tuning change. */
 }
 
 .diagnostic-note {
     color: var(--text-muted);
-    font-size: 0.84rem;
+    font-size: 0.78rem;
 }
 
 .diagnostics-columns {
@@ -2600,6 +2637,21 @@ button {
 [data-theme="light"] .session-item {
     background: rgba(0,0,0,0.02);
     border-color: rgba(0,0,0,0.06);
+}
+
+/* Performance section: diagnostics accordions and the HLS-ladder <details>
+   wrapper need their dark-mode rgba(255,255,255,…) backgrounds flipped to
+   black-alpha for light mode — otherwise both panels read as flat / nearly
+   invisible against the off-white page. Same convention as .session-item /
+   .diagnostic-card above. */
+[data-theme="light"] .diag-accordion {
+    background: rgba(0,0,0,0.02);
+    border-color: rgba(0,0,0,0.08);
+}
+
+[data-theme="light"] .tuning-knobs-grid .form-group-details {
+    background: rgba(0,0,0,0.015);
+    border-color: rgba(0,0,0,0.08);
 }
 
 [data-theme="light"] .status-pill {
@@ -4815,22 +4867,77 @@ button {
     color: var(--text-main);
 }
 
-/* ===== Performance section (admin → /performance) ===== */
+/* ===== Performance section (admin → /performance) =====
+   Stacked full-width cards instead of the previous 2-column grid that
+   crushed the tuning sidebar. The Encoder & Host tile grid and the
+   Tuning Knobs editor each get the full width of the section. */
 
-.performance-grid {
+/* Tuning knobs grid — flex-friendly multi-column. Most knobs are scalar
+   (label + small input + helper text) and fit at 220 px. Knobs marked
+   .form-group-fullwidth (HLS variant ladder, etc.) span the whole row. */
+.tuning-knobs-grid {
     display: grid;
-    grid-template-columns: 1fr minmax(280px, 380px);
-    gap: 1rem;
-    align-items: start;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem 1.25rem;
 }
 
-@media (max-width: 900px) {
-    .performance-grid { grid-template-columns: 1fr; }
+.tuning-knobs-grid .form-group {
+    margin-bottom: 0;
 }
 
-.performance-knobs .options-card { margin-top: 0; }
+.tuning-knobs-grid .form-group-fullwidth {
+    grid-column: 1 / -1;
+}
 
-.performance-knobs .tuning-presets {
+/* HLS variant ladder hides behind a <details> toggle. Closed state is
+   compact summary; open state lets the ladder table extend horizontally. */
+.tuning-knobs-grid .form-group-details {
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.tuning-knobs-grid .form-group-details summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.55rem 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    user-select: none;
+    font-family: var(--font-heading);
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
+    color: var(--text-main);
+}
+
+/* Suppress the native disclosure triangle in both webkit (Safari < 15) and
+   the standards-track ::marker pseudo-element so Firefox doesn't render
+   its native triangle alongside our custom ▸ chevron. */
+.tuning-knobs-grid .form-group-details summary::-webkit-details-marker { display: none; }
+.tuning-knobs-grid .form-group-details summary::marker { display: none; }
+
+.tuning-knobs-grid .form-group-details summary::before {
+    content: '▸';
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    transition: transform 0.2s ease;
+}
+
+.tuning-knobs-grid .form-group-details[open] summary::before {
+    transform: rotate(90deg);
+    display: inline-block;
+}
+
+.tuning-knobs-grid .form-group-summary-label {
+    flex: 1;
+}
+
+.tuning-knobs-grid .form-group-details-body {
+    padding: 0 0.85rem 0.85rem;
+}
+
+.tuning-presets {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
@@ -4863,7 +4970,11 @@ button {
     user-select: none;
 }
 
+/* See note on .form-group-details summary above — both webkit and standards
+   marker pseudo-elements need to be suppressed so Firefox doesn't double
+   up the native triangle and our custom chevron. */
 .diag-accordion summary::-webkit-details-marker { display: none; }
+.diag-accordion summary::marker { display: none; }
 
 .diag-accordion summary::before {
     content: '▸';
@@ -4900,7 +5011,208 @@ button {
 }
 
 .diag-accordion[open] > *:not(summary) {
-    padding: 0 0.95rem 0.95rem;
+    padding: 0 0.75rem 0.75rem;
+}
+
+/* Flat 1-row-per-entry layout used inside the Performance diagnostics
+   accordions (Recent errors, Upload sessions, Recent transcodes, Active
+   streaming sessions, Tuning audit). Replaces the old .session-item
+   stacked-card layout that was 3 layers of dark grey deep. */
+.diag-accordion .session-list {
+    display: flex;
+    flex-direction: column;
+    /* Tight rows, separated by hairline borders rather than gaps. */
+    gap: 0;
+}
+
+.diag-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 0.8rem;
+    color: var(--text-main);
+}
+
+.diag-row:last-child {
+    border-bottom: none;
+}
+
+.diag-row-time {
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.diag-row-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.74rem;
+    color: var(--text-main);
+    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 36ch;
+    white-space: nowrap;
+}
+
+.diag-row-tag {
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.diag-row-code {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--red);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+.diag-row-reason {
+    color: var(--text-main);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.diag-row-meta {
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.diag-row-action {
+    margin-left: auto;
+}
+
+.diag-row-empty {
+    padding: 0.6rem 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.diag-row-error .diag-row-code {
+    background: rgba(255, 74, 74, 0.12);
+    border: 1px solid rgba(255, 74, 74, 0.3);
+    border-radius: 4px;
+    padding: 0.04rem 0.35rem;
+    color: #ff8f8f;
+}
+
+/* Collapsible error row — when an error has a `details` blob the row is
+   a <details> element so mobile / keyboard users can tap-to-expand
+   instead of relying on a hover tooltip. The summary holds the inline
+   row content (matching .diag-row's flex layout) and the body shows
+   the full details blob in a monospace pre. */
+details.diag-row-details {
+    /* Override the .diag-row flex on the <details> element itself —
+       <details> needs `display: block` so the summary + body stack
+       vertically on expand. The summary uses flex to lay out the row
+       content; see .diag-row-details summary below. */
+    display: block;
+    padding: 0;
+    cursor: pointer;
+}
+
+details.diag-row-details > summary {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.4rem 0;
+    user-select: none;
+}
+
+details.diag-row-details > summary::-webkit-details-marker { display: none; }
+details.diag-row-details > summary::marker { display: none; }
+
+details.diag-row-details > summary::after {
+    content: '▸';
+    margin-left: 0.4rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    transition: transform 0.15s ease;
+}
+
+details.diag-row-details[open] > summary::after {
+    transform: rotate(90deg);
+    display: inline-block;
+}
+
+.diag-row-details-body {
+    margin: 0.2rem 0 0.6rem;
+    padding: 0.6rem 0.7rem;
+    background: rgba(0, 0, 0, 0.18);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.74rem;
+    color: var(--text-main);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 12rem;
+    overflow: auto;
+}
+
+[data-theme="light"] .diag-row-details-body {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* "browser" tag pill on resumable upload rows — accent-tinted so it's
+   easy to scan past from the server-side rows above. */
+.diag-row-resume .diag-row-tag {
+    background: rgba(23, 113, 201, 0.14);
+    border: 1px solid rgba(23, 113, 201, 0.35);
+    color: var(--accent);
+    border-radius: 4px;
+    padding: 0.04rem 0.4rem;
+}
+
+/* Single-line summary for resumable uploads kept by THIS browser.
+   Replaces the old 2-column "Server | This browser" grid that wasted
+   horizontal space when (almost always) empty. */
+.local-resume-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.55rem;
+    padding-top: 0.55rem;
+    border-top: 1px dashed var(--border-light);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.local-resume-line:empty {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.local-resume-summary {
+    /* Container element written into by renderLocalResumeSessions.
+       Empty by default; the inline .local-resume-line provides its
+       own border so this wrapper just needs to participate in flow. */
+    display: block;
+}
+
+/* Drop the dark sub-card background — the accordion provides containment
+   on its own, and three nested grey panels was the visual problem. */
+.diagnostics-section {
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 /* ===== Overview activity strip ===== */
