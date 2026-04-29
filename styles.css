@@ -2468,6 +2468,14 @@ button {
     box-shadow: 0 10px 40px rgba(0,0,0,0.12);
 }
 
+/* The dark-mode badge has an accent halo behind the circle (.team-badge::after).
+   In light mode that halo reads as an obvious blue tint against the page
+   background, so suppress it. The light-mode box-shadow above is the visual
+   ring. */
+[data-theme="light"] .team-badge::after {
+    display: none;
+}
+
 [data-theme="light"] .match-card {
     background: linear-gradient(135deg, #fff, #f8f8fa);
     border-color: rgba(0,0,0,0.08);
