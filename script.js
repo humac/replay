@@ -190,6 +190,7 @@ const app = {
             }
         }
         this._stopPositionTracking();
+        this._stopVodHeartbeat?.();
         this.activeMatchId = null;
         this.activeSlot = null;
         this.destroyHlsPlayer();
