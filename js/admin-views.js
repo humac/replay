@@ -506,43 +506,353 @@ export const adminViewsMixin = {
         this.refreshOverviewKpis?.(this.diagnostics, { active: this.activeStreams, blocks: this.streamBlocks });
     },
 
-    renderTranscodingQueuePanel() {
-        const list = document.getElementById('matches-queue-list');
-        if (!list) return;
-        const active = this.diagnostics?.active_jobs || [];
-        const failed = this.diagnostics?.failed_slots || [];
-        if (!active.length && !failed.length) {
-            list.innerHTML = '<div class="session-empty">No active or failed encodes. New uploads will appear here while they process.</div>';
+    // ===== MATCH LIBRARY TABLE =====
+    //
+    // Library state lives on the app instance so filter inputs survive
+    // re-renders and the expanded-row set persists across status polls.
+    _libraryFilters: null,
+    _libraryExpanded: null,
+    _libraryWired: false,
+
+    _ensureLibraryState() {
+        if (!this._libraryFilters) {
+            this._libraryFilters = { q: '', status: '', format: '', sort: 'date_desc' };
+        }
+        if (!this._libraryExpanded) {
+            this._libraryExpanded = new Set();
+        }
+    },
+
+    setLibraryFilter(patch = {}) {
+        this._ensureLibraryState();
+        Object.assign(this._libraryFilters, patch);
+        this.renderMatchLibraryTable();
+    },
+
+    _wireLibraryControls() {
+        if (this._libraryWired) return;
+        this._libraryWired = true;
+        const search = document.getElementById('library-search');
+        if (search) {
+            search.addEventListener('input', () => this.setLibraryFilter({ q: search.value.trim() }));
+        }
+        const status = document.getElementById('library-status-filter');
+        if (status) {
+            status.addEventListener('change', () => this.setLibraryFilter({ status: status.value }));
+        }
+        const format = document.getElementById('library-format-filter');
+        if (format) {
+            format.addEventListener('change', () => this.setLibraryFilter({ format: format.value }));
+        }
+        const sort = document.getElementById('library-sort');
+        if (sort) {
+            sort.addEventListener('change', () => this.setLibraryFilter({ sort: sort.value }));
+        }
+    },
+
+    _matchSlotsForFormat(match) {
+        return match.format === 'two_halves' ? ['first_half', 'second_half'] : ['full'];
+    },
+
+    _matchAggregateStatus(match) {
+        const slots = this._matchSlotsForFormat(match);
+        const states = slots.map((s) => this.slotStatus(match, s));
+        if (states.includes('error')) return 'error';
+        if (states.includes('transcoding')) return 'transcoding';
+        if (states.every((s) => s === 'ready')) return 'ready';
+        if (states.every((s) => s === 'none')) return 'none';
+        return 'partial';
+    },
+
+    _slotPillHtml(match, slot) {
+        const status = this.slotStatus(match, slot);
+        const cls = status === 'transcoding' ? 'transcoding'
+                  : status === 'error' ? 'error'
+                  : status === 'ready' ? 'ready'
+                  : 'neutral';
+        const shortLabel = slot === 'first_half' ? '1H' : slot === 'second_half' ? '2H' : 'Full';
+        const stateText = status === 'none' ? 'no video' : status;
+        return `<span class="slot-pill ${cls}" title="${shortLabel} · ${stateText}">${shortLabel} · ${this.esc(stateText)}</span>`;
+    },
+
+    _filteredLibraryMatches() {
+        this._ensureLibraryState();
+        const f = this._libraryFilters;
+        const q = (f.q || '').toLowerCase();
+        let rows = (this.matches || []).slice();
+        if (q) {
+            rows = rows.filter((m) => {
+                const blob = `${m.home_team || ''} ${m.away_team || ''} ${m.location || ''} ${m.id || ''}`.toLowerCase();
+                return blob.includes(q);
+            });
+        }
+        if (f.format) rows = rows.filter((m) => (m.format || 'full') === f.format);
+        if (f.status) rows = rows.filter((m) => this._matchAggregateStatus(m) === f.status);
+        const cmpDate = (a, b) => (a.date || '').localeCompare(b.date || '');
+        const cmpUpdated = (a, b) => (b.updated_at || '').localeCompare(a.updated_at || '');
+        if (f.sort === 'date_asc') rows.sort(cmpDate);
+        else if (f.sort === 'updated_desc') rows.sort(cmpUpdated);
+        else rows.sort((a, b) => cmpDate(b, a)); // date_desc
+        return rows;
+    },
+
+    renderMatchLibraryTable() {
+        const wrap = document.getElementById('library-table-wrap');
+        const summary = document.getElementById('library-summary-line');
+        if (!wrap) return;
+        this._ensureLibraryState();
+        this._wireLibraryControls();
+
+        const matches = this.matches || [];
+        if (summary) {
+            const encoding = matches.filter((m) => this._matchAggregateStatus(m) === 'transcoding').length;
+            const failed = matches.filter((m) => this._matchAggregateStatus(m) === 'error').length;
+            summary.textContent = `${matches.length} match${matches.length === 1 ? '' : 'es'} · ${encoding} encoding · ${failed} failed`;
+        }
+
+        const filtered = this._filteredLibraryMatches();
+        if (!filtered.length) {
+            wrap.innerHTML = '<div class="session-empty">No matches yet. Use Add Match to record one.</div>';
             return;
         }
-        const activeRows = active.map((j) => `
-            <div class="session-item">
-                <div class="session-main">
-                    <div class="session-title-row">
-                        <strong>${this.esc(j.home_team)} vs ${this.esc(j.away_team)}</strong>
-                        <span class="status-pill transcoding">${this.esc(j.stage || 'transcoding')}</span>
+
+        const headerRow = `
+            <thead>
+                <tr>
+                    <th class="lib-col-expand" aria-label="Expand"></th>
+                    <th class="lib-col-date">Date</th>
+                    <th class="lib-col-matchup">Matchup</th>
+                    <th class="lib-col-format">Format</th>
+                    <th class="lib-col-slots">Slots</th>
+                    <th class="lib-col-score">Score</th>
+                    <th class="lib-col-updated">Updated</th>
+                    <th class="lib-col-menu" aria-label="Actions"></th>
+                </tr>
+            </thead>
+        `;
+
+        const bodyRows = filtered.map((m) => this._renderMatchRow(m)).join('');
+        wrap.innerHTML = `<table class="match-library-table">${headerRow}<tbody>${bodyRows}</tbody></table>`;
+    },
+
+    _renderMatchRow(match) {
+        const expanded = this._libraryExpanded.has(match.id);
+        const slots = this._matchSlotsForFormat(match);
+        const slotPills = slots.map((s) => this._slotPillHtml(match, s)).join(' ');
+        const formatLabel = match.format === 'two_halves' ? 'Halves' : 'Full';
+        const aggregate = this._matchAggregateStatus(match);
+        const aggregateClass = aggregate === 'error' ? 'is-error'
+                             : aggregate === 'transcoding' ? 'is-encoding'
+                             : aggregate === 'ready' ? 'is-ready'
+                             : '';
+        const score = (match.score_home != null && match.score_away != null)
+            ? `${this.esc(match.score_home)}–${this.esc(match.score_away)}`
+            : '<span class="muted">—</span>';
+        const updatedLabel = match.updated_at ? this.esc(match.updated_at.replace('T', ' ').slice(0, 16)) : '<span class="muted">—</span>';
+        const safeId = this.esc(match.id);
+        const matchup = `<strong>${this.esc(match.home_team || '')}</strong> <span class="muted">vs</span> <strong>${this.esc(match.away_team || '')}</strong>${match.location ? `<div class="row-sub">${this.esc(match.location)}</div>` : ''}`;
+
+        const headRow = `
+            <tr class="match-row ${aggregateClass} ${expanded ? 'is-expanded' : ''}" data-match-row="${safeId}">
+                <td class="lib-col-expand">
+                    <button type="button" class="row-expand-btn" aria-expanded="${expanded}" aria-controls="match-detail-${safeId}" title="Toggle diagnostics" onclick="app.toggleMatchRow('${safeId}')">${expanded ? '▾' : '▸'}</button>
+                </td>
+                <td class="lib-col-date">${this.esc(match.date || '')}${match.time ? `<div class="row-sub">${this.esc(match.time)}</div>` : ''}</td>
+                <td class="lib-col-matchup">${matchup}</td>
+                <td class="lib-col-format"><span class="format-pill">${formatLabel}</span></td>
+                <td class="lib-col-slots">${slotPills}</td>
+                <td class="lib-col-score">${score}</td>
+                <td class="lib-col-updated">${updatedLabel}</td>
+                <td class="lib-col-menu">
+                    <div class="row-menu">
+                        <button type="button" class="row-menu-btn" title="Actions" onclick="app.toggleRowMenu('${safeId}', event)">⋯</button>
+                        <div class="row-menu-list" id="row-menu-${safeId}" hidden>
+                            <button type="button" onclick="app.openEditMatchModal('${safeId}')">Edit details</button>
+                            <button type="button" onclick="app.openMatchInPlayer('${safeId}')">Open in player</button>
+                            <button type="button" class="is-danger" onclick="app.deleteMatch('${safeId}')">Delete match</button>
+                        </div>
                     </div>
-                    <div class="session-meta">${this.slotLabel(j.slot)}${j.pct != null ? ' • ' + j.pct + '%' : ''}${j.elapsed_s != null ? ' • ' + this.formatAge(j.elapsed_s) : ''}</div>
-                    ${j.pct != null ? `<div class="progress-bar-container"><div class="progress-bar" style="width:${j.pct}%"></div></div>` : ''}
+                </td>
+            </tr>
+        `;
+
+        const detailRow = `
+            <tr class="match-detail-row" id="match-detail-${safeId}" ${expanded ? '' : 'hidden'}>
+                <td colspan="8">
+                    ${this._renderSlotDiagnosticsPanel(match)}
+                </td>
+            </tr>
+        `;
+
+        return headRow + detailRow;
+    },
+
+    _renderSlotDiagnosticsPanel(match) {
+        const slots = this._matchSlotsForFormat(match);
+        const isAdmin = !!this.isAdmin?.();
+        const safeId = this.esc(match.id);
+        const slotCards = slots.map((slot) => {
+            const status = this.slotStatus(match, slot);
+            const filename = match.videos?.[slot] || null;
+            const pillCls = status === 'transcoding' ? 'transcoding'
+                          : status === 'error' ? 'error'
+                          : status === 'ready' ? 'ready'
+                          : 'neutral';
+            const safeSlot = this.esc(slot);
+            const buttons = [];
+            // Verify is read-only — available to uploaders too.
+            buttons.push(`<button type="button" class="mini-action-btn" onclick="app.verifyAssets('${safeId}')">Verify</button>`);
+            if (isAdmin) {
+                if (status === 'ready') {
+                    buttons.push(`<button type="button" class="mini-action-btn" onclick="app.regenerateHls('${safeId}', '${safeSlot}')" title="Rebuild HLS variants only — fast, no re-encode">Regen HLS</button>`);
+                    buttons.push(`<button type="button" class="mini-action-btn" onclick="app.forceRetranscode('${safeId}', '${safeSlot}')" title="Full re-encode from existing MP4 — multi-minute">Re-transcode</button>`);
+                } else if (status === 'error') {
+                    buttons.push(`<button type="button" class="mini-action-btn" onclick="app.retryTranscode('${safeId}', '${safeSlot}')">Retry</button>`);
+                    buttons.push(`<button type="button" class="mini-action-btn" onclick="app.forceRetranscode('${safeId}', '${safeSlot}')">Force Re-transcode</button>`);
+                } else if (status === 'transcoding') {
+                    buttons.push(`<span class="muted">Encoder is working on this slot…</span>`);
+                }
+            }
+            buttons.push(`<button type="button" class="mini-action-btn" onclick="app.viewMatchErrors('${safeId}', '${safeSlot}')">Logs</button>`);
+            return `
+                <div class="slot-card">
+                    <div class="slot-card-head">
+                        <span class="status-pill ${pillCls}">${this.slotLabel(slot)}</span>
+                        <span class="muted">${this.esc(status === 'none' ? 'no video uploaded' : status)}</span>
+                    </div>
+                    <div class="slot-card-meta">
+                        ${filename ? `<span>file: ${this.esc(filename)}</span>` : '<span class="muted">no file on disk</span>'}
+                    </div>
+                    <div class="slot-card-actions">
+                        ${buttons.join('')}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        const thumbBlock = isAdmin
+            ? `<div class="slot-card slot-card-thumb">
+                    <div class="slot-card-head">
+                        <span class="status-pill ${match.has_thumbnail ? 'ready' : 'neutral'}">Thumbnail</span>
+                        <span class="muted">${match.has_thumbnail ? 'present' : 'missing'}</span>
+                    </div>
+                    <div class="slot-card-actions">
+                        <button type="button" class="mini-action-btn" onclick="app.regenerateMatchThumbnail('${safeId}')">Regenerate Thumbnail</button>
+                    </div>
+                </div>`
+            : '';
+
+        return `
+            <div class="slot-diagnostics-panel">
+                <div class="slot-diagnostics-head">
+                    <span class="muted">Match ID</span>
+                    <code>${safeId}</code>
+                </div>
+                <div class="slot-cards-grid">
+                    ${slotCards}
+                    ${thumbBlock}
                 </div>
             </div>
-        `).join('');
-        const failedRows = failed.map((f) => `
-            <div class="session-item">
-                <div class="session-main">
-                    <div class="session-title-row">
-                        <strong>${this.esc(f.home_team)} vs ${this.esc(f.away_team)}</strong>
-                        <span class="status-pill error">Stuck</span>
-                    </div>
-                    <div class="session-meta">${this.slotLabel(f.slot)}</div>
-                </div>
-                <div class="session-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.retryTranscode('${this.esc(f.match_id)}', '${this.esc(f.slot)}')">Retry</button>
-                    <button type="button" class="mini-action-btn" onclick="app.verifyAssets('${this.esc(f.match_id)}')">Verify</button>
-                </div>
-            </div>
-        `).join('');
-        list.innerHTML = activeRows + failedRows;
+        `;
+    },
+
+    toggleMatchRow(matchId) {
+        this._ensureLibraryState();
+        if (this._libraryExpanded.has(matchId)) this._libraryExpanded.delete(matchId);
+        else this._libraryExpanded.add(matchId);
+        this.renderMatchLibraryTable();
+    },
+
+    toggleRowMenu(matchId, event) {
+        if (event) event.stopPropagation();
+        document.querySelectorAll('.row-menu-list').forEach((el) => {
+            if (el.id === `row-menu-${matchId}`) {
+                el.hidden = !el.hidden;
+            } else {
+                el.hidden = true;
+            }
+        });
+        // One-shot click-away listener.
+        if (!this._rowMenuClickAway) {
+            this._rowMenuClickAway = (e) => {
+                if (!e.target.closest?.('.row-menu')) {
+                    document.querySelectorAll('.row-menu-list').forEach((el) => { el.hidden = true; });
+                }
+            };
+            document.addEventListener('click', this._rowMenuClickAway);
+        }
+    },
+
+    openMatchInPlayer(matchId) {
+        const match = (this.matches || []).find((m) => m.id === matchId);
+        if (!match) return;
+        const slug = match.slug || match.id;
+        try { window.open(`/match/${encodeURIComponent(slug)}`, '_blank', 'noopener'); }
+        catch { window.location.href = `/match/${encodeURIComponent(slug)}`; }
+    },
+
+    async viewMatchErrors(matchId, slot = null) {
+        try {
+            const resp = await fetch(`/api/admin/matches/${matchId}/errors`, {
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Failed to load error log');
+            const data = await resp.json();
+            const errors = (data.errors || []).filter((e) => !slot || e.slot === slot);
+            if (!errors.length) {
+                await this.notifyModal({
+                    title: 'No errors recorded',
+                    message: slot
+                        ? `No errors logged for ${this.slotLabel(slot)}.`
+                        : 'No errors logged for this match.',
+                });
+                return;
+            }
+            const lines = errors.slice(0, 10).map((e) => {
+                const when = (e.created_at || '').replace('T', ' ').slice(0, 19);
+                const detail = e.details ? ` — ${String(e.details).slice(0, 120)}` : '';
+                return `[${when}] ${e.slot} · ${e.error_code}: ${e.reason}${detail}`;
+            });
+            await this.notifyModal({
+                title: `Recent errors${slot ? ` · ${this.slotLabel(slot)}` : ''}`,
+                message: lines.join('\n'),
+            });
+        } catch (error) {
+            this.showError(error.message);
+        }
+    },
+
+    async regenerateMatchThumbnail(matchId) {
+        const slot = await this.promptChoice({
+            title: 'Regenerate thumbnail',
+            message: 'Pick the slot to grab a frame from. "Auto" uses the default priority (full → 1st half → 2nd half).',
+            options: [
+                { value: '', label: 'Auto' },
+                { value: 'full', label: 'Full match' },
+                { value: 'first_half', label: '1st Half' },
+                { value: 'second_half', label: '2nd Half' },
+            ],
+            initialValue: '',
+            confirmLabel: 'Regenerate',
+        });
+        if (slot === null) return;
+        const url = `/api/admin/matches/${matchId}/regenerate-thumbnail${slot ? `?slot=${slot}` : ''}`;
+        try {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Thumbnail regeneration failed');
+            }
+            const data = await resp.json();
+            this.showSuccess(`Thumbnail regenerated from ${data.slot}.`);
+            await this.loadMatches?.();
+            this.renderMatchLibraryTable();
+        } catch (error) {
+            this.showError(error.message);
+        }
     },
 
     async refreshActiveStreams() {
@@ -712,54 +1022,12 @@ export const adminViewsMixin = {
             </div>
         `;
 
-        // Active jobs
-        const jobsSection = document.getElementById('active-jobs-section');
-        const jobsList = document.getElementById('active-jobs-list');
-        if (jobsSection && jobsList) {
-            if (active_jobs && active_jobs.length) {
-                jobsSection.style.display = '';
-                jobsList.innerHTML = active_jobs.map(j => `
-                    <div class="session-item">
-                        <div class="session-main">
-                            <div class="session-title-row">
-                                <strong>${this.esc(j.home_team)} vs ${this.esc(j.away_team)}</strong>
-                                <span class="status-pill transcoding">${this.esc(j.stage || 'transcoding')}</span>
-                            </div>
-                            <div class="session-meta">${this.slotLabel(j.slot)}${j.pct != null ? ' • ' + j.pct + '%' : ''}${j.elapsed_s != null ? ' • ' + this.formatAge(j.elapsed_s) : ''}</div>
-                            ${j.pct != null ? `<div class="progress-bar-container"><div class="progress-bar" style="width:${j.pct}%"></div></div>` : ''}
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                jobsSection.style.display = 'none';
-            }
-        }
-
-        // Failed slots
-        const failedSection = document.getElementById('failed-slots-section');
-        const failedList = document.getElementById('failed-slots-list');
-        if (failedSection && failedList) {
-            if (failed_slots && failed_slots.length) {
-                failedSection.style.display = '';
-                failedList.innerHTML = failed_slots.map(f => `
-                    <div class="session-item">
-                        <div class="session-main">
-                            <div class="session-title-row">
-                                <strong>${this.esc(f.home_team)} vs ${this.esc(f.away_team)}</strong>
-                                <span class="status-pill error">Error</span>
-                            </div>
-                            <div class="session-meta">${this.slotLabel(f.slot)} • ${this.esc(f.match_id)}</div>
-                        </div>
-                        <div class="session-actions">
-                            <button type="button" class="mini-action-btn" onclick="app.retryTranscode('${this.esc(f.match_id)}', '${this.esc(f.slot)}')">Retry</button>
-                            <button type="button" class="mini-action-btn" onclick="app.verifyAssets('${this.esc(f.match_id)}')">Verify</button>
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                failedSection.style.display = 'none';
-            }
-        }
+        // Per-match active jobs and failed slots used to render here as
+        // standalone session-list panels. Both moved into the Match Library
+        // table (per-row aggregate pill + expanded slot diagnostics), which
+        // gives admins a row identity rather than a fleet-wide list of
+        // anonymous slots. Counts still surface in the diagnostic tiles
+        // above ("Failed Slots", "Matches" — ready/processing breakdown).
 
         // Recent errors
         const errorsSection = document.getElementById('recent-errors-section');
@@ -954,7 +1222,8 @@ export const adminViewsMixin = {
             }
             this.showSuccess(`HLS regenerated for ${slot}.`);
             await this.refreshAdminDiagnostics();
-            await this.renderLibraryMaintenance?.();
+            await this.loadMatches?.();
+            this.renderMatchLibraryTable?.();
         } catch (error) {
             this.showError(error.message);
         }
@@ -979,61 +1248,11 @@ export const adminViewsMixin = {
             }
             this.showSuccess(`Re-transcode started for ${slot}.`);
             await this.refreshAdminDiagnostics();
-            await this.renderLibraryMaintenance?.();
+            await this.loadMatches?.();
+            this.renderMatchLibraryTable?.();
         } catch (error) {
             this.showError(error.message);
         }
-    },
-
-    async renderLibraryMaintenance() {
-        // /admin/system is admin-only via routing (ADMIN_ONLY_SECTIONS in
-        // admin.js), so this code only runs for admin users — the markup
-        // never reaches a viewer/uploader. Defensive isAdmin check is
-        // belt-and-braces against future routing changes.
-        if (!this.isAdmin?.()) return;
-        const card = document.getElementById('library-maintenance-card');
-        const list = document.getElementById('lib-ready-slots-list');
-        if (!card || !list) return;
-
-        // One-time wire of the refresh button.
-        if (!card.dataset.wired) {
-            card.dataset.wired = '1';
-            document.getElementById('lib-refresh-btn')?.addEventListener('click', () => this.renderLibraryMaintenance());
-        }
-
-        const matches = this.matches || [];
-        const rows = [];
-        for (const m of matches) {
-            const vs = m.video_status || {};
-            for (const slot of ['full', 'first_half', 'second_half']) {
-                if (vs[slot] === 'ready') {
-                    rows.push({ match: m, slot });
-                }
-            }
-        }
-        if (!rows.length) {
-            list.innerHTML = '<div class="session-empty">No ready slots in the library.</div>';
-            return;
-        }
-        list.innerHTML = rows.map(({ match, slot }) => `
-            <div class="session-item">
-                <div class="session-main">
-                    <div class="session-title-row">
-                        <strong>${this.esc(match.home_team)} vs ${this.esc(match.away_team)}</strong>
-                        <span class="status-pill ready">${this.slotLabel(slot)}</span>
-                    </div>
-                    <div class="session-meta">${this.esc(match.id)}${match.date ? ' • ' + this.esc(match.date) : ''}</div>
-                </div>
-                <div class="session-actions">
-                    <button type="button" class="mini-action-btn"
-                            onclick="app.regenerateHls('${this.esc(match.id)}', '${this.esc(slot)}')"
-                            title="Rebuild HLS variants only — fast, no re-encode">Regen HLS</button>
-                    <button type="button" class="mini-action-btn"
-                            onclick="app.forceRetranscode('${this.esc(match.id)}', '${this.esc(slot)}')"
-                            title="Full re-encode from existing MP4 — multi-minute">Re-transcode</button>
-                </div>
-            </div>
-        `).join('');
     },
 
     async exportDatabase() {
@@ -1264,10 +1483,18 @@ export const adminViewsMixin = {
 
             await this.loadMatches();
             this.renderSeasonView();
-            this.cancelEdit();
-            document.getElementById('add-match-form').reset();
+            // Reset the form first so cancelEdit's lookups still find the
+            // hidden #edit-match-id field; then tear it down. The form
+            // template gets re-cloned each time the modal opens, so leaving
+            // detached DOM behind is fine.
+            const liveForm = document.getElementById('add-match-form');
+            if (liveForm) liveForm.reset();
             this.resetFileLabels();
-            this.showSeasonView({ replaceHistory: true });
+            this.cancelEdit();
+            // Re-render the library table so the new/updated match appears
+            // immediately. We stay on /admin/matches; the caller modal closes
+            // itself when this resolves cleanly.
+            this.renderMatchLibraryTable?.();
 
             this.checkTranscodePolling();
 
@@ -1287,54 +1514,164 @@ export const adminViewsMixin = {
     },
 
     editMatch(matchId, { pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
-        const match = this.matches.find(m => m.id === matchId);
+        // Legacy entry point — public season-view "Edit" buttons call this.
+        // Route through the modal so the entry point is uniform.
+        this.openEditMatchModal(matchId, { pushHistory, replaceHistory, scrollTop });
+    },
+
+    cancelEdit() {
+        // Reset hidden form state. The modal close handler tears down the DOM
+        // entirely, so guard each lookup — these elements may be detached.
+        const hiddenId = document.getElementById('edit-match-id');
+        if (hiddenId) hiddenId.value = '';
+        this._editMatchETag = null;
+        const form = document.getElementById('add-match-form');
+        if (form) form.reset();
+        const heading = document.getElementById('form-heading');
+        if (heading) heading.textContent = 'Add New Match';
+        const submit = document.getElementById('submit-btn');
+        if (submit) submit.textContent = 'Create Match';
+        const cancelBtn = document.getElementById('cancel-edit-btn');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (form) this.resetFileLabels();
+    },
+
+    // ===== ADD / EDIT MATCH MODAL =====
+    //
+    // The form template lives inside <template id="match-form-template"> in
+    // index.html so all of its input ids (f-home-team, f-video-full, …) are
+    // unique in the DOM only while the modal is open. Existing helpers
+    // (handleFormSubmit, toggleFormatFields, uploadFileIfSelected,
+    // uploadVideoIfSelected, renderEditAssetStates) read those ids at call
+    // time and therefore work without modification.
+
+    _mountMatchForm() {
+        const tpl = document.getElementById('match-form-template');
+        if (!tpl) return null;
+        const fragment = tpl.content.cloneNode(true);
+        const form = fragment.querySelector('#add-match-form');
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(form);
+        return wrapper;
+    },
+
+    _wireMountedFormFileLabels() {
+        // Mirror the boot-time wiring in script.js, scoped to the cloned form.
+        const ids = ['f-home-logo', 'f-away-logo', 'f-video-full', 'f-video-first', 'f-video-second'];
+        ids.forEach((id) => {
+            const input = document.getElementById(id);
+            const label = document.getElementById(id + '-label');
+            if (!input || !label || input.dataset.wired) return;
+            input.dataset.wired = '1';
+            input.addEventListener('change', () => {
+                const file = input.files[0];
+                if (file) {
+                    const n = file.name;
+                    label.textContent = n.length > 24
+                        ? n.slice(0, 14) + '…' + n.slice(-8)
+                        : n;
+                } else {
+                    label.textContent = 'No file chosen';
+                }
+                this.updatePendingUploadState(id, file || null);
+            });
+        });
+    },
+
+    async openAddMatchModal() {
+        await this._openMatchModal({ mode: 'add' });
+    },
+
+    async openEditMatchModal(matchId, { pushHistory = true, replaceHistory = false } = {}) {
+        const match = (this.matches || []).find((m) => m.id === matchId);
         if (!match) {
-            this.showAdminView('matches', { pushHistory });
+            this.showError('Match not found.');
             return;
         }
-
-        this.showAdminView('matches', { pushHistory: false, scrollTop: false });
-        if (this.authToken) this.refreshAdminDiagnostics();
-
-        document.getElementById('edit-match-id').value = match.id;
-        this._editMatchETag = match.updated_at || null;
-        document.getElementById('f-home-team').value = match.home_team || '';
-        document.getElementById('f-away-team').value = match.away_team || '';
-        document.getElementById('f-date').value = match.date || '';
-        document.getElementById('f-time').value = match.time || '';
-        document.getElementById('f-location').value = match.location || '';
-        document.getElementById('f-score-home').value = match.score_home != null ? match.score_home : '';
-        document.getElementById('f-score-away').value = match.score_away != null ? match.score_away : '';
-
-        const formatRadio = document.querySelector(`input[name="format"][value="${match.format || 'full'}"]`);
-        if (formatRadio) formatRadio.checked = true;
-        this.toggleFormatFields();
-        this.resetFileLabels();
-        this.renderEditAssetStates(match);
-
-        document.getElementById('form-heading').textContent = 'Edit Match';
-        document.getElementById('submit-btn').textContent = 'Update Match';
-        document.getElementById('cancel-edit-btn').style.display = 'inline-block';
-
         if (pushHistory) {
-            this.pushHistoryState(
+            this.pushHistoryState?.(
                 { view: 'admin', section: 'matches', mode: 'edit', matchId },
                 { replace: replaceHistory, url: '/admin/matches' },
             );
         }
-        if (scrollTop) {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+        await this._openMatchModal({ mode: 'edit', match });
     },
 
-    cancelEdit() {
-        document.getElementById('edit-match-id').value = '';
-        this._editMatchETag = null;
-        document.getElementById('add-match-form').reset();
-        document.getElementById('form-heading').textContent = 'Add New Match';
-        document.getElementById('submit-btn').textContent = 'Create Match';
-        document.getElementById('cancel-edit-btn').style.display = 'none';
-        this.resetFileLabels();
+    async _openMatchModal({ mode, match = null }) {
+        const body = this._mountMatchForm();
+        if (!body) {
+            this.showError('Match form template missing.');
+            return;
+        }
+
+        const isEdit = mode === 'edit' && match;
+        const title = isEdit ? `Edit · ${match.home_team || ''} vs ${match.away_team || ''}` : 'Add Match';
+        const confirmLabel = isEdit ? 'Update Match' : 'Create Match';
+        const kicker = isEdit ? 'Edit match' : 'New match';
+
+        await this.formModal({
+            title,
+            kicker,
+            body,
+            confirmLabel,
+            cancelLabel: 'Cancel',
+            size: 'wide',
+            onSubmit: async (close) => {
+                const before = this.matches?.length || 0;
+                try {
+                    await this.handleFormSubmit();
+                } catch (err) {
+                    // handleFormSubmit handles its own error toasts; re-throw to keep modal open.
+                    return;
+                }
+                // handleFormSubmit clears the form / resets edit state on success.
+                // Detect success: the hidden #edit-match-id should now be cleared.
+                const stillOpen = document.getElementById('edit-match-id');
+                if (!stillOpen || !stillOpen.value) {
+                    close(true);
+                    this.renderMatchLibraryTable();
+                    if (!isEdit && (this.matches?.length || 0) > before) {
+                        this.showInfo('Match added — encoding will continue in the background.');
+                    }
+                }
+            },
+        });
+
+        // Modal DOM was just appended — wire file inputs and seed values.
+        this._wireMountedFormFileLabels();
+
+        if (isEdit) {
+            const m = match;
+            document.getElementById('edit-match-id').value = m.id;
+            this._editMatchETag = m.updated_at || null;
+            document.getElementById('f-home-team').value = m.home_team || '';
+            document.getElementById('f-away-team').value = m.away_team || '';
+            document.getElementById('f-date').value = m.date || '';
+            document.getElementById('f-time').value = m.time || '';
+            document.getElementById('f-location').value = m.location || '';
+            document.getElementById('f-score-home').value = m.score_home != null ? m.score_home : '';
+            document.getElementById('f-score-away').value = m.score_away != null ? m.score_away : '';
+            const formatRadio = document.querySelector(`input[name="format"][value="${m.format || 'full'}"]`);
+            if (formatRadio) formatRadio.checked = true;
+            this.toggleFormatFields();
+            this.resetFileLabels();
+            this.renderEditAssetStates(m);
+            const heading = document.getElementById('form-heading');
+            if (heading) heading.textContent = 'Edit Match';
+            const submit = document.getElementById('submit-btn');
+            if (submit) submit.textContent = 'Update Match';
+        } else {
+            this.toggleFormatFields();
+            this.resetFileLabels();
+        }
+
+        // After modal closes (any path), make sure transient state is gone.
+        // The formModal Promise resolves when the user dismisses or onSubmit
+        // calls close(); we already ran cancelEdit-style cleanup in
+        // handleFormSubmit on success, but for cancel paths we need to clear
+        // the hidden field so the next opener starts fresh.
+        this.cancelEdit();
+        this.renderMatchLibraryTable();
     },
 
     async deleteMatch(matchId) {

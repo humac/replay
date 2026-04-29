@@ -116,9 +116,13 @@ export const adminMixin = {
                 this.refreshAdminDiagnostics?.();
                 break;
             case 'matches':
-                if (typeof this.renderTranscodingQueuePanel === 'function') {
-                    this.renderTranscodingQueuePanel();
+                if (typeof this.renderMatchLibraryTable === 'function') {
+                    this.renderMatchLibraryTable();
                 }
+                // Background refresh so tile counts (status strip) and
+                // per-slot statuses stay current while the user is on the
+                // library page. Matches list itself comes from this.matches,
+                // which loadMatches() keeps refreshed.
                 if (this.authToken && typeof this.refreshAdminDiagnostics === 'function') {
                     this.refreshAdminDiagnostics();
                 }
@@ -143,7 +147,6 @@ export const adminMixin = {
             case 'system':
                 this.refreshAdminDiagnostics?.();
                 this.startPerformanceTuningPolling?.();
-                this.renderLibraryMaintenance?.();
                 break;
         }
         if (section !== 'system') this.stopPerformanceTuningPolling?.();
@@ -292,7 +295,7 @@ export const adminMixin = {
             {
                 kicker: 'Failed Slots',
                 value: counts.failed_slots != null ? counts.failed_slots : '—',
-                note: counts.failed_slots ? 'Inspect and retry from System.' : 'No slots are stuck right now.',
+                note: counts.failed_slots ? 'Open Matches → expand a row to retry.' : 'No slots are stuck right now.',
                 tone: counts.failed_slots ? 'bad' : 'good',
             },
             {

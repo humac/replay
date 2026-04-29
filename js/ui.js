@@ -82,6 +82,10 @@ function openAppModal({
     danger = false,
     options = null,             // [{ value, label }] for prompt-style picker
     initialValue = '',
+    body = null,                // HTMLElement to mount inside the card (kind === 'form')
+    kicker = null,              // override kicker label
+    size = null,                // 'form' | 'wide' — adds .is-{size} class to card
+    onSubmit = null,            // async (closeFn) => void; called when user confirms a form modal
 } = {}) {
     return new Promise((resolve) => {
         if (_activeModal) _activeModal.close(null);
@@ -95,12 +99,20 @@ function openAppModal({
         backdrop.className = 'app-modal-backdrop';
 
         const card = document.createElement('div');
-        card.className = `app-modal-card${danger ? ' is-danger' : ''}`;
-        card.innerHTML = `
-            <span class="app-modal-kicker">${danger ? 'Confirm action' : (kind === 'alert' ? 'Status' : 'Confirm')}</span>
+        const sizeClass = size ? ` is-${size}` : (kind === 'form' ? ' is-form' : '');
+        card.className = `app-modal-card${danger ? ' is-danger' : ''}${sizeClass}`;
+        const kickerText = kicker
+            ?? (danger ? 'Confirm action'
+                : kind === 'alert' ? 'Status'
+                : kind === 'form' ? 'Form'
+                : 'Confirm');
+        const headHtml = `
+            <span class="app-modal-kicker">${escapeHtml(kickerText)}</span>
             <h3 class="app-modal-title">${escapeHtml(title)}</h3>
-            <p class="app-modal-message">${escapeHtml(message)}</p>
         `;
+        card.innerHTML = headHtml + (message
+            ? `<p class="app-modal-message">${escapeHtml(message)}</p>`
+            : '');
 
         let pickerEl = null;
         if (kind === 'prompt' && Array.isArray(options) && options.length) {
@@ -120,6 +132,13 @@ function openAppModal({
                 pickerEl.appendChild(btn);
             });
             card.appendChild(pickerEl);
+        }
+
+        if (kind === 'form' && body instanceof HTMLElement) {
+            const bodyWrap = document.createElement('div');
+            bodyWrap.className = 'app-modal-body';
+            bodyWrap.appendChild(body);
+            card.appendChild(bodyWrap);
         }
 
         const actions = document.createElement('div');
@@ -152,20 +171,23 @@ function openAppModal({
             resolve(value);
         };
 
-        const onConfirm = () => {
+        const onConfirm = async () => {
             if (kind === 'prompt') {
                 const active = pickerEl?.querySelector('.app-modal-picker-btn.is-active');
                 close(active ? active.dataset.value : initialValue);
             } else if (kind === 'alert') {
                 close(true);
+            } else if (kind === 'form' && typeof onSubmit === 'function') {
+                try { await onSubmit(close); }
+                catch (err) { console.error('form modal submit failed', err); }
             } else {
                 close(true);
             }
         };
-        const onCancel = () => close(kind === 'prompt' ? null : false);
+        const onCancel = () => close(kind === 'prompt' ? null : (kind === 'form' ? null : false));
         const onKey = (e) => {
             if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
-            if (e.key === 'Enter' && document.activeElement?.tagName !== 'BUTTON') {
+            if (e.key === 'Enter' && kind !== 'form' && document.activeElement?.tagName !== 'BUTTON') {
                 e.preventDefault(); onConfirm();
             }
         };
@@ -175,9 +197,16 @@ function openAppModal({
         backdrop.addEventListener('click', onCancel);
         document.addEventListener('keydown', onKey);
 
-        _activeModal = { close };
+        _activeModal = { close, card };
         // Focus handling — confirm by default, cancel for destructive prompts.
-        setTimeout(() => (danger ? cancelBtn || confirmBtn : confirmBtn).focus(), 0);
+        setTimeout(() => {
+            if (kind === 'form') {
+                const firstField = card.querySelector('input:not([type=hidden]), select, textarea');
+                (firstField || confirmBtn).focus();
+            } else {
+                (danger ? cancelBtn || confirmBtn : confirmBtn).focus();
+            }
+        }, 0);
     });
 }
 
@@ -207,6 +236,25 @@ export const uiMixin = {
     /** Promise<true> — informational modal with a single dismiss button. */
     notifyModal({ title, message, confirmLabel = 'Close' } = {}) {
         return openAppModal({ kind: 'alert', title, message, confirmLabel });
+    },
+
+    /**
+     * Promise — form-style modal that mounts caller-provided DOM. Resolves with
+     * whatever value the onSubmit handler passes to its close() callback, or
+     * `null` if the user cancels / dismisses.
+     */
+    formModal({ title, kicker, message = '', body, confirmLabel = 'Save', cancelLabel = 'Cancel', onSubmit, size = 'form' } = {}) {
+        return openAppModal({
+            kind: 'form',
+            title,
+            kicker,
+            message,
+            body,
+            confirmLabel,
+            cancelLabel,
+            onSubmit,
+            size,
+        });
     },
 
     /** Set a button into a loading state; returns a restore function. */
