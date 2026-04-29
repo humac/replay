@@ -224,15 +224,23 @@ function openAppModal({
 
 export const uiMixin = {
     showSuccess(message) {
-        showToast(message, { type: 'success' });
+        return showToast(message, { type: 'success' });
     },
 
     showError(message) {
-        showToast(message, { type: 'error', duration: 6000 });
+        return showToast(message, { type: 'error', duration: 6000 });
     },
 
-    showInfo(message) {
-        showToast(message, { type: 'info' });
+    showInfo(message, opts = {}) {
+        return showToast(message, { type: 'info', ...opts });
+    },
+
+    // Persistent info toast — stays until the caller calls .remove() on the
+    // returned element. Use for "operation in flight" affordance on calls
+    // that may take 30+ seconds (Regen HLS, Re-transcode, etc.). The toast
+    // dismiss button still works, so a frustrated user can clear it manually.
+    showProgress(message) {
+        return showToast(message, { type: 'info', duration: 0 });
     },
 
     /** Promise<boolean> — resolves true when the user confirms, false on cancel/escape. */
