@@ -215,6 +215,18 @@ export const adminMixin = {
                 this.streamBlocks = streams.blocks || [];
             }
             this.renderAdminStatusStrip({ diag, streams });
+
+            // The matches library viewers pill is computed at row-render
+            // time from this.activeStreams. Without an explicit re-render
+            // the pill stays at whatever value it had when the user
+            // entered /admin/matches and never updates as VOD viewers
+            // come and go. Cheap to re-render — just rewrites
+            // #library-table-wrap, leaves filter inputs and the
+            // _libraryExpanded set untouched.
+            const matchesSection = document.querySelector('.admin-section[data-admin-section="matches"]');
+            if (matchesSection && matchesSection.classList.contains('is-active') && typeof this.renderMatchLibraryTable === 'function') {
+                this.renderMatchLibraryTable();
+            }
         } catch (e) {
             console.warn('status strip refresh failed', e);
         }

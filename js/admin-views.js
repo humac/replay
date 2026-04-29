@@ -690,11 +690,18 @@ export const adminViewsMixin = {
         const thumbHtml = match.has_thumbnail
             ? `<img class="library-thumb" src="/api/matches/${safeId}/thumbnail" alt="" loading="lazy">`
             : `<div class="library-thumb library-thumb-placeholder" aria-hidden="true"></div>`;
+        // Live VOD viewer count for this match — badge visible on the
+        // collapsed row so admins notice activity without expanding every
+        // row. Refreshed on the 10 s status-strip cadence.
+        const vodCount = this.vodViewersForMatch?.(match.id) ?? 0;
+        const watchingBadge = vodCount > 0
+            ? `<span class="library-watching-badge" title="${vodCount} VOD viewer${vodCount === 1 ? '' : 's'} watching">● ${vodCount} watching</span>`
+            : '';
         const matchup = `
             <div class="library-matchup">
                 ${thumbHtml}
                 <div class="library-matchup-text">
-                    <div><strong>${this.esc(match.home_team || '')}</strong> <span class="muted">vs</span> <strong>${this.esc(match.away_team || '')}</strong></div>
+                    <div><strong>${this.esc(match.home_team || '')}</strong> <span class="muted">vs</span> <strong>${this.esc(match.away_team || '')}</strong>${watchingBadge}</div>
                     ${match.location ? `<div class="row-sub">${this.esc(match.location)}</div>` : ''}
                 </div>
             </div>
