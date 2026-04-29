@@ -1121,8 +1121,16 @@ export const adminViewsMixin = {
     // strip's 10 s `/api/admin/streams` poll also writes that cache (see
     // refreshAdminStatusStrip in admin.js), so the count stays current
     // while the user is on any admin section.
+    //
+    // Backend registers VOD sessions as `vod-hls` (HLS playback) or
+    // `vod-mp4` (direct MP4 download/stream) — match both. Filtering on
+    // bare 'vod' would silently miss every VOD viewer.
+    _isVodKind(kind) {
+        return kind === 'vod-hls' || kind === 'vod-mp4';
+    },
+
     vodViewersForMatch(matchId) {
-        return (this.activeStreams || []).filter((s) => s.kind === 'vod' && s.match_id === matchId).length;
+        return (this.activeStreams || []).filter((s) => this._isVodKind(s.kind) && s.match_id === matchId).length;
     },
 
     // Manage-viewers modal for a single match. Lists the active VOD sessions
@@ -1137,7 +1145,7 @@ export const adminViewsMixin = {
         body.className = 'match-viewers-modal-body';
 
         const renderList = () => {
-            const viewers = (this.activeStreams || []).filter((s) => s.kind === 'vod' && s.match_id === matchId);
+            const viewers = (this.activeStreams || []).filter((s) => this._isVodKind(s.kind) && s.match_id === matchId);
             if (!viewers.length) {
                 body.innerHTML = '<div class="session-empty">No active viewers right now.</div>';
                 return;
