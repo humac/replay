@@ -650,17 +650,28 @@ export const adminViewsMixin = {
             : '<span class="muted">—</span>';
         const updatedLabel = match.updated_at ? this.esc(match.updated_at.replace('T', ' ').slice(0, 16)) : '<span class="muted">—</span>';
         const safeId = this.esc(match.id);
-        const matchup = `<strong>${this.esc(match.home_team || '')}</strong> <span class="muted">vs</span> <strong>${this.esc(match.away_team || '')}</strong>${match.location ? `<div class="row-sub">${this.esc(match.location)}</div>` : ''}`;
+        const thumbHtml = match.has_thumbnail
+            ? `<img class="library-thumb" src="/api/matches/${safeId}/thumbnail" alt="" loading="lazy">`
+            : `<div class="library-thumb library-thumb-placeholder" aria-hidden="true"></div>`;
+        const matchup = `
+            <div class="library-matchup">
+                ${thumbHtml}
+                <div class="library-matchup-text">
+                    <div><strong>${this.esc(match.home_team || '')}</strong> <span class="muted">vs</span> <strong>${this.esc(match.away_team || '')}</strong></div>
+                    ${match.location ? `<div class="row-sub">${this.esc(match.location)}</div>` : ''}
+                </div>
+            </div>
+        `;
 
         const headRow = `
-            <tr class="match-row ${aggregateClass} ${expanded ? 'is-expanded' : ''}" data-match-row="${safeId}">
+            <tr class="library-row ${aggregateClass} ${expanded ? 'is-expanded' : ''}" data-match-row="${safeId}">
                 <td class="lib-col-expand">
-                    <button type="button" class="row-expand-btn" aria-expanded="${expanded}" aria-controls="match-detail-${safeId}" title="Toggle diagnostics" onclick="app.toggleMatchRow('${safeId}')">${expanded ? '▾' : '▸'}</button>
+                    <button type="button" class="row-expand-btn" aria-expanded="${expanded}" aria-controls="library-detail-${safeId}" title="Toggle diagnostics" onclick="app.toggleMatchRow('${safeId}')">${expanded ? '▾' : '▸'}</button>
                 </td>
                 <td class="lib-col-date">${this.esc(match.date || '')}${match.time ? `<div class="row-sub">${this.esc(match.time)}</div>` : ''}</td>
                 <td class="lib-col-matchup">${matchup}</td>
                 <td class="lib-col-format"><span class="format-pill">${formatLabel}</span></td>
-                <td class="lib-col-slots">${slotPills}</td>
+                <td class="lib-col-slots"><div class="slot-pill-stack">${slotPills}</div></td>
                 <td class="lib-col-score">${score}</td>
                 <td class="lib-col-updated">${updatedLabel}</td>
                 <td class="lib-col-menu">
@@ -677,7 +688,7 @@ export const adminViewsMixin = {
         `;
 
         const detailRow = `
-            <tr class="match-detail-row" id="match-detail-${safeId}" ${expanded ? '' : 'hidden'}>
+            <tr class="library-detail-row" id="library-detail-${safeId}" ${expanded ? '' : 'hidden'}>
                 <td colspan="8">
                     ${this._renderSlotDiagnosticsPanel(match)}
                 </td>
