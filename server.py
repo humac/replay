@@ -1582,23 +1582,60 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
 
 @app.post("/api/admin/matches/{match_id}/slots/{slot}/regenerate-hls")
 async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
-    """Regenerate HLS assets from an existing MP4 without re-transcoding."""
+    """Regenerate HLS assets from an existing MP4 without re-transcoding.
+
+    Failure paths are deliberately verbose so an admin clicking Regen HLS
+    in the matches library has *some* signal in the response and the log
+    stream when the operation goes wrong (the frontend only shows
+    "Failed: <detail>" toast, so the detail string matters).
+    """
     user = _auth.require_role(request, "admin")
+    actor = user.get("username") if isinstance(user, dict) else "?"
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
     match = _db.get_match_by_id(match_id)
     if not match:
+        logger.info("regen_hls.skipped: match_not_found %s", match_id, extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "match_not_found"})
         raise HTTPException(404, "Match not found")
 
     mp4_path = _slot_mp4_path(match_id, slot)
     if not mp4_path.is_file():
-        raise HTTPException(404, "MP4 file not found on disk")
+        logger.warning(
+            "regen_hls.skipped: mp4_not_found %s/%s at %s", match_id, slot, mp4_path,
+            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "mp4_not_found"},
+        )
+        raise HTTPException(404, f"MP4 file not found on disk at {mp4_path}")
 
-    ok = await _build_hls_assets(mp4_path, match_id, slot)
+    logger.info(
+        "regen_hls.start %s/%s by %s (mp4=%s, %s bytes)",
+        match_id, slot, actor, mp4_path, mp4_path.stat().st_size,
+        extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "start"},
+    )
+    try:
+        ok = await _build_hls_assets(mp4_path, match_id, slot)
+    except Exception as exc:
+        # Surface the underlying ffmpeg / probe error in both the log and
+        # the HTTP response so the admin doesn't have to grep stdout.
+        logger.exception(
+            "regen_hls.crash %s/%s: %s", match_id, slot, exc,
+            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "exception"},
+        )
+        raise HTTPException(500, f"HLS generation crashed: {type(exc).__name__}: {exc}")
+
     if not ok:
-        raise HTTPException(500, "HLS generation failed")
-    logger.info("admin.action", extra={"action": "regenerate_hls", "actor": user["username"], "target_id": match_id, "slot": slot})
+        logger.warning(
+            "regen_hls.failed %s/%s — all variant methods exhausted (see preceding warnings for ffmpeg stderr tails)",
+            match_id, slot,
+            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "all_failed"},
+        )
+        raise HTTPException(500, "HLS generation failed — every variant exhausted its hwaccel + CPU fallback. Check the server log for the ffmpeg stderr tail.")
+
+    logger.info(
+        "admin.action regen_hls.done %s/%s by %s",
+        match_id, slot, actor,
+        extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "done"},
+    )
     return {"ok": True, "slot": slot}
 
 
