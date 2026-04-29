@@ -4980,3 +4980,27 @@ button {
     max-height: 60vh;
     overflow-y: auto;
 }
+
+/* "● 2 watching" badge that surfaces VOD activity on a collapsed library row
+   so admins notice it without expanding. Compact pill, accent palette,
+   pulses gently to draw the eye. */
+.library-watching-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.55rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(23, 113, 201, 0.14);
+    color: var(--accent);
+    border: 1px solid rgba(23, 113, 201, 0.35);
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    font-weight: 500;
+    vertical-align: middle;
+    animation: libraryWatchingPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes libraryWatchingPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
