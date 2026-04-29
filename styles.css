@@ -2639,6 +2639,21 @@ button {
     border-color: rgba(0,0,0,0.06);
 }
 
+/* Performance section: diagnostics accordions and the HLS-ladder <details>
+   wrapper need their dark-mode rgba(255,255,255,…) backgrounds flipped to
+   black-alpha for light mode — otherwise both panels read as flat / nearly
+   invisible against the off-white page. Same convention as .session-item /
+   .diagnostic-card above. */
+[data-theme="light"] .diag-accordion {
+    background: rgba(0,0,0,0.02);
+    border-color: rgba(0,0,0,0.08);
+}
+
+[data-theme="light"] .tuning-knobs-grid .form-group-details {
+    background: rgba(0,0,0,0.015);
+    border-color: rgba(0,0,0,0.08);
+}
+
 [data-theme="light"] .status-pill {
     background: rgba(0,0,0,0.06);
     color: var(--text-main);
@@ -4896,7 +4911,11 @@ button {
     color: var(--text-main);
 }
 
+/* Suppress the native disclosure triangle in both webkit (Safari < 15) and
+   the standards-track ::marker pseudo-element so Firefox doesn't render
+   its native triangle alongside our custom ▸ chevron. */
 .tuning-knobs-grid .form-group-details summary::-webkit-details-marker { display: none; }
+.tuning-knobs-grid .form-group-details summary::marker { display: none; }
 
 .tuning-knobs-grid .form-group-details summary::before {
     content: '▸';
@@ -4951,7 +4970,11 @@ button {
     user-select: none;
 }
 
+/* See note on .form-group-details summary above — both webkit and standards
+   marker pseudo-elements need to be suppressed so Firefox doesn't double
+   up the native triangle and our custom chevron. */
 .diag-accordion summary::-webkit-details-marker { display: none; }
+.diag-accordion summary::marker { display: none; }
 
 .diag-accordion summary::before {
     content: '▸';
@@ -5083,6 +5106,77 @@ button {
     border-radius: 4px;
     padding: 0.04rem 0.35rem;
     color: #ff8f8f;
+}
+
+/* Collapsible error row — when an error has a `details` blob the row is
+   a <details> element so mobile / keyboard users can tap-to-expand
+   instead of relying on a hover tooltip. The summary holds the inline
+   row content (matching .diag-row's flex layout) and the body shows
+   the full details blob in a monospace pre. */
+details.diag-row-details {
+    /* Override the .diag-row flex on the <details> element itself —
+       <details> needs `display: block` so the summary + body stack
+       vertically on expand. The summary uses flex to lay out the row
+       content; see .diag-row-details summary below. */
+    display: block;
+    padding: 0;
+    cursor: pointer;
+}
+
+details.diag-row-details > summary {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.4rem 0;
+    user-select: none;
+}
+
+details.diag-row-details > summary::-webkit-details-marker { display: none; }
+details.diag-row-details > summary::marker { display: none; }
+
+details.diag-row-details > summary::after {
+    content: '▸';
+    margin-left: 0.4rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    transition: transform 0.15s ease;
+}
+
+details.diag-row-details[open] > summary::after {
+    transform: rotate(90deg);
+    display: inline-block;
+}
+
+.diag-row-details-body {
+    margin: 0.2rem 0 0.6rem;
+    padding: 0.6rem 0.7rem;
+    background: rgba(0, 0, 0, 0.18);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.74rem;
+    color: var(--text-main);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 12rem;
+    overflow: auto;
+}
+
+[data-theme="light"] .diag-row-details-body {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* "browser" tag pill on resumable upload rows — accent-tinted so it's
+   easy to scan past from the server-side rows above. */
+.diag-row-resume .diag-row-tag {
+    background: rgba(23, 113, 201, 0.14);
+    border: 1px solid rgba(23, 113, 201, 0.35);
+    color: var(--accent);
+    border-radius: 4px;
+    padding: 0.04rem 0.4rem;
 }
 
 /* Single-line summary for resumable uploads kept by THIS browser.

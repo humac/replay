@@ -1338,21 +1338,32 @@ export const adminViewsMixin = {
         const errorsList = document.getElementById('recent-errors-list');
         const errorsCount = document.getElementById('diag-errors-count');
         // Recent errors — flat 1-line-per-row layout. Drops the per-item
-        // dark-grey card; rows are separated by a hairline border.
+        // dark-grey card; rows are separated by a hairline border. When an
+        // error has a `details` blob we wrap the row in a <details> element
+        // so mobile / keyboard users can expand it (the previous tooltip-only
+        // approach was inaccessible on those input modes).
         if (errorsList) {
             if (recent_errors && recent_errors.length) {
                 errorsList.innerHTML = recent_errors.map((e) => {
-                    const when = (e.created_at || '').replace('T', ' ').slice(11, 16);
-                    const detailTitle = e.details ? `title="${this.esc(String(e.details).slice(0, 400))}"` : '';
-                    return `
-                        <div class="diag-row diag-row-error" ${detailTitle}>
-                            <span class="diag-row-time">${this.esc(when)}</span>
-                            <span class="diag-row-id">${this.esc(e.match_id || '')}</span>
-                            <span class="diag-row-tag">${this.esc(this.slotLabel(e.slot))}</span>
-                            <span class="diag-row-code">${this.esc(e.error_code || '')}</span>
-                            <span class="diag-row-reason">${this.esc(e.reason || '')}</span>
-                        </div>
+                    // YYYY-MM-DD HH:MM — preserves the date so multi-day
+                    // outages don't reduce to ambiguous time-of-day strings.
+                    const when = (e.created_at || '').replace('T', ' ').slice(0, 16);
+                    const head = `
+                        <span class="diag-row-time">${this.esc(when)}</span>
+                        <span class="diag-row-id">${this.esc(e.match_id || '')}</span>
+                        <span class="diag-row-tag">${this.esc(this.slotLabel(e.slot))}</span>
+                        <span class="diag-row-code">${this.esc(e.error_code || '')}</span>
+                        <span class="diag-row-reason">${this.esc(e.reason || '')}</span>
                     `;
+                    if (e.details) {
+                        return `
+                            <details class="diag-row diag-row-error diag-row-details">
+                                <summary>${head}</summary>
+                                <pre class="diag-row-details-body">${this.esc(String(e.details))}</pre>
+                            </details>
+                        `;
+                    }
+                    return `<div class="diag-row diag-row-error">${head}</div>`;
                 }).join('');
             } else {
                 errorsList.innerHTML = '<div class="diag-row-empty">No recent encoder errors.</div>';
@@ -1388,25 +1399,29 @@ export const adminViewsMixin = {
     },
 
     // Resumable uploads kept in this browser's localStorage. Almost always
-    // empty in practice; collapse the previous 2-column grid down to a
-    // single trailing summary line so it doesn't dominate the accordion.
+    // empty in practice. Render flat .diag-row entries so each stalled
+    // upload gets its own per-entry "Clear" button — collapsing them to a
+    // single summary line meant the admin could only target the oldest
+    // entry. Stays compact (one row per entry, no nested cards) but
+    // restores per-row affordance.
     renderLocalResumeSessions() {
         const entries = Object.entries(this.getSavedUploadSessions());
         if (!entries.length) return '';
-        const noun = `${entries.length} resumable upload${entries.length === 1 ? '' : 's'}`;
-        // Build a tooltip with the per-entry details so power users can
-        // still see what's queued without taking up vertical space.
-        const tooltip = entries.map(([, session]) => {
-            const file = session.file_name || session.match_id || 'upload';
-            return `${file} · ${session.match_id} · ${this.slotLabel(session.slot)} · ${this.formatBytes(session.size_bytes || 0)}`;
-        }).join('\n');
-        const firstKey = entries[0][0];
-        return `
-            <div class="local-resume-line" title="${this.esc(tooltip)}">
-                <span>${noun} from this browser. Re-open the match form and re-select the file to resume.</span>
-                <button type="button" class="mini-action-btn" onclick="app.clearLocalResumeSession(decodeURIComponent('${encodeURIComponent(firstKey)}'))">Clear oldest</button>
-            </div>
-        `;
+        return entries.map(([key, session]) => {
+            const fileLabel = session.file_name || session.match_id || 'upload';
+            const sizeLabel = this.formatBytes(session.size_bytes || 0);
+            const safeKey = encodeURIComponent(key);
+            return `
+                <div class="diag-row diag-row-resume">
+                    <span class="diag-row-tag">browser</span>
+                    <span class="diag-row-id">${this.esc(fileLabel)}</span>
+                    <span class="diag-row-meta">${this.esc(session.match_id || '')} · ${this.esc(this.slotLabel(session.slot))} · ${sizeLabel}</span>
+                    <span class="diag-row-action">
+                        <button type="button" class="mini-action-btn" onclick="app.clearLocalResumeSession(decodeURIComponent('${safeKey}'))">Clear</button>
+                    </span>
+                </div>
+            `;
+        }).join('');
     },
 
     async cleanupStaleUploads() {
