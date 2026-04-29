@@ -1605,6 +1605,14 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
             "regen_hls.skipped: mp4_not_found %s/%s at %s", match_id, slot, mp4_path,
             extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "mp4_not_found"},
         )
+        # Surface in the admin Recent Errors panel too — admin actions that
+        # fail are exactly the kind of thing the panel exists to flag.
+        _db.log_video_error(
+            match_id, slot,
+            "REGEN_HLS_MP4_MISSING",
+            "Regen HLS skipped — MP4 not found on disk.",
+            f"Expected at {mp4_path}. The slot may need a Re-transcode (or a fresh upload) before HLS can be rebuilt.",
+        )
         raise HTTPException(404, f"MP4 file not found on disk at {mp4_path}")
 
     logger.info(
@@ -1621,6 +1629,12 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
             "regen_hls.crash %s/%s: %s", match_id, slot, exc,
             extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "exception"},
         )
+        _db.log_video_error(
+            match_id, slot,
+            "REGEN_HLS_CRASH",
+            f"Regen HLS crashed: {type(exc).__name__}",
+            f"{type(exc).__name__}: {exc}\nTriggered by {actor}. See server log for full traceback.",
+        )
         raise HTTPException(500, f"HLS generation crashed: {type(exc).__name__}: {exc}")
 
     if not ok:
@@ -1628,6 +1642,12 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
             "regen_hls.failed %s/%s — all variant methods exhausted (see preceding warnings for ffmpeg stderr tails)",
             match_id, slot,
             extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "all_failed"},
+        )
+        _db.log_video_error(
+            match_id, slot,
+            "REGEN_HLS_FAILED",
+            "Regen HLS failed — every variant exhausted hwaccel + CPU fallback.",
+            f"Triggered by {actor}. Check the server log for the per-variant ffmpeg stderr tails (lines tagged 'HLS variant {match_id}/{slot}/<name> <method> failed').",
         )
         raise HTTPException(500, "HLS generation failed — every variant exhausted its hwaccel + CPU fallback. Check the server log for the ffmpeg stderr tail.")
 
