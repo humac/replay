@@ -3722,8 +3722,12 @@ button {
 }
 
 [data-theme="light"] .form-group select {
-    background-color: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.10);
+    /* Pure white on the off-white page so the select reads as a fillable
+       field, not a disabled grey box. The earlier rule at line ~2531 sets
+       this; we only override the dropdown chevron colour here, deliberately
+       NOT the background. */
+    background-color: #ffffff;
+    border-color: rgba(0, 0, 0, 0.14);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%236b6b75' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
 }
 
@@ -4215,7 +4219,7 @@ button {
     padding: 0.5rem 0.75rem;
     border-radius: 8px;
     border: 1px solid var(--border-light);
-    background: var(--bg-dark);
+    background: rgba(0, 0, 0, 0.35);
     color: var(--text-main);
     font-family: var(--font-body);
     font-size: 0.9rem;
@@ -4225,10 +4229,20 @@ button {
     padding: 0.5rem 0.6rem;
     border-radius: 8px;
     border: 1px solid var(--border-light);
-    background: var(--bg-dark);
+    background: rgba(0, 0, 0, 0.35);
     color: var(--text-main);
     font-family: var(--font-body);
     font-size: 0.85rem;
+}
+
+/* Light theme — match the rest of the form elements: pure white fields with a
+   visible hairline border. The default rule above used var(--bg-dark) which
+   evaluates to the page background in light mode and made the controls look
+   disabled. */
+[data-theme="light"] .library-filter-bar input[type="search"],
+[data-theme="light"] .library-filter-bar select {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.14);
 }
 
 .library-filter-bar input:focus,
@@ -4624,4 +4638,345 @@ button {
     .match-library-table .lib-col-expand { display: inline-block; padding-right: 0.6rem; }
     .match-library-table .lib-col-matchup { display: inline-block; }
     .match-library-table .lib-col-menu { display: block; padding-top: 0.3rem; }
+}
+
+/* ===== Live Console (admin → /live) ===== */
+
+.live-console-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.live-console-header-state {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.live-onair-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: 999px;
+    font-family: var(--font-heading);
+    font-size: 0.8rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-light);
+    color: var(--text-muted);
+}
+
+.live-onair-pill[data-state="on"] {
+    background: rgba(255, 74, 74, 0.14);
+    border-color: rgba(255, 74, 74, 0.35);
+    color: #ff8f8f;
+}
+
+.live-onair-pill[data-state="standby"] {
+    background: rgba(255, 170, 0, 0.14);
+    border-color: rgba(255, 170, 0, 0.30);
+    color: #ffaa00;
+}
+
+.live-onair-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.live-onair-pill[data-state="on"] .live-onair-dot {
+    animation: liveOnAirPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes liveOnAirPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.9); }
+}
+
+.live-console-viewers {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* Two-column grid: write-rail (form) on the left, read-rail (telemetry) on
+   the right. Collapses to single column at ≤900 px so the existing admin
+   breakpoint isn't introduced into the new layout. */
+.live-console-grid {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) 1fr;
+    gap: 1rem;
+    align-items: start;
+}
+
+.live-console-rail .options-card,
+.live-console-read .options-card {
+    margin-top: 0;
+}
+
+.live-console-rail .options-card + .options-card,
+.live-console-read .options-card + .options-card {
+    margin-top: 1rem;
+}
+
+@media (max-width: 900px) {
+    .live-console-grid { grid-template-columns: 1fr; }
+}
+
+.live-throughput-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.live-throughput-now {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.live-throughput-value {
+    font-family: var(--font-heading);
+    font-size: 1.6rem;
+    color: var(--text-main);
+    letter-spacing: 0.04em;
+}
+
+.live-throughput-note {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.live-throughput-spark {
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.live-encoder-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 0.6rem;
+}
+
+.live-encoder-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.live-encoder-kicker {
+    font-family: var(--font-heading);
+    font-size: 0.65rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.live-encoder-value {
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
+    color: var(--text-main);
+}
+
+/* ===== Performance section (admin → /performance) ===== */
+
+.performance-grid {
+    display: grid;
+    grid-template-columns: 1fr minmax(280px, 380px);
+    gap: 1rem;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .performance-grid { grid-template-columns: 1fr; }
+}
+
+.performance-knobs .options-card { margin-top: 0; }
+
+.performance-knobs .tuning-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+/* Diagnostics accordion — one-line summary closed, expands on click. Replaces
+   the always-on session-list panels that took 30+ vertical lines. */
+.diag-accordions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.diag-accordion {
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    overflow: hidden;
+}
+
+.diag-accordion summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.7rem 0.95rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    user-select: none;
+}
+
+.diag-accordion summary::-webkit-details-marker { display: none; }
+
+.diag-accordion summary::before {
+    content: '▸';
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-right: 0.4rem;
+    transition: transform 0.2s ease;
+}
+
+.diag-accordion[open] summary::before { transform: rotate(90deg); display: inline-block; }
+
+.diag-accordion-title {
+    flex: 1;
+    font-family: var(--font-heading);
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-main);
+}
+
+.diag-accordion-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 22px;
+    padding: 0 0.55rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-light);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.diag-accordion[open] > *:not(summary) {
+    padding: 0 0.95rem 0.95rem;
+}
+
+/* ===== Overview activity strip ===== */
+
+.overview-activity-card { padding-bottom: 0.75rem; }
+
+.activity-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+}
+
+.activity-empty {
+    padding: 0.5rem 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.activity-event {
+    display: grid;
+    grid-template-columns: 24px auto 1fr auto auto;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: rgba(255, 255, 255, 0.015);
+    font-size: 0.85rem;
+}
+
+.activity-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.activity-event.tone-bad .activity-glyph { background: rgba(255, 74, 74, 0.14); color: #ff8f8f; }
+.activity-event.tone-good .activity-glyph { background: rgba(34, 197, 94, 0.14); color: #7be3a0; }
+.activity-event.tone-accent .activity-glyph { background: rgba(23, 113, 201, 0.16); color: var(--accent); }
+
+.activity-verb {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.activity-subject {
+    color: var(--text-main);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.activity-detail {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.activity-time {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ===== Slot diagnostics — VOD viewers pill on expanded library row ===== */
+
+.slot-diagnostics-viewers {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(23, 113, 201, 0.14);
+    color: var(--accent);
+    border: 1px solid rgba(23, 113, 201, 0.35);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    margin-left: auto;
+    /* When rendered as a <button> (admin + viewers > 0) it stays a pill, but
+       gains a hover affordance and pointer cursor so the click is obvious. */
+    font-family: inherit;
+}
+
+.slot-diagnostics-viewers.is-clickable {
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.slot-diagnostics-viewers.is-clickable:hover,
+.slot-diagnostics-viewers.is-clickable:focus-visible {
+    background: rgba(23, 113, 201, 0.22);
+    border-color: rgba(23, 113, 201, 0.55);
+    outline: none;
+}
+
+.match-viewers-modal-body {
+    max-height: 60vh;
+    overflow-y: auto;
 }

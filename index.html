@@ -290,22 +290,29 @@
                     <!-- OVERVIEW -->
                     <section class="admin-section" data-admin-section="overview">
                         <div class="overview-kpi-grid" id="overview-kpi-grid"></div>
+                        <div class="options-card mt-4 overview-activity-card">
+                            <div class="admin-card-head">
+                                <h3>Recent Activity</h3>
+                                <span class="admin-card-kicker">Last events</span>
+                            </div>
+                            <div id="overview-activity-strip" class="activity-strip"></div>
+                        </div>
                         <div class="overview-quick-actions">
                             <a href="/admin/matches" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('matches');setTimeout(() => app.openAddMatchModal(), 50);">
                                 <span class="overview-quick-glyph">＋</span>
                                 <span class="overview-quick-label"><strong>Add a match</strong><span>Drop in video, fill teams, watch it encode.</span></span>
                             </a>
-                            <a href="/admin/streams" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('streams')">
-                                <span class="overview-quick-glyph">◉</span>
-                                <span class="overview-quick-label"><strong>Watch the audience</strong><span>See who is currently streaming and kill abusers.</span></span>
-                            </a>
                             <a href="/admin/live" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('live')">
                                 <span class="overview-quick-glyph">⚡</span>
-                                <span class="overview-quick-label"><strong>Open the booth</strong><span>RTMP key, MediaMTX status, rotate stream key.</span></span>
+                                <span class="overview-quick-label"><strong>Open the booth</strong><span>RTMP key, viewers, encoder load.</span></span>
                             </a>
-                            <a href="/admin/system" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('system')">
+                            <a href="/admin/performance" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('performance')">
                                 <span class="overview-quick-glyph">⚙</span>
-                                <span class="overview-quick-label"><strong>Open the toolbox</strong><span>Disk, encoding errors, backfill, DB export.</span></span>
+                                <span class="overview-quick-label"><strong>Performance</strong><span>Encoder, host load, tuning knobs.</span></span>
+                            </a>
+                            <a href="/admin/settings" class="overview-quick-action" onclick="event.preventDefault();app.showAdminView('settings')">
+                                <span class="overview-quick-glyph">✎</span>
+                                <span class="overview-quick-label"><strong>Settings</strong><span>Branding, public copy, downloads.</span></span>
                             </a>
                         </div>
                     </section>
@@ -499,87 +506,124 @@
                         </template>
                     </section>
 
-                    <!-- LIVE -->
+                    <!-- LIVE CONSOLE — broadcast cockpit (write-side form on the left
+                         rail; read-side viewers/throughput/encoder-load on the right). -->
                     <section class="admin-section" data-admin-section="live">
-                        <form id="live-settings-card" class="live-settings-card" onsubmit="event.preventDefault();app.handleSettingsSubmit()">
-                            <div class="options-card">
-                                <div class="admin-card-head">
-                                    <h3>Camera Ingest</h3>
-                                    <span class="admin-card-kicker">RTMP</span>
-                                </div>
-                                <p class="admin-panel-copy">Point a camera (e.g. XbotGo Falcon) at the RTMP URL with the stream key below. Rotating the key invalidates the old one immediately.</p>
-                                <div class="form-row">
-                                    <div class="form-group settings-checkbox-group">
-                                        <label class="checkbox-label">
-                                            <input type="checkbox" id="settings-live-enabled">
-                                            Enable live streaming and accept incoming streams
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Public RTMP URL (shown to camera operators)</label>
-                                        <input type="text" id="settings-live-rtmp-public-url" maxlength="200" placeholder="rtmp://your-host:1935/live">
-                                    </div>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Offline Message</label>
-                                        <input type="text" id="settings-live-offline-message" maxlength="160" placeholder="Shown when no stream is active">
-                                    </div>
-                                </div>
+                        <div class="live-console-header">
+                            <div class="live-console-header-state">
+                                <span class="live-onair-pill" id="live-onair-pill" data-state="off">
+                                    <span class="live-onair-dot" aria-hidden="true"></span>
+                                    <span id="live-onair-label">OFF AIR</span>
+                                </span>
+                                <span class="live-console-viewers" id="live-console-viewers">0 viewers</span>
                             </div>
-
-                            <div class="options-card mt-4">
-                                <div class="admin-card-head">
-                                    <h3>Endpoint &amp; Key</h3>
-                                    <span class="admin-card-kicker">Secrets</span>
-                                </div>
-                                <div class="live-config-row">
-                                    <span class="live-config-label">RTMP Endpoint</span>
-                                    <span class="live-config-value" id="live-config-rtmp">—</span>
-                                    <div class="live-config-actions">
-                                        <button type="button" class="btn-secondary" id="live-copy-rtmp-btn">Copy</button>
-                                    </div>
-                                </div>
-                                <div class="live-config-row">
-                                    <span class="live-config-label">Stream Key</span>
-                                    <span class="live-config-value is-secret" id="live-config-stream-key">••••••••</span>
-                                    <div class="live-config-actions">
-                                        <button type="button" class="btn-secondary" id="live-reveal-key-btn">Reveal</button>
-                                        <button type="button" class="btn-secondary" id="live-copy-key-btn">Copy</button>
-                                        <button type="button" class="btn-secondary" id="live-rotate-key-btn">Rotate</button>
-                                    </div>
-                                </div>
-                                <div class="live-diagnose-row">
-                                    <button type="button" class="btn-secondary" id="live-diagnose-btn">Diagnose</button>
-                                    <span class="live-diagnose-hint">Snapshot of MediaMTX paths, RTMP connections, and recent auth rejections.</span>
-                                </div>
-                                <div class="live-diagnose-report" id="live-diagnose-report" style="display:none;"></div>
-                            </div>
-
-                            <div class="form-actions mt-4">
-                                <button type="submit" class="btn-primary">Save Live Settings</button>
-                            </div>
-                        </form>
-                    </section>
-
-                    <!-- STREAMS -->
-                    <section class="admin-section" data-admin-section="streams">
-                        <div class="options-card">
-                            <div class="admin-card-head">
-                                <h3>Active Streaming Connections</h3>
-                                <span class="admin-card-kicker">Realtime</span>
-                            </div>
-                            <p class="admin-panel-copy">Every viewer currently watching live or VOD. Killing a session blocks that IP from this resource for 5 minutes.</p>
-                            <div id="active-streams-list" class="session-list"></div>
                         </div>
-                        <div class="options-card mt-4" id="stream-blocks-section" style="display:none;">
-                            <div class="admin-card-head">
-                                <h3>Active Stream Blocks</h3>
-                                <span class="admin-card-kicker">Cooldown</span>
+
+                        <div class="live-console-grid">
+                            <!-- Left rail: write controls -->
+                            <form id="live-settings-card" class="live-settings-card live-console-rail" onsubmit="event.preventDefault();app.handleSettingsSubmit()">
+                                <div class="options-card">
+                                    <div class="admin-card-head">
+                                        <h3>Camera Ingest</h3>
+                                        <span class="admin-card-kicker">RTMP</span>
+                                    </div>
+                                    <p class="admin-panel-copy">Point a camera (e.g. XbotGo Falcon) at the RTMP URL with the stream key below. Rotating the key invalidates the old one immediately.</p>
+                                    <div class="form-row">
+                                        <div class="form-group settings-checkbox-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="settings-live-enabled">
+                                                Enable live streaming and accept incoming streams
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Public RTMP URL (shown to camera operators)</label>
+                                            <input type="text" id="settings-live-rtmp-public-url" maxlength="200" placeholder="rtmp://your-host:1935/live">
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Offline Message</label>
+                                            <input type="text" id="settings-live-offline-message" maxlength="160" placeholder="Shown when no stream is active">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="options-card mt-4">
+                                    <div class="admin-card-head">
+                                        <h3>Endpoint &amp; Key</h3>
+                                        <span class="admin-card-kicker">Secrets</span>
+                                    </div>
+                                    <div class="live-config-row">
+                                        <span class="live-config-label">RTMP Endpoint</span>
+                                        <span class="live-config-value" id="live-config-rtmp">—</span>
+                                        <div class="live-config-actions">
+                                            <button type="button" class="btn-secondary" id="live-copy-rtmp-btn">Copy</button>
+                                        </div>
+                                    </div>
+                                    <div class="live-config-row">
+                                        <span class="live-config-label">Stream Key</span>
+                                        <span class="live-config-value is-secret" id="live-config-stream-key">••••••••</span>
+                                        <div class="live-config-actions">
+                                            <button type="button" class="btn-secondary" id="live-reveal-key-btn">Reveal</button>
+                                            <button type="button" class="btn-secondary" id="live-copy-key-btn">Copy</button>
+                                            <button type="button" class="btn-secondary" id="live-rotate-key-btn">Rotate</button>
+                                        </div>
+                                    </div>
+                                    <div class="live-diagnose-row">
+                                        <button type="button" class="btn-secondary" id="live-diagnose-btn">Diagnose</button>
+                                        <span class="live-diagnose-hint">Snapshot of MediaMTX paths, RTMP connections, and recent auth rejections.</span>
+                                    </div>
+                                    <div class="live-diagnose-report" id="live-diagnose-report" style="display:none;"></div>
+                                </div>
+
+                                <div class="form-actions mt-4">
+                                    <button type="submit" class="btn-primary">Save Live Settings</button>
+                                </div>
+                            </form>
+
+                            <!-- Right rail: read-only telemetry and viewer kill-list -->
+                            <div class="live-console-read">
+                                <div class="options-card">
+                                    <div class="admin-card-head">
+                                        <h3>Live Throughput</h3>
+                                        <span class="admin-card-kicker">Last 60 s</span>
+                                    </div>
+                                    <div class="live-throughput-row">
+                                        <div class="live-throughput-now">
+                                            <span class="live-throughput-value" id="live-throughput-bps">— Mbps</span>
+                                            <span class="live-throughput-note" id="live-throughput-avg">Avg 30 s: —</span>
+                                        </div>
+                                        <div class="live-throughput-spark" id="live-throughput-spark" aria-hidden="true"></div>
+                                    </div>
+                                </div>
+
+                                <div class="options-card mt-4">
+                                    <div class="admin-card-head">
+                                        <h3>Encoder Load</h3>
+                                        <span class="admin-card-kicker">Live path</span>
+                                    </div>
+                                    <div class="live-encoder-grid" id="live-encoder-grid"></div>
+                                </div>
+
+                                <div class="options-card mt-4">
+                                    <div class="admin-card-head">
+                                        <h3>Active Viewers</h3>
+                                        <span class="admin-card-kicker" id="live-viewers-count">0</span>
+                                    </div>
+                                    <p class="admin-panel-copy">Live viewers only. Killing a session blocks that IP from the live stream for 5 minutes.</p>
+                                    <div id="live-viewers-list" class="session-list"></div>
+                                </div>
+
+                                <div class="options-card mt-4" id="live-blocks-section" style="display:none;">
+                                    <div class="admin-card-head">
+                                        <h3>Stream Blocks</h3>
+                                        <span class="admin-card-kicker">Cooldown</span>
+                                    </div>
+                                    <div id="live-blocks-list" class="session-list"></div>
+                                </div>
                             </div>
-                            <div id="stream-blocks-list" class="session-list"></div>
                         </div>
                     </section>
 
@@ -751,93 +795,132 @@
                                 </div>
                             </div>
 
-                            <div class="options-card mt-4" id="tuning-knobs-card">
-                                <div class="admin-card-head">
-                                    <h3>Performance Tuning</h3>
-                                    <span class="admin-card-kicker">Encoder, uploads, live</span>
-                                </div>
-                                <p class="admin-panel-copy">
-                                    Knobs that used to live in env vars. Most apply on the next call;
-                                    a few (segment duration, live HLS variant, recording, live transcode)
-                                    require a process or MediaMTX restart and are flagged as such.
-                                </p>
-                                <div class="admin-panel-actions">
-                                    <button type="button" class="btn-secondary" data-tuning-preset="conservative">Conservative</button>
-                                    <button type="button" class="btn-secondary" data-tuning-preset="balanced-10g">Balanced 10 GbE</button>
-                                    <button type="button" class="btn-secondary" data-tuning-preset="live-first">Live-first</button>
-                                </div>
-                                <div id="tuning-knobs-grid" class="form-grid"></div>
-                                <div class="diagnostics-section mt-4">
-                                    <div class="diagnostics-section-title">Recent changes</div>
-                                    <div id="tuning-audit-list" class="session-list"></div>
-                                </div>
-                            </div>
-
                             <div class="form-actions mt-4">
                                 <button type="submit" id="settings-submit-btn" class="btn-primary">Save Settings</button>
                             </div>
                         </form>
                     </section>
 
-                    <!-- SYSTEM -->
-                    <section class="admin-section" data-admin-section="system">
-                        <div class="options-card admin-ops-card" id="admin-ops-card">
+                    <!-- PERFORMANCE — encoder + host telemetry on the left, tuning knobs on the
+                         right (knob change + impact in one view). Diagnostics rails (errors,
+                         upload sessions, recent transcodes, audit) are collapsed accordions
+                         at the bottom — count pill closed, expand to see detail. -->
+                    <section class="admin-section" data-admin-section="performance">
+                        <div class="performance-grid">
+                            <div class="performance-read">
+                                <div class="options-card admin-ops-card" id="performance-tuning-card">
+                                    <div class="admin-panel-head">
+                                        <div>
+                                            <h3>Encoder &amp; Host</h3>
+                                            <p class="admin-panel-copy">
+                                                Live + VOD throughput, host load, iGPU activity, and transcode realtime factor — refreshes every 5 s.
+                                            </p>
+                                        </div>
+                                        <div class="admin-panel-actions">
+                                            <button type="button" class="btn-secondary" id="perf-refresh-btn">Refresh</button>
+                                            <button type="button" class="btn-secondary" id="perf-capture-btn">60-s capture</button>
+                                            <button type="button" class="btn-secondary" id="perf-copy-btn">Copy snapshot</button>
+                                            <button type="button" class="btn-secondary" id="perf-download-btn">Download</button>
+                                        </div>
+                                    </div>
+                                    <div id="perf-grid" class="diagnostics-grid"></div>
+                                </div>
+                            </div>
+
+                            <aside class="performance-knobs">
+                                <div class="options-card mt-0" id="tuning-knobs-card">
+                                    <div class="admin-card-head">
+                                        <h3>Tuning Knobs</h3>
+                                        <span class="admin-card-kicker">Encoder, uploads, live</span>
+                                    </div>
+                                    <p class="admin-panel-copy">
+                                        Most apply on the next call; a few (segment duration, live HLS variant, recording, live transcode)
+                                        require a process or MediaMTX restart and are flagged.
+                                    </p>
+                                    <div class="admin-panel-actions tuning-presets">
+                                        <button type="button" class="btn-secondary" data-tuning-preset="conservative">Conservative</button>
+                                        <button type="button" class="btn-secondary" data-tuning-preset="balanced-10g">Balanced 10 GbE</button>
+                                        <button type="button" class="btn-secondary" data-tuning-preset="live-first">Live-first</button>
+                                    </div>
+                                    <div id="tuning-knobs-grid" class="form-grid"></div>
+                                    <div class="form-actions mt-3">
+                                        <button type="button" id="tuning-save-btn" class="btn-primary" onclick="app.handleTuningSubmit()">Save Tuning</button>
+                                    </div>
+                                </div>
+                            </aside>
+                        </div>
+
+                        <div class="options-card admin-ops-card mt-4" id="admin-ops-card">
                             <div class="admin-panel-head">
                                 <div>
-                                    <h3>Diagnostics</h3>
-                                    <p class="admin-panel-copy">Live upload state, disk headroom, and cleanup controls for interrupted jobs.</p>
+                                    <h3>Disk &amp; Diagnostics</h3>
+                                    <p class="admin-panel-copy">Disk headroom, encoding queue, and cleanup controls for interrupted jobs.</p>
                                 </div>
                                 <div class="admin-panel-actions">
                                     <button type="button" class="btn-secondary" id="refresh-diagnostics-btn">Refresh</button>
-                                    <button type="button" class="btn-secondary" id="backfill-hls-btn">Backfill Existing HLS</button>
-                                    <button type="button" class="btn-secondary" id="cleanup-uploads-btn">Cleanup Stale Uploads</button>
-                                    <button type="button" class="btn-secondary" id="export-db-btn">Export Database</button>
+                                    <button type="button" class="btn-secondary" id="backfill-hls-btn">Backfill HLS</button>
+                                    <button type="button" class="btn-secondary" id="cleanup-uploads-btn">Cleanup uploads</button>
+                                    <button type="button" class="btn-secondary" id="export-db-btn">Export DB</button>
                                 </div>
                             </div>
                             <div id="diagnostics-grid" class="diagnostics-grid"></div>
-                            <div id="recent-errors-section" class="diagnostics-section" style="display:none;">
-                                <div class="diagnostics-section-title">Recent Errors</div>
-                                <div id="recent-errors-list" class="session-list"></div>
-                            </div>
-                            <div class="diagnostics-columns">
-                                <div class="diagnostics-section">
-                                    <div class="diagnostics-section-title">Server Upload Sessions</div>
-                                    <div id="upload-sessions-list" class="session-list"></div>
-                                </div>
-                                <div class="diagnostics-section">
-                                    <div class="diagnostics-section-title">This Browser Can Resume</div>
-                                    <div id="local-upload-sessions-list" class="session-list"></div>
-                                </div>
+
+                            <!-- Collapsed-by-default accordions. Closed state is one row with a
+                                 count pill; click to expand. Reuses the existing renderers
+                                 that fill #recent-errors-list, #upload-sessions-list,
+                                 #local-upload-sessions-list, #perf-rt-list, #perf-sessions-list,
+                                 #tuning-audit-list — only the wrapper changes. -->
+                            <div class="diag-accordions">
+                                <details class="diag-accordion" id="diag-errors">
+                                    <summary>
+                                        <span class="diag-accordion-title">Recent errors</span>
+                                        <span class="diag-accordion-count" id="diag-errors-count">0</span>
+                                    </summary>
+                                    <div id="recent-errors-list" class="session-list"></div>
+                                </details>
+
+                                <details class="diag-accordion" id="diag-uploads">
+                                    <summary>
+                                        <span class="diag-accordion-title">Upload sessions</span>
+                                        <span class="diag-accordion-count" id="diag-uploads-count">0</span>
+                                    </summary>
+                                    <div class="diagnostics-columns">
+                                        <div class="diagnostics-section">
+                                            <div class="diagnostics-section-title">Server</div>
+                                            <div id="upload-sessions-list" class="session-list"></div>
+                                        </div>
+                                        <div class="diagnostics-section">
+                                            <div class="diagnostics-section-title">This browser</div>
+                                            <div id="local-upload-sessions-list" class="session-list"></div>
+                                        </div>
+                                    </div>
+                                </details>
+
+                                <details class="diag-accordion" id="diag-transcodes">
+                                    <summary>
+                                        <span class="diag-accordion-title">Recent transcodes (realtime factor)</span>
+                                        <span class="diag-accordion-count" id="diag-transcodes-count">0</span>
+                                    </summary>
+                                    <div id="perf-rt-list" class="session-list"></div>
+                                </details>
+
+                                <details class="diag-accordion" id="diag-sessions">
+                                    <summary>
+                                        <span class="diag-accordion-title">Active streaming sessions</span>
+                                        <span class="diag-accordion-count" id="diag-sessions-count">0</span>
+                                    </summary>
+                                    <div id="perf-sessions-list" class="session-list"></div>
+                                </details>
+
+                                <details class="diag-accordion" id="diag-audit">
+                                    <summary>
+                                        <span class="diag-accordion-title">Tuning audit log</span>
+                                        <span class="diag-accordion-count" id="diag-audit-count">0</span>
+                                    </summary>
+                                    <div id="tuning-audit-list" class="session-list"></div>
+                                </details>
                             </div>
                         </div>
-
-                        <div class="options-card admin-ops-card mt-4" id="performance-tuning-card">
-                            <div class="admin-panel-head">
-                                <div>
-                                    <h3>Performance Tuning</h3>
-                                    <p class="admin-panel-copy">
-                                        Live throughput, host load, iGPU activity, and transcode realtime factor.
-                                        Use the snapshot button to copy a redacted JSON bundle into a coding agent.
-                                    </p>
-                                </div>
-                                <div class="admin-panel-actions">
-                                    <button type="button" class="btn-secondary" id="perf-refresh-btn">Refresh</button>
-                                    <button type="button" class="btn-secondary" id="perf-capture-btn">Start 60-s capture</button>
-                                    <button type="button" class="btn-secondary" id="perf-copy-btn">Copy snapshot</button>
-                                    <button type="button" class="btn-secondary" id="perf-download-btn">Download JSON</button>
-                                </div>
-                            </div>
-                            <div id="perf-grid" class="diagnostics-grid"></div>
-                            <div class="diagnostics-section mt-3">
-                                <div class="diagnostics-section-title">Recent Transcodes (realtime factor)</div>
-                                <div id="perf-rt-list" class="session-list"></div>
-                            </div>
-                            <div class="diagnostics-section mt-3">
-                                <div class="diagnostics-section-title">Active Streaming Throughput</div>
-                                <div id="perf-sessions-list" class="session-list"></div>
-                            </div>
-                        </div>
-
                     </section>
                 </div>
             </div>

@@ -96,8 +96,10 @@ export const adminViewsMixin = {
 
         // Audit list
         const auditList = document.getElementById('tuning-audit-list');
+        const auditCountEl = document.getElementById('diag-audit-count');
         if (auditList) {
             const entries = payload.audit || [];
+            if (auditCountEl) auditCountEl.textContent = String(entries.length);
             auditList.innerHTML = entries.length
                 ? entries.map((e) => `
                     <div class="session-item">
@@ -418,6 +420,41 @@ export const adminViewsMixin = {
         }
         this.setAppSettingsPayload(await resp.json());
         this.applyAppSettings();
+    },
+
+    // Tuning-only save path used by the Performance section's #tuning-save-btn.
+    // /api/admin/settings PUT accepts partial bodies (server iterates submitted
+    // keys), so omitting branding/copy/live fields leaves them untouched. This
+    // avoids the bug where saving tuning from the Performance section would
+    // PUT empty live form values (HTML defaults) and silently disable live
+    // streaming + clear the configured RTMP URL.
+    async handleTuningSubmit() {
+        const submitBtn = document.getElementById('tuning-save-btn');
+        const body = { ...this.collectTuningKnobs() };
+        const restore = this.btnLoading(submitBtn, 'Saving...');
+        try {
+            const resp = await this.authFetch('/api/admin/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                const detail = err.detail;
+                const msg = (detail && typeof detail === 'object' && detail.errors)
+                    ? Object.entries(detail.errors).map(([k, v]) => `${k}: ${v}`).join('; ')
+                    : (typeof detail === 'string' ? detail : 'Failed to save tuning');
+                throw new Error(msg);
+            }
+            this.setAppSettingsPayload(await resp.json());
+            this.applyAppSettings();
+            this.renderTuningKnobsCard();
+            this.showSuccess('Tuning saved.');
+        } catch (error) {
+            this.showError(error.message);
+        } finally {
+            restore('Save Tuning');
+        }
     },
 
     async handleSettingsSubmit() {
@@ -753,11 +790,21 @@ export const adminViewsMixin = {
                 </div>`
             : '';
 
+        // Clickable when admin + viewers > 0 — opens a modal listing the VOD
+        // sessions with Kill buttons. Static pill otherwise.
+        const vodViewers = this.vodViewersForMatch?.(match.id) ?? 0;
+        const viewersPill = vodViewers
+            ? (isAdmin
+                ? `<button type="button" class="slot-diagnostics-viewers is-clickable" onclick="app.openMatchViewersModal('${safeId}')">${vodViewers} viewer${vodViewers === 1 ? '' : 's'} watching now</button>`
+                : `<span class="slot-diagnostics-viewers">${vodViewers} viewer${vodViewers === 1 ? '' : 's'} watching now</span>`)
+            : '';
+
         return `
             <div class="slot-diagnostics-panel">
                 <div class="slot-diagnostics-head">
                     <span class="muted">Match ID</span>
                     <code>${safeId}</code>
+                    ${viewersPill}
                 </div>
                 <div class="slot-cards-grid">
                     ${slotCards}
@@ -866,12 +913,12 @@ export const adminViewsMixin = {
         }
     },
 
+    // Fetch /api/admin/streams and store on the app instance. Rendering is
+    // delegated to renderActiveStreams() (Live Console viewers list — live
+    // sessions only) and the on-air pill in the Live Console header. VOD
+    // viewer counts surface per-row in the matches library (vodViewersForMatch).
     async refreshActiveStreams() {
         if (!this.authToken) return;
-        const list = document.getElementById('active-streams-list');
-        const blocksSection = document.getElementById('stream-blocks-section');
-        const blocksList = document.getElementById('stream-blocks-list');
-        if (!list) return;
         try {
             const resp = await fetch('/api/admin/streams', { headers: this.getAuthHeaders() });
             if (!resp.ok) throw new Error('Failed to load active streams');
@@ -879,50 +926,27 @@ export const adminViewsMixin = {
             this.activeStreams = data.active || [];
             this.streamBlocks = data.blocks || [];
             this.renderActiveStreams();
-            if (blocksSection && blocksList) {
-                if (this.streamBlocks.length) {
-                    blocksSection.style.display = '';
-                    blocksList.innerHTML = this.streamBlocks.map((b, idx) => `
-                        <div class="session-item">
-                            <div class="session-main">
-                                <div class="session-title-row">
-                                    <strong>${this.esc(b.ip)}</strong>
-                                    <span class="status-pill error">${this.esc(b.kind)}</span>
-                                </div>
-                                <div class="session-meta">
-                                    ${b.match_id ? this.esc(b.match_id) + (b.slot ? ' • ' + this.slotLabel(b.slot) : '') : 'live stream'}
-                                    • clears in ${Math.max(0, Math.round(b.expires_in_seconds))}s
-                                </div>
-                            </div>
-                            <div class="session-actions">
-                                <button type="button" class="mini-action-btn stream-unblock-btn" data-idx="${idx}">Unblock</button>
-                            </div>
-                        </div>
-                    `).join('');
-                    blocksList.querySelectorAll('.stream-unblock-btn').forEach(btn => {
-                        const idx = parseInt(btn.dataset.idx, 10);
-                        btn.addEventListener('click', () => this.unblockStream(this.streamBlocks[idx]));
-                    });
-                } else {
-                    blocksSection.style.display = 'none';
-                }
-            }
+            this.renderLiveConsoleHeader?.();
+            this.renderLiveBlocks?.();
         } catch (error) {
-            list.innerHTML = `<div class="session-empty">${this.esc(error.message)}</div>`;
+            const list = document.getElementById('live-viewers-list');
+            if (list) list.innerHTML = `<div class="session-empty">${this.esc(error.message)}</div>`;
         }
     },
 
+    // Live Console viewers list — live-kind only. VOD viewers are shown per
+    // match in the library expanded row, not here.
     renderActiveStreams() {
-        const list = document.getElementById('active-streams-list');
+        const list = document.getElementById('live-viewers-list');
+        const countEl = document.getElementById('live-viewers-count');
         if (!list) return;
-        if (!this.activeStreams || !this.activeStreams.length) {
-            list.innerHTML = '<div class="session-empty">No active streaming connections.</div>';
+        const liveOnly = (this.activeStreams || []).filter((s) => s.kind === 'live');
+        if (countEl) countEl.textContent = String(liveOnly.length);
+        if (!liveOnly.length) {
+            list.innerHTML = '<div class="session-empty">No live viewers right now.</div>';
             return;
         }
-        list.innerHTML = this.activeStreams.map((s) => {
-            const target = s.kind === 'live'
-                ? 'Live stream'
-                : `${this.esc(s.match_label || s.match_id || 'match')}${s.slot ? ' • ' + this.slotLabel(s.slot) : ''}`;
+        list.innerHTML = liveOnly.map((s) => {
             const geoBits = [];
             if (s.geo) {
                 if (s.geo.city) geoBits.push(s.geo.city);
@@ -935,10 +959,10 @@ export const adminViewsMixin = {
                 <div class="session-item">
                     <div class="session-main">
                         <div class="session-title-row">
-                            <strong>${target}</strong>
-                            <span class="status-pill">${this.esc(s.kind)}</span>
+                            <strong>${this.esc(s.ip)}</strong>
+                            <span class="status-pill">live</span>
                         </div>
-                        <div class="session-meta">${this.esc(s.ip)} • ${this.esc(geoText)} • ${dur} • ${this.formatBytes(s.bytes_sent || 0)}</div>
+                        <div class="session-meta">${this.esc(geoText)} • ${dur} • ${this.formatBytes(s.bytes_sent || 0)}</div>
                         <div class="session-meta" title="${this.esc(s.user_agent || '')}">${this.esc(ua)}${s.user_agent && s.user_agent.length > 60 ? '…' : ''}</div>
                     </div>
                     <div class="session-actions">
@@ -947,6 +971,222 @@ export const adminViewsMixin = {
                 </div>
             `;
         }).join('');
+    },
+
+    // ON-AIR pill in the Live Console header. Reflects MediaMTX publisher
+    // state (derived from any kind === 'live' session being active) plus the
+    // user-set live_enabled flag.
+    renderLiveConsoleHeader() {
+        const pill = document.getElementById('live-onair-pill');
+        const label = document.getElementById('live-onair-label');
+        const viewers = document.getElementById('live-console-viewers');
+        if (!pill || !label) return;
+        const settings = this.getAppSettings();
+        const enabled = settings.live_enabled === '1';
+        const liveCount = (this.activeStreams || []).filter((s) => s.kind === 'live').length;
+        const isOnAir = enabled && liveCount > 0;
+        pill.dataset.state = !enabled ? 'off' : isOnAir ? 'on' : 'standby';
+        label.textContent = !enabled ? 'OFF AIR' : isOnAir ? 'ON AIR' : 'STANDBY';
+        if (viewers) viewers.textContent = `${liveCount} viewer${liveCount === 1 ? '' : 's'}`;
+    },
+
+    renderLiveBlocks() {
+        const section = document.getElementById('live-blocks-section');
+        const list = document.getElementById('live-blocks-list');
+        if (!section || !list) return;
+        const blocks = this.streamBlocks || [];
+        if (!blocks.length) {
+            section.style.display = 'none';
+            return;
+        }
+        section.style.display = '';
+        list.innerHTML = blocks.map((b, idx) => `
+            <div class="session-item">
+                <div class="session-main">
+                    <div class="session-title-row">
+                        <strong>${this.esc(b.ip)}</strong>
+                        <span class="status-pill error">${this.esc(b.kind)}</span>
+                    </div>
+                    <div class="session-meta">
+                        ${b.match_id ? this.esc(b.match_id) + (b.slot ? ' • ' + this.slotLabel(b.slot) : '') : 'live stream'}
+                        • clears in ${Math.max(0, Math.round(b.expires_in_seconds))}s
+                    </div>
+                </div>
+                <div class="session-actions">
+                    <button type="button" class="mini-action-btn stream-unblock-btn" data-idx="${idx}">Unblock</button>
+                </div>
+            </div>
+        `).join('');
+        list.querySelectorAll('.stream-unblock-btn').forEach((btn) => {
+            const idx = parseInt(btn.dataset.idx, 10);
+            btn.addEventListener('click', () => this.unblockStream(blocks[idx]));
+        });
+    },
+
+    // ===== LIVE CONSOLE — read-rail polling =====
+    //
+    // Polls /api/admin/streams (viewers + blocks) every 5 s while the Live
+    // section is active, plus a parallel /api/admin/performance fetch to
+    // drive the throughput card and encoder-load tile. Stops on section
+    // exit (admin.js calls stopLiveConsolePolling).
+    _liveConsoleTimer: null,
+    _liveThroughputSamples: [],
+
+    startLiveConsolePolling() {
+        // Reset the rolling sparkline buffer on every entry so the chart
+        // shows only the current session, not a mix of old samples from a
+        // previous visit.
+        this._liveThroughputSamples = [];
+        this.refreshLiveConsole();
+        if (this._liveConsoleTimer) return;
+        this._liveConsoleTimer = setInterval(() => {
+            const liveSection = document.querySelector('.admin-section[data-admin-section="live"]');
+            if (!liveSection || !liveSection.classList.contains('is-active')) {
+                this.stopLiveConsolePolling();
+                return;
+            }
+            this.refreshLiveConsole();
+        }, 5000);
+    },
+
+    stopLiveConsolePolling() {
+        if (this._liveConsoleTimer) {
+            clearInterval(this._liveConsoleTimer);
+            this._liveConsoleTimer = null;
+        }
+    },
+
+    async refreshLiveConsole() {
+        if (!this.authToken || !this.isAdmin?.()) return;
+        await this.refreshActiveStreams();
+        try {
+            const resp = await this.authFetch('/api/admin/performance', { headers: this.getAuthHeaders() });
+            if (!resp.ok) return;
+            const perf = await resp.json();
+            this.renderLiveThroughputCard(perf);
+            this.renderLiveEncoderTile(perf);
+        } catch (err) {
+            console.warn('live console performance fetch failed', err);
+        }
+    },
+
+    renderLiveThroughputCard(perf) {
+        const bpsEl = document.getElementById('live-throughput-bps');
+        const avgEl = document.getElementById('live-throughput-avg');
+        const sparkEl = document.getElementById('live-throughput-spark');
+        if (!bpsEl) return;
+        const t = perf?.throughput || {};
+        const last = t.last || {};
+        const liveBps = last.bps_live_out || 0;
+        const avg = t.avg_live_bps_30s || 0;
+        bpsEl.textContent = this._fmtMbps(liveBps);
+        if (avgEl) avgEl.textContent = `Avg 30 s: ${this._fmtMbps(avg)} · ${last.active_live || 0} viewers`;
+        // Maintain a rolling window of samples for the sparkline.
+        this._liveThroughputSamples.push(liveBps);
+        if (this._liveThroughputSamples.length > 60) this._liveThroughputSamples.shift();
+        if (sparkEl && typeof this.sparklineSvg === 'function') {
+            sparkEl.innerHTML = this.sparklineSvg(this._liveThroughputSamples, { width: 200, height: 36 });
+        }
+    },
+
+    renderLiveEncoderTile(perf) {
+        const grid = document.getElementById('live-encoder-grid');
+        if (!grid) return;
+        const host = perf?.host || {};
+        const tx = perf?.transcode || {};
+        const last = perf?.throughput?.last || {};
+        const tiles = [
+            { kicker: 'CPU', value: host.cpu_percent != null ? `${host.cpu_percent.toFixed(0)}%` : '—' },
+            { kicker: 'iGPU', value: host.intel_gpu_busy_pct != null ? `${host.intel_gpu_busy_pct}%` : '—' },
+            { kicker: 'Memory', value: host.memory ? `${host.memory.percent.toFixed(0)}%` : '—' },
+            { kicker: 'NIC TX', value: host.net ? this._fmtMbps(host.net.bps_tx) : '—' },
+            { kicker: 'VOD egress', value: this._fmtMbps(last.bps_vod_out || 0) },
+            { kicker: 'Encoder slots', value: `${tx.in_flight || 0} / ${tx.concurrency_limit || 0}` },
+        ];
+        grid.innerHTML = tiles.map((t) => `
+            <div class="live-encoder-cell">
+                <span class="live-encoder-kicker">${this.esc(t.kicker)}</span>
+                <span class="live-encoder-value">${this.esc(t.value)}</span>
+            </div>
+        `).join('');
+    },
+
+    _fmtMbps(bps) {
+        if (!bps) return '0 Mbps';
+        return `${(bps / 1_000_000).toFixed(2)} Mbps`;
+    },
+
+    // VOD viewer count for a single match — used by the matches library
+    // expanded row. Reads from the cached this.activeStreams; the status
+    // strip's 10 s `/api/admin/streams` poll also writes that cache (see
+    // refreshAdminStatusStrip in admin.js), so the count stays current
+    // while the user is on any admin section.
+    vodViewersForMatch(matchId) {
+        return (this.activeStreams || []).filter((s) => s.kind === 'vod' && s.match_id === matchId).length;
+    },
+
+    // Manage-viewers modal for a single match. Lists the active VOD sessions
+    // and exposes Kill on each — restores the kill capability that the
+    // standalone Streams page used to provide. Uses formModal as a generic
+    // container; the "submit" action is just Done (no PUT).
+    async openMatchViewersModal(matchId) {
+        const match = (this.matches || []).find((m) => m.id === matchId);
+        const matchLabel = match ? `${match.home_team || ''} vs ${match.away_team || ''}` : matchId;
+
+        const body = document.createElement('div');
+        body.className = 'match-viewers-modal-body';
+
+        const renderList = () => {
+            const viewers = (this.activeStreams || []).filter((s) => s.kind === 'vod' && s.match_id === matchId);
+            if (!viewers.length) {
+                body.innerHTML = '<div class="session-empty">No active viewers right now.</div>';
+                return;
+            }
+            body.innerHTML = `<div class="session-list">${viewers.map((s) => {
+                const geoBits = [];
+                if (s.geo) {
+                    if (s.geo.city) geoBits.push(s.geo.city);
+                    if (s.geo.country) geoBits.push(s.geo.country);
+                }
+                const geoText = geoBits.length ? geoBits.join(', ') : '—';
+                const dur = this.formatDuration ? this.formatDuration(s.duration_seconds) : `${Math.round(s.duration_seconds)}s`;
+                return `
+                    <div class="session-item">
+                        <div class="session-main">
+                            <div class="session-title-row">
+                                <strong>${this.esc(s.ip)}</strong>
+                                <span class="status-pill">${this.esc(s.slot ? this.slotLabel(s.slot) : 'vod')}</span>
+                            </div>
+                            <div class="session-meta">${this.esc(geoText)} · ${dur} · ${this.formatBytes(s.bytes_sent || 0)}</div>
+                        </div>
+                        <div class="session-actions">
+                            <button type="button" class="mini-action-btn" data-kill-id="${this.esc(s.id)}">Kill</button>
+                        </div>
+                    </div>
+                `;
+            }).join('')}</div>`;
+            body.querySelectorAll('button[data-kill-id]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    await this.killStream(btn.dataset.killId);
+                    // killStream calls refreshActiveStreams on success, which
+                    // updates this.activeStreams. Re-render the modal list.
+                    renderList();
+                });
+            });
+        };
+
+        renderList();
+
+        await this.formModal({
+            title: `Viewers · ${matchLabel}`,
+            kicker: 'Active VOD sessions',
+            body,
+            confirmLabel: 'Done',
+            cancelLabel: 'Close',
+            onSubmit: async (close) => close(true),
+        });
+        // Refresh the matches library row counts on close.
+        this.renderMatchLibraryTable?.();
     },
 
     async killStream(sessionId) {
@@ -1040,13 +1280,14 @@ export const adminViewsMixin = {
         // anonymous slots. Counts still surface in the diagnostic tiles
         // above ("Failed Slots", "Matches" — ready/processing breakdown).
 
-        // Recent errors
-        const errorsSection = document.getElementById('recent-errors-section');
+        // Recent errors — rendered inside a <details> accordion on Performance.
+        // The accordion stays closed by default; the count pill in its summary
+        // is the at-a-glance signal.
         const errorsList = document.getElementById('recent-errors-list');
-        if (errorsSection && errorsList) {
+        const errorsCount = document.getElementById('diag-errors-count');
+        if (errorsList) {
             if (recent_errors && recent_errors.length) {
-                errorsSection.style.display = '';
-                errorsList.innerHTML = recent_errors.map(e => `
+                errorsList.innerHTML = recent_errors.map((e) => `
                     <div class="session-item">
                         <div class="session-main">
                             <div class="session-title-row">
@@ -1060,10 +1301,13 @@ export const adminViewsMixin = {
                     </div>
                 `).join('');
             } else {
-                errorsSection.style.display = 'none';
+                errorsList.innerHTML = '<div class="session-empty">No recent encoder errors.</div>';
             }
         }
+        if (errorsCount) errorsCount.textContent = String((recent_errors || []).length);
 
+        // Upload sessions — server side
+        const uploadCountEl = document.getElementById('diag-uploads-count');
         if (!upload_sessions.length) {
             serverList.innerHTML = '<div class="session-empty">No recent upload sessions.</div>';
         } else {
@@ -1083,6 +1327,7 @@ export const adminViewsMixin = {
                 </div>
             `).join('');
         }
+        if (uploadCountEl) uploadCountEl.textContent = String(upload_sessions.length);
 
         localList.innerHTML = this.renderLocalResumeSessions();
     },
@@ -1733,8 +1978,8 @@ export const adminViewsMixin = {
         this.refreshPerformanceTuning();
         if (this._perfTimer) return;
         this._perfTimer = setInterval(() => {
-            const sysSection = document.querySelector('.admin-section[data-admin-section="system"]');
-            if (!sysSection || !sysSection.classList.contains('is-active')) {
+            const perfSection = document.querySelector('.admin-section[data-admin-section="performance"]');
+            if (!perfSection || !perfSection.classList.contains('is-active')) {
                 this.stopPerformanceTuningPolling();
                 return;
             }
@@ -1801,8 +2046,10 @@ export const adminViewsMixin = {
         `).join('') + (cap ? `<div class="diagnostic-card">${cap}</div>` : '');
 
         const rtList = document.getElementById('perf-rt-list');
+        const rtCountEl = document.getElementById('diag-transcodes-count');
         if (rtList) {
             const rows = (tx.recent || []);
+            if (rtCountEl) rtCountEl.textContent = String(rows.length);
             rtList.innerHTML = rows.length
                 ? rows.map((h) => `
                     <div class="session-item">
@@ -1822,8 +2069,10 @@ export const adminViewsMixin = {
         }
 
         const sessList = document.getElementById('perf-sessions-list');
+        const sessCountEl = document.getElementById('diag-sessions-count');
         if (sessList) {
             const sessions = p.active_sessions || [];
+            if (sessCountEl) sessCountEl.textContent = String(sessions.length);
             sessList.innerHTML = sessions.length
                 ? sessions.map((s) => `
                     <div class="session-item">

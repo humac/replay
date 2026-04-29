@@ -5,17 +5,26 @@
 // diagnostics lists, live config, users list) are preserved so existing
 // renderers in views.js / live.js keep working without changes.
 
-const ADMIN_SECTIONS = ['overview', 'matches', 'live', 'streams', 'users', 'settings', 'system'];
-const ADMIN_ONLY_SECTIONS = new Set(['overview', 'live', 'streams', 'users', 'settings', 'system']);
+// Section list — Live before Performance because operating a live broadcast
+// is the higher-frequency task. The legacy `streams` section folded into
+// Live Console (live viewers) and per-row VOD viewers in Matches; legacy
+// `system` was renamed to `performance` so the tuning knobs and the live
+// signal they control share one page. Old URLs redirect via
+// resolveAdminSection() below.
+const ADMIN_SECTIONS = ['overview', 'matches', 'live', 'performance', 'users', 'settings'];
+const ADMIN_ONLY_SECTIONS = new Set(['overview', 'live', 'performance', 'users', 'settings']);
+const LEGACY_SECTION_REDIRECTS = {
+    streams: 'live',
+    system: 'performance',
+};
 
 const SECTION_META = {
-    overview:  { label: 'Overview',  glyph: '01', kicker: 'Status' },
-    matches:   { label: 'Matches',   glyph: '02', kicker: 'Library' },
-    live:      { label: 'Live',      glyph: '03', kicker: 'Broadcast' },
-    streams:   { label: 'Streams',   glyph: '04', kicker: 'Viewers' },
-    users:     { label: 'Users',     glyph: '05', kicker: 'Accounts' },
-    settings:  { label: 'Settings',  glyph: '06', kicker: 'Branding' },
-    system:    { label: 'System',    glyph: '07', kicker: 'Diagnostics' },
+    overview:    { label: 'Overview',    glyph: '01', kicker: 'Status' },
+    matches:     { label: 'Matches',     glyph: '02', kicker: 'Library' },
+    live:        { label: 'Live',        glyph: '03', kicker: 'Broadcast' },
+    performance: { label: 'Performance', glyph: '04', kicker: 'Encoder & host' },
+    users:       { label: 'Users',       glyph: '05', kicker: 'Accounts' },
+    settings:    { label: 'Settings',    glyph: '06', kicker: 'Branding' },
 };
 
 export const adminMixin = {
@@ -23,10 +32,13 @@ export const adminMixin = {
     _adminSection: null,
 
     isAdminSection(section) {
-        return ADMIN_SECTIONS.includes(section);
+        return ADMIN_SECTIONS.includes(section) || section in LEGACY_SECTION_REDIRECTS;
     },
 
     resolveAdminSection(section) {
+        // Honor legacy URLs so existing bookmarks (/admin/streams, /admin/system)
+        // keep working after the layout refactor.
+        if (section in LEGACY_SECTION_REDIRECTS) section = LEGACY_SECTION_REDIRECTS[section];
         if (!ADMIN_SECTIONS.includes(section)) return this.isAdmin() ? 'overview' : 'matches';
         if (!this.isAdmin() && ADMIN_ONLY_SECTIONS.has(section)) return 'matches';
         return section;
@@ -128,15 +140,15 @@ export const adminMixin = {
                 }
                 break;
             case 'live':
+                // Render the form first so DOM ids exist, then start the
+                // read-rail poll (viewers + throughput + encoder load).
                 if (typeof this.renderLiveSettingsCard === 'function') {
                     this.renderLiveSettingsCard();
                 }
                 if (typeof this.renderSettingsForm === 'function') {
                     this.renderSettingsForm();
                 }
-                break;
-            case 'streams':
-                this.refreshActiveStreams?.();
+                this.startLiveConsolePolling?.();
                 break;
             case 'users':
                 if (typeof this.renderUsersList === 'function') this.renderUsersList();
@@ -144,12 +156,17 @@ export const adminMixin = {
             case 'settings':
                 if (typeof this.renderSettingsForm === 'function') this.renderSettingsForm();
                 break;
-            case 'system':
+            case 'performance':
                 this.refreshAdminDiagnostics?.();
                 this.startPerformanceTuningPolling?.();
+                // Tuning knobs render here now (moved out of Settings).
+                if (this.isAdmin?.() && typeof this.renderTuningKnobsCard === 'function') {
+                    this.renderTuningKnobsCard();
+                }
                 break;
         }
-        if (section !== 'system') this.stopPerformanceTuningPolling?.();
+        if (section !== 'performance') this.stopPerformanceTuningPolling?.();
+        if (section !== 'live') this.stopLiveConsolePolling?.();
     },
 
     startAdminStatusPolling() {
@@ -189,6 +206,14 @@ export const adminMixin = {
             ]);
             const diag = diagResp.ok ? await diagResp.json() : null;
             const streams = streamsResp.ok ? await streamsResp.json() : null;
+            // Populate the shared cache so consumers like vodViewersForMatch
+            // (matches library expanded row) and renderActiveStreams (Live
+            // Console) read fresh data on the 10 s status-strip cadence
+            // without having to call refreshActiveStreams themselves.
+            if (streams) {
+                this.activeStreams = streams.active || [];
+                this.streamBlocks = streams.blocks || [];
+            }
             this.renderAdminStatusStrip({ diag, streams });
         } catch (e) {
             console.warn('status strip refresh failed', e);
@@ -268,7 +293,7 @@ export const adminMixin = {
         `;
     },
 
-    // ===== Overview KPI tiles =====
+    // ===== Overview KPI tiles + activity strip =====
     refreshOverviewKpis(diagnostics, streams) {
         const grid = document.getElementById('overview-kpi-grid');
         if (!grid) return;
@@ -277,8 +302,10 @@ export const adminMixin = {
         const settings = this.getAppSettings();
         const activeViewers = Array.isArray(streams?.active) ? streams.active.length : 0;
         const liveOn = settings.live_enabled === '1';
-        const liveRtmp = settings.live_rtmp_public_url || 'Not configured';
 
+        // Slimmed from 6 tiles → 4. The dropped tiles (Library, HLS Backfill,
+        // Active Viewers as a separate tile) move into either the matches
+        // library or the activity strip / Live Console.
         const tiles = [
             {
                 kicker: 'Disk',
@@ -287,10 +314,10 @@ export const adminMixin = {
                 tone: disk.enough_space === false ? 'warn' : 'good',
             },
             {
-                kicker: 'Library',
-                value: counts.matches != null ? counts.matches : '—',
-                note: `${counts.ready_slots || 0} ready · ${counts.transcoding_slots || 0} encoding`,
-                tone: 'neutral',
+                kicker: 'Encoding',
+                value: counts.transcoding_slots != null ? counts.transcoding_slots : '—',
+                note: `${counts.matches || 0} matches · ${counts.ready_slots || 0} ready`,
+                tone: counts.transcoding_slots ? 'accent' : 'neutral',
             },
             {
                 kicker: 'Failed Slots',
@@ -299,24 +326,10 @@ export const adminMixin = {
                 tone: counts.failed_slots ? 'bad' : 'good',
             },
             {
-                kicker: 'Active Viewers',
-                value: activeViewers,
-                note: activeViewers ? 'Open Streams to monitor or kill sessions.' : 'No one is currently watching.',
-                tone: 'accent',
-            },
-            {
-                kicker: 'Live Stream',
-                value: liveOn ? 'Enabled' : 'Off',
-                note: liveOn ? this.esc(liveRtmp) : 'Toggle on from the Live section.',
+                kicker: 'Live',
+                value: liveOn ? `On · ${activeViewers}` : 'Off',
+                note: liveOn ? `${activeViewers} viewer${activeViewers === 1 ? '' : 's'} watching now.` : 'Toggle on from the Live section.',
                 tone: liveOn ? 'good' : 'idle',
-            },
-            {
-                kicker: 'HLS Backfill',
-                value: counts.hls_missing_slots != null ? counts.hls_missing_slots : '—',
-                note: counts.hls_missing_slots
-                    ? 'Ready MP4s missing variant ladders. Use System → Backfill.'
-                    : 'All ready slots have HLS ladders.',
-                tone: counts.hls_missing_slots ? 'warn' : 'good',
             },
         ];
 
@@ -327,15 +340,80 @@ export const adminMixin = {
                 <span class="overview-tile-note">${tile.note}</span>
             </article>
         `).join('');
+
+        this.renderActivityStrip?.(diagnostics, streams);
+    },
+
+    // Activity strip — last ~8 events derived from the same diagnostics
+    // payload so we don't need a new endpoint. Sources we mine:
+    //   - diagnostics.recent_errors (most recent encode errors)
+    //   - diagnostics.active_jobs (currently encoding)
+    //   - diagnostics.upload_sessions (in-flight uploads)
+    // Replaces the standalone "Recent Errors" card on the old System page.
+    renderActivityStrip(diagnostics, streams) {
+        const strip = document.getElementById('overview-activity-strip');
+        if (!strip) return;
+        const events = [];
+
+        (diagnostics?.recent_errors || []).slice(0, 6).forEach((e) => {
+            events.push({
+                ts: e.created_at || '',
+                glyph: '✕',
+                tone: 'bad',
+                verb: this.esc(e.error_code || 'error'),
+                subject: `${this.esc(e.match_id || '')} · ${this.slotLabel(e.slot)}`,
+                detail: this.esc(e.reason || ''),
+            });
+        });
+
+        (diagnostics?.active_jobs || []).slice(0, 4).forEach((j) => {
+            events.push({
+                ts: '',
+                glyph: '↻',
+                tone: 'accent',
+                verb: 'encoding',
+                subject: `${this.esc(j.home_team || '')} vs ${this.esc(j.away_team || '')} · ${this.slotLabel(j.slot)}`,
+                detail: j.pct != null ? `${j.pct}%` : (j.stage || ''),
+            });
+        });
+
+        const activeStreams = Array.isArray(streams?.active) ? streams.active : [];
+        if (activeStreams.length) {
+            const liveCount = activeStreams.filter((s) => s.kind === 'live').length;
+            const vodCount = activeStreams.length - liveCount;
+            events.push({
+                ts: '',
+                glyph: '◉',
+                tone: 'good',
+                verb: 'streaming',
+                subject: `${activeStreams.length} viewer${activeStreams.length === 1 ? '' : 's'}`,
+                detail: liveCount ? `${liveCount} live · ${vodCount} vod` : `${vodCount} vod`,
+            });
+        }
+
+        if (!events.length) {
+            strip.innerHTML = '<div class="activity-empty">All quiet — no recent events.</div>';
+            return;
+        }
+
+        const sorted = events.sort((a, b) => (b.ts || '').localeCompare(a.ts || '')).slice(0, 8);
+        strip.innerHTML = sorted.map((ev) => `
+            <div class="activity-event tone-${ev.tone}">
+                <span class="activity-glyph" aria-hidden="true">${ev.glyph}</span>
+                <span class="activity-verb">${ev.verb}</span>
+                <span class="activity-subject">${ev.subject}</span>
+                ${ev.detail ? `<span class="activity-detail">${ev.detail}</span>` : ''}
+                ${ev.ts ? `<span class="activity-time">${this.esc(ev.ts.replace('T', ' ').slice(11, 16))}</span>` : ''}
+            </div>
+        `).join('');
     },
 };
 
 const ADMIN_SECTION_BLURBS = {
-    overview: 'Realtime snapshot of platform health, encoding queue, and live viewers.',
-    matches:  'Add a new match to the library and watch its encoding pipeline progress.',
-    live:     'Configure RTMP ingest, rotate the camera key, and inspect MediaMTX state.',
-    streams:  'Active viewer sessions across live and VOD playback. Kill abusers in one click.',
-    users:    'Operator accounts: create, suspend, or delete admins, uploaders, and viewers.',
-    settings: 'Branding, public copy, navigation labels, and visitor download permissions.',
-    system:   'Disk headroom, transcoding errors, upload sessions, and recovery operations.',
+    overview:    'At-a-glance dashboard with KPIs, recent activity, and quick actions.',
+    matches:     'Add a new match to the library and watch its encoding pipeline progress.',
+    live:        'Broadcast cockpit: RTMP key, MediaMTX state, live viewers, and encoder load — in one place.',
+    users:       'Operator accounts: create, suspend, or delete admins, uploaders, and viewers.',
+    settings:    'Branding, public copy, navigation labels, and visitor download permissions.',
+    performance: 'Encoder + host telemetry with tuning knobs. Change a setting, watch its impact.',
 };

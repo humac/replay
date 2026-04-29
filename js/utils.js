@@ -137,4 +137,31 @@ export const utilsMixin = {
         if (sun) sun.style.display = theme === 'light' ? 'block' : 'none';
         if (moon) moon.style.display = theme === 'light' ? 'none' : 'block';
     },
+
+    // Tiny inline-SVG sparkline. Renders an open polyline through the points,
+    // scaled to fit width × height. Returns an SVG string suitable for
+    // .innerHTML on a wrapper element.
+    //
+    // Why inline SVG and not a chart library: this is a 20-line replacement
+    // for a 50 KB dependency. Used for short rolling windows where a single
+    // path is enough to convey trend direction.
+    sparklineSvg(values, { width = 160, height = 32, stroke = 'currentColor', strokeWidth = 1.5, fill = 'none' } = {}) {
+        const arr = Array.isArray(values) ? values.filter((v) => v != null && Number.isFinite(v)) : [];
+        if (arr.length < 2) {
+            return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="none" aria-hidden="true"></svg>`;
+        }
+        const min = Math.min(...arr);
+        const max = Math.max(...arr);
+        const span = max - min || 1;
+        const stepX = width / (arr.length - 1);
+        const points = arr.map((v, i) => {
+            const x = i * stepX;
+            // Flip Y so larger values draw higher.
+            const y = height - ((v - min) / span) * (height - 2) - 1;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="none" aria-hidden="true">
+            <polyline fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" points="${points}" />
+        </svg>`;
+    },
 };
