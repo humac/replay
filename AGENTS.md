@@ -38,6 +38,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling
 - `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live)
+- `pytest.ini`: pytest-asyncio mode/scope plus narrow filters for third-party Python 3.14 deprecations
 - `docker-compose.yml`: local container runtime — defines `replay` and the `mediamtx` sidecar
 - `mediamtx.yml`: MediaMTX config (RTMP ingest, LL-HLS output, external auth webhook)
 - `Caddyfile`: reverse proxy that serves VOD HLS `.ts/.m4s/.mp4` segments + variant playlists directly from `/data` via `sendfile()` and proxies all other routes to the replay app on `:8090`. Drops Python out of the segment-serving hot path so 10 GbE LAN delivery is achievable.
@@ -79,7 +80,7 @@ Most relevant variables:
 - `MEDIAMTX_HLS_URL` — internal address of the MediaMTX sidecar's HLS port (default `http://mediamtx:8888`)
 - `MEDIAMTX_API_URL` — internal address of the MediaMTX control API (default `http://mediamtx:9997`)
 - `TRUSTED_PROXY` — `cloudflare` (default) or `none`; controls whether `client_ip()` in `streams.py` honors `CF-Connecting-IP`/`X-Forwarded-For`. Set to `none` for bare deployments not behind Cloudflare.
-- `LIVE_AUTH_SECRET` — shared secret MediaMTX sends in `X-Internal-Secret` when calling `/api/live/auth`. Configure the same value in `mediamtx.yml`'s `authHTTPHeaders`. If unset, the endpoint is open to all network callers (only safe when firewalled).
+- `LIVE_AUTH_SECRET` — shared secret MediaMTX sends in `X-Internal-Secret` when calling `/api/live/auth`. Configure the same value in `mediamtx.yml`'s `authHTTPHeaders`. If unset, the endpoint returns 503 by default; set `LIVE_AUTH_ALLOW_INSECURE=1` only for local/dev firewalled scenarios.
 - `LIVE_STALE_SEGMENT_AGE_SECONDS` — stream flips to offline when no new HLS segment has been cut for this many seconds (default 90)
 
 ## Project Constraints
@@ -119,6 +120,7 @@ After frontend changes, sanity-check:
 - Match scores are intentionally hidden by default on cards and the game header — the site is a replay library, not a results page. Reveal state lives in `app._revealedScores` (per-session Set, not persisted). When adding new surfaces that show a score, call `app.isMatchScoreRevealed(matchId)` to gate the numerals and emit a `.score-reveal-chip` (or `.score-reveal-chip-large` on the game page) that calls `app.revealMatchScore(matchId, event)`.
 - For caching behavior, be careful with `index.html`, `/static/*`, and Cloudflare-facing asset URLs.
 - When adding or modifying API endpoints, add or update Pydantic models in `models.py` and add corresponding tests in `tests/`.
+- When testing `/api/live/auth`, configure `server.LIVE_AUTH_SECRET` and send `X-Internal-Secret` unless the test is explicitly covering the fail-closed missing-secret path.
 - Login is rate-limited (5 attempts/60s per IP). Token cleanup sweeps run automatically. On startup, `lifespan` also calls `_uploads.cleanup_stale_sessions()` to cancel any upload sessions that were left `'active'` across a restart.
 - Three user roles: `admin` (full access), `uploader` (match CRUD + uploads), `viewer` (read-only). Use `_auth.require_role(request, "admin", "uploader")` for role checks. The env-var admin (`ADMIN_USER`/`ADMIN_PASS`) is always a superadmin and is checked before the DB user table — it bypasses the DB `enabled` flag entirely. Do not reuse `ADMIN_USER` as a DB account name.
 - Backend logic is organized into focused modules (`db.py`, `auth.py`, `settings.py`, `uploads.py`, `media.py`). Keep `server.py` as the route registration layer; add business logic to the appropriate module.

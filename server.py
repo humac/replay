@@ -256,6 +256,7 @@ app = FastAPI(title="Replay", lifespan=lifespan)
 # Configure via mediamtx.yml authHTTPHeaders. If unset the endpoint is open
 # (backwards-compatible) but logs a warning on first request.
 LIVE_AUTH_SECRET = os.environ.get("LIVE_AUTH_SECRET", "")
+LIVE_AUTH_ALLOW_INSECURE = os.environ.get("LIVE_AUTH_ALLOW_INSECURE", "0") == "1"
 
 # All other tuning knobs are now stored in the settings table (with env-var
 # fallback on first boot — see settings.TUNING_KNOBS). Read them via the
@@ -1010,9 +1011,12 @@ async def live_auth_webhook(body: LiveAuthRequest, request: Request):
     if LIVE_AUTH_SECRET:
         if request.headers.get("x-internal-secret") != LIVE_AUTH_SECRET:
             raise HTTPException(401, "Unauthorized")
-    elif not hasattr(live_auth_webhook, "_warned"):
-        live_auth_webhook._warned = True
-        logger.warning("LIVE_AUTH_SECRET is not set; /api/live/auth is publicly accessible")
+    elif LIVE_AUTH_ALLOW_INSECURE:
+        if not hasattr(live_auth_webhook, "_warned"):
+            live_auth_webhook._warned = True
+            logger.warning("LIVE_AUTH_SECRET is not set; insecure live auth is enabled via LIVE_AUTH_ALLOW_INSECURE=1")
+    else:
+        raise HTTPException(503, "Live auth misconfigured: set LIVE_AUTH_SECRET")
 
     key = await _stream_key()
     payload = body.model_dump()

@@ -14,7 +14,7 @@ import db as _db
 # In-memory token store: {token_string: {created, user_id, role, username}}
 _active_tokens: dict[str, dict] = {}
 TOKEN_TTL = 86400  # 24 hours
-_MAX_ACTIVE_TOKENS = 100
+_MAX_ACTIVE_TOKENS = max(1, int(os.environ.get("MAX_ACTIVE_TOKENS", "1000")))
 _last_token_sweep: float = 0.0
 _TOKEN_SWEEP_INTERVAL = 60.0  # seconds
 
