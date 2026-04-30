@@ -32,6 +32,8 @@ jobs:
           python3 -m py_compile settings.py
           python3 -m py_compile uploads.py
           python3 -m py_compile log.py
+          python3 -m py_compile live.py
+          python3 -m py_compile streams.py
       - name: Run tests
         env:
           REPLAY_DATA_DIR: ${{ runner.temp }}/replay_data
@@ -42,7 +44,10 @@ jobs:
           # upload-session tests. The env var seeds the `min_free_disk_bytes`
           # setting on first boot.
           MIN_FREE_DISK_BYTES: "1048576"
-        run: pytest tests/ -v
+        # --cov-fail-under=60 gates against significant regressions; the
+        # current baseline (Apr 2026) is ~64% with tests/ excluded via
+        # .coveragerc. Raise once media.py / server.py grow more coverage.
+        run: pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
 
   build-and-push:
     needs: test

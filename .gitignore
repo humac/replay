@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .claude/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
