@@ -775,27 +775,49 @@ export const adminViewsMixin = {
         const slots = this._matchSlotsForFormat(match);
         const isAdmin = !!this.isAdmin?.();
         const safeId = this.esc(match.id);
-        // Set of "match_id/slot" keys currently rebuilding their HLS ladder
-        // via the async admin endpoint. Server populates this from
-        // _regen_hls_tasks; the diagnostics poll refreshes every ~10 s.
-        const regenInFlight = new Set(this.diagnostics?.regen_hls_in_flight || []);
+        // Map of "match_id/slot" → elapsed_seconds for the slots currently
+        // rebuilding their HLS ladder via the async admin endpoint. Server
+        // populates this from _regen_hls_tasks; the diagnostics poll
+        // refreshes every ~10 s. Backwards-compat: old payload shape was a
+        // bare list of keys, so accept either.
+        const regenInFlight = new Map();
+        const raw = this.diagnostics?.regen_hls_in_flight || [];
+        raw.forEach((entry) => {
+            if (typeof entry === 'string') regenInFlight.set(entry, null);
+            else if (entry && entry.key) regenInFlight.set(entry.key, entry.elapsed_seconds ?? null);
+        });
         const slotCards = slots.map((slot) => {
             const status = this.slotStatus(match, slot);
             const filename = match.videos?.[slot] || null;
-            const isRegenInFlight = regenInFlight.has(`${match.id}/${slot}`);
+            const slotKey = `${match.id}/${slot}`;
+            const isRegenInFlight = regenInFlight.has(slotKey);
+            const elapsedSec = isRegenInFlight ? regenInFlight.get(slotKey) : null;
             const pillCls = isRegenInFlight ? 'transcoding'
                           : status === 'transcoding' ? 'transcoding'
                           : status === 'error' ? 'error'
                           : status === 'ready' ? 'ready'
                           : 'neutral';
-            const pillLabel = isRegenInFlight ? `${this.slotLabel(slot)} · regenerating HLS` : this.slotLabel(slot);
+            // MM:SS format — formatDuration's "2m" / "37s" rounding is too
+            // coarse here because the user is watching the timer tick to
+            // gauge progress. Pad seconds so the digits don't jitter.
+            const elapsedLabel = (elapsedSec != null && Number.isFinite(elapsedSec))
+                ? ` · ${Math.floor(elapsedSec / 60)}:${String(Math.floor(elapsedSec % 60)).padStart(2, '0')}`
+                : '';
+            const pillLabel = isRegenInFlight
+                ? `${this.slotLabel(slot)} · regenerating HLS${elapsedLabel}`
+                : this.slotLabel(slot);
             const safeSlot = this.esc(slot);
             const buttons = [];
             // Verify is read-only — available to uploaders too.
             buttons.push(`<button type="button" class="mini-action-btn" onclick="app.verifyAssets('${safeId}')">Verify</button>`);
             if (isAdmin) {
                 if (isRegenInFlight) {
-                    buttons.push(`<span class="muted">Rebuilding HLS variants… expected 1–10 minutes.</span>`);
+                    // Loosened copy — "1–10 minutes" was optimistic for
+                    // multi-GB matches across 3 variants. The elapsed-time
+                    // counter in the pill is now the primary signal; the
+                    // text below is just a "still working" reassurance.
+                    const baseNote = 'Rebuilding HLS variants. Expect 1–30 min depending on match length and variant count. The pill above shows elapsed time; refreshes every 10 s.';
+                    buttons.push(`<span class="muted">${baseNote}</span>`);
                 } else if (status === 'ready') {
                     buttons.push(`<button type="button" class="mini-action-btn" onclick="app.regenerateHls('${safeId}', '${safeSlot}')" title="Rebuild HLS variants only — fast, no re-encode">Regen HLS</button>`);
                     buttons.push(`<button type="button" class="mini-action-btn" onclick="app.forceRetranscode('${safeId}', '${safeSlot}')" title="Full re-encode from existing MP4 — multi-minute">Re-transcode</button>`);
