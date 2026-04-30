@@ -741,12 +741,12 @@ export const adminViewsMixin = {
                 <td class="lib-col-expand">
                     <button type="button" class="row-expand-btn" aria-expanded="${expanded}" aria-controls="library-detail-${safeId}" title="Toggle diagnostics" onclick="app.toggleMatchRow('${safeId}')">${expanded ? '▾' : '▸'}</button>
                 </td>
-                <td class="lib-col-date">${this.esc(match.date || '')}${match.time ? `<div class="row-sub">${this.esc(match.time)}</div>` : ''}</td>
+                <td class="lib-col-date" data-label="Date">${this.esc(match.date || '')}${match.time ? `<div class="row-sub">${this.esc(match.time)}</div>` : ''}</td>
                 <td class="lib-col-matchup">${matchup}</td>
-                <td class="lib-col-format"><span class="format-pill">${formatLabel}</span></td>
+                <td class="lib-col-format" data-label="Format"><span class="format-pill">${formatLabel}</span></td>
                 <td class="lib-col-slots"><div class="slot-pill-stack">${slotPills}</div></td>
-                <td class="lib-col-score">${score}</td>
-                <td class="lib-col-watching">${watchingCell}</td>
+                <td class="lib-col-score" data-label="Score">${score}</td>
+                <td class="lib-col-watching" data-label="Watching">${watchingCell}</td>
                 <td class="lib-col-menu">
                     <div class="row-menu">
                         <button type="button" class="row-menu-btn" title="Actions" onclick="app.toggleRowMenu('${safeId}', event)">⋯</button>
