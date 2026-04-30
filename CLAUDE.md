@@ -42,7 +42,7 @@ Primary validation:
 
 ```bash
 python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py && python3 -m py_compile streams.py
-pytest tests/ -v
+pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
 ```
 
 
@@ -50,3 +50,4 @@ pytest tests/ -v
 - Live auth webhook tests should set `server.LIVE_AUTH_SECRET` and send `X-Internal-Secret` so stream-key validation is exercised behind the MediaMTX shared-secret gate.
 - `pytest.ini` pins pytest-asyncio fixture loop scope to `function` and narrowly filters dependency-owned Python 3.14 asyncio deprecations so local test runs stay warning-clean.
 - Auth token cap is configurable with `MAX_ACTIVE_TOKENS` (default 1000).
+- CI gates coverage at 60% via `pytest-cov` (`.coveragerc` excludes `tests/`); current baseline is ~64%. New tests live in `tests/test_db.py`, `tests/test_models.py`, `tests/test_server.py` (covers `ResizableSemaphore` directly), plus expanded coverage in `tests/test_admin.py` (retry/regenerate-hls success paths, transcode-semaphore live-resize), `tests/test_matches.py` (slug deep-links, logo upload + nosniff/CSP/inline-disposition for SVG, thumbnail), and `tests/test_media.py` (ffprobe parsing via mocked subprocess, `verify_slot_assets`, `select_hwaccel`).

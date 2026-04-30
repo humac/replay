@@ -37,7 +37,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `js/ui.js`: toast notifications (success/error/info) and button loading state helpers
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling
-- `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live)
+- `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live, streams, media, db, models, server). `.coveragerc` excludes the test files from coverage; CI gates `--cov-fail-under=60` (current baseline ~64 %).
 - `pytest.ini`: pytest-asyncio mode/scope plus narrow filters for third-party Python 3.14 deprecations
 - `docker-compose.yml`: local container runtime — defines `replay` and the `mediamtx` sidecar
 - `mediamtx.yml`: MediaMTX config (RTMP ingest, LL-HLS output, external auth webhook)
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt   # for testing
 python server.py
 python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py && python3 -m py_compile streams.py
-pytest tests/ -v
+pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
 docker compose up --build
 ```
 
@@ -97,8 +97,8 @@ Most relevant variables:
 After backend changes, run:
 
 ```bash
-python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py
-pytest tests/ -v
+python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py && python3 -m py_compile streams.py
+pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
 ```
 
 After frontend changes, sanity-check:

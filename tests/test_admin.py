@@ -485,3 +485,270 @@ def test_intel_gpu_busy_diff_pattern(tmp_path, monkeypatch):
     pct = server._intel_gpu_busy_pct()
     assert pct is not None
     assert 40.0 <= pct <= 60.0, f"expected ~50%, got {pct}"
+
+
+# ---------------------------------------------------------------------------
+# Recovery-endpoint happy paths — retry, regenerate-hls, regenerate-thumbnail
+#
+# These mock the actual ffmpeg-bound work so the suite stays fast. The tests
+# exist to lock in the route → state-transition → activity-event flow that
+# CLAUDE.md treats as the operational source of truth.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_success_spawns_transcode_and_logs_activity(
+    client, auth_headers, monkeypatch, data_dir,
+):
+    """Happy path: a slot in 'error' status with an MP4 on disk transitions
+    to 'transcoding' and emits a transcode.retry_requested activity event."""
+    import db as _db
+    import server
+
+    spawned = []
+    monkeypatch.setattr(server, "_spawn_transcode",
+                        lambda mid, slot, src, dest: spawned.append((mid, slot, src.name, dest.name)))
+
+    resp = await client.post("/api/matches", json={"home_team": "A", "away_team": "B"}, headers=auth_headers)
+    match_id = resp.json()["id"]
+
+    # Stage an MP4 on disk so the route's source-file check passes.
+    match_dir = data_dir / "videos" / match_id
+    match_dir.mkdir(parents=True, exist_ok=True)
+    (match_dir / "full.mp4").write_bytes(b"x" * 16)
+
+    with _db.connect() as conn:
+        m = _db.get_match_by_id(match_id)
+        m["video_status"]["full"] = "error"
+        _db.upsert_match(conn, m)
+        conn.commit()
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/retry",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "transcoding"
+    assert body["forced"] is False
+    assert spawned and spawned[0][0] == match_id and spawned[0][1] == "full"
+
+    # The transition should be persisted, and an activity event written.
+    refreshed = _db.get_match_by_id(match_id)
+    assert refreshed["video_status"]["full"] == "transcoding"
+    events = _db.get_activity_events(limit=10)
+    assert any(e["event_type"] == "transcode.retry_requested" and e["match_id"] == match_id
+               for e in events)
+
+
+@pytest.mark.asyncio
+async def test_retry_force_logs_force_event(
+    client, auth_headers, monkeypatch, data_dir,
+):
+    """force=true on a 'ready' slot still kicks off a transcode and logs the
+    transcode.force_requested event (warning severity)."""
+    import db as _db
+    import server
+
+    monkeypatch.setattr(server, "_spawn_transcode", lambda *a, **k: None)
+
+    resp = await client.post("/api/matches", json={"home_team": "A", "away_team": "B"}, headers=auth_headers)
+    match_id = resp.json()["id"]
+
+    match_dir = data_dir / "videos" / match_id
+    match_dir.mkdir(parents=True, exist_ok=True)
+    (match_dir / "full.mp4").write_bytes(b"x")
+
+    with _db.connect() as conn:
+        m = _db.get_match_by_id(match_id)
+        m["video_status"]["full"] = "ready"
+        _db.upsert_match(conn, m)
+        conn.commit()
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/retry?force=true",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["forced"] is True
+
+    events = _db.get_activity_events(limit=10)
+    assert any(e["event_type"] == "transcode.force_requested" and e["severity"] == "warning"
+               for e in events)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_hls_returns_202_and_logs_started(
+    client, auth_headers, monkeypatch, data_dir,
+):
+    """The endpoint validates synchronously and spawns a background job. We
+    stub the worker so no ffmpeg runs; the response should be 202 and a
+    hls.regenerate_started activity event should be logged."""
+    import db as _db
+    import server
+
+    async def _fake_run(*args, **kwargs):
+        return None
+    monkeypatch.setattr(server, "_run_regen_hls_task", _fake_run)
+
+    resp = await client.post("/api/matches", json={"home_team": "A", "away_team": "B"}, headers=auth_headers)
+    match_id = resp.json()["id"]
+
+    match_dir = data_dir / "videos" / match_id
+    match_dir.mkdir(parents=True, exist_ok=True)
+    (match_dir / "full.mp4").write_bytes(b"x" * 64)
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/regenerate-hls",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "regenerating"
+    assert body["match_id"] == match_id
+
+    events = _db.get_activity_events(limit=10)
+    assert any(e["event_type"] == "hls.regenerate_started" and e["match_id"] == match_id
+               for e in events)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_hls_409_when_already_running(
+    client, auth_headers, monkeypatch, data_dir,
+):
+    """Second request while a regen task is in flight must 409."""
+    import server
+    import asyncio as _asyncio
+
+    # Worker that never resolves until we let it.
+    gate = _asyncio.Event()
+    async def _slow_run(*args, **kwargs):
+        await gate.wait()
+    monkeypatch.setattr(server, "_run_regen_hls_task", _slow_run)
+
+    resp = await client.post("/api/matches", json={"home_team": "A", "away_team": "B"}, headers=auth_headers)
+    match_id = resp.json()["id"]
+
+    match_dir = data_dir / "videos" / match_id
+    match_dir.mkdir(parents=True, exist_ok=True)
+    (match_dir / "full.mp4").write_bytes(b"x" * 64)
+
+    first = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/regenerate-hls",
+        headers=auth_headers,
+    )
+    assert first.status_code == 202
+
+    second = await client.post(
+        f"/api/admin/matches/{match_id}/slots/full/regenerate-hls",
+        headers=auth_headers,
+    )
+    assert second.status_code == 409
+
+    # Let the worker finish so the test fixture can tear down cleanly.
+    gate.set()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_thumbnail_no_ready_slot_returns_404(client, auth_headers):
+    """No slot in 'ready' state → cannot regenerate thumb → 404."""
+    resp = await client.post("/api/matches", json={"home_team": "A", "away_team": "B"}, headers=auth_headers)
+    match_id = resp.json()["id"]
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/regenerate-thumbnail",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_regenerate_thumbnail_success_logs_activity(
+    client, auth_headers, monkeypatch, data_dir,
+):
+    """When at least one slot is ready and an MP4 exists, the route invokes
+    media.generate_thumbnail and writes a thumbnail.regenerated event."""
+    import db as _db
+    import server
+
+    async def _fake_thumb(mp4_path, thumb_path):
+        thumb_path.write_bytes(b"\xff\xd8\xff\xd9")
+        return True
+    monkeypatch.setattr(server._media, "generate_thumbnail", _fake_thumb)
+
+    resp = await client.post("/api/matches", json={"home_team": "A", "away_team": "B"}, headers=auth_headers)
+    match_id = resp.json()["id"]
+
+    match_dir = data_dir / "videos" / match_id
+    match_dir.mkdir(parents=True, exist_ok=True)
+    (match_dir / "full.mp4").write_bytes(b"x" * 32)
+
+    with _db.connect() as conn:
+        m = _db.get_match_by_id(match_id)
+        m["video_status"]["full"] = "ready"
+        _db.upsert_match(conn, m)
+        conn.commit()
+
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/regenerate-thumbnail",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert (match_dir / "thumb.jpg").is_file()
+
+    events = _db.get_activity_events(limit=10)
+    assert any(e["event_type"] == "thumbnail.regenerated" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_thumbnail_invalid_slot_400(client, auth_headers):
+    resp = await client.post("/api/matches", json={"home_team": "A", "away_team": "B"}, headers=auth_headers)
+    match_id = resp.json()["id"]
+    resp = await client.post(
+        f"/api/admin/matches/{match_id}/regenerate-thumbnail?slot=quarters",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Live-resize invariant: PUT /api/admin/settings with transcode_concurrency
+# must call TRANSCODE_SEMAPHORE.resize() so the change applies in-process
+# without a restart (CLAUDE.md docs this as a hard requirement).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_settings_change_resizes_transcode_semaphore(client, auth_headers):
+    """Changing transcode_concurrency must update the live semaphore limit."""
+    import server
+
+    starting = server.TRANSCODE_SEMAPHORE.limit
+    target = starting + 2
+
+    resp = await client.put(
+        "/api/admin/settings",
+        json={"transcode_concurrency": target},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert server.TRANSCODE_SEMAPHORE.limit == target
+
+    # Restore so other tests keep their assumed default.
+    await server.TRANSCODE_SEMAPHORE.resize(starting)
+
+
+@pytest.mark.asyncio
+async def test_settings_change_unrelated_does_not_resize_semaphore(client, auth_headers):
+    """A settings update that doesn't touch transcode_concurrency must not
+    alter the semaphore limit."""
+    import server
+
+    starting = server.TRANSCODE_SEMAPHORE.limit
+    resp = await client.put(
+        "/api/admin/settings",
+        json={"downloads_enabled": "0"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert server.TRANSCODE_SEMAPHORE.limit == starting
