@@ -66,7 +66,11 @@ _transcode_tasks: dict[str, asyncio.Task] = {}
 # rebuilding their HLS ladder so the admin diagnostics endpoint can
 # surface a "regenerating HLS" pill and the frontend can poll for
 # completion. Cleared on task completion.
-_regen_hls_tasks: dict[str, asyncio.Task] = {}
+#
+# Value is (task, started_monotonic_seconds) so the diagnostics endpoint
+# can publish elapsed time per slot. Time is monotonic so NTP jumps don't
+# corrupt the elapsed value.
+_regen_hls_tasks: dict[str, tuple[asyncio.Task, float]] = {}
 
 
 def _spawn_task(coro) -> asyncio.Task:
@@ -1304,11 +1308,14 @@ async def admin_diagnostics(request: Request):
         "failed_slots": failed_slots,
         "active_jobs": active_jobs,
         # Slots whose HLS variant ladder is currently being rebuilt by an
-        # admin-triggered regen (fire-and-forget background task). Keys are
-        # "match_id/slot"; the frontend uses this to show a "regenerating"
-        # pill in the matches library expanded row.
+        # admin-triggered regen (fire-and-forget background task). Each entry
+        # is { key: "match_id/slot", elapsed_seconds: float } so the frontend
+        # can show "regenerating HLS · 2:34" instead of just a binary state.
+        # Elapsed comes from a monotonic clock so NTP jumps don't corrupt it.
         "regen_hls_in_flight": [
-            key for key, task in _regen_hls_tasks.items() if task and not task.done()
+            {"key": key, "elapsed_seconds": max(0.0, time.monotonic() - started)}
+            for key, (task, started) in _regen_hls_tasks.items()
+            if task and not task.done()
         ],
         "recent_errors": recent_errors,
     }
@@ -1686,12 +1693,14 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
 
     key = f"{match_id}/{slot}"
     existing = _regen_hls_tasks.get(key)
-    if existing is not None and not existing.done():
-        logger.info(
-            "regen_hls.skipped: already_in_flight %s/%s", match_id, slot,
-            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "already_in_flight"},
-        )
-        raise HTTPException(409, "An HLS regeneration is already in flight for this slot.")
+    if existing is not None:
+        existing_task, _ = existing
+        if not existing_task.done():
+            logger.info(
+                "regen_hls.skipped: already_in_flight %s/%s", match_id, slot,
+                extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "already_in_flight"},
+            )
+            raise HTTPException(409, "An HLS regeneration is already in flight for this slot.")
 
     logger.info(
         "regen_hls.start %s/%s by %s (mp4=%s, %s bytes) — running async, response is 202",
@@ -1699,7 +1708,7 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
         extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "start"},
     )
     task = _spawn_task(_run_regen_hls_task(match_id, slot, mp4_path, actor))
-    _regen_hls_tasks[key] = task
+    _regen_hls_tasks[key] = (task, time.monotonic())
     task.add_done_callback(lambda _t: _regen_hls_tasks.pop(key, None))
     return JSONResponse(
         status_code=202,
