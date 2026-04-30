@@ -775,19 +775,28 @@ export const adminViewsMixin = {
         const slots = this._matchSlotsForFormat(match);
         const isAdmin = !!this.isAdmin?.();
         const safeId = this.esc(match.id);
+        // Set of "match_id/slot" keys currently rebuilding their HLS ladder
+        // via the async admin endpoint. Server populates this from
+        // _regen_hls_tasks; the diagnostics poll refreshes every ~10 s.
+        const regenInFlight = new Set(this.diagnostics?.regen_hls_in_flight || []);
         const slotCards = slots.map((slot) => {
             const status = this.slotStatus(match, slot);
             const filename = match.videos?.[slot] || null;
-            const pillCls = status === 'transcoding' ? 'transcoding'
+            const isRegenInFlight = regenInFlight.has(`${match.id}/${slot}`);
+            const pillCls = isRegenInFlight ? 'transcoding'
+                          : status === 'transcoding' ? 'transcoding'
                           : status === 'error' ? 'error'
                           : status === 'ready' ? 'ready'
                           : 'neutral';
+            const pillLabel = isRegenInFlight ? `${this.slotLabel(slot)} · regenerating HLS` : this.slotLabel(slot);
             const safeSlot = this.esc(slot);
             const buttons = [];
             // Verify is read-only — available to uploaders too.
             buttons.push(`<button type="button" class="mini-action-btn" onclick="app.verifyAssets('${safeId}')">Verify</button>`);
             if (isAdmin) {
-                if (status === 'ready') {
+                if (isRegenInFlight) {
+                    buttons.push(`<span class="muted">Rebuilding HLS variants… expected 1–10 minutes.</span>`);
+                } else if (status === 'ready') {
                     buttons.push(`<button type="button" class="mini-action-btn" onclick="app.regenerateHls('${safeId}', '${safeSlot}')" title="Rebuild HLS variants only — fast, no re-encode">Regen HLS</button>`);
                     buttons.push(`<button type="button" class="mini-action-btn" onclick="app.forceRetranscode('${safeId}', '${safeSlot}')" title="Full re-encode from existing MP4 — multi-minute">Re-transcode</button>`);
                 } else if (status === 'error') {
@@ -798,11 +807,14 @@ export const adminViewsMixin = {
                 }
             }
             buttons.push(`<button type="button" class="mini-action-btn" onclick="app.viewMatchErrors('${safeId}', '${safeSlot}')">Logs</button>`);
+            const statusLabel = isRegenInFlight
+                ? 'rebuilding HLS'
+                : (status === 'none' ? 'no video uploaded' : status);
             return `
                 <div class="slot-card">
                     <div class="slot-card-head">
-                        <span class="status-pill ${pillCls}">${this.slotLabel(slot)}</span>
-                        <span class="muted">${this.esc(status === 'none' ? 'no video uploaded' : status)}</span>
+                        <span class="status-pill ${pillCls}">${pillLabel}</span>
+                        <span class="muted">${this.esc(statusLabel)}</span>
                     </div>
                     <div class="slot-card-meta">
                         ${filename ? `<span>file: ${this.esc(filename)}</span>` : '<span class="muted">no file on disk</span>'}
@@ -1543,26 +1555,22 @@ export const adminViewsMixin = {
     },
 
     async regenerateHls(matchId, slot) {
-        // Always log entry + exit so an admin opening DevTools can confirm
-        // the click actually fired through to the function. Several
-        // user-reported "nothing happens" reports turned out to be stale
-        // SPA caches; this gives a definitive signal.
+        // The endpoint is fire-and-forget on the server side: it validates,
+        // spawns a background task, and returns 202 in <100 ms. The actual
+        // ffmpeg work runs detached. Polling /api/admin/diagnostics surfaces
+        // the slot in `regen_hls_in_flight` until the task finishes; the
+        // matches library expanded row uses that to show a "regenerating"
+        // pill. Failures land in video_errors → Recent Errors panel.
         console.info('[admin] regenerateHls invoked', { matchId, slot });
         const ok = await this.confirmAction({
             title: 'Regenerate HLS',
-            message: `Rebuild the HLS variant ladder for ${this.slotLabel(slot)}? Uses the existing MP4 — no re-encode.`,
+            message: `Rebuild the HLS variant ladder for ${this.slotLabel(slot)}? Uses the existing MP4 — no re-encode. The rebuild runs in the background; you'll see a "regenerating" pill on the slot until it finishes (1–10 minutes for a multi-GB file).`,
             confirmLabel: 'Regenerate',
         });
         if (!ok) {
             console.info('[admin] regenerateHls cancelled by user');
             return;
         }
-        // Persistent in-flight toast (showProgress, duration: 0). Even a
-        // "fast" regen sits on the wire 30–60 s for a multi-GB MP4
-        // because the variant ladder re-segments every output. The toast
-        // gives the user something to look at, and a Close button if they
-        // want to dismiss it manually.
-        const progress = this.showProgress?.(`Regenerating HLS for ${this.slotLabel(slot)}… this can take up to a minute on large files.`);
         try {
             const url = `/api/admin/matches/${matchId}/slots/${slot}/regenerate-hls`;
             console.info('[admin] regenerateHls fetch start', url);
@@ -1571,26 +1579,22 @@ export const adminViewsMixin = {
                 headers: this.getAuthHeaders(),
             });
             console.info('[admin] regenerateHls fetch done', { status: resp.status });
+            if (resp.status === 409) {
+                this.showInfo(`HLS regeneration is already in flight for ${this.slotLabel(slot)}.`);
+                return;
+            }
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || `HLS regeneration failed (HTTP ${resp.status})`);
+                throw new Error(err.detail || `HLS regeneration failed to start (HTTP ${resp.status})`);
             }
-            this.showSuccess(`HLS regenerated for ${this.slotLabel(slot)}.`);
+            // 202 Accepted — task is now running asynchronously. Refresh the
+            // diagnostics so the regenerating pill shows up immediately.
+            this.showSuccess(`HLS regeneration started for ${this.slotLabel(slot)}. Watch the slot pill in the matches library; it'll flip back to ready when done. Failures show up in Recent Errors.`);
             await this.refreshAdminDiagnostics();
-            await this.loadMatches?.();
             this.renderMatchLibraryTable?.();
         } catch (error) {
-            // Network error or HTTP error — surface the message regardless,
-            // and log the full error to the console so the admin can see
-            // CORS / DNS / connection-refused details that don't fit in a
-            // toast.
             console.error('[admin] regenerateHls error', error);
-            this.showError(error.message || 'HLS regeneration failed (no response from server).');
-        } finally {
-            // Dismiss the persistent in-flight toast.
-            if (progress && typeof progress.remove === 'function') {
-                try { progress.remove(); } catch { /* ignore */ }
-            }
+            this.showError(error.message || 'HLS regeneration failed to start (no response from server).');
         }
     },
 
