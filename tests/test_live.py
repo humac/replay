@@ -7,20 +7,35 @@ import pytest
 
 pytestmark = pytest.mark.asyncio
 
+TEST_LIVE_AUTH_SECRET = "test-live-auth-secret"
+
+
+def enable_live_auth_secret(monkeypatch):
+    """Configure the shared MediaMTX webhook secret for tests that reach auth logic."""
+    import server
+
+    monkeypatch.setattr(server, "LIVE_AUTH_SECRET", TEST_LIVE_AUTH_SECRET)
+    monkeypatch.setattr(server, "LIVE_AUTH_ALLOW_INSECURE", False)
+    server._live_auth_attempts.clear()
+    return {"X-Internal-Secret": TEST_LIVE_AUTH_SECRET}
+
 
 # ---------------------------------------------------------------------------
 # /api/live/auth — webhook MediaMTX uses to validate incoming publishes
 # ---------------------------------------------------------------------------
 
-async def test_live_auth_accepts_correct_path(client):
+async def test_live_auth_accepts_correct_path(client, monkeypatch):
     """A publish to live/<configured-key> over RTMP should be accepted."""
     import settings as _settings
+
+    headers = enable_live_auth_secret(monkeypatch)
 
     # Force a known stream key.
     _settings.save_unlocked({"live_stream_key": "test-secret-123"})
 
     resp = await client.post(
         "/api/live/auth",
+        headers=headers,
         json={
             "user": "",
             "password": "",
@@ -36,12 +51,14 @@ async def test_live_auth_accepts_correct_path(client):
     assert resp.json() == {"ok": True}
 
 
-async def test_live_auth_rejects_wrong_key(client):
+async def test_live_auth_rejects_wrong_key(client, monkeypatch):
     import settings as _settings
+    headers = enable_live_auth_secret(monkeypatch)
     _settings.save_unlocked({"live_stream_key": "test-secret-123"})
 
     resp = await client.post(
         "/api/live/auth",
+        headers=headers,
         json={
             "action": "publish",
             "path": "live/wrong-key",
@@ -51,13 +68,15 @@ async def test_live_auth_rejects_wrong_key(client):
     assert resp.status_code == 401
 
 
-async def test_live_auth_rejects_non_publish_action(client):
+async def test_live_auth_rejects_non_publish_action(client, monkeypatch):
     """Reads/api/etc. are excluded in mediamtx.yml but the server still denies."""
     import settings as _settings
+    headers = enable_live_auth_secret(monkeypatch)
     _settings.save_unlocked({"live_stream_key": "test-secret-123"})
 
     resp = await client.post(
         "/api/live/auth",
+        headers=headers,
         json={
             "action": "read",
             "path": "live/test-secret-123",
@@ -67,12 +86,14 @@ async def test_live_auth_rejects_non_publish_action(client):
     assert resp.status_code == 401
 
 
-async def test_live_auth_rejects_wrong_protocol(client):
+async def test_live_auth_rejects_wrong_protocol(client, monkeypatch):
     import settings as _settings
+    headers = enable_live_auth_secret(monkeypatch)
     _settings.save_unlocked({"live_stream_key": "test-secret-123"})
 
     resp = await client.post(
         "/api/live/auth",
+        headers=headers,
         json={
             "action": "publish",
             "path": "live/test-secret-123",
@@ -80,6 +101,43 @@ async def test_live_auth_rejects_wrong_protocol(client):
         },
     )
     assert resp.status_code == 401
+
+
+async def test_live_auth_rejects_missing_internal_secret(client, monkeypatch):
+    import settings as _settings
+
+    enable_live_auth_secret(monkeypatch)
+    _settings.save_unlocked({"live_stream_key": "test-secret-123"})
+
+    resp = await client.post(
+        "/api/live/auth",
+        json={
+            "action": "publish",
+            "path": "live/test-secret-123",
+            "protocol": "rtmp",
+        },
+    )
+    assert resp.status_code == 401
+
+
+async def test_live_auth_fails_closed_without_configured_secret(client, monkeypatch):
+    import server
+    import settings as _settings
+
+    monkeypatch.setattr(server, "LIVE_AUTH_SECRET", "")
+    monkeypatch.setattr(server, "LIVE_AUTH_ALLOW_INSECURE", False)
+    server._live_auth_attempts.clear()
+    _settings.save_unlocked({"live_stream_key": "test-secret-123"})
+
+    resp = await client.post(
+        "/api/live/auth",
+        json={
+            "action": "publish",
+            "path": "live/test-secret-123",
+            "protocol": "rtmp",
+        },
+    )
+    assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -569,16 +627,18 @@ async def test_admin_live_diagnostics_shape(client, auth_headers):
     assert data["recent_rejections"] == []
 
 
-async def test_admin_live_diagnostics_captures_rejections(client, auth_headers):
+async def test_admin_live_diagnostics_captures_rejections(client, auth_headers, monkeypatch):
     """Rejected /api/live/auth attempts should show up in the diagnostics buffer."""
     import live as _live
     import settings as _settings
     _live.clear_rejections()
+    headers = enable_live_auth_secret(monkeypatch)
     _settings.save_unlocked({"live_stream_key": "valid-key-xyz"})
 
     # Send a publish with the wrong key.
     bad = await client.post(
         "/api/live/auth",
+        headers=headers,
         json={
             "action": "publish",
             "path": "live/totally-wrong",

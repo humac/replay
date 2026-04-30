@@ -43,3 +43,9 @@ Primary validation:
 python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py && python3 -m py_compile streams.py
 pytest tests/ -v
 ```
+
+
+- Live auth hardening: `/api/live/auth` now fails closed (503) when `LIVE_AUTH_SECRET` is unset unless `LIVE_AUTH_ALLOW_INSECURE=1` is explicitly set for dev-only use.
+- Live auth webhook tests should set `server.LIVE_AUTH_SECRET` and send `X-Internal-Secret` so stream-key validation is exercised behind the MediaMTX shared-secret gate.
+- `pytest.ini` pins pytest-asyncio fixture loop scope to `function` and narrowly filters dependency-owned Python 3.14 asyncio deprecations so local test runs stay warning-clean.
+- Auth token cap is configurable with `MAX_ACTIVE_TOKENS` (default 1000).

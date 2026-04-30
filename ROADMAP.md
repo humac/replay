@@ -215,7 +215,7 @@ Deep-link route `/live` and live view section. New `js/live.js` mixin polls `/ap
 Settings view gains a "Live Streaming" card (admin-only): toggle live on/off, set the public-facing RTMP URL shown to camera operators, customise the offline message and nav label, view/copy the RTMP endpoint and stream key (masked by default), and rotate the key with one click.
 
 **5.6 Test coverage** ✅
-13 new tests in `tests/test_live.py`: auth webhook accepts/rejects (correct key, wrong key, non-publish action, wrong protocol), status endpoint shape and disabled-state, HLS proxy 502/404 paths, admin config + rotate flows, and a regression check that the stream key never leaks via `/api/settings`.
+15 tests in `tests/test_live.py`: auth webhook accepts/rejects (correct key, wrong key, non-publish action, wrong protocol), internal-secret enforcement and fail-closed missing-secret behavior, status endpoint shape and disabled-state, HLS proxy 502/404 paths, admin config + rotate flows, and a regression check that the stream key never leaks via `/api/settings`.
 
 **5.7 AirPlay & Chromecast on the live feed** ✅
 Watch Live now exposes the same AirPlay + Chromecast buttons as the replay player. AirPlay binds `webkitShowPlaybackTargetPicker` / `RemotePlayback.prompt()` to the `live-video` element so iOS / Safari users can hand the LL-HLS feed to an Apple TV or AirPlay 2 display. Chromecast reuses the global `CastContext` from `js/player.js`; `setupCastFramework` and `onCastConnected` are now view-aware — when the live view is active, casting loads `/api/live/hls/index.m3u8` with `streamType=LIVE` and `application/x-mpegURL`, pauses local audio so the TV doesn't echo, and shows the live cast overlay. `onCastDisconnected` resumes muted local playback if the user is still on the live view. New methods live in `js/live.js` (`initLiveRemotePlayback`, `toggleLiveAirPlay`, `toggleLiveCast`, `castLiveStream`, `resumeLiveAfterCast`); `applyLiveStatus` automatically casts the feed if a session is already up when the publisher comes online.
@@ -472,3 +472,7 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Error timestamps preserve the date**: switched from `slice(11, 16)` (HH:MM only) to `slice(0, 16)` (YYYY-MM-DD HH:MM) so multi-day error spans aren't ambiguous.
 - **CLAUDE.md updated** with the three-tier button convention and the new Performance layout invariants.
 - **Validation**: 141/141 pytest pass; all Python modules `py_compile` clean; JS modules parse cleanly.
+
+
+- **M3 hardening follow-up (2026-04-30):** `/api/live/auth` now fails closed when `LIVE_AUTH_SECRET` is missing (503) unless `LIVE_AUTH_ALLOW_INSECURE=1` is explicitly set. Added `MAX_ACTIVE_TOKENS` env knob (default 1000) to reduce unexpected token eviction under multi-user load. Live webhook tests now configure `LIVE_AUTH_SECRET` and send `X-Internal-Secret`, with explicit coverage for missing-header rejection and missing-secret misconfiguration.
+- **Warning-clean tests (2026-04-30):** `pytest.ini` now sets `asyncio_default_fixture_loop_scope = function` and filters known dependency-owned Python 3.14 deprecations from `pytest_asyncio.plugin` and `fastapi.routing`; `pytest tests/ -q` reports `146 passed` without warning noise.
