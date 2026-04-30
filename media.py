@@ -171,6 +171,38 @@ def slot_hls_master_path(videos_dir: Path, match_id: str, slot: str) -> Path:
     return slot_hls_dir(videos_dir, match_id, slot) / "master.m3u8"
 
 
+def cleanup_hls_staging_dirs(videos_dir: Path) -> int:
+    """Remove orphaned ``<slot>.tmp`` and ``<slot>.old`` staging dirs.
+
+    ``build_hls_assets`` builds into ``<slot>.tmp/`` and renames the
+    existing ``<slot>/`` aside to ``<slot>.old/`` during the swap. A
+    crashed or killed regen leaves either or both of those siblings on
+    disk; the next regen of the same slot rmtree's them at the top of
+    the function, but if no regen ever happens again they linger
+    indefinitely. Lifespan calls this on startup to sweep them.
+
+    Returns the count of removed directories.
+    """
+    removed = 0
+    if not videos_dir.is_dir():
+        return removed
+    for match_dir in videos_dir.iterdir():
+        hls_root = match_dir / "hls"
+        if not hls_root.is_dir():
+            continue
+        for entry in hls_root.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name.endswith(".tmp") or entry.name.endswith(".old"):
+                try:
+                    shutil.rmtree(entry)
+                    removed += 1
+                    logger.info("Removed orphan HLS staging dir: %s", entry)
+                except OSError as exc:
+                    logger.warning("Could not remove %s: %s", entry, exc)
+    return removed
+
+
 def match_originals_dir(originals_dir: Path, match_id: str) -> Path:
     """Per-match cold storage: raw uploads + finished MP4."""
     return originals_dir / match_id
@@ -395,9 +427,26 @@ async def build_hls_assets(
     hls_variant_presets: list[dict],
     hwaccel_preference: str | None = None,
 ) -> bool:
+    """Build the HLS variant ladder for *match_id/slot* atomically.
+
+    The previous implementation rmtree'd the live HLS directory before
+    starting ffmpeg — so a regen that crashed, was cancelled mid-flight, or
+    got killed by a container restart left the slot with no playable HLS
+    until the startup ``backfill_existing_hls`` swept it back up. That gap
+    broke any in-progress VOD playback (master.m3u8 → 404).
+
+    Now we stage every output into a sibling ``<slot>.tmp/`` directory and
+    only swap it into place on full success. On any failure we
+    rmtree the staging dir and leave the existing ``<slot>/`` untouched —
+    so a killed regen is a no-op rather than data loss.
+    """
     width, height = await probe_video_dimensions(source_mp4)
     variants = build_hls_variants(width, height, hls_variant_presets)
-    hls_dir = slot_hls_dir(videos_dir, match_id, slot)
+    final_hls_dir = slot_hls_dir(videos_dir, match_id, slot)
+    # Stage into <slot>.tmp/ — same filesystem as the final dir so the
+    # atomic rename at the end is a metadata-only operation.
+    hls_dir = final_hls_dir.with_name(final_hls_dir.name + ".tmp")
+    # Clean up any prior crashed staging dir from a previous attempt.
     shutil.rmtree(hls_dir, ignore_errors=True)
     hls_dir.mkdir(parents=True, exist_ok=True)
 
@@ -571,27 +620,68 @@ async def build_hls_assets(
             )
             return None
 
-    results = await asyncio.gather(*[_generate_variant(v) for v in variants])
+    try:
+        results = await asyncio.gather(*[_generate_variant(v) for v in variants])
+    except BaseException:
+        # asyncio.CancelledError is a BaseException and lands here too — we
+        # want to clean the staging dir on cancel so a killed task doesn't
+        # leak stale partial variants on disk. Re-raise so the caller's
+        # cancellation semantics are preserved.
+        shutil.rmtree(hls_dir, ignore_errors=True)
+        raise
     generated_variants = [v for v in results if v is not None]
 
-    # Any variant failure → discard all; an incomplete master.m3u8 would be
-    # silently skipped by the backfill check, permanently losing the missing
-    # quality level with no signal.
+    # Any variant failure → discard the staged dir and bail. Live HLS at
+    # final_hls_dir is untouched, so existing playback continues working.
     if len(generated_variants) < len(variants):
         shutil.rmtree(hls_dir, ignore_errors=True)
         return False
 
+    # Write the master playlist *inside the staging dir* so the swap below
+    # publishes everything together. Variant playlists reference siblings
+    # via relative paths (`<name>/index.m3u8`), so they stay valid after
+    # the parent dir gets renamed.
     master_lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
     for variant in generated_variants:
         master_lines.append(
             f"#EXT-X-STREAM-INF:BANDWIDTH={variant['bandwidth']},RESOLUTION={variant['width']}x{variant['height']}"
         )
         master_lines.append(f"{variant['name']}/index.m3u8")
+    (hls_dir / "master.m3u8").write_text("\n".join(master_lines) + "\n")
 
-    master_path = slot_hls_master_path(videos_dir, match_id, slot)
-    tmp_path = master_path.with_suffix(".m3u8.tmp")
-    tmp_path.write_text("\n".join(master_lines) + "\n")
-    os.replace(tmp_path, master_path)
+    # Swap staging dir into place. POSIX rename(2) of an empty destination
+    # is atomic; the live destination dir likely has contents, so rename it
+    # aside first. There's a microsecond window between the two renames
+    # where the slot has no HLS, but Caddy serves segments directly from
+    # disk so any in-progress playback continues uninterrupted (the master
+    # playlist is only read at start-of-playback). Worst case: a fresh
+    # client lands during the gap and gets one 404 — they'll retry.
+    backup_dir = final_hls_dir.with_name(final_hls_dir.name + ".old")
+    # Defensive cleanup of a prior crashed swap.
+    shutil.rmtree(backup_dir, ignore_errors=True)
+    try:
+        if final_hls_dir.exists():
+            os.rename(final_hls_dir, backup_dir)
+        os.rename(hls_dir, final_hls_dir)
+    except OSError as exc:
+        logger.error(
+            "HLS atomic swap failed for %s/%s: %s — rolling back",
+            match_id, slot, exc,
+        )
+        # Try to restore the backup if the staging→final rename failed
+        # after the existing→backup rename succeeded.
+        if backup_dir.exists() and not final_hls_dir.exists():
+            try:
+                os.rename(backup_dir, final_hls_dir)
+            except OSError:
+                pass
+        shutil.rmtree(hls_dir, ignore_errors=True)
+        return False
+
+    # Best-effort async cleanup of the backup dir. If this fails (e.g. a
+    # stuck file handle from an in-flight stream), the next regen will
+    # rmtree it at the top of this function.
+    shutil.rmtree(backup_dir, ignore_errors=True)
     return True
 
 

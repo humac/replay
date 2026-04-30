@@ -210,6 +210,17 @@ async def lifespan(application: FastAPI):
     await TRANSCODE_SEMAPHORE.resize(current_transcode_concurrency())
     await _sweep_orphaned_transcodes()
     _uploads.cleanup_stale_sessions(current_stale_upload_session_seconds())
+    # Drop any <slot>.tmp / <slot>.old staging dirs left over from a regen
+    # that crashed or was killed by the previous container's exit. The
+    # atomic-rename swap in media.build_hls_assets normally cleans these
+    # up itself; this catches the case where the container died between
+    # rename steps.
+    try:
+        removed = _media.cleanup_hls_staging_dirs(VIDEOS_DIR)
+        if removed:
+            logger.info("Swept %d orphan HLS staging dir(s) on startup.", removed)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("HLS staging-dir cleanup failed: %s", exc)
     # Make sure the originals directory exists. When tiered (different
     # path from VIDEOS_DIR), the host side is a bind mount and the
     # mountpoint inside the container needs to exist before first write.
