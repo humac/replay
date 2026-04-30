@@ -3657,28 +3657,38 @@ button {
         margin-bottom: 0.5rem;
     }
 
+    /* Sidebar nav becomes a wrapping pill row instead of a horizontal
+       scroller. The previous design (overflow-x + flex-shrink: 0) hid
+       sections behind a non-obvious horizontal scroll on phones — this
+       lets every section be visible without scrolling, at the cost of
+       letting the sidebar wrap to two rows on the smallest screens.
+       The 520 px block below tightens it further. */
     .admin-nav {
         flex-direction: row;
-        flex-wrap: nowrap;
-        overflow-x: auto;
+        flex-wrap: wrap;
         gap: 0.4rem;
-        scroll-snap-type: x mandatory;
-        scrollbar-width: none;
-    }
-
-    .admin-nav::-webkit-scrollbar {
-        display: none;
     }
 
     .admin-nav-item {
-        flex-shrink: 0;
-        scroll-snap-align: start;
-        min-height: 52px;
+        flex: 1 1 auto;          /* grow to fill the wrap row, shrink as needed */
+        min-width: 0;            /* allow text truncation                       */
+        min-height: 44px;        /* touch target — was 52, still ≥WCAG          */
+        padding: 0.55rem 0.7rem;
+        gap: 0.55rem;
     }
 
     .admin-nav-item.is-active {
         box-shadow: inset 0 -2px 0 var(--accent);
     }
+
+    .admin-nav-glyph {
+        width: 22px;
+        padding-right: 0.45rem;
+        font-size: 0.7rem;
+    }
+
+    .admin-nav-kicker { display: none; }
+    .admin-nav-label  { font-size: 0.82rem; letter-spacing: 0.04em; }
 
     .admin-sidebar-footer {
         display: none;
@@ -3687,9 +3697,21 @@ button {
     #admin-section-heading {
         font-size: 1.85rem;
     }
+}
 
+/* KPI grid 2-col happens at 768 px (was 900 px) so tablets 769–900 px
+   keep the full grid while phones break into a denser layout. */
+@media (max-width: 768px) {
     .overview-kpi-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* Quick actions go single-column at 640 px (was 520 px) so phones
+   376–520 px don't get oversized 260 px cards. */
+@media (max-width: 640px) {
+    .overview-quick-actions {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -3698,18 +3720,24 @@ button {
         padding: 0.85rem 0.85rem 2.5rem;
     }
 
-    .overview-kpi-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .overview-quick-actions {
-        grid-template-columns: 1fr;
-    }
+    /* Drop the decorative 01–07 glyphs on phones so labels can grow. */
+    .admin-nav { gap: 0.3rem; }
+    .admin-nav-item { padding: 0.5rem 0.55rem; min-height: 40px; }
+    .admin-nav-glyph { display: none; }
+    .admin-nav-label { font-size: 0.78rem; }
 
     .admin-card-head {
         flex-direction: column;
         align-items: flex-start;
         gap: 0.3rem;
+    }
+}
+
+/* KPI grid drops to 1-column at 480 px (was 520 px). Phones 376–480 px
+   are the only ones that hit this. */
+@media (max-width: 480px) {
+    .overview-kpi-grid {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -4192,6 +4220,30 @@ button {
         grid-template-columns: 1fr;
         gap: 0.6rem;
     }
+
+    /* Library filter bar: search forces a wrap break onto its own row;
+       the three selects share the row beneath at equal widths. The
+       desktop min-width: 200px on the search input is overridden
+       (0 here) so it can fully shrink to the viewport. */
+    .library-filter-bar input[type="search"] {
+        flex: 1 0 100%;
+        min-width: 0;
+    }
+    .library-filter-bar select {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    /* Tuning knobs + the generic form-grid drop to a single column on
+       phones — desktop's auto-fit minmax(220px, 1fr) and minmax(260px,
+       1fr) leave too little room for the controls otherwise. */
+    .form-grid,
+    .tuning-knobs-grid {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+    .ladder-editor { font-size: 0.78rem; }
+    .diag-row-id { max-width: 22ch; }   /* tighter ellipsis on phones */
 }
 
 /* ----- Performance Tuning admin card ----------------------------------- */
@@ -4711,13 +4763,72 @@ button {
     border: 0;
 }
 
-@media (max-width: 768px) {
+/* Match library at ≤640 px: switch from a flat <table> to a labeled
+   card-per-row layout. Top row holds chevron · matchup · ⋯ menu. Slot
+   pills get their own row. Date / format / score / watching collapse
+   to muted "LABEL · value" lines beneath, with the label coming from
+   the data-label attribute set in _renderMatchRow (admin-views.js).
+   Tablets 641–900 px keep the regular table — they have room for it. */
+@media (max-width: 640px) {
+    .match-library-table,
+    .match-library-table tbody,
+    .match-library-table tr,
+    .match-library-table td { display: block; }
+
     .match-library-table thead { display: none; }
-    .match-library-table tbody td { display: block; padding: 0.4rem 0.9rem; border: 0; }
-    .match-library-table .library-row { display: block; padding: 0.6rem 0; border-bottom: 1px solid var(--border-light); }
-    .match-library-table .lib-col-expand { display: inline-block; padding-right: 0.6rem; }
-    .match-library-table .lib-col-matchup { display: inline-block; }
-    .match-library-table .lib-col-menu { display: block; padding-top: 0.3rem; }
+
+    .match-library-table .library-row {
+        display: grid;
+        grid-template-columns: 28px 1fr auto;
+        column-gap: 0.6rem;
+        row-gap: 0.4rem;
+        padding: 0.7rem 0.85rem;
+        border-bottom: 1px solid var(--border-light);
+    }
+
+    /* Top row: chevron · matchup · ⋯ menu */
+    .match-library-table .lib-col-expand  { grid-column: 1; padding: 0; }
+    .match-library-table .lib-col-matchup { grid-column: 2; padding: 0; min-width: 0; }
+    .match-library-table .lib-col-menu    { grid-column: 3; padding: 0; }
+
+    /* Slots get their own row, full width below the matchup */
+    .match-library-table .lib-col-slots {
+        grid-column: 2 / -1;
+        padding: 0;
+    }
+
+    /* Date / format / score / watching: each on its own labeled meta line.
+       Auto-placement stacks them in DOM order under the slot pills. */
+    .match-library-table .lib-col-date,
+    .match-library-table .lib-col-format,
+    .match-library-table .lib-col-score,
+    .match-library-table .lib-col-watching {
+        grid-column: 2 / -1;
+        padding: 0;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+    }
+    .match-library-table .lib-col-date::before,
+    .match-library-table .lib-col-format::before,
+    .match-library-table .lib-col-score::before,
+    .match-library-table .lib-col-watching::before {
+        content: attr(data-label) " · ";
+        text-transform: uppercase;
+        font-family: var(--font-heading);
+        font-size: 0.66rem;
+        letter-spacing: 0.1em;
+        opacity: 0.55;
+        margin-right: 0.25rem;
+    }
+
+    /* Smaller thumbnail inside the cramped matchup cell */
+    .match-library-table .library-thumb { width: 40px; height: 24px; border-radius: 3px; }
+
+    /* Tighter expand chevron — fits the 28 px column */
+    .match-library-table .row-expand-btn { width: 24px; height: 24px; font-size: 0.85rem; }
+
+    /* Detail row spans full width — already block from the rule above */
+    .match-library-table .library-detail-row td { padding: 0.5rem 0.85rem 1rem; }
 }
 
 /* ===== Live Console (admin → /live) ===== */
@@ -4803,7 +4914,11 @@ button {
     margin-top: 1rem;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
+    /* Was 900 px. Tablets 769–900 px keep the two-rail layout — they
+       have ≥420 px for the form rail and 348 px+ for telemetry, which
+       is workable. Below 768 px the right rail gets squeezed enough
+       that stacking is the better experience. */
     .live-console-grid { grid-template-columns: 1fr; }
 }
 
