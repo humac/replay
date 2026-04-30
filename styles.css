@@ -5374,6 +5374,7 @@ details.diag-row-details[open] > summary::after {
 .activity-event.tone-bad .activity-glyph { background: rgba(255, 74, 74, 0.14); color: #ff8f8f; }
 .activity-event.tone-good .activity-glyph { background: rgba(34, 197, 94, 0.14); color: #7be3a0; }
 .activity-event.tone-accent .activity-glyph { background: rgba(23, 113, 201, 0.16); color: var(--accent); }
+.activity-event.tone-warn .activity-glyph { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
 
 .activity-verb {
     font-family: var(--font-heading);

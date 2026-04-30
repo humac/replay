@@ -16,7 +16,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 ## Key Files
 
 - `server.py`: API routes, SPA serving, async lock wrappers, entrypoint
-- `db.py`: SQLite connection pool, schema migrations, match CRUD helpers
+- `db.py`: SQLite connection pool, schema migrations, match CRUD helpers, persisted admin `activity_events` feed helpers
 - `auth.py`: multi-user authentication, token management, password hashing (scrypt), role-based access, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers, `TUNING_KNOBS` schema (typed validation + range clamps for performance/upload/encoder knobs), env-fallback-on-first-load, `settings_audit` write helper, typed read helpers (`get_int`/`get_float`/`get_bool`/`get_str`/`get_hls_variant_presets`)
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)
@@ -128,6 +128,7 @@ After frontend changes, sanity-check:
 - For UI feedback, use the toast system in `js/ui.js` (`showSuccess`, `showError`, `showInfo`) instead of `alert()`. Use `btnLoading()` for button loading states.
 - Playback state (position, speed) is persisted in localStorage by `js/player.js`. Keyboard shortcuts are YouTube-style and registered globally in `initKeyboardShortcuts()`. Thumbnails are auto-generated during transcoding and backfilled at startup for existing videos.
 - Video errors are persisted in the `video_errors` table. When setting status to `"error"`, pass `error_info={"error_code": ..., "reason": ..., "details": ...}` to `_set_video_status()`.
+- Admin overview "Recent Activity" is backed by persisted `activity_events` (`_db.log_activity_event()` / `_db.get_activity_events()`), not by `video_errors`. Log logical events only: upload/transcode/HLS/admin/user/settings/live-or-VOD-HLS stream session transitions. Do not log HLS segment polls, VOD heartbeat noise, or per-range MP4 requests.
 - Admin recovery endpoints: retry transcode (`POST .../retry`), regenerate HLS (`POST .../regenerate-hls`), verify assets (`GET .../verify`), export DB (`POST /api/admin/export-database`).
 - Live streaming (RTMP ingest → LL-HLS) is provided by a `mediamtx` sidecar in compose. Stream-key auth runs through `POST /api/live/auth` (called by MediaMTX); browsers always reach LL-HLS via the proxy at `/api/live/hls/*` so they only ever talk to the replay origin. The stream key is private (never returned by `/api/settings`) and is rotated via `POST /api/admin/live/rotate-key`.
 - AirPlay and Chromecast for the Watch Live feed live alongside the replay-player implementation. `js/live.js::initLiveRemotePlayback` binds the `live-video` element + `airplay-btn-live` / `cast-btn-live` buttons; `js/player.js::onCastConnected` and `setupCastFramework` are view-aware and route the live HLS URL (`application/x-mpegURL` + `streamType=LIVE`) when the live view is active.

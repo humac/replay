@@ -215,7 +215,28 @@ def _migrate_v6(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_settings_audit_key ON settings_audit(key)")
 
 
-_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4, _migrate_v5, _migrate_v6]
+def _migrate_v7(conn: sqlite3.Connection):
+    """Add activity_events table for the admin overview feed."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS activity_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'info',
+            message TEXT NOT NULL DEFAULT '',
+            match_id TEXT,
+            slot TEXT,
+            actor TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_events_created ON activity_events(created_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_events_match ON activity_events(match_id)")
+
+
+_MIGRATIONS = [_migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4, _migrate_v5, _migrate_v6, _migrate_v7]
 
 
 def _run_migrations(conn: sqlite3.Connection):
@@ -573,3 +594,78 @@ def get_video_errors(
 def count_video_errors() -> int:
     with connect() as conn:
         return conn.execute("SELECT COUNT(*) FROM video_errors").fetchone()[0]
+
+
+def log_activity_event(
+    event_type: str,
+    *,
+    severity: str = "info",
+    message: str = "",
+    match_id: str | None = None,
+    slot: str | None = None,
+    actor: str | None = None,
+    metadata: dict | None = None,
+) -> int:
+    """Insert an admin activity feed event and return its ID."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    metadata_json = json.dumps(metadata or {}, sort_keys=True)
+    with connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO activity_events (
+                event_type, severity, message, match_id, slot, actor,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_type,
+                severity,
+                message,
+                match_id,
+                slot,
+                actor or "",
+                metadata_json,
+                now,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_activity_events(limit: int = 20, max_age_hours: int | None = 72) -> list[dict]:
+    """Return newest activity feed events, optionally limited to recent hours."""
+    where_sql = ""
+    params: list = []
+    if max_age_hours is not None:
+        cutoff = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(time.time() - (max_age_hours * 3600)),
+        )
+        where_sql = " WHERE created_at >= ?"
+        params.append(cutoff)
+    params.append(limit)
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM activity_events{where_sql} ORDER BY created_at DESC, id DESC LIMIT ?",
+            params,
+        ).fetchall()
+    events = []
+    for r in rows:
+        try:
+            metadata = json.loads(r["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        events.append(
+            {
+                "id": r["id"],
+                "event_type": r["event_type"],
+                "severity": r["severity"],
+                "message": r["message"],
+                "match_id": r["match_id"],
+                "slot": r["slot"],
+                "actor": r["actor"] or "",
+                "metadata": metadata,
+                "created_at": r["created_at"],
+            }
+        )
+    return events

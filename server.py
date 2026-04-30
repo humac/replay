@@ -405,6 +405,53 @@ async def _admin_settings_payload() -> dict:
     return payload
 
 
+def _log_activity(
+    event_type: str,
+    *,
+    severity: str = "info",
+    message: str = "",
+    match_id: str | None = None,
+    slot: str | None = None,
+    actor: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """Best-effort admin activity feed writer."""
+    try:
+        _db.log_activity_event(
+            event_type,
+            severity=severity,
+            message=message,
+            match_id=match_id,
+            slot=slot,
+            actor=actor,
+            metadata=metadata,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Activity event logging failed: %s", exc)
+
+
+def _stream_activity_logger(event_type: str, *, severity: str = "info", match_id=None, slot=None, metadata=None):
+    metadata = metadata or {}
+    kind = metadata.get("kind") or "stream"
+    if event_type == "stream.started":
+        label = "Live viewer connected" if kind == "live" else "VOD viewer connected"
+    elif event_type == "stream.ended":
+        label = "Live viewer disconnected" if kind == "live" else "VOD viewer disconnected"
+    else:
+        label = event_type.replace(".", " ")
+    _log_activity(
+        event_type,
+        severity=severity,
+        message=label,
+        match_id=match_id,
+        slot=slot,
+        metadata=metadata,
+    )
+
+
+_streams.set_activity_logger(_stream_activity_logger)
+
+
 async def _render_index_html() -> str:
     settings_payload = await _public_settings_payload()
     return _settings.render_index_html(settings_payload)
@@ -440,6 +487,7 @@ async def _set_video_status(
     ``error_code``, ``reason``, ``details``), the error is also logged to the
     ``video_errors`` table for admin diagnostics.
     """
+    old_status = None
     async with MATCHES_LOCK:
         matches = _db.load_matches_unlocked()
         match = _db.find_match(matches, match_id)
@@ -447,6 +495,7 @@ async def _set_video_status(
             return
         if "video_status" not in match:
             match["video_status"] = {}
+        old_status = match["video_status"].get(slot)
         match["video_status"][slot] = status
         if filename:
             match["videos"][slot] = filename
@@ -462,6 +511,39 @@ async def _set_video_status(
             error_info.get("reason", "Unknown error"),
             error_info.get("details", ""),
         )
+    if old_status != status:
+        if status == "transcoding":
+            _log_activity(
+                "transcode.started",
+                severity="info",
+                message="Transcode started",
+                match_id=match_id,
+                slot=slot,
+                metadata={"old_status": old_status},
+            )
+        elif status == "ready":
+            _log_activity(
+                "transcode.succeeded",
+                severity="success",
+                message="Transcode finished",
+                match_id=match_id,
+                slot=slot,
+                metadata={"old_status": old_status, "filename": filename or ""},
+            )
+        elif status == "error":
+            info = error_info or {}
+            _log_activity(
+                "transcode.failed",
+                severity="error",
+                message=info.get("reason") or "Transcode failed",
+                match_id=match_id,
+                slot=slot,
+                metadata={
+                    "old_status": old_status,
+                    "error_code": info.get("error_code", "unknown"),
+                    "details": info.get("details", ""),
+                },
+            )
 
 
 async def _sweep_orphaned_transcodes():
@@ -831,6 +913,17 @@ async def update_admin_settings(request: Request):
     if "transcode_concurrency" in updates:
         await TRANSCODE_SEMAPHORE.resize(_settings.get_int(settings, "transcode_concurrency", 2))
 
+    if updates:
+        tuning_keys = [key for key in updates if key in _settings.TUNING_KNOBS]
+        event_type = "settings.tuning_updated" if tuning_keys else "settings.updated"
+        _log_activity(
+            event_type,
+            severity="info",
+            message="Tuning settings saved" if tuning_keys else "Settings saved",
+            actor=actor,
+            metadata={"keys": sorted(updates.keys()), "tuning_keys": sorted(tuning_keys)},
+        )
+
     return {
         "ok": True,
         "settings": settings,
@@ -866,7 +959,15 @@ async def upload_app_asset(file: UploadFile, request: Request):
     dest_name = f"app_{kind}{ext}"
     dest = APP_ASSETS_DIR / dest_name
     await _save_upload_file(file, dest, max_size_bytes=config["max_size"])
-    settings = await _save_settings({config["setting_key"]: dest_name})
+    actor = _auth.require_auth(request)["username"]
+    settings = await _save_settings({config["setting_key"]: dest_name}, actor=actor)
+    _log_activity(
+        "settings.asset_updated",
+        severity="info",
+        message=f"{kind.title()} asset updated",
+        actor=actor,
+        metadata={"kind": kind, "filename": dest_name},
+    )
     return {
         "ok": True,
         "kind": kind,
@@ -1066,7 +1167,14 @@ async def admin_live_rotate_key(request: Request):
     _auth.require_role(request, "admin")
     async with MATCHES_LOCK:
         new_key = _settings.rotate_stream_key_unlocked()
-    logger.info("Live stream key rotated by %s", _auth.require_auth(request)["username"])
+    actor = _auth.require_auth(request)["username"]
+    logger.info("Live stream key rotated by %s", actor)
+    _log_activity(
+        "live.key_rotated",
+        severity="warning",
+        message="Live stream key rotated",
+        actor=actor,
+    )
     return {"ok": True, "stream_key": new_key, "stream_path": _live.stream_path(new_key)}
 
 
@@ -1101,6 +1209,13 @@ async def admin_kill_stream(session_id: str, request: Request):
     if not killed:
         raise HTTPException(404, "Session not found")
     logger.info("admin.action", extra={"action": "kill_stream", "actor": user["username"], "target_id": session_id})
+    _log_activity(
+        "stream.killed",
+        severity="warning",
+        message="Stream killed",
+        actor=user["username"],
+        metadata={"session_id": session_id},
+    )
     return {"ok": True, "killed": True}
 
 
@@ -1111,6 +1226,16 @@ async def admin_unblock_stream(payload: UnblockStreamRequest, request: Request):
     key = (payload.ip, payload.kind, payload.match_id or "", payload.slot or "")
     cleared = _streams.registry.unblock(key)
     logger.info("admin.action", extra={"action": "unblock_stream", "actor": user["username"], "target_ip": payload.ip, "kind": payload.kind})
+    if cleared:
+        _log_activity(
+            "stream.unblocked",
+            severity="info",
+            message="Stream block cleared",
+            match_id=payload.match_id,
+            slot=payload.slot,
+            actor=user["username"],
+            metadata={"ip": payload.ip, "kind": payload.kind},
+        )
     return {"ok": True, "cleared": cleared}
 
 
@@ -1161,12 +1286,19 @@ async def list_users(request: Request):
 
 @app.post("/api/users")
 async def create_user(request: Request, body: CreateUserRequest):
-    _auth.require_role(request, "admin")
+    actor = _auth.require_role(request, "admin")
     existing = _db.get_user_by_username(body.username)
     if existing:
         raise HTTPException(409, "Username already exists")
     password_hash = _auth.hash_password(body.password)
     user = _db.create_user(body.username, password_hash, body.role, body.display_name)
+    _log_activity(
+        "user.created",
+        severity="info",
+        message=f"User created: {body.username}",
+        actor=actor["username"],
+        metadata={"target_user_id": user.get("id"), "role": body.role},
+    )
     return {"ok": True, "user": user}
 
 
@@ -1190,15 +1322,30 @@ async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
     _db.update_user(user_id, **updates)
     updated = _db.get_user_by_id(user_id)
     logger.info("admin.action", extra={"action": "update_user", "actor": actor["username"], "target_id": user_id, "fields": list(updates)})
+    _log_activity(
+        "user.updated",
+        severity="info",
+        message=f"User updated: {updated.get('username', user_id)}",
+        actor=actor["username"],
+        metadata={"target_user_id": user_id, "fields": list(updates)},
+    )
     return {"ok": True, "user": {k: v for k, v in updated.items() if k != "password_hash"}}
 
 
 @app.delete("/api/users/{user_id}")
 async def delete_user(user_id: str, request: Request):
     user = _auth.require_role(request, "admin")
+    target = _db.get_user_by_id(user_id)
     if not _db.delete_user(user_id):
         raise HTTPException(404, "User not found")
     logger.info("admin.action", extra={"action": "delete_user", "actor": user["username"], "target_id": user_id})
+    _log_activity(
+        "user.deleted",
+        severity="warning",
+        message=f"User deleted: {target.get('username', user_id) if target else user_id}",
+        actor=user["username"],
+        metadata={"target_user_id": user_id},
+    )
     return {"ok": True}
 
 
@@ -1293,6 +1440,7 @@ async def admin_diagnostics(request: Request):
 
     # Recent errors from DB
     recent_errors = _db.get_video_errors(limit=10)
+    recent_activity = _db.get_activity_events(limit=20, max_age_hours=72)
 
     disk_by_match = await asyncio.to_thread(_cached_disk_usage_by_match)
 
@@ -1333,6 +1481,7 @@ async def admin_diagnostics(request: Request):
             if task and not task.done()
         ],
         "recent_errors": recent_errors,
+        "recent_activity": recent_activity,
     }
 
 
@@ -1528,6 +1677,13 @@ async def admin_backfill_hls(request: Request):
     user = _auth.require_role(request, "admin")
     result = await _backfill_hls_for_existing_videos()
     logger.info("admin.action", extra={"action": "backfill_hls", "actor": user["username"]})
+    _log_activity(
+        "hls.backfill",
+        severity="info",
+        message="HLS backfill completed",
+        actor=user["username"],
+        metadata=result,
+    )
     return {"ok": True, **result}
 
 
@@ -1614,6 +1770,15 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
             "slot": slot,
         },
     )
+    _log_activity(
+        "transcode.retry_requested" if not force else "transcode.force_requested",
+        severity="warning" if force else "info",
+        message="Force re-transcode requested" if force else "Transcode retry requested",
+        match_id=match_id,
+        slot=slot,
+        actor=user["username"],
+        metadata={"source": src.name, "forced": force},
+    )
     return {"ok": True, "status": "transcoding", "source": src.name, "forced": force}
 
 
@@ -1642,6 +1807,14 @@ async def _run_regen_hls_task(match_id: str, slot: str, mp4_path: Path, actor: s
             f"Regen HLS crashed: {type(exc).__name__}",
             f"{type(exc).__name__}: {exc}\nTriggered by {actor}. See server log for full traceback.",
         )
+        _log_activity(
+            "hls.regenerate_failed",
+            severity="error",
+            message=f"HLS regeneration crashed: {type(exc).__name__}",
+            match_id=match_id,
+            slot=slot,
+            actor=actor,
+        )
         return
     if not ok:
         logger.warning(
@@ -1655,11 +1828,27 @@ async def _run_regen_hls_task(match_id: str, slot: str, mp4_path: Path, actor: s
             "Regen HLS failed — every variant exhausted hwaccel + CPU fallback.",
             f"Triggered by {actor}. Check the server log for the per-variant ffmpeg stderr tails (lines tagged 'HLS variant {match_id}/{slot}/<name> <method> failed').",
         )
+        _log_activity(
+            "hls.regenerate_failed",
+            severity="error",
+            message="HLS regeneration failed",
+            match_id=match_id,
+            slot=slot,
+            actor=actor,
+        )
         return
     logger.info(
         "admin.action regen_hls.done %s/%s by %s",
         match_id, slot, actor,
         extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "done"},
+    )
+    _log_activity(
+        "hls.regenerate_succeeded",
+        severity="success",
+        message="HLS regeneration finished",
+        match_id=match_id,
+        slot=slot,
+        actor=actor,
     )
 
 
@@ -1722,6 +1911,15 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
         match_id, slot, actor, mp4_path, mp4_path.stat().st_size,
         extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "start"},
     )
+    _log_activity(
+        "hls.regenerate_started",
+        severity="info",
+        message="HLS regeneration started",
+        match_id=match_id,
+        slot=slot,
+        actor=actor,
+        metadata={"bytes": mp4_path.stat().st_size},
+    )
     task = _spawn_task(_run_regen_hls_task(match_id, slot, mp4_path, actor))
     _regen_hls_tasks[key] = (task, time.monotonic())
     task.add_done_callback(lambda _t: _regen_hls_tasks.pop(key, None))
@@ -1770,6 +1968,14 @@ async def admin_regenerate_thumbnail(match_id: str, request: Request):
     if not ok:
         raise HTTPException(500, "Thumbnail generation failed")
     logger.info("admin.action", extra={"action": "regenerate_thumbnail", "actor": user["username"], "target_id": match_id, "slot": chosen_slot})
+    _log_activity(
+        "thumbnail.regenerated",
+        severity="success",
+        message="Thumbnail regenerated",
+        match_id=match_id,
+        slot=chosen_slot,
+        actor=user["username"],
+    )
     return {"ok": True, "slot": chosen_slot}
 
 
@@ -1800,6 +2006,12 @@ async def admin_export_database(request: Request):
         raise HTTPException(404, "Database file not found")
     date_str = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     logger.info("admin.action", extra={"action": "export_database", "actor": user["username"]})
+    _log_activity(
+        "database.exported",
+        severity="info",
+        message="Database exported",
+        actor=user["username"],
+    )
     return FileResponse(
         str(DB_FILE),
         media_type="application/x-sqlite3",
@@ -1826,7 +2038,7 @@ async def list_matches(q: str | None = None, page: int | None = None, limit: int
 
 @app.post("/api/matches")
 async def create_match(request: Request, body: CreateMatchRequest):
-    _auth.require_role(request, "admin", "uploader")
+    user = _auth.require_role(request, "admin", "uploader")
     # Timestamp prefix keeps IDs sortable in logs; the random suffix prevents
     # collisions when two POSTs land in the same millisecond (silently turning
     # the upsert into an overwrite of the first row).
@@ -1861,12 +2073,20 @@ async def create_match(request: Request, body: CreateMatchRequest):
         matches = _db.load_matches_unlocked()
         matches.append(match)
         _db.save_matches_unlocked(matches)
+    _log_activity(
+        "match.created",
+        severity="info",
+        message=f"Match added: {body.home_team} vs {body.away_team}",
+        match_id=match_id,
+        actor=user["username"],
+        metadata={"slug": match["slug"], "format": body.format},
+    )
     return match
 
 
 @app.put("/api/matches/{match_id}")
 async def update_match(match_id: str, request: Request, body: UpdateMatchRequest):
-    _auth.require_role(request, "admin", "uploader")
+    user = _auth.require_role(request, "admin", "uploader")
     updates = body.model_dump(exclude_unset=True)
     async with MATCHES_LOCK:
         matches = _db.load_matches_unlocked()
@@ -1891,7 +2111,16 @@ async def update_match(match_id: str, request: Request, body: UpdateMatchRequest
 
         match["updated_at"] = _now_ms()
         _db.save_matches_unlocked(matches)
-        return match
+        updated_match = dict(match)
+    _log_activity(
+        "match.updated",
+        severity="info",
+        message=f"Match updated: {updated_match.get('home_team', '')} vs {updated_match.get('away_team', '')}",
+        match_id=match_id,
+        actor=user["username"],
+        metadata={"fields": sorted(updates.keys())},
+    )
+    return updated_match
 
 
 @app.delete("/api/matches/{match_id}")
@@ -1922,6 +2151,13 @@ async def delete_match(match_id: str, request: Request):
         if d.exists():
             shutil.rmtree(str(d))
     logger.info("admin.action", extra={"action": "delete_match", "actor": user["username"], "target_id": match_id})
+    _log_activity(
+        "match.deleted",
+        severity="warning",
+        message=f"Match deleted: {match.get('home_team', '')} vs {match.get('away_team', '')}",
+        match_id=match_id,
+        actor=user["username"],
+    )
     return {"ok": True}
 
 
@@ -1931,7 +2167,7 @@ async def delete_match(match_id: str, request: Request):
 
 @app.post("/api/matches/{match_id}/upload-video/session")
 async def create_upload_session(match_id: str, request: Request, body: CreateUploadSessionRequest):
-    _auth.require_role(request, "admin", "uploader")
+    user = _auth.require_role(request, "admin", "uploader")
     stale_seconds = current_stale_upload_session_seconds()
     _uploads.cleanup_stale_sessions(stale_seconds)
     slot = request.query_params.get("slot", "full")
@@ -2007,6 +2243,15 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
         session_id, match_id, slot, size_bytes, total_chunks,
         extra={"session_id": session_id, "match_id": match_id, "slot": slot,
                "size_bytes": size_bytes, "total_chunks": total_chunks},
+    )
+    _log_activity(
+        "upload.started",
+        severity="info",
+        message="Upload started",
+        match_id=match_id,
+        slot=slot,
+        actor=user["username"],
+        metadata={"session_id": session_id, "filename": filename, "size_bytes": size_bytes},
     )
     return {
         "session_id": session_id,
@@ -2097,10 +2342,19 @@ async def get_upload_session(session_id: str, request: Request):
 
 @app.delete("/api/uploads/sessions/{session_id}")
 async def cancel_upload_session(session_id: str, request: Request):
-    _auth.require_role(request, "admin", "uploader")
+    user = _auth.require_role(request, "admin", "uploader")
     row = _uploads.mark_session_status(session_id, "cancelled")
     if not row:
         raise HTTPException(404, "Upload session not found")
+    _log_activity(
+        "upload.cancelled",
+        severity="warning",
+        message="Upload cancelled",
+        match_id=row["match_id"],
+        slot=row["slot"],
+        actor=user["username"],
+        metadata={"session_id": session_id},
+    )
     return {"ok": True, "session": _uploads.session_view(row, current_stale_upload_session_seconds())}
 
 
@@ -2121,7 +2375,7 @@ async def cleanup_upload_sessions(request: Request):
 
 @app.post("/api/uploads/sessions/{session_id}/complete")
 async def complete_upload_session(session_id: str, request: Request):
-    _auth.require_role(request, "admin", "uploader")
+    user = _auth.require_role(request, "admin", "uploader")
     row = _uploads.get_session(session_id)
     if not row:
         raise HTTPException(404, "Upload session not found")
@@ -2160,13 +2414,22 @@ async def complete_upload_session(session_id: str, request: Request):
         session_id, match_id, slot, actual_size,
         extra={"session_id": session_id, "match_id": match_id, "slot": slot, "size_bytes": actual_size},
     )
+    _log_activity(
+        "upload.completed",
+        severity="success",
+        message="Upload completed",
+        match_id=match_id,
+        slot=slot,
+        actor=user["username"],
+        metadata={"session_id": session_id, "size_bytes": actual_size},
+    )
     _spawn_transcode(match_id, slot, raw_path, final_path)
     return {"ok": True, "status": "transcoding", "slot": slot, "size_mb": round(actual_size / 1e6, 1)}
 
 @app.post("/api/matches/{match_id}/upload-video")
 async def upload_video(match_id: str, file: UploadFile, request: Request):
     """Upload a video file (MP4 / MKV).  Query param: slot=full|first_half|second_half"""
-    _auth.require_role(request, "admin", "uploader")
+    user = _auth.require_role(request, "admin", "uploader")
     slot = request.query_params.get("slot", "full")
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "slot must be full, first_half, or second_half")
@@ -2205,6 +2468,15 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
         "Upload saved: %s/%s (%s MB in %ss) — starting transcode",
         match_id, slot, size_mb, elapsed,
         extra={"match_id": match_id, "slot": slot, "size_mb": size_mb, "elapsed_s": elapsed},
+    )
+    _log_activity(
+        "upload.completed",
+        severity="success",
+        message="Upload completed",
+        match_id=match_id,
+        slot=slot,
+        actor=user["username"],
+        metadata={"filename": fname, "size_bytes": bytes_written, "elapsed_s": elapsed},
     )
 
     await _set_video_status(match_id, slot, "transcoding", None)

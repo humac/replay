@@ -215,6 +215,11 @@ export const adminMixin = {
                 this.streamBlocks = streams.blocks || [];
             }
             this.renderAdminStatusStrip({ diag, streams });
+            const overviewSection = document.querySelector('.admin-section[data-admin-section="overview"]');
+            if (overviewSection && overviewSection.classList.contains('is-active') && diag) {
+                this.diagnostics = diag;
+                this.refreshOverviewKpis?.(diag, streams);
+            }
 
             // The matches library viewers pill is computed at row-render
             // time from this.activeStreams. Without an explicit re-render
@@ -356,55 +361,89 @@ export const adminMixin = {
         this.renderActivityStrip?.(diagnostics, streams);
     },
 
-    // Activity strip — last ~8 events derived from the same diagnostics
-    // payload so we don't need a new endpoint. Sources we mine:
-    //   - diagnostics.recent_errors (most recent encode errors)
-    //   - diagnostics.active_jobs (currently encoding)
-    //   - diagnostics.upload_sessions (in-flight uploads)
-    // Replaces the standalone "Recent Errors" card on the old System page.
+    // Activity strip — persisted operational feed from diagnostics.recent_activity,
+    // plus a few "right now" rows for active uploads/transcodes/streams.
     renderActivityStrip(diagnostics, streams) {
         const strip = document.getElementById('overview-activity-strip');
         if (!strip) return;
         const events = [];
+        const nowTs = new Date().toISOString();
+        const severityTone = (severity) => ({
+            error: 'bad',
+            warning: 'warn',
+            success: 'good',
+            info: 'accent',
+        }[severity] || 'accent');
+        const severityGlyph = (severity) => ({
+            error: '!',
+            warning: '!',
+            success: '+',
+            info: 'i',
+        }[severity] || 'i');
+        const eventVerb = (type) => {
+            const root = String(type || 'activity').split('.')[0] || 'activity';
+            return root.replace(/_/g, ' ');
+        };
+        const eventDetail = (e) => {
+            const bits = [];
+            if (e.match_id) bits.push(e.match_id);
+            if (e.slot) bits.push(this.slotLabel(e.slot));
+            if (e.actor) bits.push(`by ${e.actor}`);
+            return bits.join(' · ');
+        };
 
-        (diagnostics?.recent_errors || []).slice(0, 6).forEach((e) => {
+        (diagnostics?.recent_activity || []).slice(0, 12).forEach((e) => {
             events.push({
                 ts: e.created_at || '',
-                glyph: '✕',
-                tone: 'bad',
-                verb: this.esc(e.error_code || 'error'),
-                subject: `${this.esc(e.match_id || '')} · ${this.slotLabel(e.slot)}`,
-                detail: this.esc(e.reason || ''),
+                glyph: severityGlyph(e.severity),
+                tone: severityTone(e.severity),
+                verb: this.esc(eventVerb(e.event_type)),
+                subject: this.esc(e.message || e.event_type || 'Activity'),
+                detail: this.esc(eventDetail(e)),
             });
         });
 
         (diagnostics?.active_jobs || []).slice(0, 4).forEach((j) => {
             events.push({
-                ts: '',
-                glyph: '↻',
+                ts: nowTs,
+                glyph: '>',
                 tone: 'accent',
-                verb: 'encoding',
+                verb: 'encoding now',
                 subject: `${this.esc(j.home_team || '')} vs ${this.esc(j.away_team || '')} · ${this.slotLabel(j.slot)}`,
                 detail: j.pct != null ? `${j.pct}%` : (j.stage || ''),
             });
         });
+
+        (diagnostics?.upload_sessions || [])
+            .filter((s) => s.status === 'active')
+            .slice(0, 3)
+            .forEach((s) => {
+                events.push({
+                    ts: nowTs,
+                    glyph: '>',
+                    tone: 'accent',
+                    verb: 'uploading now',
+                    subject: `${this.esc(s.match_id || '')} · ${this.slotLabel(s.slot)}`,
+                    detail: s.progress_pct != null ? `${s.progress_pct}%` : '',
+                });
+            });
 
         const activeStreams = Array.isArray(streams?.active) ? streams.active : [];
         if (activeStreams.length) {
             const liveCount = activeStreams.filter((s) => s.kind === 'live').length;
             const vodCount = activeStreams.length - liveCount;
             events.push({
-                ts: '',
-                glyph: '◉',
+                ts: nowTs,
+                glyph: 'i',
                 tone: 'good',
-                verb: 'streaming',
+                verb: 'streaming now',
                 subject: `${activeStreams.length} viewer${activeStreams.length === 1 ? '' : 's'}`,
                 detail: liveCount ? `${liveCount} live · ${vodCount} vod` : `${vodCount} vod`,
             });
         }
 
         if (!events.length) {
-            strip.innerHTML = '<div class="activity-empty">All quiet — no recent events.</div>';
+            strip.innerHTML = '<div class="activity-empty">All quiet - no recent activity in the last 72 hours.</div>';
             return;
         }
 
