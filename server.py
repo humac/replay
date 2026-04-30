@@ -60,6 +60,14 @@ _background_tasks: set[asyncio.Task] = set()
 # Transcode tasks keyed by "{match_id}/{slot}" so delete_match can cancel them.
 _transcode_tasks: dict[str, asyncio.Task] = {}
 
+# Regen-HLS tasks keyed by "{match_id}/{slot}". Tracked separately from
+# _transcode_tasks because regen doesn't change the slot's video_status
+# (the MP4 is still ready) — we just need to know which slots are
+# rebuilding their HLS ladder so the admin diagnostics endpoint can
+# surface a "regenerating HLS" pill and the frontend can poll for
+# completion. Cleared on task completion.
+_regen_hls_tasks: dict[str, asyncio.Task] = {}
+
 
 def _spawn_task(coro) -> asyncio.Task:
     """Create a tracked background task; log exceptions and auto-discard on completion."""
@@ -1295,6 +1303,13 @@ async def admin_diagnostics(request: Request):
         "upload_sessions": upload_sessions,
         "failed_slots": failed_slots,
         "active_jobs": active_jobs,
+        # Slots whose HLS variant ladder is currently being rebuilt by an
+        # admin-triggered regen (fire-and-forget background task). Keys are
+        # "match_id/slot"; the frontend uses this to show a "regenerating"
+        # pill in the matches library expanded row.
+        "regen_hls_in_flight": [
+            key for key, task in _regen_hls_tasks.items() if task and not task.done()
+        ],
         "recent_errors": recent_errors,
     }
 
@@ -1580,51 +1595,21 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
     return {"ok": True, "status": "transcoding", "source": src.name, "forced": force}
 
 
-@app.post("/api/admin/matches/{match_id}/slots/{slot}/regenerate-hls")
-async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
-    """Regenerate HLS assets from an existing MP4 without re-transcoding.
+async def _run_regen_hls_task(match_id: str, slot: str, mp4_path: Path, actor: str):
+    """Background worker: rebuilds the HLS variant ladder for *match_id/slot*.
 
-    Failure paths are deliberately verbose so an admin clicking Regen HLS
-    in the matches library has *some* signal in the response and the log
-    stream when the operation goes wrong (the frontend only shows
-    "Failed: <detail>" toast, so the detail string matters).
+    Spawned by the admin regen-hls endpoint so the HTTP response can return
+    202 Accepted in <100 ms instead of holding the connection open for
+    minutes — Cloudflare's 100 s edge timeout was returning 524 to the
+    browser even though the server was still working.
+
+    All failure paths log to ``video_errors`` so they surface in the admin
+    Recent Errors panel; the response from the original POST is already
+    long gone by the time those happen.
     """
-    user = _auth.require_role(request, "admin")
-    actor = user.get("username") if isinstance(user, dict) else "?"
-    if slot not in ("full", "first_half", "second_half"):
-        raise HTTPException(400, "Invalid slot")
-
-    match = _db.get_match_by_id(match_id)
-    if not match:
-        logger.info("regen_hls.skipped: match_not_found %s", match_id, extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "match_not_found"})
-        raise HTTPException(404, "Match not found")
-
-    mp4_path = _slot_mp4_path(match_id, slot)
-    if not mp4_path.is_file():
-        logger.warning(
-            "regen_hls.skipped: mp4_not_found %s/%s at %s", match_id, slot, mp4_path,
-            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "mp4_not_found"},
-        )
-        # Surface in the admin Recent Errors panel too — admin actions that
-        # fail are exactly the kind of thing the panel exists to flag.
-        _db.log_video_error(
-            match_id, slot,
-            "REGEN_HLS_MP4_MISSING",
-            "Regen HLS skipped — MP4 not found on disk.",
-            f"Expected at {mp4_path}. The slot may need a Re-transcode (or a fresh upload) before HLS can be rebuilt.",
-        )
-        raise HTTPException(404, f"MP4 file not found on disk at {mp4_path}")
-
-    logger.info(
-        "regen_hls.start %s/%s by %s (mp4=%s, %s bytes)",
-        match_id, slot, actor, mp4_path, mp4_path.stat().st_size,
-        extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "start"},
-    )
     try:
         ok = await _build_hls_assets(mp4_path, match_id, slot)
     except Exception as exc:
-        # Surface the underlying ffmpeg / probe error in both the log and
-        # the HTTP response so the admin doesn't have to grep stdout.
         logger.exception(
             "regen_hls.crash %s/%s: %s", match_id, slot, exc,
             extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "exception"},
@@ -1635,8 +1620,7 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
             f"Regen HLS crashed: {type(exc).__name__}",
             f"{type(exc).__name__}: {exc}\nTriggered by {actor}. See server log for full traceback.",
         )
-        raise HTTPException(500, f"HLS generation crashed: {type(exc).__name__}: {exc}")
-
+        return
     if not ok:
         logger.warning(
             "regen_hls.failed %s/%s — all variant methods exhausted (see preceding warnings for ffmpeg stderr tails)",
@@ -1649,14 +1633,78 @@ async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
             "Regen HLS failed — every variant exhausted hwaccel + CPU fallback.",
             f"Triggered by {actor}. Check the server log for the per-variant ffmpeg stderr tails (lines tagged 'HLS variant {match_id}/{slot}/<name> <method> failed').",
         )
-        raise HTTPException(500, "HLS generation failed — every variant exhausted its hwaccel + CPU fallback. Check the server log for the ffmpeg stderr tail.")
-
+        return
     logger.info(
         "admin.action regen_hls.done %s/%s by %s",
         match_id, slot, actor,
         extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "done"},
     )
-    return {"ok": True, "slot": slot}
+
+
+@app.post("/api/admin/matches/{match_id}/slots/{slot}/regenerate-hls")
+async def admin_regenerate_hls(match_id: str, slot: str, request: Request):
+    """Kick off an async HLS regeneration and return 202 immediately.
+
+    Why fire-and-forget: the actual ffmpeg work to re-segment a multi-GB
+    MP4 across 3 variants typically takes 1–10 minutes. Cloudflare (and
+    most edge proxies) cap origin response latency around 100 s — the
+    previous synchronous handler hit Cloudflare's 524 every time, even
+    though the server-side work was succeeding. Now we validate the
+    request synchronously (slot, match, mp4 exists, no regen already in
+    flight), spawn ``_run_regen_hls_task`` as a tracked background task,
+    and return 202 with a job key the frontend can poll. Failures land
+    in the ``video_errors`` table (so they show up in the admin Recent
+    Errors panel) and in stdout (so they're greppable in the container
+    log).
+    """
+    user = _auth.require_role(request, "admin")
+    actor = user.get("username") if isinstance(user, dict) else "?"
+    if slot not in ("full", "first_half", "second_half"):
+        raise HTTPException(400, "Invalid slot")
+
+    match = _db.get_match_by_id(match_id)
+    if not match:
+        logger.info(
+            "regen_hls.skipped: match_not_found %s", match_id,
+            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "match_not_found"},
+        )
+        raise HTTPException(404, "Match not found")
+
+    mp4_path = _slot_mp4_path(match_id, slot)
+    if not mp4_path.is_file():
+        logger.warning(
+            "regen_hls.skipped: mp4_not_found %s/%s at %s", match_id, slot, mp4_path,
+            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "mp4_not_found"},
+        )
+        _db.log_video_error(
+            match_id, slot,
+            "REGEN_HLS_MP4_MISSING",
+            "Regen HLS skipped — MP4 not found on disk.",
+            f"Expected at {mp4_path}. The slot may need a Re-transcode (or a fresh upload) before HLS can be rebuilt.",
+        )
+        raise HTTPException(404, f"MP4 file not found on disk at {mp4_path}")
+
+    key = f"{match_id}/{slot}"
+    existing = _regen_hls_tasks.get(key)
+    if existing is not None and not existing.done():
+        logger.info(
+            "regen_hls.skipped: already_in_flight %s/%s", match_id, slot,
+            extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "reason": "already_in_flight"},
+        )
+        raise HTTPException(409, "An HLS regeneration is already in flight for this slot.")
+
+    logger.info(
+        "regen_hls.start %s/%s by %s (mp4=%s, %s bytes) — running async, response is 202",
+        match_id, slot, actor, mp4_path, mp4_path.stat().st_size,
+        extra={"action": "regenerate_hls", "actor": actor, "target_id": match_id, "slot": slot, "phase": "start"},
+    )
+    task = _spawn_task(_run_regen_hls_task(match_id, slot, mp4_path, actor))
+    _regen_hls_tasks[key] = task
+    task.add_done_callback(lambda _t: _regen_hls_tasks.pop(key, None))
+    return JSONResponse(
+        status_code=202,
+        content={"ok": True, "slot": slot, "status": "regenerating", "match_id": match_id},
+    )
 
 
 @app.post("/api/admin/matches/{match_id}/regenerate-thumbnail")
