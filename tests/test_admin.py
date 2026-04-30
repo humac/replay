@@ -20,6 +20,7 @@ async def test_diagnostics_structure(client, auth_headers):
     assert "failed_slots" in data
     assert "active_jobs" in data
     assert "recent_errors" in data
+    assert "recent_activity" in data
     assert "disk_usage_by_match" in data
 
 
@@ -51,6 +52,47 @@ async def test_match_errors_logged(client, auth_headers):
     assert len(errors) == 2
     codes = {e["error_code"] for e in errors}
     assert codes == {"disk_full", "cpu_failed"}
+
+
+@pytest.mark.asyncio
+async def test_activity_events_surface_in_diagnostics(client, auth_headers):
+    """Recent operational activity is exposed separately from video errors."""
+    import db as _db
+
+    _db.log_activity_event(
+        "transcode.succeeded",
+        severity="success",
+        message="Transcode finished",
+        match_id="match-activity",
+        slot="full",
+        actor="admin",
+    )
+
+    resp = await client.get("/api/admin/diagnostics", headers=auth_headers)
+    assert resp.status_code == 200
+    activity = resp.json()["recent_activity"]
+    assert activity
+    assert activity[0]["event_type"] == "transcode.succeeded"
+    assert activity[0]["message"] == "Transcode finished"
+    assert activity[0]["match_id"] == "match-activity"
+
+
+@pytest.mark.asyncio
+async def test_match_create_logs_activity(client, auth_headers):
+    """Creating a match writes a durable overview activity event."""
+    resp = await client.post("/api/matches", json={
+        "home_team": "Activity A", "away_team": "Activity B",
+    }, headers=auth_headers)
+    assert resp.status_code == 200
+    match_id = resp.json()["id"]
+
+    diag = await client.get("/api/admin/diagnostics", headers=auth_headers)
+    assert diag.status_code == 200
+    events = diag.json()["recent_activity"]
+    assert any(
+        e["event_type"] == "match.created" and e["match_id"] == match_id
+        for e in events
+    )
 
 
 @pytest.mark.asyncio

@@ -17,13 +17,34 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from fastapi import Request
 
 import log as _log
 
 logger = _log.setup("replay")
+
+_activity_logger: Callable[..., None] | None = None
+
+
+def set_activity_logger(callback: Callable[..., None] | None) -> None:
+    """Install a best-effort activity logger supplied by server.py."""
+    global _activity_logger
+    _activity_logger = callback
+
+
+def _emit_activity(event_type: str, **payload) -> None:
+    if _activity_logger is None:
+        return
+    try:
+        _activity_logger(event_type, **payload)
+    except Exception as exc:  # pragma: no cover - telemetry must not break streams
+        logger.warning("Stream activity logging failed: %s", exc)
+
+
+def _should_log_stream_activity(sess: "StreamSession") -> bool:
+    return sess.kind in ("live", "vod-hls")
 
 # ---------------------------------------------------------------------------
 # Client IP resolution
@@ -249,6 +270,20 @@ class StreamRegistry:
                 "slot": sess.slot,
             },
         )
+        if _should_log_stream_activity(sess):
+            _emit_activity(
+                "stream.started",
+                severity="info",
+                match_id=sess.match_id,
+                slot=sess.slot,
+                metadata={
+                    "session_id": sess.id,
+                    "kind": sess.kind,
+                    "ip": sess.ip,
+                    "user_agent": sess.user_agent,
+                    "geo": sess.geo,
+                },
+            )
         return sess
 
     def register_long(
@@ -271,6 +306,20 @@ class StreamRegistry:
                 "slot": sess.slot,
             },
         )
+        if _should_log_stream_activity(sess):
+            _emit_activity(
+                "stream.started",
+                severity="info",
+                match_id=sess.match_id,
+                slot=sess.slot,
+                metadata={
+                    "session_id": sess.id,
+                    "kind": sess.kind,
+                    "ip": sess.ip,
+                    "user_agent": sess.user_agent,
+                    "geo": sess.geo,
+                },
+            )
         return sess
 
     def unregister(self, session_id: str) -> None:
@@ -286,6 +335,20 @@ class StreamRegistry:
                 "slot": sess.slot,
             },
         )
+        if _should_log_stream_activity(sess):
+            _emit_activity(
+                "stream.ended",
+                severity="info",
+                match_id=sess.match_id,
+                slot=sess.slot,
+                metadata={
+                    "session_id": sess.id,
+                    "kind": sess.kind,
+                    "ip": sess.ip,
+                    "duration_seconds": round(time.time() - sess.started_at, 1),
+                    "bytes_sent": sess.bytes_sent,
+                },
+            )
 
     def add_bytes(self, session_id: str, n: int) -> None:
         sess = self._sessions.get(session_id)

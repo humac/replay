@@ -476,3 +476,13 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 - **M3 hardening follow-up (2026-04-30):** `/api/live/auth` now fails closed when `LIVE_AUTH_SECRET` is missing (503) unless `LIVE_AUTH_ALLOW_INSECURE=1` is explicitly set. Added `MAX_ACTIVE_TOKENS` env knob (default 1000) to reduce unexpected token eviction under multi-user load. Live webhook tests now configure `LIVE_AUTH_SECRET` and send `X-Internal-Secret`, with explicit coverage for missing-header rejection and missing-secret misconfiguration.
 - **Warning-clean tests (2026-04-30):** `pytest.ini` now sets `asyncio_default_fixture_loop_scope = function` and filters known dependency-owned Python 3.14 deprecations from `pytest_asyncio.plugin` and `fastapi.routing`; `pytest tests/ -q` reports `146 passed` without warning noise.
+
+## Follow-up — Admin Recent Activity Feed ✅ COMPLETE (2026-04-30)
+
+**Goal:** make Overview's "Recent Activity" a real operational feed instead of a stale replay of old transcode errors.
+
+- **`activity_events` table** (`db.py` migration v7): persisted feed with event type, severity, message, match/slot, actor, metadata JSON, and timestamp. Helpers `log_activity_event()` and `get_activity_events()` return a 72-hour recent window for the dashboard.
+- **Diagnostics payload** (`server.py`): `/api/admin/diagnostics` now includes `recent_activity` alongside the existing `recent_errors`. The errors table remains the detailed failure history; it no longer drives the overview feed.
+- **Event sources** (`server.py`, `streams.py`): logical events are recorded for match create/update/delete, upload start/complete/cancel, transcode start/success/failure, retry/force re-transcode, HLS regeneration start/success/failure, thumbnail regeneration, settings/tuning/asset saves, live key rotation, user changes, database export, live/VOD-HLS stream start/end/kill/unblock, and HLS backfill. Stream logging is session-level only; segment polls, VOD heartbeats, and per-range MP4 requests stay quiet.
+- **Overview UI** (`js/admin.js`, `styles.css`): `renderActivityStrip()` renders persisted activity first, then current active uploads/transcodes/streams as "now" rows. The global 10-second admin status poll also refreshes the overview when it is active, so viewer and activity state no longer sits stale. Empty state now says there has been no recent activity in the last 72 hours.
+- **Tests** (`tests/test_admin.py`): diagnostics structure now asserts `recent_activity`, with coverage for direct activity persistence and match-create activity logging.
