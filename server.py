@@ -31,9 +31,12 @@ import settings as _settings
 import streams as _streams
 import uploads as _uploads
 from models import (
-    CreateMatchRequest, CreateUploadSessionRequest, CreateUserRequest,
-    LiveAuthRequest, LoginRequest, StartCaptureRequest, UnblockStreamRequest,
-    UpdateMatchRequest, UpdateUserRequest,
+    CreateCoachingNoteRequest, CreateCoachingPlaylistRequest, CreateMatchRequest,
+    CreatePlayerRequest, CreatePlayerUserLinkRequest, CreateUploadSessionRequest,
+    CreateUserRequest, LiveAuthRequest, LoginRequest, MarkCoachingReviewRequest,
+    StartCaptureRequest, UnblockStreamRequest, UpdateCoachingNoteRequest,
+    UpdateCoachingPlaylistRequest, UpdateMatchRequest, UpdatePlayerRequest,
+    UpdateUserRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -842,6 +845,18 @@ async def admin_deep_link(section: str | None = None):
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
+@app.get("/coach")
+async def coach_deep_link():
+    """Serve the SPA shell for the coaching workspace."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
+@app.get("/feedback")
+async def feedback_deep_link():
+    """Serve the SPA shell for signed-in player/family feedback."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
 @app.get("/static/{filepath:path}")
 async def static_file(filepath: str):
     filepath = filepath.split("?", 1)[0]
@@ -1251,7 +1266,7 @@ async def login(request: Request, body: LoginRequest):
     if not user:
         raise HTTPException(401, "Invalid credentials")
     token = _auth.create_token(user["user_id"], user["role"], user["username"])
-    return {"token": token, "role": user["role"], "username": user["username"]}
+    return {"token": token, "role": user["role"], "roles": sorted(_auth.role_set(user["role"])), "username": user["username"]}
 
 
 @app.post("/api/logout")
@@ -1264,7 +1279,7 @@ async def logout(request: Request):
 async def auth_check(request: Request):
     try:
         user = _auth.require_auth(request)
-        return {"authenticated": True, "role": user["role"], "username": user["username"]}
+        return {"authenticated": True, "role": user["role"], "roles": user.get("roles", []), "username": user["username"]}
     except HTTPException:
         return {"authenticated": False}
 
@@ -1347,6 +1362,312 @@ async def delete_user(user_id: str, request: Request):
         metadata={"target_user_id": user_id},
     )
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Coaching workspace
+# ---------------------------------------------------------------------------
+
+def _require_coach(request: Request) -> dict:
+    return _auth.require_role(request, "admin", "coach")
+
+
+def _filter_notes_for_user(notes: list[dict], user: dict) -> list[dict]:
+    if _auth.has_role(user, "admin", "coach"):
+        return notes
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    visible = []
+    for note in notes:
+        visibility = note.get("visibility", "private")
+        if visibility in {"team", "unlisted"}:
+            visible.append(note)
+            continue
+        if visibility == "player" and linked_players.intersection(note.get("player_ids", [])):
+            visible.append(note)
+    return visible
+
+
+def _filter_playlists_for_user(playlists: list[dict], user: dict) -> list[dict]:
+    if _auth.has_role(user, "admin", "coach"):
+        return playlists
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    visible = []
+    for playlist in playlists:
+        visibility = playlist.get("visibility", "private")
+        if visibility in {"team", "unlisted"}:
+            visible.append(playlist)
+            continue
+        if visibility == "player" and linked_players.intersection(playlist.get("player_ids", [])):
+            visible.append(playlist)
+    return visible
+
+
+@app.get("/api/coach/players")
+async def coach_list_players(request: Request):
+    _require_coach(request)
+    return {"players": _db.list_players(include_inactive=True)}
+
+
+@app.get("/api/coach/users")
+async def coach_list_linkable_users(request: Request):
+    _require_coach(request)
+    return {
+        "users": [
+            {k: v for k, v in u.items() if k != "password_hash"}
+            for u in _db.list_users()
+        ]
+    }
+
+
+@app.post("/api/coach/players")
+async def coach_create_player(request: Request, body: CreatePlayerRequest):
+    user = _require_coach(request)
+    player = _db.create_player(
+        body.display_name,
+        jersey_number=body.jersey_number,
+        active=body.active,
+        notes=body.notes,
+    )
+    _log_activity(
+        "coach.player_created",
+        severity="info",
+        message=f"Roster player added: {player.get('display_name')}",
+        actor=user["username"],
+        metadata={"player_id": player.get("id")},
+    )
+    return {"ok": True, "player": player}
+
+
+@app.patch("/api/coach/players/{player_id}")
+async def coach_update_player(player_id: str, request: Request, body: UpdatePlayerRequest):
+    user = _require_coach(request)
+    updates = body.model_dump(exclude_unset=True)
+    if updates and not _db.update_player(player_id, **updates):
+        raise HTTPException(404, "Player not found")
+    player = _db.get_player(player_id)
+    if not player:
+        raise HTTPException(404, "Player not found")
+    _log_activity(
+        "coach.player_updated",
+        severity="info",
+        message=f"Roster player updated: {player.get('display_name')}",
+        actor=user["username"],
+        metadata={"player_id": player_id, "fields": sorted(updates.keys())},
+    )
+    return {"ok": True, "player": player}
+
+
+@app.delete("/api/coach/players/{player_id}")
+async def coach_delete_player(player_id: str, request: Request):
+    user = _require_coach(request)
+    player = _db.get_player(player_id)
+    if not _db.delete_player(player_id):
+        raise HTTPException(404, "Player not found")
+    _log_activity(
+        "coach.player_deleted",
+        severity="warning",
+        message=f"Roster player deleted: {player.get('display_name', player_id) if player else player_id}",
+        actor=user["username"],
+        metadata={"player_id": player_id},
+    )
+    return {"ok": True}
+
+
+@app.post("/api/coach/player-links")
+async def coach_link_player_user(request: Request, body: CreatePlayerUserLinkRequest):
+    user = _require_coach(request)
+    if not _db.get_player(body.player_id):
+        raise HTTPException(404, "Player not found")
+    if not _db.get_user_by_id(body.user_id):
+        raise HTTPException(404, "User not found")
+    player = _db.link_player_user(body.player_id, body.user_id, body.relationship)
+    _log_activity(
+        "coach.player_linked",
+        severity="info",
+        message=f"Roster link updated: {player.get('display_name', body.player_id)}",
+        actor=user["username"],
+        metadata={"player_id": body.player_id, "user_id": body.user_id, "relationship": body.relationship},
+    )
+    return {"ok": True, "player": player}
+
+
+@app.delete("/api/coach/player-links/{link_id}")
+async def coach_delete_player_user_link(link_id: int, request: Request):
+    user = _require_coach(request)
+    if not _db.delete_player_user_link(link_id):
+        raise HTTPException(404, "Link not found")
+    _log_activity(
+        "coach.player_unlinked",
+        severity="warning",
+        message="Roster account link removed",
+        actor=user["username"],
+        metadata={"link_id": link_id},
+    )
+    return {"ok": True}
+
+
+@app.get("/api/coach/notes")
+async def coach_list_notes(request: Request, match_id: str | None = None):
+    _require_coach(request)
+    return {"notes": _db.list_coaching_notes(match_id=match_id)}
+
+
+@app.post("/api/coach/notes")
+async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
+    user = _require_coach(request)
+    if not _db.get_match_by_id(body.match_id):
+        raise HTTPException(404, "Match not found")
+    for player_id in body.player_ids:
+        if not _db.get_player(player_id):
+            raise HTTPException(404, f"Player not found: {player_id}")
+    note = _db.create_coaching_note(body.model_dump(), actor=user["username"])
+    _log_activity(
+        "coach.note_created",
+        severity="info",
+        message=f"Coaching note created: {note.get('title')}",
+        match_id=note.get("match_id"),
+        slot=note.get("slot"),
+        actor=user["username"],
+        metadata={"note_id": note.get("id"), "visibility": note.get("visibility")},
+    )
+    return {"ok": True, "note": note}
+
+
+@app.patch("/api/coach/notes/{note_id}")
+async def coach_update_note(note_id: int, request: Request, body: UpdateCoachingNoteRequest):
+    user = _require_coach(request)
+    existing = _db.get_coaching_note(note_id)
+    if not existing:
+        raise HTTPException(404, "Note not found")
+    updates = body.model_dump(exclude_unset=True)
+    for player_id in updates.get("player_ids") or []:
+        if not _db.get_player(player_id):
+            raise HTTPException(404, f"Player not found: {player_id}")
+    note = _db.update_coaching_note(note_id, updates) or existing
+    _log_activity(
+        "coach.note_updated",
+        severity="info",
+        message=f"Coaching note updated: {note.get('title')}",
+        match_id=note.get("match_id"),
+        slot=note.get("slot"),
+        actor=user["username"],
+        metadata={"note_id": note_id, "fields": sorted(updates.keys())},
+    )
+    return {"ok": True, "note": note}
+
+
+@app.delete("/api/coach/notes/{note_id}")
+async def coach_delete_note(note_id: int, request: Request):
+    user = _require_coach(request)
+    note = _db.get_coaching_note(note_id)
+    if not _db.delete_coaching_note(note_id):
+        raise HTTPException(404, "Note not found")
+    _log_activity(
+        "coach.note_deleted",
+        severity="warning",
+        message=f"Coaching note deleted: {note.get('title', note_id) if note else note_id}",
+        match_id=note.get("match_id") if note else None,
+        slot=note.get("slot") if note else None,
+        actor=user["username"],
+        metadata={"note_id": note_id},
+    )
+    return {"ok": True}
+
+
+@app.get("/api/coach/playlists")
+async def coach_list_playlists(request: Request):
+    _require_coach(request)
+    return {"playlists": _db.list_coaching_playlists()}
+
+
+@app.post("/api/coach/playlists")
+async def coach_create_playlist(request: Request, body: CreateCoachingPlaylistRequest):
+    user = _require_coach(request)
+    for note_id in body.note_ids:
+        if not _db.get_coaching_note(note_id):
+            raise HTTPException(404, f"Note not found: {note_id}")
+    for player_id in body.player_ids:
+        if not _db.get_player(player_id):
+            raise HTTPException(404, f"Player not found: {player_id}")
+    playlist = _db.create_coaching_playlist(body.model_dump(), actor=user["username"])
+    _log_activity(
+        "coach.playlist_created",
+        severity="info",
+        message=f"Coaching playlist created: {playlist.get('title')}",
+        actor=user["username"],
+        metadata={"playlist_id": playlist.get("id"), "visibility": playlist.get("visibility")},
+    )
+    return {"ok": True, "playlist": playlist}
+
+
+@app.patch("/api/coach/playlists/{playlist_id}")
+async def coach_update_playlist(playlist_id: int, request: Request, body: UpdateCoachingPlaylistRequest):
+    user = _require_coach(request)
+    existing = _db.get_coaching_playlist(playlist_id)
+    if not existing:
+        raise HTTPException(404, "Playlist not found")
+    updates = body.model_dump(exclude_unset=True)
+    for note_id in updates.get("note_ids") or []:
+        if not _db.get_coaching_note(note_id):
+            raise HTTPException(404, f"Note not found: {note_id}")
+    for player_id in updates.get("player_ids") or []:
+        if not _db.get_player(player_id):
+            raise HTTPException(404, f"Player not found: {player_id}")
+    playlist = _db.update_coaching_playlist(playlist_id, updates) or existing
+    _log_activity(
+        "coach.playlist_updated",
+        severity="info",
+        message=f"Coaching playlist updated: {playlist.get('title')}",
+        actor=user["username"],
+        metadata={"playlist_id": playlist_id, "fields": sorted(updates.keys())},
+    )
+    return {"ok": True, "playlist": playlist}
+
+
+@app.delete("/api/coach/playlists/{playlist_id}")
+async def coach_delete_playlist(playlist_id: int, request: Request):
+    user = _require_coach(request)
+    playlist = _db.get_coaching_playlist(playlist_id)
+    if not _db.delete_coaching_playlist(playlist_id):
+        raise HTTPException(404, "Playlist not found")
+    _log_activity(
+        "coach.playlist_deleted",
+        severity="warning",
+        message=f"Coaching playlist deleted: {playlist.get('title', playlist_id) if playlist else playlist_id}",
+        actor=user["username"],
+        metadata={"playlist_id": playlist_id},
+    )
+    return {"ok": True}
+
+
+@app.get("/api/my-feedback")
+async def my_feedback(request: Request):
+    user = _auth.require_auth(request)
+    players = []
+    if user.get("user_id"):
+        linked = set(_db.linked_player_ids_for_user(user["user_id"]))
+        players = [p for p in _db.list_players(include_inactive=True) if p["id"] in linked]
+    notes = _filter_notes_for_user(_db.list_coaching_notes(), user)
+    playlists = _filter_playlists_for_user(_db.list_coaching_playlists(), user)
+    reviews = _db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else []
+    return {"players": players, "notes": notes, "playlists": playlists, "reviews": reviews}
+
+
+@app.post("/api/my-feedback/review")
+async def mark_my_feedback_review(request: Request, body: MarkCoachingReviewRequest):
+    user = _auth.require_auth(request)
+    if not user.get("user_id"):
+        raise HTTPException(403, "Feedback review tracking requires a database user")
+    if not body.note_id and not body.playlist_id:
+        raise HTTPException(422, "note_id or playlist_id is required")
+    visible_note_ids = {n["id"] for n in _filter_notes_for_user(_db.list_coaching_notes(), user)}
+    visible_playlist_ids = {p["id"] for p in _filter_playlists_for_user(_db.list_coaching_playlists(), user)}
+    if body.note_id and body.note_id not in visible_note_ids:
+        raise HTTPException(403, "Note is not visible to this user")
+    if body.playlist_id and body.playlist_id not in visible_playlist_ids:
+        raise HTTPException(403, "Playlist is not visible to this user")
+    review = _db.mark_coaching_review(user["user_id"], body.note_id, body.playlist_id, body.reflection)
+    return {"ok": True, "review": review}
 
 
 # ---------------------------------------------------------------------------
@@ -1570,15 +1891,25 @@ def _host_signals() -> dict:
         return out
 
     out["psutil_available"] = True
-    out["cpu_percent"] = _psutil.cpu_percent(interval=None)
-    out["cpu_count"] = _psutil.cpu_count(logical=True)
-    vm = _psutil.virtual_memory()
-    out["memory"] = {
-        "total": vm.total, "available": vm.available, "used": vm.used,
-        "percent": vm.percent,
-    }
-    sm = _psutil.swap_memory()
-    out["swap"] = {"total": sm.total, "used": sm.used, "percent": sm.percent}
+    try:
+        out["cpu_percent"] = _psutil.cpu_percent(interval=None)
+        out["cpu_count"] = _psutil.cpu_count(logical=True)
+    except Exception:
+        out["cpu_percent"] = None
+        out["cpu_count"] = None
+    try:
+        vm = _psutil.virtual_memory()
+        out["memory"] = {
+            "total": vm.total, "available": vm.available, "used": vm.used,
+            "percent": vm.percent,
+        }
+    except Exception:
+        out["memory"] = None
+    try:
+        sm = _psutil.swap_memory()
+        out["swap"] = {"total": sm.total, "used": sm.used, "percent": sm.percent}
+    except Exception:
+        out["swap"] = None
 
     # Per-NIC bytes; fold into a single tx/rx delta for the panel.
     try:
@@ -2136,6 +2467,13 @@ async def delete_match(match_id: str, request: Request):
         matches = [m for m in matches if m["id"] != match_id]
         _db.save_matches_unlocked(matches)
         with _db.connect() as conn:
+            note_rows = conn.execute("SELECT id FROM coaching_notes WHERE match_id = ?", (match_id,)).fetchall()
+            for row in note_rows:
+                conn.execute("DELETE FROM coaching_note_players WHERE note_id = ?", (row["id"],))
+                conn.execute("DELETE FROM coaching_note_tags WHERE note_id = ?", (row["id"],))
+                conn.execute("DELETE FROM coaching_playlist_items WHERE note_id = ?", (row["id"],))
+                conn.execute("DELETE FROM coaching_reviews WHERE note_id = ?", (row["id"],))
+            conn.execute("DELETE FROM coaching_notes WHERE match_id = ?", (match_id,))
             conn.execute("DELETE FROM upload_sessions WHERE match_id = ?", (match_id,))
             conn.execute("DELETE FROM video_errors WHERE match_id = ?", (match_id,))
             conn.commit()

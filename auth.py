@@ -39,6 +39,23 @@ if not ADMIN_PASS:
     )
 
 
+def role_set(role: str | None) -> set[str]:
+    """Parse a stored role string.
+
+    Historically Replay stored exactly one role in ``users.role``. Coaching
+    adds combined access like ``coach,uploader`` without a disruptive schema
+    rewrite, so permission checks normalize to a set.
+    """
+    roles = {part.strip().lower() for part in (role or "").split(",") if part.strip()}
+    if "admin" in roles:
+        roles.update({"coach", "uploader", "viewer"})
+    return roles or {"viewer"}
+
+
+def has_role(user: dict, *roles: str) -> bool:
+    return bool(role_set(user.get("role")).intersection(roles))
+
+
 # ---------------------------------------------------------------------------
 # Password hashing (scrypt, stdlib only)
 # ---------------------------------------------------------------------------
@@ -98,13 +115,19 @@ def require_auth(request: Request) -> dict:
     if time.time() - info["created"] > TOKEN_TTL:
         del _active_tokens[token]
         raise HTTPException(401, "Token expired")
-    return {"user_id": info.get("user_id"), "role": info["role"], "username": info["username"]}
+    roles = sorted(role_set(info.get("role")))
+    return {
+        "user_id": info.get("user_id"),
+        "role": info["role"],
+        "roles": roles,
+        "username": info["username"],
+    }
 
 
 def require_role(request: Request, *roles: str) -> dict:
     """Validate token and check that the user has one of the given roles. Raises 403 if not."""
     user = require_auth(request)
-    if user["role"] not in roles:
+    if not has_role(user, *roles):
         raise HTTPException(403, "Insufficient permissions")
     return user
 

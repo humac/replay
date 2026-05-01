@@ -10,6 +10,7 @@ import { adminViewsMixin } from './js/admin-views.js';
 import { uiMixin } from './js/ui.js';
 import { liveMixin } from './js/live.js';
 import { adminMixin } from './js/admin.js';
+import { coachingMixin } from './js/coaching.js';
 
 const app = {
     // ===== STATE & CONFIG =====
@@ -38,6 +39,7 @@ const app = {
     _pollTimer: null,
     authToken: null,
     userRole: null,
+    userRoles: [],
     userName: null,
     diagnostics: null,
     transcodeProgress: {},
@@ -87,6 +89,26 @@ const app = {
             const resolved = this.resolveAdminSection(requested);
             window.history.replaceState({ view: 'admin', section: resolved }, '', `/admin/${resolved}`);
             this.showAdminView(resolved, { pushHistory: false, scrollTop: false });
+            return;
+        }
+
+        if (path === '/coach') {
+            if (!this.canCoach()) {
+                window.history.replaceState({ view: 'season' }, '', '/');
+                return;
+            }
+            window.history.replaceState({ view: 'coach' }, '', '/coach');
+            this.showCoachView({ pushHistory: false, scrollTop: false });
+            return;
+        }
+
+        if (path === '/feedback') {
+            if (!this.authToken) {
+                window.history.replaceState({ view: 'season' }, '', '/');
+                return;
+            }
+            window.history.replaceState({ view: 'feedback' }, '', '/feedback');
+            this.showFeedbackView({ pushHistory: false, scrollTop: false });
             return;
         }
 
@@ -166,6 +188,16 @@ const app = {
             return;
         }
 
+        if (state.view === 'coach') {
+            this.showCoachView({ pushHistory: false, scrollTop });
+            return;
+        }
+
+        if (state.view === 'feedback') {
+            this.showFeedbackView({ pushHistory: false, scrollTop });
+            return;
+        }
+
         this.showSeasonView({ pushHistory: false, scrollTop });
     },
 
@@ -213,6 +245,10 @@ const app = {
             downloadActions.style.display = 'none';
             downloadActions.innerHTML = '';
         }
+        const coachPanel = document.getElementById('coach-match-panel');
+        if (coachPanel) coachPanel.style.display = 'none';
+        const coachCanvas = document.getElementById('coach-drawing-canvas');
+        if (coachCanvas) coachCanvas.style.display = 'none';
         this.updateRemotePlaybackNote();
     },
 
@@ -268,6 +304,12 @@ const app = {
                 } else if (view === 'live') {
                     this.cancelEdit();
                     this.showLiveView();
+                } else if (view === 'coach') {
+                    this.cancelEdit();
+                    this.showCoachView();
+                } else if (view === 'feedback') {
+                    this.cancelEdit();
+                    this.showFeedbackView();
                 }
             });
         });
@@ -346,6 +388,7 @@ const app = {
     ...uiMixin,
     ...liveMixin,
     ...adminMixin,
+    ...coachingMixin,
 };
 
 // Expose globally for inline onclick handlers

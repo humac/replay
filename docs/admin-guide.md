@@ -1,6 +1,6 @@
 # Replay — Administrator Guide
 
-This guide walks an administrator through everything you need to run a Replay deployment: first-time setup, day-to-day match management, live streaming, performance tuning, users, and branding.
+This guide walks an administrator through everything you need to run a Replay deployment: first-time setup, day-to-day match management, coaching tools, live streaming, performance tuning, users, and branding.
 
 ## Contents
 
@@ -10,12 +10,13 @@ This guide walks an administrator through everything you need to run a Replay de
 4. [The admin dashboard](#the-admin-dashboard)
 5. [Managing matches](#managing-matches)
 6. [Uploading video](#uploading-video)
-7. [Live streaming](#live-streaming)
-8. [Performance tuning](#performance-tuning)
-9. [Users and roles](#users-and-roles)
-10. [Branding and labels](#branding-and-labels)
-11. [Backups and data export](#backups-and-data-export)
-12. [Reference](#reference)
+7. [Coaching workspace](#coaching-workspace)
+8. [Live streaming](#live-streaming)
+9. [Performance tuning](#performance-tuning)
+10. [Users and roles](#users-and-roles)
+11. [Branding and labels](#branding-and-labels)
+12. [Backups and data export](#backups-and-data-export)
+13. [Reference](#reference)
 
 ---
 
@@ -30,6 +31,7 @@ For a brand-new install, work through these in order:
 - [ ] Visit `/admin/settings` and update the team name, season title, and intro copy.
 - [ ] Upload a club logo and favicon under **Branding**.
 - [ ] Visit `/admin/users` and create accounts for everyone who needs to upload matches.
+- [ ] (Optional) Create coach and family/player accounts, then use `/coach` to link roster players to those accounts.
 - [ ] (Optional) Visit `/admin/live` to enable streaming and rotate the stream key.
 - [ ] (Optional) Visit `/admin/performance` to confirm hardware acceleration is detected.
 
@@ -37,14 +39,17 @@ For a brand-new install, work through these in order:
 
 ## Roles and access
 
-Replay has four distinct roles:
+Replay has five access levels/capabilities:
 
 | Role | Can do |
 |---|---|
 | **Anonymous** | Browse the season grid, watch matches, watch live |
-| **Viewer** | Same as anonymous; intended for future read-only features |
+| **Viewer** | Same as anonymous plus signed-in features such as team-visible coaching feedback |
+| **Coach** | Create roster records, link player/family accounts, add coaching notes/drawings/playlists |
 | **Uploader** | Add / edit / delete matches and upload video. Limited to `/admin/matches` |
 | **Admin** | Everything: users, live, settings, performance tuning |
+
+Database users can have combined capabilities such as `coach,uploader`. The env-var superadmin always behaves as an admin and inherits every capability.
 
 There is also one special account: the **environment-variable superadmin**. This is the user you set via `ADMIN_USER` and `ADMIN_PASS` in `.env.local`. It is always treated as an admin, exists outside the user database, and cannot be disabled or deleted from the UI. Use it as a recovery account — if you ever lose access through the UI, you can sign in with the env-var credentials and fix the database account.
 
@@ -219,6 +224,48 @@ Replay handles large match recordings (often 5–15 GB) via **resumable chunked 
 
 ---
 
+## Coaching workspace
+
+`/coach` is the coach-facing review workspace. It is visible to users with the `coach` capability and to admins.
+
+### Roster and family links
+
+The roster is separate from login accounts:
+
+- A **player** record represents the athlete: display name, jersey number, active flag, and internal notes.
+- A **user** record remains the login account.
+- A **player-user link** connects one or more parent/guardian/family/player accounts to a player.
+
+This supports common family setups: two parents linked to the same player, one account linked to siblings, or an older player linked to their own account.
+
+### Coaching notes
+
+Coaches can create timestamped notes against a match slot (`Full`, `1st Half`, `2nd Half`). Notes include title, body, category, tags, visibility, optional linked players, and optional drawing overlay metadata.
+
+Visibility options:
+
+| Visibility | Who can see it |
+|---|---|
+| **Private** | Coaches and admins only |
+| **Team-visible** | Signed-in viewers through **My Feedback** |
+| **Player/family** | Only accounts linked to the selected roster player(s) |
+| **Unlisted link** | Signed-in viewers with the link-style access pattern |
+
+When a coach opens a match, the replay sidebar includes a **Coach Notes** panel. The coach can save a note at the current video timestamp and use the drawing canvas to capture freehand markup. Drawings are metadata only — they are not burned into the MP4/HLS files.
+
+### Review playlists and My Feedback
+
+Review playlists group coaching notes into a lesson such as "First-half pressing" or "Build-up decisions." Coaches can assign playlists to the team or to linked players/families.
+
+Players and families sign in and open **My Feedback**. They only see:
+
+- team-visible notes/playlists
+- player-specific notes/playlists for roster players linked to their account
+
+They can jump from a note directly to the match timestamp and mark notes/playlists as reviewed.
+
+---
+
 ## Live streaming
 
 The Live page is the cockpit for broadcasting matches in real time. The left rail is the ingest config; the right rail shows live throughput, encoder load, and active viewers.
@@ -345,7 +392,7 @@ The page lists every account with role, status, and inline actions to **Disable*
 2. Fill in:
    - **Username** — 2–50 characters, letters/numbers/dots/hyphens only, case-insensitive uniqueness.
    - **Password** — at least 8 characters.
-   - **Role** — `viewer`, `uploader`, or `admin` (see [Roles and access](#roles-and-access)).
+   - **Role** — `viewer`, `coach`, `uploader`, `coach,uploader`, or `admin` (see [Roles and access](#roles-and-access)).
    - **Display name** — optional. Shown in the header after sign-in.
 3. Click **ADD USER**.
 
@@ -464,6 +511,8 @@ A short summary — for full details see the source in `server.py`.
 | `GET /api/admin/performance` | Real-time metrics |
 | `GET/PUT /api/admin/settings` | Application settings |
 | `GET/POST/PATCH/DELETE /api/users` | User management |
+| `GET/POST/PATCH/DELETE /api/coach/*` | Coaching roster, notes, links, playlists |
+| `GET /api/my-feedback` | Signed-in player/family feedback |
 | `POST /api/admin/live/rotate-key` | New stream key |
 | `GET /api/admin/streams` | Active viewer sessions |
 

@@ -322,7 +322,7 @@ export const adminViewsMixin = {
                     <span class="user-name">${this.esc(u.display_name || u.username)}</span>
                     <span class="user-username">@${this.esc(u.username)}</span>
                 </div>
-                <span class="badge ${u.role}">${u.role}</span>
+                <span class="badge ${String(u.role || 'viewer').includes('coach') ? 'processing' : u.role}">${this.esc(String(u.role || 'viewer').replace(',', ' + '))}</span>
                 <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
                 <div class="user-actions">
                     <button class="btn-sm" onclick="app.toggleUserEnabled('${u.id}', ${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
