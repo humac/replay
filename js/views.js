@@ -333,6 +333,7 @@ export const viewsMixin = {
         this.renderGameStatus(match);
 
         this.renderGameMatchup(match);
+        this.renderCoachingPanel?.();
 
         this.activateView('game-view');
         if (pushHistory) {

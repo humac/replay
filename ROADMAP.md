@@ -501,3 +501,183 @@ On phones the season header stacked the team badge, title/intro block and Watch 
   - `tests/test_admin.py` (now 32 tests) — retry happy path (state transition + `transcode.retry_requested` event), force-retry warning event, regenerate-HLS 202 + `hls.regenerate_started` event, regenerate-HLS in-flight 409, regenerate-thumbnail 404 / success / invalid-slot, and the live-resize invariant: `PUT /api/admin/settings { transcode_concurrency }` must call `TRANSCODE_SEMAPHORE.resize()` while leaving the limit untouched for unrelated keys.
 - **CI workflow** (`.github/workflows/ci.yml`): now runs `pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60`. `requirements-dev.txt` adds `pytest-cov`. `.coveragerc` excludes `tests/` so the percentage reflects application code only. Compile check now also verifies `live.py` and `streams.py`. Baseline coverage on this commit: ~64 % (256 tests, ~6 s).
 - **Doc sync:** `CLAUDE.md` + `AGENTS.md` validation snippets updated to the cov-gated command. New tests entry in `AGENTS.md` "Common files."
+
+---
+
+## Follow-up — Coaching Platform MVP ✅ COMPLETE (2026-05-01)
+
+**Goal:** implement the first usable coaching layer from the future roadmap: coaches can maintain a roster, link family/player accounts, create timestamped notes with drawing metadata, build review playlists, and publish feedback to the right signed-in viewers.
+
+- **Roles and navigation** (`auth.py`, `models.py`, `script.js`, `js/api.js`, `index.html`): added a `coach` capability and comma-separated combined roles such as `coach,uploader`. Admins inherit every capability. Signed-in coaches see a new `/coach` workspace; signed-in viewers see `/feedback` for "My Feedback."
+- **Coaching schema** (`db.py` migration v8): added `players`, `player_user_links`, `coaching_notes`, `coaching_note_players`, `coaching_note_tags`, `coaching_playlists`, `coaching_playlist_items`, `coaching_playlist_players`, and `coaching_reviews`. Drawings are stored as JSON metadata on notes, not burned into video.
+- **Coach APIs** (`server.py`, `models.py`): new coach/admin-gated routes under `/api/coach/*` for roster CRUD, linkable-user lookup, player-user links, notes, and playlists. New signed-in route `/api/my-feedback` returns only team-visible feedback plus player-specific feedback for roster players linked to the current user; `/api/my-feedback/review` records lightweight review completion/reflection.
+- **Coach workspace UI** (`js/coaching.js`, `index.html`, `styles.css`): `/coach` supports adding roster players, linking players to user accounts, creating timestamped notes, assigning linked players/tags/visibility, listing notes, and creating playlists from note selections.
+- **In-player note capture** (`js/coaching.js`, `js/views.js`, `index.html`): coaches watching a match get a Coach Notes panel in the match sidebar. They can save a note at the current video time, link players, choose visibility, and use a canvas overlay to capture freehand drawing metadata. Existing playback controls are not blocked unless drawing mode is active.
+- **Player/family feedback view** (`js/coaching.js`, `index.html`): `/feedback` shows linked roster players, published review playlists, and visible coaching notes. Users can jump from a note to the match timestamp and mark notes/playlists reviewed.
+- **Design note** (`specs/coaching-platform-design.md`): captures the MVP scope, role/privacy model, backend tables, frontend ownership, and validation approach for future coaching work.
+- **Tests** (`tests/test_coaching.py`): covers coach role access, viewer denial, roster account links, player-specific feedback visibility, drawing JSON persistence, team-visible notes, and review tracking. Full suite: `260 passed`.
+
+**Remaining coaching follow-ups:** richer drawing tools (arrows, circles, zones, labels, undo stack), playlist auto-play sequencing with pre/post-roll, roster import/export, coach-facing review-completion dashboards, and rendered clip export.
+
+---
+
+## Future Track — Fan + Family Engagement
+
+**Goal:** evolve Replay from a working match archive into a club match-day hub that helps families, supporters, and players find the right video moments quickly while preserving the current spoiler-safe public viewing model.
+
+**Product assumptions:**
+
+- Public match viewing remains link-accessible by default.
+- Score hiding remains the default presentation for replay surfaces.
+- Signed-in features are additive; they should not make the existing family/fan flow feel heavier.
+- Fan-facing engagement should avoid public youth-player profiles in v1.
+
+### F1 — Fan-first match discovery
+
+- Feature the latest ready match and current live match more prominently on the season page.
+- Add upcoming/not-yet-uploaded fixtures so families can see that a game exists before the recording is ready.
+- Add match metadata for competition, tags, and optional visibility.
+- Add richer filters for date range, opponent, venue, tag, competition, and video availability.
+- Move the public SPA toward server-side paginated search instead of relying on the bounded 500-match payload.
+
+### F2 — Shareable moments and public highlights
+
+- Add shareable timestamp links such as `/match/{slug}/first-half?t=12m34s`.
+- Add public highlight entries with title, slot, start time, end time, and optional spoiler flag.
+- In v1, highlights should be metadata-driven seek links, not generated video files.
+- Expose highlights as match-page chips and optional season-page cards.
+
+### F3 — Optional reactions and moderated comments
+
+- Add lightweight reactions on matches and highlights: cheer, great save, great goal, thanks.
+- Add match comments behind a settings toggle, disabled by default.
+- Require moderation before comments become public.
+- Log moderation activity, not every anonymous reaction, into the admin activity feed.
+
+### F4 — Match-day live experience
+
+- Upgrade `/live` into a match-day page with current fixture, kickoff time, venue, and replay-status messaging.
+- Let admins bind the live stream to a scheduled match.
+- Add an admin-controlled live announcement banner for delays, weather, or stream status.
+- After a live match, surface the recording lifecycle: pending upload, processing, ready.
+
+### F5 — Club identity and supporter surfaces
+
+- Add a richer club home header with team/club banner image, sponsor links, social links, and support copy.
+- Add configurable public modules such as "About this team", "How to watch live", and "Support the club".
+- Add public collections/playlists: Best goals, tournament weekend, full season, coach picks.
+- Keep matches and live viewing visible in the first viewport; do not turn Replay into a marketing-only landing page.
+
+### F6 — Returning-family convenience
+
+- Add a client-only "Continue watching" rail using the existing playback-position storage.
+- Add "new since your last visit" indicators for anonymous viewers via localStorage.
+- Add optional signed-in favorites/watchlist for viewer accounts.
+- Consider calendar-export links for upcoming fixtures once fixture rows exist before uploads.
+
+---
+
+## Future Track — Coaching Platform
+
+**Goal:** let coaches turn recorded match video into structured teaching material: timestamped notes, drawing overlays, review playlists, and private player/family feedback.
+
+**Product assumptions:**
+
+- Coaching content starts private.
+- Player-specific feedback requires login.
+- Public player profile pages are out of scope for v1.
+- Families are modeled as normal user accounts linked to roster player records.
+- Drawing overlays are stored as metadata only; rendered clip export can come later.
+- Public match viewing remains unchanged.
+
+### C1 — Coach workspace and roles
+
+- Add a `coach` capability/role.
+- Coaches can create private coaching notes, drawings, review playlists, and player feedback.
+- Admins can grant users the access they need across admin, coach, uploader, and viewer workflows.
+- Prefer a dedicated `/coach` workspace or a Coach section in the existing admin shell; keep public viewing uncluttered.
+
+### C2 — Roster, player profiles, and family account links
+
+- Add roster records separate from login users.
+- A `player` record represents an athlete on the team: display name, jersey number, active flag, and optional internal notes.
+- A `user` record remains the login identity.
+- Add `player_user_links` so one or more user accounts can access a player's feedback.
+- Support common family cases:
+  - one parent account linked to one player
+  - two parent/guardian accounts linked to the same player
+  - one family account linked to multiple siblings
+  - older player account linked directly to their own player profile
+- Admins/coaches manage roster links manually in v1.
+- Do not add public player profile pages in v1.
+
+Suggested data model:
+
+- `players`: `id`, `display_name`, `jersey_number`, `active`, `notes`, `created_at`, `updated_at`
+- `player_user_links`: `id`, `player_id`, `user_id`, `relationship`, `created_at`
+- Relationship values: `self`, `parent`, `guardian`, `family`
+
+### C3 — Timestamped coaching notes
+
+- Coaches can pause a match and create a note tied to match, slot, and timestamp.
+- Notes include title, body, category, tags, visibility, and optional linked players.
+- Notes appear as timeline markers and in a side-panel list.
+- Clicking a note seeks the video to its timestamp.
+- Suggested categories: shape, pressing, transition, set piece, build-up, finishing, defending, goalkeeper, effort, decision.
+
+Suggested data model:
+
+- `coaching_notes`: `id`, `match_id`, `slot`, `timestamp_seconds`, `title`, `body`, `category`, `visibility`, `created_by`, `created_at`, `updated_at`
+- `coaching_note_players`: `note_id`, `player_id`
+- `coaching_note_tags`: `note_id`, `tag`
+
+### C4 — Drawing overlays and freeze frames
+
+- Coaches can draw arrows, circles, rectangles/zones, player-number labels, and freehand lines on paused video.
+- Drawings are stored as JSON overlay metadata, not burned into video.
+- Each drawing belongs to a coaching note and re-renders when the note is opened.
+- Provide undo, clear, color, and line-width controls.
+- Use a canvas or SVG overlay above the existing video player.
+
+### C5 — Review playlists
+
+- Coaches can group notes into playlists such as "First-half pressing" or "Build-up patterns".
+- A playlist plays moments in sequence with configurable pre-roll and post-roll.
+- Playlists can be private, team-visible, player/family-visible, or unlisted-link visible.
+- Coaches can reorder items and add an intro/summary.
+
+Suggested data model:
+
+- `coaching_playlists`
+- `coaching_playlist_items`
+- `coaching_playlist_players` for player-specific assignments
+
+### C6 — Player and family feedback view
+
+- Signed-in players/families get a **My Feedback** page.
+- The page shows only notes and playlists linked to roster players connected to the signed-in user account.
+- On match pages, published feedback appears as timeline markers only for authorized users.
+- Team-wide published notes can be visible to all signed-in viewers or shared by unlisted link.
+- Private coach notes are never visible outside coach/admin users.
+
+### C7 — Assignments and review tracking
+
+- Coaches can assign notes or playlists to players, families, or the whole team.
+- Players/families can mark feedback as reviewed.
+- Coaches see simple completion status, not invasive watch analytics.
+- Add an optional reflection prompt such as "What did you notice?"
+
+### Coaching access rules
+
+- Anonymous users: public matches, public live stream, and public/unlisted fan highlights only.
+- Viewer users: normal signed-in viewing plus team-visible coaching playlists.
+- Linked family/player users: viewer access plus feedback assigned to linked player records.
+- Coach users: create/edit private notes, drawings, playlists, and assignments.
+- Admin users: manage users, roster records, player-user links, and all coaching content.
+
+### Coaching test plan
+
+- Backend: migrations, role validation, roster CRUD, player-user link permissions, note/playlist CRUD, drawing JSON validation, visibility enforcement.
+- Frontend: coach workspace rendering, note creation, drawing persistence, timeline marker seeking, playlist playback, My Feedback filtering.
+- Privacy: anonymous users cannot access private coaching routes; linked users only see feedback for linked players.
+- Regression: public VOD, live viewing, score hiding, uploads, admin match library, Cast/AirPlay.

@@ -1,6 +1,6 @@
 # Replay — User Guide
 
-Welcome to **Replay**, your team's match video archive. This guide walks you through everything you can do as a viewer: browsing the season, watching recorded matches, watching live, and signing in.
+Welcome to **Replay**, your team's match video archive. This guide walks you through everything you can do as a viewer: browsing the season, watching recorded matches, watching live, signing in, and reviewing coach-published feedback.
 
 ## Contents
 
@@ -10,8 +10,9 @@ Welcome to **Replay**, your team's match video archive. This guide walks you thr
 4. [Watching a match](#watching-a-match)
 5. [Watching live](#watching-live)
 6. [Signing in](#signing-in)
-7. [On a phone or tablet](#on-a-phone-or-tablet)
-8. [Troubleshooting](#troubleshooting)
+7. [Reviewing coach feedback](#reviewing-coach-feedback)
+8. [On a phone or tablet](#on-a-phone-or-tablet)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -104,6 +105,23 @@ Once signed in, the LOGIN button is replaced by **LOGOUT** and your name appears
 ![Header after signing in](./screenshots/user-logged-in-header.png)
 
 > **Warning:** Replay locks out an IP after 5 failed login attempts in 60 seconds. If you mistype your password a few times, wait a minute before trying again.
+
+---
+
+## Reviewing coach feedback
+
+If your club uses Replay for coaching, a **My Feedback** link appears after you sign in. This page shows coach-published review playlists and timestamped notes that are visible to your account.
+
+Player-specific feedback only appears when a coach or admin has linked your user account to a roster player. One family account can be linked to multiple players, and multiple parent/guardian accounts can be linked to the same player.
+
+On **My Feedback** you can:
+
+- see linked roster players
+- open coach notes at the exact match timestamp
+- view any drawing overlay the coach saved on the paused video
+- mark notes or playlists as reviewed
+
+Private coach notes are not shown here. Coaches decide which notes are shared with the whole team and which ones are linked to specific players/families.
 
 ---
 

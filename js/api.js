@@ -34,6 +34,7 @@ export const apiMixin = {
             if (data.authenticated) {
                 this.authToken = token;
                 this.userRole = data.role || 'viewer';
+                this.userRoles = data.roles || [this.userRole];
                 this.userName = data.username || '';
                 this.setLoggedIn();
             } else {
@@ -46,16 +47,30 @@ export const apiMixin = {
     },
 
     isAdmin() {
-        return this.userRole === 'admin';
+        return this.hasRole('admin');
+    },
+
+    hasRole(role) {
+        const roles = this.userRoles || (this.userRole ? String(this.userRole).split(',') : []);
+        if (roles.includes('admin')) return true;
+        return roles.includes(role);
+    },
+
+    canCoach() {
+        return this.hasRole('coach');
     },
 
     canEdit() {
-        return this.userRole === 'admin' || this.userRole === 'uploader';
+        return this.hasRole('uploader');
     },
 
     setLoggedIn() {
         const navAdmin = document.getElementById('nav-admin');
         if (navAdmin) navAdmin.style.display = this.canEdit() ? '' : 'none';
+        const navCoach = document.getElementById('nav-coach');
+        if (navCoach) navCoach.style.display = this.canCoach() ? '' : 'none';
+        const navFeedback = document.getElementById('nav-feedback');
+        if (navFeedback) navFeedback.style.display = '';
         document.getElementById('nav-login-btn').style.display = 'none';
         document.getElementById('nav-logout-btn').style.display = '';
         const gameEditBtn = document.getElementById('game-edit-btn');
@@ -63,15 +78,21 @@ export const apiMixin = {
         const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
         if (regenThumbBtn && this.activeMatchId) regenThumbBtn.style.display = this.isAdmin() ? 'inline-flex' : 'none';
         this.setAdminPanelVisibility(this.isAdmin());
+        this.renderCoachingPanel?.();
         if (this.isAdmin()) this.refreshAdminDiagnostics();
     },
 
     setLoggedOut() {
         this.authToken = null;
         this.userRole = null;
+        this.userRoles = [];
         this.userName = null;
         const navAdmin = document.getElementById('nav-admin');
         if (navAdmin) navAdmin.style.display = 'none';
+        const navCoach = document.getElementById('nav-coach');
+        if (navCoach) navCoach.style.display = 'none';
+        const navFeedback = document.getElementById('nav-feedback');
+        if (navFeedback) navFeedback.style.display = 'none';
         document.getElementById('nav-login-btn').style.display = '';
         document.getElementById('nav-logout-btn').style.display = 'none';
         const gameEditBtn = document.getElementById('game-edit-btn');
@@ -82,6 +103,10 @@ export const apiMixin = {
         this.stopAdminStatusPolling?.();
         if (document.getElementById('admin-view')?.classList.contains('active')) {
             this.cancelEdit();
+            this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
+        }
+        if (document.getElementById('coach-view')?.classList.contains('active') ||
+            document.getElementById('feedback-view')?.classList.contains('active')) {
             this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
         }
     },
@@ -118,11 +143,13 @@ export const apiMixin = {
             const data = await resp.json();
             this.authToken = data.token;
             this.userRole = data.role || 'viewer';
+            this.userRoles = data.roles || [this.userRole];
             this.userName = data.username || '';
             sessionStorage.setItem('replay_admin_token', data.token);
             this.setLoggedIn();
             this.hideLoginModal();
             this.renderSeasonView();
+            this.renderCoachingPanel?.();
         } catch {
             errorEl.textContent = 'Login failed. Please try again.';
             errorEl.style.display = 'block';
@@ -334,6 +361,110 @@ export const apiMixin = {
             headers: this.getAuthHeaders(),
         });
         if (!resp.ok) throw new Error('Failed to delete user');
+        return resp.json();
+    },
+
+    // ===== COACHING =====
+    async loadCoachBundle(matchId = null) {
+        const suffix = matchId ? `?match_id=${encodeURIComponent(matchId)}` : '';
+        const [playersResp, notesResp, playlistsResp, users] = await Promise.all([
+            this.authFetch('/api/coach/players', { headers: this.getAuthHeaders() }),
+            this.authFetch(`/api/coach/notes${suffix}`, { headers: this.getAuthHeaders() }),
+            this.authFetch('/api/coach/playlists', { headers: this.getAuthHeaders() }),
+            this.authFetch('/api/coach/users', { headers: this.getAuthHeaders() }),
+        ]);
+        if (!playersResp.ok || !notesResp.ok || !playlistsResp.ok || !users.ok) {
+            throw new Error('Failed to load coaching workspace');
+        }
+        return {
+            players: (await playersResp.json()).players || [],
+            notes: (await notesResp.json()).notes || [],
+            playlists: (await playlistsResp.json()).playlists || [],
+            users: (await users.json()).users || [],
+        };
+    },
+
+    async createCoachPlayer(data) {
+        const resp = await this.authFetch('/api/coach/players', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to create player');
+        return resp.json();
+    },
+
+    async linkCoachPlayer(data) {
+        const resp = await this.authFetch('/api/coach/player-links', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to link account');
+        return resp.json();
+    },
+
+    async unlinkCoachPlayer(linkId) {
+        const resp = await this.authFetch(`/api/coach/player-links/${linkId}`, {
+            method: 'DELETE',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error('Failed to remove roster link');
+        return resp.json();
+    },
+
+    async createCoachNote(data) {
+        const resp = await this.authFetch('/api/coach/notes', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save coaching note');
+        return resp.json();
+    },
+
+    async updateCoachNote(noteId, data) {
+        const resp = await this.authFetch(`/api/coach/notes/${noteId}`, {
+            method: 'PATCH',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update coaching note');
+        return resp.json();
+    },
+
+    async deleteCoachNote(noteId) {
+        const resp = await this.authFetch(`/api/coach/notes/${noteId}`, {
+            method: 'DELETE',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error('Failed to delete coaching note');
+        return resp.json();
+    },
+
+    async createCoachPlaylist(data) {
+        const resp = await this.authFetch('/api/coach/playlists', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save playlist');
+        return resp.json();
+    },
+
+    async loadMyFeedback() {
+        const resp = await this.authFetch('/api/my-feedback', { headers: this.getAuthHeaders() });
+        if (!resp.ok) throw new Error('Failed to load feedback');
+        return resp.json();
+    },
+
+    async markFeedbackReviewed(data) {
+        const resp = await this.authFetch('/api/my-feedback/review', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to mark reviewed');
         return resp.json();
     },
 };

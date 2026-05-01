@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -103,7 +103,19 @@ class CreateUploadSessionRequest(BaseModel):
 
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-_VALID_ROLES = {"admin", "uploader", "viewer"}
+_VALID_ROLES = {"admin", "coach", "uploader", "viewer"}
+
+
+def _normalize_role_string(value: str) -> str:
+    roles = [part.strip().lower() for part in value.split(",") if part.strip()]
+    if not roles:
+        raise ValueError("role must include at least one role")
+    unknown = [role for role in roles if role not in _VALID_ROLES]
+    if unknown:
+        raise ValueError(f"role must contain only: {', '.join(sorted(_VALID_ROLES))}")
+    # Keep a stable order for storage and client comparisons.
+    ordered = [role for role in ("admin", "coach", "uploader", "viewer") if role in roles]
+    return ",".join(ordered)
 
 
 class CreateUserRequest(BaseModel):
@@ -123,9 +135,7 @@ class CreateUserRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        if v not in _VALID_ROLES:
-            raise ValueError(f"role must be one of: {', '.join(sorted(_VALID_ROLES))}")
-        return v
+        return _normalize_role_string(v)
 
 
 class UpdateUserRequest(BaseModel):
@@ -139,9 +149,208 @@ class UpdateUserRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str | None) -> str | None:
-        if v is not None and v not in _VALID_ROLES:
-            raise ValueError(f"role must be one of: {', '.join(sorted(_VALID_ROLES))}")
+        return _normalize_role_string(v) if v is not None else v
+
+
+_VALID_PLAYER_RELATIONSHIPS = {"self", "parent", "guardian", "family"}
+_VALID_NOTE_CATEGORIES = {
+    "shape", "pressing", "transition", "set_piece", "build_up", "finishing",
+    "defending", "goalkeeper", "effort", "decision", "other",
+}
+_VALID_COACHING_VISIBILITY = {"private", "team", "player", "unlisted"}
+_VALID_SLOTS = {"full", "first_half", "second_half"}
+
+
+class CreatePlayerRequest(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=120)
+    jersey_number: str = Field("", max_length=20)
+    active: bool = True
+    notes: str = Field("", max_length=1000)
+
+    @field_validator("display_name", "jersey_number", "notes")
+    @classmethod
+    def strip_text(cls, v: str) -> str:
+        return v.strip()
+
+
+class UpdatePlayerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: Optional[str] = Field(None, min_length=1, max_length=120)
+    jersey_number: Optional[str] = Field(None, max_length=20)
+    active: Optional[bool] = None
+    notes: Optional[str] = Field(None, max_length=1000)
+
+    @field_validator("display_name", "jersey_number", "notes")
+    @classmethod
+    def strip_text(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+
+class CreatePlayerUserLinkRequest(BaseModel):
+    player_id: str = Field(..., min_length=1, max_length=80)
+    user_id: str = Field(..., min_length=1, max_length=80)
+    relationship: str = Field("family")
+
+    @field_validator("relationship")
+    @classmethod
+    def validate_relationship(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _VALID_PLAYER_RELATIONSHIPS:
+            raise ValueError(f"relationship must be one of: {', '.join(sorted(_VALID_PLAYER_RELATIONSHIPS))}")
         return v
+
+
+class CreateCoachingNoteRequest(BaseModel):
+    match_id: str = Field(..., min_length=1, max_length=120)
+    slot: str = Field("full")
+    timestamp_seconds: float = Field(..., ge=0)
+    title: str = Field(..., min_length=1, max_length=160)
+    body: str = Field("", max_length=4000)
+    category: str = Field("other")
+    visibility: str = Field("private")
+    player_ids: list[str] = Field(default_factory=list, max_length=50)
+    tags: list[str] = Field(default_factory=list, max_length=25)
+    drawing: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("slot")
+    @classmethod
+    def validate_slot(cls, v: str) -> str:
+        if v not in _VALID_SLOTS:
+            raise ValueError("slot must be full, first_half, or second_half")
+        return v
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _VALID_NOTE_CATEGORIES:
+            raise ValueError(f"category must be one of: {', '.join(sorted(_VALID_NOTE_CATEGORIES))}")
+        return v
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _VALID_COACHING_VISIBILITY:
+            raise ValueError(f"visibility must be one of: {', '.join(sorted(_VALID_COACHING_VISIBILITY))}")
+        return v
+
+    @field_validator("title", "body")
+    @classmethod
+    def strip_text(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, v: list[str]) -> list[str]:
+        seen = set()
+        tags = []
+        for tag in v:
+            clean = str(tag).strip().lower()
+            if not clean or clean in seen:
+                continue
+            if len(clean) > 40:
+                raise ValueError("tags must be 40 characters or fewer")
+            seen.add(clean)
+            tags.append(clean)
+        return tags
+
+
+class UpdateCoachingNoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp_seconds: Optional[float] = Field(None, ge=0)
+    title: Optional[str] = Field(None, min_length=1, max_length=160)
+    body: Optional[str] = Field(None, max_length=4000)
+    category: Optional[str] = None
+    visibility: Optional[str] = None
+    player_ids: Optional[list[str]] = Field(None, max_length=50)
+    tags: Optional[list[str]] = Field(None, max_length=25)
+    drawing: Optional[dict[str, Any]] = None
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.validate_category(v)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.validate_visibility(v)
+
+    @field_validator("title", "body")
+    @classmethod
+    def strip_text(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.normalize_tags(v)
+
+
+class CreateCoachingPlaylistRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=160)
+    description: str = Field("", max_length=1000)
+    visibility: str = Field("private")
+    player_ids: list[str] = Field(default_factory=list, max_length=50)
+    note_ids: list[int] = Field(default_factory=list, max_length=100)
+    pre_roll_seconds: float = Field(5.0, ge=0, le=60)
+    post_roll_seconds: float = Field(8.0, ge=0, le=120)
+
+    @field_validator("title", "description")
+    @classmethod
+    def strip_text(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str) -> str:
+        return CreateCoachingNoteRequest.validate_visibility(v)
+
+
+class UpdateCoachingPlaylistRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(None, min_length=1, max_length=160)
+    description: Optional[str] = Field(None, max_length=1000)
+    visibility: Optional[str] = None
+    player_ids: Optional[list[str]] = Field(None, max_length=50)
+    note_ids: Optional[list[int]] = Field(None, max_length=100)
+    pre_roll_seconds: Optional[float] = Field(None, ge=0, le=60)
+    post_roll_seconds: Optional[float] = Field(None, ge=0, le=120)
+
+    @field_validator("title", "description")
+    @classmethod
+    def strip_text(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.validate_visibility(v)
+
+
+class MarkCoachingReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note_id: Optional[int] = None
+    playlist_id: Optional[int] = None
+    reflection: str = Field("", max_length=1000)
+
+    @field_validator("reflection")
+    @classmethod
+    def strip_reflection(cls, v: str) -> str:
+        return v.strip()
 
 
 class LiveAuthRequest(BaseModel):

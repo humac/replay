@@ -14,6 +14,7 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **Watch Live (RTMP ingest → LL-HLS)** — point a camera (e.g. XbotGo Falcon) at the site's RTMP URL with a configurable stream key; viewers watch the live feed at `/live` with sub-5s latency
 - **AirPlay 2** — explicit AirPlay picker button on supported Safari/WebKit devices for Apple TV and AirPlay 2 displays
 - **Chromecast** — Google Cast SDK integration with a dedicated cast button, metadata, and remote playback resume support
+- **Coaching workspace** — coaches can create roster players, link family/player accounts, save timestamped notes with drawing overlays, build review playlists, and publish feedback to linked viewers
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
 - **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
 - **Public downloads** — optional direct MP4 download buttons for ready games with normal browser resume support for large files
@@ -214,6 +215,11 @@ $REPLAY_DATA_DIR/
 | `/api/live/auth` | POST | Webhook MediaMTX calls to authorise an RTMP publish |
 | `/api/admin/live/config` | GET | Admin: view stream key, RTMP path, and live config |
 | `/api/admin/live/rotate-key` | POST | Admin: rotate the stream key (invalidates current publisher) |
+| `/api/coach/players` | GET/POST | Coach/admin: roster records |
+| `/api/coach/player-links` | POST | Coach/admin: link roster players to user accounts |
+| `/api/coach/notes` | GET/POST | Coach/admin: timestamped coaching notes + drawing metadata |
+| `/api/coach/playlists` | GET/POST | Coach/admin: review playlists |
+| `/api/my-feedback` | GET | Signed-in player/family feedback scoped by roster links |
 
 ## Tech Stack
 

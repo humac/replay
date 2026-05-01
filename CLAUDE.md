@@ -6,7 +6,7 @@ Additional guidance for Claude in this repo:
 
 - Favor direct, minimal edits over speculative rewrites.
 - Check the current file contents before editing because this repo is often changed iteratively.
-- When fixing UI behavior, inspect `index.html` and the relevant JS module in `js/` (views, admin-views, player, uploads, api, utils, live, admin). `script.js` is the entry point that assembles all mixins into `window.app`. Public view rendering (season, game, score reveal, team stats) is in `js/views.js`; admin renderers and match form actions are in `js/admin-views.js`.
+- When fixing UI behavior, inspect `index.html` and the relevant JS module in `js/` (views, admin-views, player, uploads, api, utils, live, admin, coaching). `script.js` is the entry point that assembles all mixins into `window.app`. Public view rendering (season, game, score reveal, team stats) is in `js/views.js`; admin renderers and match form actions are in `js/admin-views.js`; the coach workspace and My Feedback surfaces live in `js/coaching.js`.
 - The admin/uploader surface lives in a single `#admin-view` shell with sub-routes: `/admin/overview`, `/admin/matches`, `/admin/live`, `/admin/performance`, `/admin/users`, `/admin/settings`. Legacy URLs `/admin/streams` and `/admin/system` redirect to `/admin/live` and `/admin/performance` respectively (`LEGACY_SECTION_REDIRECTS` in `js/admin.js`). Routing, sidebar render, status-strip polling, and role gating are in `js/admin.js`. Existing renderers (`renderSettingsForm`, `renderLiveSettingsCard`, `refreshActiveStreams`, `renderUsersList`, `refreshAdminDiagnostics`, `renderTuningKnobsCard`, `renderPerformanceTuning`) are reused unchanged — only the DOM containers moved.
 - Admin overview "Recent Activity" renders `diagnostics.recent_activity`, which comes from persisted SQLite `activity_events` (`db.log_activity_event`). Keep this as an operational feed for logical events: uploads, transcodes, HLS regeneration, match/user/settings/admin actions, and live/VOD-HLS stream session start/end/kill. Do not repurpose `video_errors` as the feed and do not log HLS segment polls, heartbeat noise, or per-range MP4 requests.
 - `/admin/live` is the broadcast cockpit: ingest/key form on the left rail, live throughput sparkline + encoder load tile + active live viewers + stream blocks on the right. `startLiveConsolePolling` (5 s) drives the read rail; `refreshActiveStreams` writes to `#live-viewers-list` (live-kind only) and `#live-blocks-list`. `renderLiveConsoleHeader` updates the ON-AIR pill.
@@ -16,6 +16,8 @@ Additional guidance for Claude in this repo:
 - The Matches tab is a library table (`renderMatchLibraryTable()` in `js/admin-views.js`), not an inline form. Add/Edit go through a modal cloned from `<template id="match-form-template">` in `index.html`; the modal mounts via `app.formModal({ body, onSubmit, … })` defined in `js/ui.js`. Per-slot recovery (Verify, Regen HLS, Re-transcode, Force Re-transcode, Logs, Regenerate Thumbnail) lives inside the row's expanded diagnostics panel — that is the single place those actions are exposed. The Failed Slots / Active Jobs / Library Maintenance panels are no longer rendered under `/admin/system`; counts still surface as diagnostic tiles and the status strip.
 - When fixing public-domain behavior, consider cache and proxy behavior before assuming application logic is broken.
 - When adding or modifying API endpoints, update Pydantic models in `models.py` and add tests in `tests/`.
+- Coaching routes live under `/api/coach/*` and require `admin` or `coach`; signed-in player/family feedback lives under `/api/my-feedback`. DB user roles can be comma-separated capability strings (`coach,uploader`), so use `_auth.require_role()` / `_auth.has_role()` and `app.hasRole()` / `app.canCoach()` instead of direct string equality.
+- Coaching drawings are JSON metadata on `coaching_notes`, rendered by `js/coaching.js` as a canvas overlay. Do not burn drawings into video files unless a future clip-export feature explicitly calls for it.
 - Match URLs use slug-based deep links (`/match/{slug}`, `/match/{slug}/first-half`). The Watch Live page deep-links to `/live`.
 - Live streaming runs through a `mediamtx` sidecar in compose. Camera-facing surface is RTMP at port 1935; browsers play LL-HLS via the proxy at `/api/live/hls/*`. Never expose MediaMTX's 8888/9997 ports publicly — they stay on the internal compose network.
 - When setting video status to `"error"`, always pass `error_info` dict with `error_code`, `reason`, `details` to `_set_video_status()` so errors are persisted to the `video_errors` table.
@@ -31,12 +33,14 @@ Additional guidance for Claude in this repo:
 - Tuning knobs save through a dedicated `handleTuningSubmit()` (NOT `handleSettingsSubmit()`). It PUTs only the `collectTuningKnobs()` payload to `/api/admin/settings`, leaving branding, public-copy, and live-streaming fields untouched. The endpoint is partial-update — it iterates submitted keys only. Don't route the Performance section's `#tuning-save-btn` through `handleSettingsSubmit`; that handler reads the live-form inputs which may hold HTML defaults if the user never visited Live or Settings, silently disabling live and clearing the configured RTMP URL.
 - Use the `lifespan` async context manager for startup/shutdown tasks (not `@app.on_event`).
 - Deployment and troubleshooting docs live in `docs/DEPLOYMENT.md` and `docs/TROUBLESHOOTING.md`.
+- Larger feature designs can live in `specs/`; the coaching MVP design note is `specs/coaching-platform-design.md`.
 
 After every code change, update the relevant markdown files to stay in sync:
 
 - `ROADMAP.md` — mark completed items, add descriptions of what was done.
 - `AGENTS.md` — update Key Files, Editing Guidance, or Stack if new files/conventions were added.
 - `CLAUDE.md` — update if validation commands or editing guidance changed.
+- `specs/` — add or update a design note for non-trivial cross-stack features.
 
 Primary validation:
 
@@ -50,4 +54,4 @@ pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
 - Live auth webhook tests should set `server.LIVE_AUTH_SECRET` and send `X-Internal-Secret` so stream-key validation is exercised behind the MediaMTX shared-secret gate.
 - `pytest.ini` pins pytest-asyncio fixture loop scope to `function` and narrowly filters dependency-owned Python 3.14 asyncio deprecations so local test runs stay warning-clean.
 - Auth token cap is configurable with `MAX_ACTIVE_TOKENS` (default 1000).
-- CI gates coverage at 60% via `pytest-cov` (`.coveragerc` excludes `tests/`); current baseline is ~64%. New tests live in `tests/test_db.py`, `tests/test_models.py`, `tests/test_server.py` (covers `ResizableSemaphore` directly), plus expanded coverage in `tests/test_admin.py` (retry/regenerate-hls success paths, transcode-semaphore live-resize), `tests/test_matches.py` (slug deep-links, logo upload + nosniff/CSP/inline-disposition for SVG, thumbnail), and `tests/test_media.py` (ffprobe parsing via mocked subprocess, `verify_slot_assets`, `select_hwaccel`).
+- CI gates coverage at 60% via `pytest-cov` (`.coveragerc` excludes `tests/`); current baseline is ~64%. Newer tests live in `tests/test_coaching.py` (coach roles, roster links, feedback visibility, drawing JSON, review tracking), `tests/test_db.py`, `tests/test_models.py`, `tests/test_server.py` (covers `ResizableSemaphore` directly), plus expanded coverage in `tests/test_admin.py`, `tests/test_matches.py`, and `tests/test_media.py`.
