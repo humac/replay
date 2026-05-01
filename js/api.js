@@ -78,6 +78,7 @@ export const apiMixin = {
         const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
         if (regenThumbBtn && this.activeMatchId) regenThumbBtn.style.display = this.isAdmin() ? 'inline-flex' : 'none';
         this.setAdminPanelVisibility(this.isAdmin());
+        this.setupCoachModeToggle?.();
         this.renderCoachingPanel?.();
         if (this.isAdmin()) this.refreshAdminDiagnostics();
     },

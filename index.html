@@ -243,7 +243,13 @@
                     <div id="download-actions" class="download-actions" style="display:none;"></div>
                 </div>
 
-                <div class="sidebar">
+                <div class="sidebar" id="game-sidebar">
+                    <div class="coach-mode-bar" id="coach-mode-bar" hidden>
+                        <button type="button" class="btn-head" id="coach-mode-toggle" aria-expanded="false" aria-controls="coach-match-panel" onclick="app.toggleCoachMode()">
+                            <span class="coach-mode-toggle-label">Coach Notes</span>
+                            <span class="coach-mode-toggle-icon" aria-hidden="true">▾</span>
+                        </button>
+                    </div>
                     <div class="game-details">
                         <div class="game-matchup" id="game-matchup">
                             <!-- Injected by JS: logo, name, score per team -->
@@ -259,8 +265,8 @@
                             <h3 id="game-video-status-label">Video Status</h3>
                             <div id="game-slot-status-list" class="game-slot-status-list"></div>
                         </div>
-                        <div class="coach-match-panel" id="coach-match-panel" style="display:none;"></div>
                     </div>
+                    <div class="coach-match-panel" id="coach-match-panel" hidden></div>
                 </div>
             </div>
         </section>

@@ -333,6 +333,8 @@ export const viewsMixin = {
         this.renderGameStatus(match);
 
         this.renderGameMatchup(match);
+        this._coachModeOn = false;
+        this.setupCoachModeToggle?.();
         this.renderCoachingPanel?.();
 
         this.activateView('game-view');

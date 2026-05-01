@@ -13,6 +13,7 @@ export const coachingMixin = {
     _coachPlaylistSession: null,
     _coachPlaylistMonitor: null,
     _coachPlaylistFreezeTimer: null,
+    _coachModeOn: false,
 
     async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         if (!this.canCoach()) {
@@ -402,10 +403,10 @@ export const coachingMixin = {
         const panel = document.getElementById('coach-match-panel');
         if (!panel) return;
         if (!this.canCoach() || !this.activeMatchId) {
-            panel.style.display = 'none';
+            panel.hidden = true;
             return;
         }
-        panel.style.display = 'block';
+        panel.hidden = false;
         let bundle = this._coachBundle;
         try {
             bundle = await this.loadCoachBundle(this.activeMatchId);
@@ -451,7 +452,33 @@ export const coachingMixin = {
                 `).join('') : '<div class="session-empty">No notes for this match yet.</div>'}
             </div>
         `;
-        this.activateCoachCanvas();
+        if (this._coachModeOn) this.activateCoachCanvas();
+        else this.setupCoachCanvas();
+    },
+
+    setupCoachModeToggle() {
+        const bar = document.getElementById('coach-mode-bar');
+        if (!bar) return;
+        bar.hidden = !this.canCoach();
+        const sidebar = document.getElementById('game-sidebar');
+        if (sidebar) sidebar.classList.toggle('coach-mode-on', this._coachModeOn && this.canCoach());
+        const btn = document.getElementById('coach-mode-toggle');
+        if (btn) btn.setAttribute('aria-expanded', this._coachModeOn ? 'true' : 'false');
+    },
+
+    toggleCoachMode(force) {
+        if (!this.canCoach() || !this.activeMatchId) return;
+        const next = typeof force === 'boolean' ? force : !this._coachModeOn;
+        this._coachModeOn = next;
+        const sidebar = document.getElementById('game-sidebar');
+        if (sidebar) sidebar.classList.toggle('coach-mode-on', next);
+        const btn = document.getElementById('coach-mode-toggle');
+        if (btn) btn.setAttribute('aria-expanded', next ? 'true' : 'false');
+        if (next) {
+            this.renderCoachingPanel();
+        } else {
+            this.deactivateCoachCanvas();
+        }
     },
 
     async saveCoachPanelNote() {
