@@ -119,6 +119,7 @@ On **My Feedback** you can:
 - see linked roster players
 - open coach notes at the exact match timestamp
 - view any drawing overlay the coach saved on the paused video
+- play review playlists that move through coach-selected moments with pre-roll and post-roll
 - mark notes or playlists as reviewed
 
 Private coach notes are not shown here. Coaches decide which notes are shared with the whole team and which ones are linked to specific players/families.

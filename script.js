@@ -214,6 +214,7 @@ const app = {
     },
 
     teardownGameView() {
+        this.stopCoachingPlaylistSession?.({ keepView: true });
         // Save final position before tearing down
         if (this.activeMatchId && this.activeSlot) {
             const videoEl = document.getElementById('game-video');

@@ -5571,6 +5571,52 @@ details.diag-row-details[open] > summary::after {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.coach-telestrator {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.coach-tool-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.4rem;
+}
+
+.coach-tool-grid .mini-action-btn.active,
+.coach-color-swatch.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.22);
+}
+
+.coach-tool-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.coach-color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.22);
+    background: var(--swatch);
+    cursor: pointer;
+}
+
+.coach-width-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.coach-width-control input {
+    width: 84px;
+    padding: 0;
+}
+
 .coach-panel-notes {
     margin-top: 0.75rem;
     display: grid;
@@ -5619,6 +5665,45 @@ details.diag-row-details[open] > summary::after {
     touch-action: none;
 }
 
+.coach-playlist-session {
+    position: absolute;
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 7;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 8px;
+    background: rgba(5, 10, 18, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(10px);
+}
+
+.coach-playlist-session span,
+.coach-playlist-session small {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.coach-playlist-session strong {
+    display: block;
+    color: var(--text);
+    font-family: var(--font-heading);
+    letter-spacing: 0;
+}
+
+.coach-playlist-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
 .feedback-content {
     max-width: 980px;
     margin: 0 auto;
@@ -5649,6 +5734,26 @@ details.diag-row-details[open] > summary::after {
     .coach-draw-actions {
         width: 100%;
         grid-template-columns: 1fr;
+    }
+
+    .coach-tool-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .coach-playlist-session {
+        left: 0.5rem;
+        right: 0.5rem;
+        bottom: 0.5rem;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .coach-playlist-controls {
+        justify-content: stretch;
+    }
+
+    .coach-playlist-controls .mini-action-btn {
+        flex: 1 1 42%;
     }
 }
 

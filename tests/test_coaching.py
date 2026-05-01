@@ -142,3 +142,83 @@ async def test_team_visible_note_and_review_tracking(client, auth_headers):
 
     feedback = await client.get("/api/my-feedback", headers=viewer_headers)
     assert feedback.json()["reviews"][0]["note_id"] == note_id
+
+
+@pytest.mark.asyncio
+async def test_v2_drawing_validation(client, auth_headers):
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel",
+        "away_team": "Drawing FC",
+        "date": "2026-05-02",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    valid = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Annotated shape",
+        "category": "shape",
+        "visibility": "private",
+        "drawing": {
+            "version": 2,
+            "objects": [
+                {"type": "arrow", "color": "#38bdf8", "width": 4, "x1": 0.1, "y1": 0.2, "x2": 0.4, "y2": 0.5},
+                {"type": "label", "color": "#ffffff", "x": 0.5, "y": 0.5, "text": "9"},
+                {"type": "spotlight", "x": 0.2, "y": 0.2, "w": 0.3, "h": 0.3},
+            ],
+        },
+    }, headers=auth_headers)
+    assert valid.status_code == 200
+    assert valid.json()["note"]["drawing"]["version"] == 2
+
+    invalid = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Bad drawing",
+        "drawing": {"version": 2, "objects": [{"type": "arrow", "x1": 2, "y1": 0, "x2": 0, "y2": 0}]},
+    }, headers=auth_headers)
+    assert invalid.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_visible_playlist_grants_access_to_private_items(client, auth_headers):
+    await client.post("/api/users", json={
+        "username": "playlistviewer",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel",
+        "away_team": "Playlist FC",
+        "date": "2026-05-03",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 75,
+        "title": "Private playlist moment",
+        "category": "decision",
+        "visibility": "private",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    playlist_resp = await client.post("/api/coach/playlists", json={
+        "title": "Team review sequence",
+        "description": "One private item shared through the playlist.",
+        "visibility": "team",
+        "note_ids": [note_id],
+        "pre_roll_seconds": 6,
+        "post_roll_seconds": 11,
+    }, headers=auth_headers)
+    assert playlist_resp.status_code == 200
+    assert playlist_resp.json()["playlist"]["items"][0]["id"] == note_id
+
+    viewer_headers = await _login(client, "playlistviewer")
+    feedback = await client.get("/api/my-feedback", headers=viewer_headers)
+    payload = feedback.json()
+    assert payload["notes"] == []
+    assert payload["playlists"][0]["pre_roll_seconds"] == 6
+    assert payload["playlists"][0]["post_roll_seconds"] == 11
+    assert payload["playlists"][0]["items"][0]["title"] == "Private playlist moment"

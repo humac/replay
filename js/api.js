@@ -452,6 +452,16 @@ export const apiMixin = {
         return resp.json();
     },
 
+    async updateCoachPlaylist(playlistId, data) {
+        const resp = await this.authFetch(`/api/coach/playlists/${playlistId}`, {
+            method: 'PATCH',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update playlist');
+        return resp.json();
+    },
+
     async loadMyFeedback() {
         const resp = await this.authFetch('/api/my-feedback', { headers: this.getAuthHeaders() });
         if (!resp.ok) throw new Error('Failed to load feedback');

@@ -4,6 +4,15 @@ export const coachingMixin = {
     _coachBundle: null,
     _coachDrawing: null,
     _coachDrawingActive: false,
+    _coachDrawingTool: 'freehand',
+    _coachDrawingColor: '#38bdf8',
+    _coachDrawingWidth: 3,
+    _coachSelectedObjectIndex: null,
+    _coachCurrentObject: null,
+    _coachDragState: null,
+    _coachPlaylistSession: null,
+    _coachPlaylistMonitor: null,
+    _coachPlaylistFreezeTimer: null,
 
     async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         if (!this.canCoach()) {
@@ -155,8 +164,12 @@ export const coachingMixin = {
             <article class="coach-row">
                 <div>
                     <strong>${this.esc(p.title)}</strong>
-                    <span>${p.note_ids?.length || 0} notes · ${this.esc(p.visibility)}</span>
+                    <span>${p.note_ids?.length || 0} notes · ${this.esc(p.visibility)} · ${Number(p.pre_roll_seconds ?? 5)}s pre / ${Number(p.post_roll_seconds ?? 8)}s post</span>
                     ${p.description ? `<p>${this.esc(p.description)}</p>` : ''}
+                </div>
+                <div class="coach-row-actions">
+                    <button type="button" class="mini-action-btn" onclick="app.startCoachPlaylist(${p.id})">Play</button>
+                    <button type="button" class="mini-action-btn" onclick="app.openCoachPlaylistEditor(${p.id})">Edit</button>
                 </div>
             </article>
         `).join('');
@@ -298,8 +311,43 @@ export const coachingMixin = {
                 visibility: document.getElementById('coach-playlist-visibility')?.value || 'private',
                 note_ids: this.selectedValues('coach-playlist-notes').map((v) => Number(v)),
                 player_ids: this.selectedValues('coach-playlist-players'),
+                pre_roll_seconds: Number(document.getElementById('coach-playlist-pre-roll')?.value || 5),
+                post_roll_seconds: Number(document.getElementById('coach-playlist-post-roll')?.value || 8),
             });
             this.showSuccess('Review playlist created.');
+            await this.renderCoachWorkspace();
+        } catch (err) {
+            this.showError(err.message);
+        }
+    },
+
+    async openCoachPlaylistEditor(playlistId) {
+        const playlist = (this._coachBundle?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
+        if (!playlist) return;
+        const body = document.createElement('div');
+        body.className = 'coach-mini-form';
+        body.innerHTML = `
+            <label>Title<input type="text" id="playlist-edit-title" maxlength="160" value="${this.esc(playlist.title)}"></label>
+            <label>Pre-roll Seconds<input type="number" id="playlist-edit-pre" min="0" max="60" step="1" value="${Number(playlist.pre_roll_seconds ?? 5)}"></label>
+            <label>Post-roll Seconds<input type="number" id="playlist-edit-post" min="0" max="120" step="1" value="${Number(playlist.post_roll_seconds ?? 8)}"></label>
+        `;
+        const values = await this.formModal({
+            title: 'Edit Playlist',
+            kicker: 'Review session',
+            body,
+            confirmLabel: 'Save playlist',
+            onSubmit: async (close) => {
+                close({
+                    title: document.getElementById('playlist-edit-title')?.value.trim(),
+                    pre_roll_seconds: Number(document.getElementById('playlist-edit-pre')?.value || 5),
+                    post_roll_seconds: Number(document.getElementById('playlist-edit-post')?.value || 8),
+                });
+            },
+        });
+        if (!values) return;
+        try {
+            await this.updateCoachPlaylist(playlist.id, values);
+            this.showSuccess('Playlist updated.');
             await this.renderCoachWorkspace();
         } catch (err) {
             this.showError(err.message);
@@ -355,11 +403,8 @@ export const coachingMixin = {
                 </div>
                 <select id="coach-panel-players" multiple size="3">${playerOptions}</select>
                 <input type="text" id="coach-panel-tags" placeholder="tags,comma,separated">
-                <div class="coach-draw-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.toggleCoachDrawing()">Draw</button>
-                    <button type="button" class="mini-action-btn" onclick="app.clearCoachDrawing()">Clear drawing</button>
-                    <button type="button" class="mini-action-btn" onclick="app.saveCoachPanelNote()">Save at current time</button>
-                </div>
+                ${this.renderCoachTelestratorToolbar()}
+                <button type="button" class="mini-action-btn" onclick="app.saveCoachPanelNote()">Save at current time</button>
             </div>
             <div class="coach-panel-notes">
                 ${notes.length ? notes.map((n) => `
@@ -406,6 +451,42 @@ export const coachingMixin = {
         }, 300);
     },
 
+    renderCoachTelestratorToolbar() {
+        const tools = [
+            ['select', 'Select'],
+            ['freehand', 'Line'],
+            ['arrow', 'Arrow'],
+            ['circle', 'Circle'],
+            ['zone', 'Zone'],
+            ['label', 'Label'],
+            ['spotlight', 'Spot'],
+            ['dim', 'Dim'],
+        ];
+        const colors = ['#38bdf8', '#f97316', '#22c55e', '#facc15', '#f43f5e', '#ffffff'];
+        return `
+            <div class="coach-telestrator">
+                <div class="coach-tool-grid">
+                    ${tools.map(([tool, label]) => `
+                        <button type="button" data-coach-tool="${tool}" class="mini-action-btn ${this._coachDrawingTool === tool ? 'active' : ''}" onclick="app.setCoachDrawingTool('${tool}')">${label}</button>
+                    `).join('')}
+                </div>
+                <div class="coach-tool-row">
+                    ${colors.map((color) => `
+                        <button type="button" data-coach-color="${color}" class="coach-color-swatch ${this._coachDrawingColor === color ? 'active' : ''}" style="--swatch:${color}" title="${color}" onclick="app.setCoachDrawingColor('${color}')"></button>
+                    `).join('')}
+                    <label class="coach-width-control">Width <input type="range" min="2" max="10" value="${this._coachDrawingWidth}" onchange="app.setCoachDrawingWidth(this.value)"></label>
+                </div>
+                <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number">
+                <div class="coach-draw-actions">
+                    <button type="button" class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
+                    <button type="button" class="mini-action-btn" onclick="app.undoCoachDrawing()">Undo</button>
+                    <button type="button" class="mini-action-btn" onclick="app.deleteSelectedCoachObject()">Delete</button>
+                    <button type="button" class="mini-action-btn" onclick="app.clearCoachDrawing()">Clear</button>
+                </div>
+            </div>
+        `;
+    },
+
     setupCoachCanvas() {
         const canvas = document.getElementById('coach-drawing-canvas');
         const video = document.getElementById('game-video');
@@ -420,10 +501,35 @@ export const coachingMixin = {
         video.addEventListener('loadedmetadata', resize);
         canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
         canvas.addEventListener('pointermove', (event) => this.coachDrawMove(event));
-        canvas.addEventListener('pointerup', () => this.coachDrawEnd());
-        canvas.addEventListener('pointerleave', () => this.coachDrawEnd());
+        canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
+        canvas.addEventListener('pointerleave', (event) => this.coachDrawEnd(event));
         canvas._coachBound = true;
         resize();
+    },
+
+    normalizeCoachDrawing(drawing) {
+        if (!drawing) return null;
+        if (drawing.version === 2 && Array.isArray(drawing.objects)) return { version: 2, objects: [...drawing.objects] };
+        if (Array.isArray(drawing.strokes)) {
+            return {
+                version: 2,
+                objects: drawing.strokes.map((stroke) => ({
+                    type: 'freehand',
+                    color: stroke.color || '#38bdf8',
+                    width: stroke.width || 3,
+                    points: stroke.points || [],
+                })),
+            };
+        }
+        return null;
+    },
+
+    ensureCoachDrawing() {
+        if (!this._coachDrawing || this._coachDrawing.version !== 2) {
+            this._coachDrawing = this.normalizeCoachDrawing(this._coachDrawing) || { version: 2, objects: [] };
+        }
+        if (!Array.isArray(this._coachDrawing.objects)) this._coachDrawing.objects = [];
+        return this._coachDrawing;
     },
 
     toggleCoachDrawing() {
@@ -433,6 +539,35 @@ export const coachingMixin = {
         canvas.style.display = this._coachDrawingActive ? 'block' : 'none';
         canvas.style.pointerEvents = this._coachDrawingActive ? 'auto' : 'none';
         this.setupCoachCanvas();
+    },
+
+    setCoachDrawingTool(tool) {
+        this._coachDrawingTool = tool;
+        this._coachDrawingActive = true;
+        if (tool === 'dim') {
+            this.ensureCoachDrawing().objects.push({ type: 'dim', opacity: 0.45 });
+            this.paintCoachCanvas();
+        }
+        document.querySelectorAll('[data-coach-tool]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.coachTool === tool);
+        });
+        const canvas = document.getElementById('coach-drawing-canvas');
+        if (canvas) {
+            canvas.style.display = 'block';
+            canvas.style.pointerEvents = 'auto';
+        }
+        this.paintCoachCanvas();
+    },
+
+    setCoachDrawingColor(color) {
+        this._coachDrawingColor = color;
+        document.querySelectorAll('[data-coach-color]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.coachColor === color);
+        });
+    },
+
+    setCoachDrawingWidth(width) {
+        this._coachDrawingWidth = Math.max(2, Math.min(10, Number(width || 3)));
     },
 
     coachDrawPoint(event) {
@@ -447,22 +582,74 @@ export const coachingMixin = {
     coachDrawStart(event) {
         if (!this._coachDrawingActive) return;
         event.preventDefault();
-        if (!this._coachDrawing) this._coachDrawing = { version: 1, strokes: [] };
-        const stroke = { color: '#38bdf8', width: 3, points: [this.coachDrawPoint(event)] };
-        this._coachDrawing.strokes.push(stroke);
-        this._coachCurrentStroke = stroke;
+        const drawing = this.ensureCoachDrawing();
+        const point = this.coachDrawPoint(event);
+        if (this._coachDrawingTool === 'select') {
+            const index = this.hitCoachDrawingObject(point);
+            this._coachSelectedObjectIndex = index;
+            this._coachDragState = index === null ? null : { index, start: point };
+            this.paintCoachCanvas();
+            return;
+        }
+        if (this._coachDrawingTool === 'label') {
+            const text = document.getElementById('coach-label-text')?.value.trim() || 'Player';
+            drawing.objects.push({ type: 'label', color: this._coachDrawingColor, x: point.x, y: point.y, text });
+            this._coachSelectedObjectIndex = drawing.objects.length - 1;
+            this.paintCoachCanvas();
+            return;
+        }
+        let object = null;
+        if (this._coachDrawingTool === 'freehand') {
+            object = { type: 'freehand', color: this._coachDrawingColor, width: this._coachDrawingWidth, points: [point] };
+        } else if (this._coachDrawingTool === 'arrow') {
+            object = { type: 'arrow', color: this._coachDrawingColor, width: this._coachDrawingWidth, x1: point.x, y1: point.y, x2: point.x, y2: point.y };
+        } else if (['circle', 'zone', 'spotlight'].includes(this._coachDrawingTool)) {
+            object = { type: this._coachDrawingTool, color: this._coachDrawingColor, width: this._coachDrawingWidth, x: point.x, y: point.y, w: 0.001, h: 0.001 };
+        }
+        if (!object) return;
+        drawing.objects.push(object);
+        this._coachSelectedObjectIndex = drawing.objects.length - 1;
+        this._coachCurrentObject = { object, start: point };
         this.paintCoachCanvas();
     },
 
     coachDrawMove(event) {
-        if (!this._coachDrawingActive || !this._coachCurrentStroke) return;
+        if (!this._coachDrawingActive) return;
         event.preventDefault();
-        this._coachCurrentStroke.points.push(this.coachDrawPoint(event));
+        const point = this.coachDrawPoint(event);
+        if (this._coachDragState) {
+            const object = this._coachDrawing?.objects?.[this._coachDragState.index];
+            if (object) {
+                const dx = point.x - this._coachDragState.start.x;
+                const dy = point.y - this._coachDragState.start.y;
+                this.moveCoachDrawingObject(object, dx, dy);
+                this._coachDragState.start = point;
+            }
+            this.paintCoachCanvas();
+            return;
+        }
+        if (!this._coachCurrentObject) return;
+        const { object, start } = this._coachCurrentObject;
+        if (object.type === 'freehand') {
+            object.points.push(point);
+        } else if (object.type === 'arrow') {
+            object.x2 = point.x;
+            object.y2 = point.y;
+        } else if (['circle', 'zone', 'spotlight'].includes(object.type)) {
+            object.x = Math.min(start.x, point.x);
+            object.y = Math.min(start.y, point.y);
+            object.w = Math.abs(point.x - start.x);
+            object.h = Math.abs(point.y - start.y);
+        }
         this.paintCoachCanvas();
     },
 
-    coachDrawEnd() {
-        this._coachCurrentStroke = null;
+    coachDrawEnd(event) {
+        if (event?.target?.releasePointerCapture && event.pointerId !== undefined) {
+            try { event.target.releasePointerCapture(event.pointerId); } catch { /* ignore */ }
+        }
+        this._coachCurrentObject = null;
+        this._coachDragState = null;
     },
 
     paintCoachCanvas() {
@@ -470,26 +657,170 @@ export const coachingMixin = {
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const strokes = this._coachDrawing?.strokes || [];
-        strokes.forEach((stroke) => {
-            ctx.strokeStyle = stroke.color || '#38bdf8';
-            ctx.lineWidth = stroke.width || 3;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
+        const drawing = this.normalizeCoachDrawing(this._coachDrawing);
+        const objects = drawing?.objects || [];
+        objects.forEach((object, index) => {
+            this.paintCoachObject(ctx, canvas, object);
+            if (index === this._coachSelectedObjectIndex) this.paintCoachSelection(ctx, canvas, object);
+        });
+    },
+
+    paintCoachObject(ctx, canvas, object) {
+        const color = object.color || '#38bdf8';
+        const width = object.width || 3;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = width;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        if (object.type === 'dim') {
+            ctx.fillStyle = `rgba(0, 0, 0, ${object.opacity ?? 0.45})`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else if (object.type === 'freehand') {
             ctx.beginPath();
-            (stroke.points || []).forEach((pt, idx) => {
+            (object.points || []).forEach((pt, idx) => {
                 const x = pt.x * canvas.width;
                 const y = pt.y * canvas.height;
                 if (idx === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             });
             ctx.stroke();
-        });
+        } else if (object.type === 'arrow') {
+            const x1 = object.x1 * canvas.width;
+            const y1 = object.y1 * canvas.height;
+            const x2 = object.x2 * canvas.width;
+            const y2 = object.y2 * canvas.height;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            const head = 14 + width;
+            ctx.beginPath();
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(x2 - head * Math.cos(angle - Math.PI / 6), y2 - head * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(x2 - head * Math.cos(angle + Math.PI / 6), y2 - head * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fill();
+        } else if (object.type === 'circle' || object.type === 'spotlight') {
+            const x = object.x * canvas.width;
+            const y = object.y * canvas.height;
+            const w = object.w * canvas.width;
+            const h = object.h * canvas.height;
+            if (object.type === 'spotlight') {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.48)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.beginPath();
+                ctx.ellipse(x + w / 2, y + h / 2, Math.max(8, w / 2), Math.max(8, h / 2), 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = color;
+            }
+            ctx.beginPath();
+            ctx.ellipse(x + w / 2, y + h / 2, Math.max(4, w / 2), Math.max(4, h / 2), 0, 0, Math.PI * 2);
+            ctx.stroke();
+        } else if (object.type === 'zone') {
+            ctx.strokeRect(object.x * canvas.width, object.y * canvas.height, object.w * canvas.width, object.h * canvas.height);
+            ctx.globalAlpha = 0.14;
+            ctx.fillRect(object.x * canvas.width, object.y * canvas.height, object.w * canvas.width, object.h * canvas.height);
+        } else if (object.type === 'label') {
+            const x = object.x * canvas.width;
+            const y = object.y * canvas.height;
+            const text = object.text || 'Player';
+            ctx.font = '700 18px system-ui, sans-serif';
+            const metrics = ctx.measureText(text);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+            ctx.fillRect(x - 6, y - 22, metrics.width + 12, 28);
+            ctx.fillStyle = color;
+            ctx.fillText(text, x, y);
+        }
+        ctx.restore();
+    },
+
+    paintCoachSelection(ctx, canvas, object) {
+        const box = this.coachObjectBounds(object);
+        if (!box) return;
+        ctx.save();
+        ctx.strokeStyle = '#ffffff';
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(box.x * canvas.width, box.y * canvas.height, box.w * canvas.width, box.h * canvas.height);
+        ctx.restore();
+    },
+
+    coachObjectBounds(object) {
+        if (!object) return null;
+        if (object.type === 'arrow') {
+            const x = Math.min(object.x1, object.x2);
+            const y = Math.min(object.y1, object.y2);
+            return { x, y, w: Math.abs(object.x2 - object.x1) || 0.02, h: Math.abs(object.y2 - object.y1) || 0.02 };
+        }
+        if (['circle', 'zone', 'spotlight'].includes(object.type)) return { x: object.x, y: object.y, w: object.w, h: object.h };
+        if (object.type === 'label') return { x: object.x, y: Math.max(0, object.y - 0.08), w: 0.12, h: 0.08 };
+        if (object.type === 'freehand') {
+            const points = object.points || [];
+            if (!points.length) return null;
+            const xs = points.map((p) => p.x);
+            const ys = points.map((p) => p.y);
+            const x = Math.min(...xs);
+            const y = Math.min(...ys);
+            return { x, y, w: Math.max(0.02, Math.max(...xs) - x), h: Math.max(0.02, Math.max(...ys) - y) };
+        }
+        if (object.type === 'dim') return { x: 0, y: 0, w: 1, h: 1 };
+        return null;
+    },
+
+    hitCoachDrawingObject(point) {
+        const objects = this._coachDrawing?.objects || [];
+        for (let i = objects.length - 1; i >= 0; i -= 1) {
+            const box = this.coachObjectBounds(objects[i]);
+            if (!box) continue;
+            const pad = 0.025;
+            if (point.x >= box.x - pad && point.x <= box.x + box.w + pad &&
+                point.y >= box.y - pad && point.y <= box.y + box.h + pad) {
+                return i;
+            }
+        }
+        return null;
+    },
+
+    moveCoachDrawingObject(object, dx, dy) {
+        const clamp = (value) => Math.max(0, Math.min(1, value));
+        if (object.type === 'freehand') {
+            object.points = (object.points || []).map((pt) => ({ x: clamp(pt.x + dx), y: clamp(pt.y + dy) }));
+        } else if (object.type === 'arrow') {
+            object.x1 = clamp(object.x1 + dx); object.y1 = clamp(object.y1 + dy);
+            object.x2 = clamp(object.x2 + dx); object.y2 = clamp(object.y2 + dy);
+        } else if (['circle', 'zone', 'spotlight'].includes(object.type)) {
+            object.x = clamp(object.x + dx);
+            object.y = clamp(object.y + dy);
+        } else if (object.type === 'label') {
+            object.x = clamp(object.x + dx);
+            object.y = clamp(object.y + dy);
+        }
+    },
+
+    undoCoachDrawing() {
+        const drawing = this.ensureCoachDrawing();
+        drawing.objects.pop();
+        this._coachSelectedObjectIndex = null;
+        this.paintCoachCanvas();
+    },
+
+    deleteSelectedCoachObject() {
+        const drawing = this.ensureCoachDrawing();
+        if (this._coachSelectedObjectIndex === null || this._coachSelectedObjectIndex === undefined) return;
+        drawing.objects.splice(this._coachSelectedObjectIndex, 1);
+        this._coachSelectedObjectIndex = null;
+        this.paintCoachCanvas();
     },
 
     clearCoachDrawing() {
         this._coachDrawing = null;
         this._coachDrawingActive = false;
+        this._coachSelectedObjectIndex = null;
         const canvas = document.getElementById('coach-drawing-canvas');
         if (canvas) canvas.style.display = 'none';
         if (canvas) canvas.style.pointerEvents = 'none';
@@ -497,7 +828,8 @@ export const coachingMixin = {
     },
 
     renderCoachDrawing(drawing) {
-        this._coachDrawing = drawing && drawing.strokes ? drawing : null;
+        this._coachDrawing = this.normalizeCoachDrawing(drawing);
+        this._coachSelectedObjectIndex = null;
         const canvas = document.getElementById('coach-drawing-canvas');
         if (canvas) canvas.style.display = this._coachDrawing ? 'block' : (this._coachDrawingActive ? 'block' : 'none');
         if (canvas) canvas.style.pointerEvents = this._coachDrawingActive ? 'auto' : 'none';
@@ -529,7 +861,10 @@ export const coachingMixin = {
                     ${(data.playlists || []).length ? data.playlists.map((p) => `
                         <article class="coach-row">
                             <div><strong>${this.esc(p.title)}</strong><span>${p.note_ids?.length || 0} notes · ${reviewedPlaylists.has(Number(p.id)) ? 'Reviewed' : 'New'}</span><p>${this.esc(p.description || '')}</p></div>
-                            <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">Mark reviewed</button>
+                            <div class="coach-row-actions">
+                                <button type="button" class="mini-action-btn" onclick="app.startFeedbackPlaylist(${p.id})">Play</button>
+                                <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">Mark reviewed</button>
+                            </div>
                         </article>
                     `).join('') : '<div class="session-empty">No playlists have been shared with you yet.</div>'}
                 </div>
@@ -562,6 +897,182 @@ export const coachingMixin = {
             if (video) video.currentTime = Number(note.timestamp_seconds || 0);
             this.renderCoachDrawing(note.drawing || {});
         }, 700);
+    },
+
+    playlistItems(playlist) {
+        if (Array.isArray(playlist?.items) && playlist.items.length) return playlist.items;
+        const notes = this._coachBundle?.notes || this._feedbackData?.notes || [];
+        const byId = new Map(notes.map((note) => [Number(note.id), note]));
+        return (playlist?.note_ids || []).map((id) => byId.get(Number(id))).filter(Boolean);
+    },
+
+    startCoachPlaylist(playlistId) {
+        const playlist = (this._coachBundle?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
+        if (playlist) this.startCoachingPlaylistSession(playlist);
+    },
+
+    startFeedbackPlaylist(playlistId) {
+        const playlist = (this._feedbackData?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
+        if (playlist) this.startCoachingPlaylistSession(playlist);
+    },
+
+    startCoachingPlaylistSession(playlist) {
+        const items = this.playlistItems(playlist);
+        if (!items.length) {
+            this.showError('This playlist has no playable notes.');
+            return;
+        }
+        this.stopCoachingPlaylistSession({ keepView: true });
+        this._coachPlaylistSession = {
+            playlist,
+            items,
+            index: 0,
+            frozeCurrentItem: false,
+            paused: false,
+            opening: false,
+        };
+        this.openCoachingPlaylistItem(0);
+    },
+
+    openCoachingPlaylistItem(index) {
+        const session = this._coachPlaylistSession;
+        if (!session) return;
+        if (index < 0 || index >= session.items.length) {
+            this.finishCoachingPlaylistSession();
+            return;
+        }
+        const item = session.items[index];
+        session.index = index;
+        session.frozeCurrentItem = false;
+        session.opening = true;
+        this.renderPlaylistSessionRail();
+        this.openMatch(item.match_id, { initialSlot: item.slot, pushHistory: false, scrollTop: false });
+        window.setTimeout(() => {
+            if (this._coachPlaylistSession !== session) return;
+            const video = document.getElementById('game-video');
+            if (!video) return;
+            const start = Math.max(0, Number(item.timestamp_seconds || 0) - Number(session.playlist.pre_roll_seconds ?? 5));
+            video.currentTime = start;
+            video.play().catch(() => {});
+            session.opening = false;
+            this.startPlaylistMonitor();
+        }, 700);
+    },
+
+    startPlaylistMonitor() {
+        this.stopPlaylistMonitor();
+        this._coachPlaylistMonitor = window.setInterval(() => {
+            const session = this._coachPlaylistSession;
+            const video = document.getElementById('game-video');
+            if (!session || !video || session.opening || session.paused) return;
+            const item = session.items[session.index];
+            const timestamp = Number(item.timestamp_seconds || 0);
+            const end = timestamp + Number(session.playlist.post_roll_seconds ?? 8);
+            if (!session.frozeCurrentItem && video.currentTime >= timestamp) {
+                session.frozeCurrentItem = true;
+                video.pause();
+                video.currentTime = timestamp;
+                this.renderCoachDrawing(item.drawing || {});
+                this.renderPlaylistSessionRail();
+                this._coachPlaylistFreezeTimer = window.setTimeout(() => {
+                    if (this._coachPlaylistSession !== session || session.paused) return;
+                    video.play().catch(() => {});
+                }, 1500);
+                return;
+            }
+            if (video.currentTime >= end || video.ended) {
+                this.openCoachingPlaylistItem(session.index + 1);
+            }
+        }, 250);
+    },
+
+    stopPlaylistMonitor() {
+        if (this._coachPlaylistMonitor) {
+            window.clearInterval(this._coachPlaylistMonitor);
+            this._coachPlaylistMonitor = null;
+        }
+        if (this._coachPlaylistFreezeTimer) {
+            window.clearTimeout(this._coachPlaylistFreezeTimer);
+            this._coachPlaylistFreezeTimer = null;
+        }
+    },
+
+    renderPlaylistSessionRail() {
+        let rail = document.getElementById('coach-playlist-session');
+        const wrapper = document.querySelector('.player-wrapper');
+        const session = this._coachPlaylistSession;
+        if (!wrapper || !session) {
+            if (rail) rail.remove();
+            return;
+        }
+        if (!rail) {
+            rail = document.createElement('div');
+            rail.id = 'coach-playlist-session';
+            rail.className = 'coach-playlist-session';
+            wrapper.appendChild(rail);
+        }
+        const item = session.items[session.index];
+        rail.innerHTML = `
+            <div>
+                <span>Review Session</span>
+                <strong>${this.esc(session.playlist.title)}</strong>
+                <small>${session.index + 1} of ${session.items.length} · ${this.esc(item.title)} · ${this.esc(item.category || 'note')}</small>
+            </div>
+            <div class="coach-playlist-controls">
+                <button type="button" class="mini-action-btn" onclick="app.previousCoachingPlaylistItem()">Prev</button>
+                <button type="button" class="mini-action-btn" onclick="app.toggleCoachingPlaylistPause()">${session.paused ? 'Resume' : 'Pause'}</button>
+                <button type="button" class="mini-action-btn" onclick="app.restartCoachingPlaylistItem()">Restart</button>
+                <button type="button" class="mini-action-btn" onclick="app.nextCoachingPlaylistItem()">Next</button>
+                <button type="button" class="mini-action-btn" onclick="app.stopCoachingPlaylistSession()">Exit</button>
+            </div>
+        `;
+    },
+
+    toggleCoachingPlaylistPause() {
+        const session = this._coachPlaylistSession;
+        const video = document.getElementById('game-video');
+        if (!session || !video) return;
+        session.paused = !session.paused;
+        if (session.paused) video.pause();
+        else video.play().catch(() => {});
+        this.renderPlaylistSessionRail();
+    },
+
+    restartCoachingPlaylistItem() {
+        const session = this._coachPlaylistSession;
+        if (session) this.openCoachingPlaylistItem(session.index);
+    },
+
+    nextCoachingPlaylistItem() {
+        const session = this._coachPlaylistSession;
+        if (session) this.openCoachingPlaylistItem(session.index + 1);
+    },
+
+    previousCoachingPlaylistItem() {
+        const session = this._coachPlaylistSession;
+        if (session) this.openCoachingPlaylistItem(Math.max(0, session.index - 1));
+    },
+
+    finishCoachingPlaylistSession() {
+        this.stopPlaylistMonitor();
+        const session = this._coachPlaylistSession;
+        this._coachPlaylistSession = null;
+        const rail = document.getElementById('coach-playlist-session');
+        if (rail) rail.remove();
+        const video = document.getElementById('game-video');
+        if (video) video.pause();
+        if (session) this.showSuccess('Playlist finished.');
+    },
+
+    stopCoachingPlaylistSession({ keepView = false } = {}) {
+        this.stopPlaylistMonitor();
+        this._coachPlaylistSession = null;
+        const rail = document.getElementById('coach-playlist-session');
+        if (rail) rail.remove();
+        if (!keepView) {
+            const video = document.getElementById('game-video');
+            if (video) video.pause();
+        }
     },
 
     async markFeedbackItemReviewed(data) {

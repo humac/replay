@@ -1402,6 +1402,19 @@ def _filter_playlists_for_user(playlists: list[dict], user: dict) -> list[dict]:
     return visible
 
 
+def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None) -> list[dict]:
+    notes_by_id = {note["id"]: note for note in (notes if notes is not None else _db.list_coaching_notes())}
+    hydrated = []
+    for playlist in playlists:
+        item_notes = [
+            notes_by_id[note_id]
+            for note_id in playlist.get("note_ids", [])
+            if note_id in notes_by_id
+        ]
+        hydrated.append({**playlist, "items": item_notes})
+    return hydrated
+
+
 @app.get("/api/coach/players")
 async def coach_list_players(request: Request):
     _require_coach(request)
@@ -1577,7 +1590,7 @@ async def coach_delete_note(note_id: int, request: Request):
 @app.get("/api/coach/playlists")
 async def coach_list_playlists(request: Request):
     _require_coach(request)
-    return {"playlists": _db.list_coaching_playlists()}
+    return {"playlists": _playlists_with_items(_db.list_coaching_playlists())}
 
 
 @app.post("/api/coach/playlists")
@@ -1590,6 +1603,7 @@ async def coach_create_playlist(request: Request, body: CreateCoachingPlaylistRe
         if not _db.get_player(player_id):
             raise HTTPException(404, f"Player not found: {player_id}")
     playlist = _db.create_coaching_playlist(body.model_dump(), actor=user["username"])
+    playlist = _playlists_with_items([playlist])[0]
     _log_activity(
         "coach.playlist_created",
         severity="info",
@@ -1614,6 +1628,7 @@ async def coach_update_playlist(playlist_id: int, request: Request, body: Update
         if not _db.get_player(player_id):
             raise HTTPException(404, f"Player not found: {player_id}")
     playlist = _db.update_coaching_playlist(playlist_id, updates) or existing
+    playlist = _playlists_with_items([playlist])[0]
     _log_activity(
         "coach.playlist_updated",
         severity="info",
@@ -1647,8 +1662,9 @@ async def my_feedback(request: Request):
     if user.get("user_id"):
         linked = set(_db.linked_player_ids_for_user(user["user_id"]))
         players = [p for p in _db.list_players(include_inactive=True) if p["id"] in linked]
-    notes = _filter_notes_for_user(_db.list_coaching_notes(), user)
-    playlists = _filter_playlists_for_user(_db.list_coaching_playlists(), user)
+    all_notes = _db.list_coaching_notes()
+    notes = _filter_notes_for_user(all_notes, user)
+    playlists = _playlists_with_items(_filter_playlists_for_user(_db.list_coaching_playlists(), user), all_notes)
     reviews = _db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else []
     return {"players": players, "notes": notes, "playlists": playlists, "reviews": reviews}
 
