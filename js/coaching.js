@@ -451,7 +451,7 @@ export const coachingMixin = {
                 `).join('') : '<div class="session-empty">No notes for this match yet.</div>'}
             </div>
         `;
-        this.setupCoachCanvas();
+        this.activateCoachCanvas();
     },
 
     async saveCoachPanelNote() {
@@ -514,7 +514,7 @@ export const coachingMixin = {
                 </div>
                 <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number">
                 <div class="coach-draw-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
+                    <button type="button" data-coach-canvas-toggle class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
                     <button type="button" class="mini-action-btn" onclick="app.undoCoachDrawing()">Undo</button>
                     <button type="button" class="mini-action-btn" onclick="app.deleteSelectedCoachObject()">Delete</button>
                     <button type="button" class="mini-action-btn" onclick="app.clearCoachDrawing()">Clear</button>
@@ -526,27 +526,46 @@ export const coachingMixin = {
     setupCoachCanvas() {
         const canvas = document.getElementById('coach-drawing-canvas');
         const video = document.getElementById('game-video');
-        if (!canvas || !video) return;
-        if (!canvas._coachBound) {
-            const resize = () => {
-                const rect = video.getBoundingClientRect();
-                canvas.width = Math.max(1, Math.round(rect.width));
-                canvas.height = Math.max(1, Math.round(rect.height));
-                this.paintCoachCanvas();
-            };
-            window.addEventListener('resize', resize);
-            video.addEventListener('loadedmetadata', resize);
-            canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
-            canvas.addEventListener('pointermove', (event) => this.coachDrawMove(event));
-            canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
-            canvas.addEventListener('pointerleave', (event) => this.coachDrawEnd(event));
-            canvas._coachBound = true;
-            canvas._coachResize = resize;
-            resize();
-        }
+        if (!canvas || !video || canvas._coachBound) return;
+        const resize = () => {
+            const rect = video.getBoundingClientRect();
+            canvas.width = Math.max(1, Math.round(rect.width));
+            canvas.height = Math.max(1, Math.round(rect.height));
+            this.paintCoachCanvas();
+        };
+        window.addEventListener('resize', resize);
+        video.addEventListener('loadedmetadata', resize);
+        canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
+        canvas.addEventListener('pointermove', (event) => this.coachDrawMove(event));
+        canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
+        canvas.addEventListener('pointerleave', (event) => this.coachDrawEnd(event));
+        canvas._coachBound = true;
+        resize();
+    },
+
+    activateCoachCanvas() {
+        this.setupCoachCanvas();
+        const canvas = document.getElementById('coach-drawing-canvas');
+        if (!canvas) return;
         this._coachDrawingActive = true;
         canvas.style.display = 'block';
         canvas.style.pointerEvents = 'auto';
+        this.updateCoachCanvasToggleLabel();
+    },
+
+    deactivateCoachCanvas() {
+        const canvas = document.getElementById('coach-drawing-canvas');
+        if (!canvas) return;
+        this._coachDrawingActive = false;
+        canvas.style.display = this._coachDrawing ? 'block' : 'none';
+        canvas.style.pointerEvents = 'none';
+        this.updateCoachCanvasToggleLabel();
+    },
+
+    updateCoachCanvasToggleLabel() {
+        document.querySelectorAll('[data-coach-canvas-toggle]').forEach((btn) => {
+            btn.textContent = `Canvas ${this._coachDrawingActive ? 'On' : 'Off'}`;
+        });
     },
 
     normalizeCoachDrawing(drawing) {
@@ -575,25 +594,16 @@ export const coachingMixin = {
     },
 
     toggleCoachDrawing() {
-        const canvas = document.getElementById('coach-drawing-canvas');
-        if (!canvas) return;
-        this._coachDrawingActive = !this._coachDrawingActive;
-        canvas.style.display = this._coachDrawingActive ? 'block' : 'none';
-        canvas.style.pointerEvents = this._coachDrawingActive ? 'auto' : 'none';
-        this.setupCoachCanvas();
+        if (this._coachDrawingActive) this.deactivateCoachCanvas();
+        else this.activateCoachCanvas();
     },
 
     setCoachDrawingTool(tool) {
         this._coachDrawingTool = tool;
-        this._coachDrawingActive = true;
         document.querySelectorAll('[data-coach-tool]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.coachTool === tool);
         });
-        const canvas = document.getElementById('coach-drawing-canvas');
-        if (canvas) {
-            canvas.style.display = 'block';
-            canvas.style.pointerEvents = 'auto';
-        }
+        this.activateCoachCanvas();
         this.paintCoachCanvas();
     },
 
@@ -869,11 +879,8 @@ export const coachingMixin = {
 
     clearCoachDrawing() {
         this._coachDrawing = null;
-        this._coachDrawingActive = false;
         this._coachSelectedObjectIndex = null;
-        const canvas = document.getElementById('coach-drawing-canvas');
-        if (canvas) canvas.style.display = 'none';
-        if (canvas) canvas.style.pointerEvents = 'none';
+        this.deactivateCoachCanvas();
         this.paintCoachCanvas();
     },
 
