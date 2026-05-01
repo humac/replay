@@ -49,7 +49,10 @@ seeds the setting, then the env var is ignored. Edit through the UI thereafter.
 | `MEDIAMTX_HLS_URL` | `http://mediamtx:8888` | Internal LL-HLS address |
 | `MEDIAMTX_API_URL` | `http://mediamtx:9997` | Internal control API |
 | `TRUSTED_PROXY` | `cloudflare` | `cloudflare` or `none` (see streams.py) |
-| `LIVE_AUTH_SECRET` | (empty) | Shared secret MediaMTX sends in `X-Internal-Secret` |
+| `LIVE_AUTH_SECRET` | (empty) | Shared secret MediaMTX sends in `X-Internal-Secret`. When unset, `/api/live/auth` fails closed with 503 unless `LIVE_AUTH_ALLOW_INSECURE=1`. |
+| `LIVE_AUTH_ALLOW_INSECURE` | `0` | Set to `1` to allow `/api/live/auth` to accept publish requests when `LIVE_AUTH_SECRET` is unset. **Dev-only.** A warning is logged on first use. Never enable in production or on a publicly reachable MediaMTX. |
+| `MAX_ACTIVE_TOKENS` | `1000` | Hard cap on concurrent admin/uploader sessions in the in-memory token store. Oldest tokens are evicted when the cap is hit. |
+| `REPLAY_STATIC_EXPORT_DIR` | (empty) | Optional path the replay container populates at startup with the SPA's static assets (`script.js`, `styles.css`, `js/`, `logo.png`) so Caddy can serve `/static/*` directly via `sendfile()`. Leave unset for the single-container layout where uvicorn serves static. |
 
 **First-boot fallback (otherwise edited in admin Settings → Performance Tuning):**
 
