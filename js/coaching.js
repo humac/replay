@@ -526,21 +526,27 @@ export const coachingMixin = {
     setupCoachCanvas() {
         const canvas = document.getElementById('coach-drawing-canvas');
         const video = document.getElementById('game-video');
-        if (!canvas || !video || canvas._coachBound) return;
-        const resize = () => {
-            const rect = video.getBoundingClientRect();
-            canvas.width = Math.max(1, Math.round(rect.width));
-            canvas.height = Math.max(1, Math.round(rect.height));
-            this.paintCoachCanvas();
-        };
-        window.addEventListener('resize', resize);
-        video.addEventListener('loadedmetadata', resize);
-        canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
-        canvas.addEventListener('pointermove', (event) => this.coachDrawMove(event));
-        canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
-        canvas.addEventListener('pointerleave', (event) => this.coachDrawEnd(event));
-        canvas._coachBound = true;
-        resize();
+        if (!canvas || !video) return;
+        if (!canvas._coachBound) {
+            const resize = () => {
+                const rect = video.getBoundingClientRect();
+                canvas.width = Math.max(1, Math.round(rect.width));
+                canvas.height = Math.max(1, Math.round(rect.height));
+                this.paintCoachCanvas();
+            };
+            window.addEventListener('resize', resize);
+            video.addEventListener('loadedmetadata', resize);
+            canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
+            canvas.addEventListener('pointermove', (event) => this.coachDrawMove(event));
+            canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
+            canvas.addEventListener('pointerleave', (event) => this.coachDrawEnd(event));
+            canvas._coachBound = true;
+            canvas._coachResize = resize;
+            resize();
+        }
+        this._coachDrawingActive = true;
+        canvas.style.display = 'block';
+        canvas.style.pointerEvents = 'auto';
     },
 
     normalizeCoachDrawing(drawing) {
@@ -580,10 +586,6 @@ export const coachingMixin = {
     setCoachDrawingTool(tool) {
         this._coachDrawingTool = tool;
         this._coachDrawingActive = true;
-        if (tool === 'dim') {
-            this.ensureCoachDrawing().objects.push({ type: 'dim', opacity: 0.45 });
-            this.paintCoachCanvas();
-        }
         document.querySelectorAll('[data-coach-tool]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.coachTool === tool);
         });
@@ -634,12 +636,21 @@ export const coachingMixin = {
             this.paintCoachCanvas();
             return;
         }
+        if (this._coachDrawingTool === 'dim') {
+            drawing.objects.push({ type: 'dim', opacity: 0.45 });
+            this._coachSelectedObjectIndex = drawing.objects.length - 1;
+            this.paintCoachCanvas();
+            return;
+        }
         let object = null;
         if (this._coachDrawingTool === 'freehand') {
             object = { type: 'freehand', color: this._coachDrawingColor, width: this._coachDrawingWidth, points: [point] };
         } else if (this._coachDrawingTool === 'arrow') {
             object = { type: 'arrow', color: this._coachDrawingColor, width: this._coachDrawingWidth, x1: point.x, y1: point.y, x2: point.x, y2: point.y };
-        } else if (['circle', 'zone', 'spotlight'].includes(this._coachDrawingTool)) {
+        } else if (this._coachDrawingTool === 'spotlight') {
+            object = { type: 'spotlight', color: this._coachDrawingColor, width: this._coachDrawingWidth,
+                       x: Math.max(0, point.x - 0.08), y: Math.max(0, point.y - 0.08), w: 0.16, h: 0.16 };
+        } else if (['circle', 'zone'].includes(this._coachDrawingTool)) {
             object = { type: this._coachDrawingTool, color: this._coachDrawingColor, width: this._coachDrawingWidth, x: point.x, y: point.y, w: 0.001, h: 0.001 };
         }
         if (!object) return;
@@ -672,10 +683,13 @@ export const coachingMixin = {
             object.x2 = point.x;
             object.y2 = point.y;
         } else if (['circle', 'zone', 'spotlight'].includes(object.type)) {
+            const minSize = object.type === 'spotlight' ? 0.08 : 0.001;
+            const w = Math.max(minSize, Math.abs(point.x - start.x));
+            const h = Math.max(minSize, Math.abs(point.y - start.y));
             object.x = Math.min(start.x, point.x);
             object.y = Math.min(start.y, point.y);
-            object.w = Math.abs(point.x - start.x);
-            object.h = Math.abs(point.y - start.y);
+            object.w = w;
+            object.h = h;
         }
         this.paintCoachCanvas();
     },
