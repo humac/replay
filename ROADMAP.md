@@ -555,6 +555,7 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Canvas activation gated on mode** (`js/coaching.js`): `renderCoachingPanel` only auto-activates the drawing canvas when `_coachModeOn` is true. With mode off, the panel still binds listeners but leaves `pointer-events: none` so the video remains scrubbable. Toggling mode off calls `deactivateCoachCanvas` to immediately release pointer events.
 - **Existing telestrator and form unchanged**: the form fields, telestrator toolbar, and notes timeline are all the same — the toggle just decides where in the sidebar they live and when the canvas is active.
 - **Mode-off panel hidden by CSS** (`styles.css`): `.sidebar:not(.coach-mode-on) .coach-match-panel { display: none }` ensures the populated panel stays hidden until the toggle is on. Without this rule, a coach opening a match would see both match details and the coach form stacked, defeating the toggle. `setLoggedOut` (`js/api.js`) also resets `_coachModeOn` and re-runs `setupCoachModeToggle` so the bar disappears on logout.
+- **Dedicated toggle button class** (`styles.css`, `index.html`): the toggle now uses a dedicated `.coach-mode-toggle` class (mirroring the existing `.team-stats-toggle` pattern) instead of `.btn-head`, since CLAUDE.md scopes `.btn-head` to `.admin-panel-head` action rows. Includes both dark and light theme variants.
 
 ---
 
