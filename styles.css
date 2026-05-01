@@ -5775,6 +5775,10 @@ details.diag-row-details[open] > summary::after {
     transform: rotate(180deg);
 }
 
+.sidebar:not(.coach-mode-on) .coach-match-panel {
+    display: none;
+}
+
 .sidebar.coach-mode-on .game-details {
     display: none;
 }

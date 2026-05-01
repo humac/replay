@@ -101,6 +101,8 @@ export const apiMixin = {
         const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
         if (regenThumbBtn) regenThumbBtn.style.display = 'none';
         this.setAdminPanelVisibility(false);
+        this._coachModeOn = false;
+        this.setupCoachModeToggle?.();
         this.stopAdminStatusPolling?.();
         if (document.getElementById('admin-view')?.classList.contains('active')) {
             this.cancelEdit();
