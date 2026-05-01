@@ -63,10 +63,16 @@ export const coachingMixin = {
         const playerOptions = bundle.players.map((p) => (
             `<option value="${this.esc(p.id)}">${this.esc(this.playerLabel(p))}</option>`
         )).join('');
-        ['coach-link-player', 'coach-note-players', 'coach-playlist-players'].forEach((id) => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = playerOptions || '<option value="">No players yet</option>';
-        });
+        const linkPlayerEl = document.getElementById('coach-link-player');
+        if (linkPlayerEl) linkPlayerEl.innerHTML = playerOptions || '<option value="">No players yet</option>';
+        this.renderCoachCheckList('coach-note-players', bundle.players.map((p) => ({
+            value: p.id,
+            label: this.playerLabel(p),
+        })), 'No players yet');
+        this.renderCoachCheckList('coach-playlist-players', bundle.players.map((p) => ({
+            value: p.id,
+            label: this.playerLabel(p),
+        })), 'No players yet');
 
         const userOptions = bundle.users.map((u) => (
             `<option value="${this.esc(u.id)}">${this.esc(u.display_name || u.username)} (@${this.esc(u.username)})</option>`
@@ -80,11 +86,34 @@ export const coachingMixin = {
         const matchEl = document.getElementById('coach-note-match');
         if (matchEl) matchEl.innerHTML = matchOptions || '<option value="">No matches yet</option>';
 
-        const noteOptions = bundle.notes.map((n) => (
-            `<option value="${n.id}">${this.esc(this.noteLabel(n))}</option>`
-        )).join('');
-        const playlistNotes = document.getElementById('coach-playlist-notes');
-        if (playlistNotes) playlistNotes.innerHTML = noteOptions || '<option value="">No notes yet</option>';
+        this.renderCoachCheckList('coach-playlist-notes', bundle.notes.map((n) => ({
+            value: n.id,
+            label: this.noteLabel(n),
+        })), 'No notes yet');
+    },
+
+    coachCheckListHtml(items, emptyLabel = 'Nothing available') {
+        if (!items.length) {
+            return `<div class="coach-check-empty">${this.esc(emptyLabel)}</div>`;
+        }
+        return items.map((item) => `
+            <button type="button" class="coach-check-option" data-value="${this.esc(item.value)}" aria-pressed="false" onclick="app.toggleCoachCheck(this)">
+                <span class="coach-check-box" aria-hidden="true"></span>
+                <span class="coach-check-label">${this.esc(item.label)}</span>
+            </button>
+        `).join('');
+    },
+
+    renderCoachCheckList(id, items, emptyLabel) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = this.coachCheckListHtml(items, emptyLabel);
+    },
+
+    toggleCoachCheck(btn) {
+        const selected = !btn.classList.contains('is-selected');
+        btn.classList.toggle('is-selected', selected);
+        btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
     },
 
     playerLabel(player) {
@@ -178,6 +207,10 @@ export const coachingMixin = {
     selectedValues(id) {
         const el = document.getElementById(id);
         if (!el) return [];
+        const themedOptions = el.querySelectorAll?.('.coach-check-option.is-selected');
+        if (themedOptions?.length) {
+            return Array.from(themedOptions).map((opt) => opt.dataset.value).filter(Boolean);
+        }
         return Array.from(el.selectedOptions || []).map((opt) => opt.value).filter(Boolean);
     },
 
@@ -382,7 +415,10 @@ export const coachingMixin = {
         }
         const players = bundle.players || [];
         const notes = bundle.notes || [];
-        const playerOptions = players.map((p) => `<option value="${this.esc(p.id)}">${this.esc(this.playerLabel(p))}</option>`).join('');
+        const playerChecklist = this.coachCheckListHtml(players.map((p) => ({
+            value: p.id,
+            label: this.playerLabel(p),
+        })), 'No players yet');
         panel.innerHTML = `
             <h3>Coach Notes</h3>
             <div class="coach-mini-form">
@@ -401,7 +437,7 @@ export const coachingMixin = {
                         <option value="player">Player/family</option>
                     </select>
                 </div>
-                <select id="coach-panel-players" multiple size="3">${playerOptions}</select>
+                <div id="coach-panel-players" class="coach-check-list compact" role="listbox" aria-label="Linked players">${playerChecklist}</div>
                 <input type="text" id="coach-panel-tags" placeholder="tags,comma,separated">
                 ${this.renderCoachTelestratorToolbar()}
                 <button type="button" class="mini-action-btn" onclick="app.saveCoachPanelNote()">Save at current time</button>
