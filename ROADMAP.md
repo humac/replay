@@ -535,6 +535,16 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Follow-up — Telestrator Pointer Capture Fix ✅ COMPLETE (2026-05-01)
+
+**Goal:** make the telestrator usable end-to-end on the match page.
+
+- **Canvas activates on coach panel mount** (`js/coaching.js`): `setupCoachCanvas` now turns on `display:block` + `pointer-events:auto` every time it runs, not only on first bind. Coaches can pause the video and immediately draw — clicks land on the overlay instead of toggling the native `<video controls>` and unpausing.
+- **Dim is a click-to-place action, not an auto-fill on select** (`js/coaching.js`): selecting the Dim tool no longer instantly pushes a full-screen dim object. Dim now behaves like Label — click on the canvas to place it.
+- **Spotlight has a usable initial size** (`js/coaching.js`): a click without drag seeds a 16% × 16% spotlight centered on the click instead of a pinhole on a half-black canvas. Drag still resizes from the click point, with an 8% minimum to keep the cutout visible mid-drag.
+
+---
+
 ## Future Track — Fan + Family Engagement
 
 **Goal:** evolve Replay from a working match archive into a club match-day hub that helps families, supporters, and players find the right video moments quickly while preserving the current spoiler-safe public viewing model.

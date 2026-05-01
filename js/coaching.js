@@ -451,7 +451,7 @@ export const coachingMixin = {
                 `).join('') : '<div class="session-empty">No notes for this match yet.</div>'}
             </div>
         `;
-        this.setupCoachCanvas();
+        this.activateCoachCanvas();
     },
 
     async saveCoachPanelNote() {
@@ -514,7 +514,7 @@ export const coachingMixin = {
                 </div>
                 <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number">
                 <div class="coach-draw-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
+                    <button type="button" data-coach-canvas-toggle class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
                     <button type="button" class="mini-action-btn" onclick="app.undoCoachDrawing()">Undo</button>
                     <button type="button" class="mini-action-btn" onclick="app.deleteSelectedCoachObject()">Delete</button>
                     <button type="button" class="mini-action-btn" onclick="app.clearCoachDrawing()">Clear</button>
@@ -543,6 +543,31 @@ export const coachingMixin = {
         resize();
     },
 
+    activateCoachCanvas() {
+        this.setupCoachCanvas();
+        const canvas = document.getElementById('coach-drawing-canvas');
+        if (!canvas) return;
+        this._coachDrawingActive = true;
+        canvas.style.display = 'block';
+        canvas.style.pointerEvents = 'auto';
+        this.updateCoachCanvasToggleLabel();
+    },
+
+    deactivateCoachCanvas() {
+        const canvas = document.getElementById('coach-drawing-canvas');
+        if (!canvas) return;
+        this._coachDrawingActive = false;
+        canvas.style.display = this._coachDrawing ? 'block' : 'none';
+        canvas.style.pointerEvents = 'none';
+        this.updateCoachCanvasToggleLabel();
+    },
+
+    updateCoachCanvasToggleLabel() {
+        document.querySelectorAll('[data-coach-canvas-toggle]').forEach((btn) => {
+            btn.textContent = `Canvas ${this._coachDrawingActive ? 'On' : 'Off'}`;
+        });
+    },
+
     normalizeCoachDrawing(drawing) {
         if (!drawing) return null;
         if (drawing.version === 2 && Array.isArray(drawing.objects)) return { version: 2, objects: [...drawing.objects] };
@@ -569,29 +594,16 @@ export const coachingMixin = {
     },
 
     toggleCoachDrawing() {
-        const canvas = document.getElementById('coach-drawing-canvas');
-        if (!canvas) return;
-        this._coachDrawingActive = !this._coachDrawingActive;
-        canvas.style.display = this._coachDrawingActive ? 'block' : 'none';
-        canvas.style.pointerEvents = this._coachDrawingActive ? 'auto' : 'none';
-        this.setupCoachCanvas();
+        if (this._coachDrawingActive) this.deactivateCoachCanvas();
+        else this.activateCoachCanvas();
     },
 
     setCoachDrawingTool(tool) {
         this._coachDrawingTool = tool;
-        this._coachDrawingActive = true;
-        if (tool === 'dim') {
-            this.ensureCoachDrawing().objects.push({ type: 'dim', opacity: 0.45 });
-            this.paintCoachCanvas();
-        }
         document.querySelectorAll('[data-coach-tool]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.coachTool === tool);
         });
-        const canvas = document.getElementById('coach-drawing-canvas');
-        if (canvas) {
-            canvas.style.display = 'block';
-            canvas.style.pointerEvents = 'auto';
-        }
+        this.activateCoachCanvas();
         this.paintCoachCanvas();
     },
 
@@ -634,12 +646,21 @@ export const coachingMixin = {
             this.paintCoachCanvas();
             return;
         }
+        if (this._coachDrawingTool === 'dim') {
+            drawing.objects.push({ type: 'dim', opacity: 0.45 });
+            this._coachSelectedObjectIndex = drawing.objects.length - 1;
+            this.paintCoachCanvas();
+            return;
+        }
         let object = null;
         if (this._coachDrawingTool === 'freehand') {
             object = { type: 'freehand', color: this._coachDrawingColor, width: this._coachDrawingWidth, points: [point] };
         } else if (this._coachDrawingTool === 'arrow') {
             object = { type: 'arrow', color: this._coachDrawingColor, width: this._coachDrawingWidth, x1: point.x, y1: point.y, x2: point.x, y2: point.y };
-        } else if (['circle', 'zone', 'spotlight'].includes(this._coachDrawingTool)) {
+        } else if (this._coachDrawingTool === 'spotlight') {
+            object = { type: 'spotlight', color: this._coachDrawingColor, width: this._coachDrawingWidth,
+                       x: Math.max(0, point.x - 0.08), y: Math.max(0, point.y - 0.08), w: 0.16, h: 0.16 };
+        } else if (['circle', 'zone'].includes(this._coachDrawingTool)) {
             object = { type: this._coachDrawingTool, color: this._coachDrawingColor, width: this._coachDrawingWidth, x: point.x, y: point.y, w: 0.001, h: 0.001 };
         }
         if (!object) return;
@@ -672,10 +693,13 @@ export const coachingMixin = {
             object.x2 = point.x;
             object.y2 = point.y;
         } else if (['circle', 'zone', 'spotlight'].includes(object.type)) {
+            const minSize = object.type === 'spotlight' ? 0.08 : 0.001;
+            const w = Math.max(minSize, Math.abs(point.x - start.x));
+            const h = Math.max(minSize, Math.abs(point.y - start.y));
             object.x = Math.min(start.x, point.x);
             object.y = Math.min(start.y, point.y);
-            object.w = Math.abs(point.x - start.x);
-            object.h = Math.abs(point.y - start.y);
+            object.w = w;
+            object.h = h;
         }
         this.paintCoachCanvas();
     },
@@ -855,11 +879,8 @@ export const coachingMixin = {
 
     clearCoachDrawing() {
         this._coachDrawing = null;
-        this._coachDrawingActive = false;
         this._coachSelectedObjectIndex = null;
-        const canvas = document.getElementById('coach-drawing-canvas');
-        if (canvas) canvas.style.display = 'none';
-        if (canvas) canvas.style.pointerEvents = 'none';
+        this.deactivateCoachCanvas();
         this.paintCoachCanvas();
     },
 
