@@ -448,7 +448,7 @@ export const playerMixin = {
 
             // Resume from saved position
             const savedPos = this._getSavedPosition(matchId, slot);
-            if (savedPos && videoEl.duration &&
+            if (!this._coachPlaylistSession && savedPos && videoEl.duration &&
                 savedPos > POSITION_RESUME_THRESHOLD &&
                 savedPos < videoEl.duration - POSITION_END_MARGIN) {
                 videoEl.currentTime = savedPos;

@@ -251,18 +251,20 @@ Visibility options:
 | **Player/family** | Only accounts linked to the selected roster player(s) |
 | **Unlisted link** | Signed-in viewers with the link-style access pattern |
 
-When a coach opens a match, the replay sidebar includes a **Coach Notes** panel. The coach can save a note at the current video timestamp and use the drawing canvas to capture freehand markup. Drawings are metadata only — they are not burned into the MP4/HLS files.
+When a coach opens a match, the replay sidebar includes a **Coach Notes** panel. The coach can save a note at the current video timestamp and use the drawing canvas as a telestrator.
+
+Available drawing tools include freehand line, arrow, circle, zone, label/player number, spotlight, dim overlay, color, line width, select/move, delete, undo, and clear. Drawings are metadata only — they are not burned into the MP4/HLS files.
 
 ### Review playlists and My Feedback
 
-Review playlists group coaching notes into a lesson such as "First-half pressing" or "Build-up decisions." Coaches can assign playlists to the team or to linked players/families.
+Review playlists group coaching notes into a lesson such as "First-half pressing" or "Build-up decisions." Coaches can assign playlists to the team or to linked players/families, set pre-roll/post-roll seconds, and play the playlist as an auto-advancing review session.
 
 Players and families sign in and open **My Feedback**. They only see:
 
 - team-visible notes/playlists
 - player-specific notes/playlists for roster players linked to their account
 
-They can jump from a note directly to the match timestamp and mark notes/playlists as reviewed.
+They can jump from a note directly to the match timestamp, play shared playlists in sequence, and mark notes/playlists as reviewed. A shared playlist grants access to its included moments inside that playlist session even when a private note is not shown as a standalone feedback card.
 
 ---
 

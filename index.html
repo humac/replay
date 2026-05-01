@@ -421,6 +421,16 @@
                             <select id="coach-playlist-players" multiple size="5"></select>
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Pre-roll Seconds</label>
+                            <input type="number" id="coach-playlist-pre-roll" min="0" max="60" step="1" value="5">
+                        </div>
+                        <div class="form-group">
+                            <label>Post-roll Seconds</label>
+                            <input type="number" id="coach-playlist-post-roll" min="0" max="120" step="1" value="8">
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label>Description</label>
                         <textarea id="coach-playlist-description" rows="3" maxlength="1000" placeholder="Review goal or meeting context"></textarea>

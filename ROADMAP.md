@@ -521,6 +521,20 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Follow-up — Telestrator + Review Playlist Playback ✅ COMPLETE (2026-05-01)
+
+**Goal:** turn coaching notes and playlists into a usable review-session workflow.
+
+- **Telestrator tools** (`js/coaching.js`, `styles.css`): upgraded the match-page coach drawing canvas from freehand-only strokes to versioned drawing objects: freehand, arrows, circles, zones, labels/player numbers, spotlight, dim overlay, colors, line width, selection/move, delete, undo, and clear. Legacy v1 stroke drawings still render.
+- **Drawing validation** (`models.py`, `tests/test_coaching.py`): coaching note drawing payloads now validate supported versions, object types, normalized coordinates, label length, and size/point limits.
+- **Playlist playback** (`js/coaching.js`, `js/player.js`): coach workspace and My Feedback playlists now launch a review-session rail, seek each note moment with pre-roll, pause briefly on the annotated freeze frame, resume through post-roll, and auto-advance with previous/next/pause/restart/exit controls.
+- **Playlist API hydration and privacy** (`server.py`): playlist responses include ordered `items` with note details. A visible playlist grants access to its item moments inside the playlist session, while standalone note cards still follow note visibility.
+- **Playlist controls** (`index.html`, `js/api.js`): playlist creation exposes pre-roll/post-roll fields and coach playlist rows can edit those timings.
+
+**Remaining coaching follow-ups:** richer roster management, coach-facing review completion dashboards, playlist reordering UI beyond multi-select ordering, typed reflections on playlist finish, and rendered clip export.
+
+---
+
 ## Future Track — Fan + Family Engagement
 
 **Goal:** evolve Replay from a working match archive into a club match-day hub that helps families, supporters, and players find the right video moments quickly while preserving the current spoiler-safe public viewing model.
