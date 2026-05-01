@@ -542,6 +542,18 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Canvas activates on coach panel mount** (`js/coaching.js`): `setupCoachCanvas` now turns on `display:block` + `pointer-events:auto` every time it runs, not only on first bind. Coaches can pause the video and immediately draw — clicks land on the overlay instead of toggling the native `<video controls>` and unpausing.
 - **Dim is a click-to-place action, not an auto-fill on select** (`js/coaching.js`): selecting the Dim tool no longer instantly pushes a full-screen dim object. Dim now behaves like Label — click on the canvas to place it.
 - **Spotlight has a usable initial size** (`js/coaching.js`): a click without drag seeds a 16% × 16% spotlight centered on the click instead of a pinhole on a half-black canvas. Drag still resizes from the click point, with an 8% minimum to keep the cutout visible mid-drag.
+- **Listener binding separated from activation** (`js/coaching.js`): `setupCoachCanvas` only binds pointer/resize listeners (idempotent on `_coachBound`); new `activateCoachCanvas` / `deactivateCoachCanvas` helpers own activation state and keep the toolbar Canvas On/Off label in sync. Fixes a regression where the Canvas Off toggle was a no-op and where the My Feedback playlist viewer flow force-activated the canvas, blocking video controls for non-coach viewers.
+
+---
+
+## Follow-up — Coach Notes Mode Toggle ✅ COMPLETE (2026-05-01)
+
+**Goal:** let a coach jump straight into note authoring without scrolling past matchup/score/meta/video-status to reach the form.
+
+- **Sidebar restructure** (`index.html`): the match-page sidebar now hosts three siblings — a coach-mode bar (hidden for non-coaches), the existing `.game-details` block, and `#coach-match-panel`. The coach panel is no longer tucked inside `.game-details`.
+- **Coach Notes toggle** (`js/coaching.js`, `js/views.js`, `js/api.js`): a "Coach Notes ▾" button at the top of the sidebar appears only when `app.canCoach()`. Clicking it flips `_coachModeOn`, adds `coach-mode-on` to `.sidebar`, and re-renders the coach panel. CSS swaps which sibling is visible — match details when off, coach panel when on. Mode resets to off when the coach navigates to a different match.
+- **Canvas activation gated on mode** (`js/coaching.js`): `renderCoachingPanel` only auto-activates the drawing canvas when `_coachModeOn` is true. With mode off, the panel still binds listeners but leaves `pointer-events: none` so the video remains scrubbable. Toggling mode off calls `deactivateCoachCanvas` to immediately release pointer events.
+- **Existing telestrator and form unchanged**: the form fields, telestrator toolbar, and notes timeline are all the same — the toggle just decides where in the sidebar they live and when the canvas is active.
 
 ---
 

@@ -5750,6 +5750,41 @@ details.diag-row-details[open] > summary::after {
     letter-spacing: 0;
 }
 
+.coach-mode-bar {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 0 0.5rem;
+}
+
+.coach-mode-bar[hidden] {
+    display: none;
+}
+
+#coach-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.coach-mode-toggle-icon {
+    transition: transform 0.18s ease;
+    display: inline-block;
+}
+
+#coach-mode-toggle[aria-expanded="true"] .coach-mode-toggle-icon {
+    transform: rotate(180deg);
+}
+
+.sidebar.coach-mode-on .game-details {
+    display: none;
+}
+
+.sidebar.coach-mode-on .coach-match-panel {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
 .coach-mini-form {
     display: grid;
     gap: 0.55rem;
