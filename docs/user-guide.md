@@ -114,15 +114,21 @@ If your club uses Replay for coaching, a **My Feedback** link appears after you 
 
 Player-specific feedback only appears when a coach or admin has linked your user account to a roster player. One family account can be linked to multiple players, and multiple parent/guardian accounts can be linked to the same player.
 
-On **My Feedback** you can:
+![My Feedback — linked players strip and the Playlists tab](./screenshots/feedback-overview.png)
 
-- see linked roster players
-- open coach notes at the exact match timestamp
-- view any drawing overlay the coach saved on the paused video
-- play review playlists that move through coach-selected moments with pre-roll and post-roll
-- mark notes or playlists as reviewed
+The page has two sub-tabs:
 
-Private coach notes are not shown here. Coaches decide which notes are shared with the whole team and which ones are linked to specific players/families.
+### Playlists (default)
+
+A playlist is a sequence of clips a coach has put together as a lesson — for example, "First-half tactical lessons" or "Player #7 development." Click **Play** on a row and the focused player opens, walking you through each clip with the saved drawings on top of the paused video. The session has **Prev / Pause / Restart / Next** controls and a **Mark reviewed** button you can click when you're done.
+
+### Notes
+
+Individual coach notes shared standalone (not as part of a playlist). Each row shows the title, the match it belongs to, and the exact timestamp. Click **Watch** to open it in the same focused player.
+
+Private coach notes are not shown here. Coaches decide which notes are shared with the whole team, which are linked to specific players/families, and which stay private to staff.
+
+> For the full coach authoring workflow and the player/family experience in depth, see [the coaching workspace guide](./coach-guide.md).
 
 ---
 

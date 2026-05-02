@@ -50,23 +50,32 @@ Legacy redirects: `/admin/streams` → `/admin/live`, `/admin/system` → `/admi
 
 ## Feature inventory → guide mapping
 
-| Feature | User guide | Admin guide |
-|---|---|---|
-| Browse season grid + filter | ✓ | — |
-| Open match / play video / score reveal | ✓ | — |
-| Watch live | ✓ | partial (offline state + setup) |
-| Login | ✓ (viewer) | ✓ (admin) |
-| Mobile experience | ✓ | — |
-| Add / edit / delete match | — | ✓ |
-| Upload video (described, not walked) | — | ✓ |
-| Live config + key rotation | — | ✓ |
-| Performance tuning + diagnostics | — | ✓ |
-| User management | — | ✓ |
-| Branding / labels / settings | — | ✓ |
-| Backups / DB export | — | ✓ |
+| Feature | User guide | Admin guide | Coach guide |
+|---|---|---|---|
+| Browse season grid + filter | ✓ | — | — |
+| Open match / play video / score reveal | ✓ | — | — |
+| Watch live | ✓ | partial (offline state + setup) | — |
+| Login | ✓ (viewer) | ✓ (admin) | ✓ (coach) |
+| Mobile experience | ✓ | — | ✓ (`/feedback` mobile) |
+| Add / edit / delete match | — | ✓ | — |
+| Upload video (described, not walked) | — | ✓ | — |
+| Live config + key rotation | — | ✓ | — |
+| Performance tuning + diagnostics | — | ✓ | — |
+| User management | — | ✓ | cross-link only |
+| Branding / labels / settings | — | ✓ | — |
+| Backups / DB export | — | ✓ | — |
+| Coach roster + family links | — | ✓ (data model) | ✓ (UI walkthrough) |
+| Coaching notes (CRUD, visibility) | partial (player view) | ✓ (data model) | ✓ |
+| Telestrator (8 tools) | — | summary | ✓ |
+| Multi-player formation overlay | — | summary | ✓ (its own subsection) |
+| Review tab + deep-link from match page | — | — | ✓ |
+| Review playlists (authoring) | — | summary | ✓ |
+| `/feedback` (player & family viewing) | ✓ (overview) | summary | ✓ (deep dive) |
+| Focused feedback player modal | — | — | ✓ |
 
 ## Known limitations called out in the guides
 
 - Live page renders an "offline" message under bare `python server.py` (no MediaMTX).
 - Score reveal is per-session — refreshing the page hides scores again.
 - The env-var superadmin cannot be deleted from the UI (by design; it's the recovery account).
+- Coaching seed inserts notes directly into SQLite, so screenshots of notes-with-drawings render correctly even though `seed.py` does not seed real video files — the focused player modal shows the layout but the underlying `<video>` element is empty.

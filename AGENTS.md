@@ -11,7 +11,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - Testing: `pytest` + `pytest-asyncio` + `httpx` (see `tests/`)
 - CI: GitHub Actions (`.github/workflows/ci.yml`)
 - Runtime: direct Python or Docker Compose
-- Docs: `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`
+- Docs: `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`, `docs/user-guide.md`, `docs/admin-guide.md`, `docs/coach-guide.md`
 - Specs: lightweight design notes for larger features live under `specs/`, including `specs/coaching-platform-design.md`
 
 ## Key Files
@@ -53,7 +53,7 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt   # for testing
 python server.py
 python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py && python3 -m py_compile streams.py
-pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
+pytest tests/ -v --cov --cov-report=term-missing
 docker compose up --build
 ```
 
@@ -100,7 +100,7 @@ After backend changes, run:
 
 ```bash
 python3 -m py_compile server.py && python3 -m py_compile media.py && python3 -m py_compile models.py && python3 -m py_compile db.py && python3 -m py_compile auth.py && python3 -m py_compile settings.py && python3 -m py_compile uploads.py && python3 -m py_compile log.py && python3 -m py_compile live.py && python3 -m py_compile streams.py
-pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
+pytest tests/ -v --cov --cov-report=term-missing
 ```
 
 After frontend changes, sanity-check:

@@ -83,6 +83,8 @@ Two security-related variables are worth knowing about:
 
 Login itself is rate-limited to 5 attempts per 60 seconds per IP regardless of these settings.
 
+Sessions last **24 hours**: every successful login returns a bearer token that the SPA stores in `sessionStorage`, and the server expires the token 24 hours after issue. Users who keep a tab open longer than that will be prompted to sign in again on their next action. The TTL is hard-coded (`auth.TOKEN_TTL = 86400`) — there is no environment variable to extend it.
+
 For the full list of environment variables — including storage tiering, log format, and reverse-proxy hints — see [`docs/DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ### Data directory layout
@@ -238,6 +240,8 @@ The roster is separate from login accounts:
 
 This supports common family setups: two parents linked to the same player, one account linked to siblings, or an older player linked to their own account.
 
+> **Note:** A coach needs the `coach` capability on their account to see `/coach`. The realistic combination is `coach,uploader` so the same person can also upload match video. Grant this from the [Users tab](#users-and-roles).
+
 ### Coaching notes
 
 Coaches can create timestamped notes against a match slot (`Full`, `1st Half`, `2nd Half`). Notes include title, body, category, tags, visibility, optional linked players, and optional drawing overlay metadata.
@@ -251,9 +255,9 @@ Visibility options:
 | **Player/family** | Only accounts linked to the selected roster player(s) |
 | **Unlisted link** | Signed-in viewers with the link-style access pattern |
 
-When a coach opens a match, the replay sidebar includes a **Coach Notes** panel. The coach can save a note at the current video timestamp and use the drawing canvas as a telestrator.
+Coaches author notes in the **Review** sub-tab of the `/coach` workspace, which pairs the match video with the telestrator canvas as the single authoring surface. From any match page, a coach also sees a **Coach this match in Review →** button in the header that deep-links straight there.
 
-Available drawing tools include freehand line, arrow, circle, zone, label/player number, spotlight, dim overlay, color, line width, select/move, delete, undo, and clear. Drawings are metadata only — they are not burned into the MP4/HLS files.
+Available drawing tools include freehand line, arrow, circle, zone, label/player number, spotlight, dim overlay, color, line width, select/move, delete, undo, and clear. There is also a **Formation** tool for tactical shape: drop 3–16 anchors on the pitch and Replay computes the convex hull around them automatically (collinear anchors are rejected so the hull always has area). Drawings are metadata only — they are not burned into the MP4/HLS files.
 
 ### Review playlists and My Feedback
 
@@ -265,6 +269,8 @@ Players and families sign in and open **My Feedback**. They only see:
 - player-specific notes/playlists for roster players linked to their account
 
 They can jump from a note directly to the match timestamp, play shared playlists in sequence, and mark notes/playlists as reviewed. A shared playlist grants access to its included moments inside that playlist session even when a private note is not shown as a standalone feedback card.
+
+See the [coach guide](./coach-guide.md) for the full authoring and family-viewing walkthrough with screenshots.
 
 ---
 
