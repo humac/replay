@@ -512,7 +512,7 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Coaching schema** (`db.py` migration v8): added `players`, `player_user_links`, `coaching_notes`, `coaching_note_players`, `coaching_note_tags`, `coaching_playlists`, `coaching_playlist_items`, `coaching_playlist_players`, and `coaching_reviews`. Drawings are stored as JSON metadata on notes, not burned into video.
 - **Coach APIs** (`server.py`, `models.py`): new coach/admin-gated routes under `/api/coach/*` for roster CRUD, linkable-user lookup, player-user links, notes, and playlists. New signed-in route `/api/my-feedback` returns only team-visible feedback plus player-specific feedback for roster players linked to the current user; `/api/my-feedback/review` records lightweight review completion/reflection.
 - **Coach workspace UI** (`js/coaching.js`, `index.html`, `styles.css`): `/coach` supports adding roster players, linking players to user accounts, creating timestamped notes, assigning linked players/tags/visibility, listing notes, and creating playlists from note selections.
-- **In-player note capture** (`js/coaching.js`, `js/views.js`, `index.html`): coaches watching a match get a Coach Notes panel in the match sidebar. They can save a note at the current video time, link players, choose visibility, and use a canvas overlay to capture freehand drawing metadata. Existing playback controls are not blocked unless drawing mode is active.
+- **In-player note capture** (`js/coaching.js`, `js/views.js`, `index.html`): coaches watching a match get a Coach Notes panel in the match sidebar. They can save a note at the current video time, link players, choose visibility, and use a canvas overlay to capture freehand drawing metadata. Existing playback controls are not blocked unless drawing mode is active. _Superseded by **Coaching Platform — UX Restructure** (line 562 below): the in-match panel was deleted and the Coach > Review tab is now the single authoring surface._
 - **Player/family feedback view** (`js/coaching.js`, `index.html`): `/feedback` shows linked roster players, published review playlists, and visible coaching notes. Users can jump from a note to the match timestamp and mark notes/playlists reviewed.
 - **Design note** (`specs/coaching-platform-design.md`): captures the MVP scope, role/privacy model, backend tables, frontend ownership, and validation approach for future coaching work.
 - **Tests** (`tests/test_coaching.py`): covers coach role access, viewer denial, roster account links, player-specific feedback visibility, drawing JSON persistence, team-visible notes, and review tracking. Full suite: `260 passed`.
@@ -546,7 +546,9 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
-## Follow-up — Coach Notes Mode Toggle ✅ COMPLETE (2026-05-01)
+## Follow-up — Coach Notes Mode Toggle ✅ COMPLETE (2026-05-01) — _SUPERSEDED_
+
+> **Superseded by [Coaching Platform — UX Restructure](#coaching-platform--ux-restructure--complete-2026-05-01) below.** The Coach Notes mode toggle, the in-match coach side panel, and `#coach-mode-bar` / `#coach-mode-toggle` / `renderCoachingPanel` / `toggleCoachMode` were all deleted later the same day in favour of `/coach?tab=review` as the single authoring surface. This entry is kept as a historical record.
 
 **Goal:** let a coach jump straight into note authoring without scrolling past matchup/score/meta/video-status to reach the form.
 

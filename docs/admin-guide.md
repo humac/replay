@@ -83,6 +83,8 @@ Two security-related variables are worth knowing about:
 
 Login itself is rate-limited to 5 attempts per 60 seconds per IP regardless of these settings.
 
+Sessions last **24 hours**: every successful login returns a bearer token that the SPA stores in `sessionStorage`, and the server expires the token 24 hours after issue. Users who keep a tab open longer than that will be prompted to sign in again on their next action. The TTL is hard-coded (`auth.TOKEN_TTL = 86400`) — there is no environment variable to extend it.
+
 For the full list of environment variables — including storage tiering, log format, and reverse-proxy hints — see [`docs/DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ### Data directory layout
@@ -253,7 +255,7 @@ Visibility options:
 | **Player/family** | Only accounts linked to the selected roster player(s) |
 | **Unlisted link** | Signed-in viewers with the link-style access pattern |
 
-When a coach opens a match, the replay sidebar includes a **Coach Notes** panel. The coach can save a note at the current video timestamp and use the drawing canvas as a telestrator.
+Coaches author notes in the **Review** sub-tab of the `/coach` workspace, which pairs the match video with the telestrator canvas as the single authoring surface. From any match page, a coach also sees a **Coach this match in Review →** button in the header that deep-links straight there.
 
 Available drawing tools include freehand line, arrow, circle, zone, label/player number, spotlight, dim overlay, color, line width, select/move, delete, undo, and clear. There is also a **Formation** tool for tactical shape: drop 3–16 anchors on the pitch and Replay computes the convex hull around them automatically (collinear anchors are rejected so the hull always has area). Drawings are metadata only — they are not burned into the MP4/HLS files.
 
