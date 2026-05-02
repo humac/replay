@@ -11,7 +11,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - Testing: `pytest` + `pytest-asyncio` + `httpx` (see `tests/`)
 - CI: GitHub Actions (`.github/workflows/ci.yml`)
 - Runtime: direct Python or Docker Compose
-- Docs: `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`
+- Docs: `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`, `docs/user-guide.md`, `docs/admin-guide.md`, `docs/coach-guide.md`
 - Specs: lightweight design notes for larger features live under `specs/`, including `specs/coaching-platform-design.md`
 
 ## Key Files
