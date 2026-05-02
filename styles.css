@@ -6436,6 +6436,57 @@ details.diag-row-details[open] > summary::after {
         scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
     }
 
+    /* Sprint 2 polish: collapse nested scrollers inside the inspector while
+     * the outer .coach-review-side already scrolls independently. Two
+     * scrollbars stacked (panel + player checklist) is distracting during
+     * video review — the player chips just grow vertically and ride along
+     * with the outer scroll. The chips themselves are tightened so a 15-25
+     * player roster doesn't dominate the inspector. */
+    #coach-view.is-review-mode #coach-review-players.coach-check-list {
+        min-height: 0;
+        max-height: none;
+        overflow: visible;
+        padding: 0.4rem;
+    }
+    #coach-view.is-review-mode #coach-review-players .coach-check-option {
+        min-height: 32px;
+        padding: 0.3rem 0.55rem;
+        font-size: 0.85rem;
+    }
+
+    /* Tighten the inspector layout so the form doesn't dominate vertically.
+     * Headers (`Telestrator`, `Save note at current time`, `Notes for this
+     * match`) are visually redundant — the controls below them are obvious —
+     * so squeeze them out in Review mode. AT users still get them via
+     * .coach-review-side > h4's intrinsic semantics; they're hidden visually
+     * only. */
+    #coach-view.is-review-mode .coach-review-side {
+        gap: 0.5rem;
+    }
+    #coach-view.is-review-mode .coach-review-side > h4 {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    /* Tighter form spacing + shorter body textarea so the form fits without
+     * forcing the side panel to scroll on a normal-height monitor. Sprint 4
+     * will collapse body/visibility/tags into an "advanced" section, which
+     * removes most of this height entirely. */
+    #coach-view.is-review-mode .coach-mini-form {
+        gap: 0.4rem;
+    }
+    #coach-view.is-review-mode .coach-mini-form textarea {
+        min-height: 56px;
+    }
+}
+
     #coach-view.is-review-mode .coach-review-side::-webkit-scrollbar {
         width: 6px;
     }
