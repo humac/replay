@@ -110,6 +110,24 @@ export const coachingMixin = {
         // Scoping the class to #coach-view keeps Roster/Notes/Playlists untouched.
         const coachView = document.getElementById('coach-view');
         if (coachView) coachView.classList.toggle('is-review-mode', name === 'review');
+        // Sprint 2 polish: install a window-resize listener that keeps the
+        // inspector height matched to the video wrapper. Bound once globally;
+        // _syncCoachReviewSideHeight no-ops when the Review tab isn't active.
+        if (!this._coachReviewSideSyncBound) {
+            window.addEventListener('resize', () => {
+                const v = document.getElementById(this._coachVideoId);
+                if (v) this._syncCoachReviewSideHeight(v);
+            });
+            this._coachReviewSideSyncBound = true;
+        }
+        if (name === 'review') {
+            // Run once after the panel becomes visible so the heights match
+            // even before any video loads.
+            requestAnimationFrame(() => {
+                const v = document.getElementById(this._coachVideoId);
+                if (v) this._syncCoachReviewSideHeight(v);
+            });
+        }
         if (pushHistory) {
             const params = new URLSearchParams(window.location.search);
             if (name === 'roster') params.delete('tab');
@@ -765,7 +783,13 @@ export const coachingMixin = {
         const video = document.getElementById(this._coachVideoId);
         if (!canvas || !video) return;
         if (canvas._coachBound) { this._resizeCoachCanvas(canvas, video); return; }
-        const resize = () => this._resizeCoachCanvas(canvas, video);
+        const resize = () => {
+            this._resizeCoachCanvas(canvas, video);
+            // Sprint 2 polish: keep the inspector's max-height matched to the
+            // video wrapper so the side panel and player are visually the same
+            // height. Re-runs whenever the wrapper resizes (window or layout).
+            this._syncCoachReviewSideHeight(video);
+        };
         window.addEventListener('resize', resize);
         video.addEventListener('loadedmetadata', resize);
         // Sprint 1: the inspector is now independently scrollable, which means the
@@ -792,6 +816,20 @@ export const coachingMixin = {
         canvas.width = Math.max(1, Math.round(rect.width));
         canvas.height = Math.max(1, Math.round(rect.height));
         this.paintCoachCanvas();
+    },
+
+    _syncCoachReviewSideHeight(video) {
+        // Match the right inspector's max-height to the video wrapper's
+        // current rendered height so they always look like sibling columns
+        // of equal height. Only applies in Review mode; the feedback modal
+        // doesn't need it. Skip on narrow viewports where the layout is
+        // already single-column.
+        if (window.innerWidth < 1024) return;
+        const wrapper = video.closest('.coach-review-wrapper');
+        const side = document.querySelector('#coach-tab-review .coach-review-side');
+        if (!wrapper || !side) return;
+        const h = Math.round(wrapper.getBoundingClientRect().height);
+        if (h > 0) side.style.maxHeight = `${h}px`;
     },
 
     // Detach the global resize listener registered by setupCoachCanvas.

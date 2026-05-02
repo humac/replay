@@ -6419,17 +6419,22 @@ details.diag-row-details[open] > summary::after {
 @media (min-width: 1024px) {
     #coach-view.is-review-mode .coach-review-grid {
         /* Video column is the dominant flex; inspector is fixed at 340px so it
-         * stays usable when the viewport narrows toward 1024px. */
+         * stays usable when the viewport narrows toward 1024px. align-items:
+         * start so the side panel doesn't stretch and fight the inspector's
+         * own scroll — its max-height is driven by JS instead (see
+         * _syncCoachReviewSideHeight in js/coaching.js) so it always matches
+         * the video wrapper's actual rendered height. */
         grid-template-columns: minmax(0, 1fr) 340px;
         gap: 0.85rem;
         align-items: start;
     }
 
     #coach-view.is-review-mode .coach-review-side {
-        /* Independent scroll so toolbar + form + notes don't push the page
-         * height when notes accumulate. 180px reserves room for the page head
-         * and subnav above. */
-        max-height: calc(100vh - 180px);
+        /* max-height is set inline by _syncCoachReviewSideHeight() and updated
+         * via the existing ResizeObserver on .coach-review-wrapper (Sprint 1).
+         * Fallback for the brief moment before JS runs: cap to a reasonable
+         * 16:9-ish height so the panel never towers above the video. */
+        max-height: calc((100vw - 380px) * 9 / 16);
         overflow: auto;
         /* Themed scrollbar — never expose native chrome inside styled UI. */
         scrollbar-width: thin;
