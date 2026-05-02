@@ -130,3 +130,60 @@ async def test_inflight_holders_complete_normally_after_shrink():
     await asyncio.gather(*tasks)
     assert len(holders_done) == 3
     assert sem.limit == 1
+
+
+# ---------------------------------------------------------------------------
+# Dev-only static-asset import rewriter (REPLAY_DEV=1)
+# ---------------------------------------------------------------------------
+
+def test_rewrite_dev_imports_adds_version_to_relative_imports(tmp_path, monkeypatch):
+    """When the gate is on, `import './js/foo.js'` becomes `?v=<mtime_ns>`.
+
+    Without the rewrite, a soft refresh after editing js/coaching.js still
+    serves the cached body because the import URL never changes. The dev gate
+    flips the URL on every save so the browser is forced to refetch.
+    """
+    import server
+
+    # Set up a tiny fake static tree: script.js + js/foo.js
+    static_root = tmp_path / "static"
+    js_dir = static_root / "js"
+    js_dir.mkdir(parents=True)
+    foo = js_dir / "foo.js"
+    foo.write_text("export const x = 1;\n")
+    script = static_root / "script.js"
+    script.write_text(
+        "import { x } from './js/foo.js';\n"
+        "import { y } from './js/bar.js';\n"  # bar doesn't exist; should be left alone
+        "console.log(x);\n"
+    )
+
+    monkeypatch.setattr(server, "STATIC_DIR", static_root)
+    body = script.read_bytes()
+    rewritten = server._rewrite_dev_imports(script, body).decode()
+
+    assert "./js/foo.js?v=" in rewritten
+    # Bar doesn't exist on disk so the rewriter leaves the import untouched
+    # (returning the original match unchanged is the safe default — an
+    # accidentally-broken import shouldn't be hidden by a fake `?v=0`).
+    assert "./js/bar.js'" in rewritten
+
+
+def test_rewrite_dev_imports_refuses_paths_outside_static_root(tmp_path, monkeypatch):
+    """The rewriter must not version imports that escape STATIC_DIR — such
+    imports stay literal so the browser sees the same 404 it would normally,
+    rather than being hidden behind a misleading versioned URL."""
+    import server
+
+    static_root = tmp_path / "static"
+    static_root.mkdir()
+    outside = tmp_path / "secret.js"
+    outside.write_text("// escaped")
+    script = static_root / "script.js"
+    script.write_text("import { x } from './js/../../secret.js';\n")
+
+    monkeypatch.setattr(server, "STATIC_DIR", static_root)
+    rewritten = server._rewrite_dev_imports(script, script.read_bytes()).decode()
+    # Original import preserved (no version), so the path-traversal guard in
+    # the static_file route can still reject it with the normal 400.
+    assert "?v=" not in rewritten
