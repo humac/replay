@@ -40,6 +40,8 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling
 - `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live, streams, media, db, models, server). `.coveragerc` excludes the test files from coverage; CI gates `--cov-fail-under=60` (current baseline ~64 %).
+- `tests/e2e/`: Playwright browser smoke checks (opt-in). Scoped with its own `package.json` and `node_modules` so the repo root stays no-build. Run from inside the folder: `cd tests/e2e && npx playwright test`. Requires the app reachable at `PLAYWRIGHT_BASE_URL` (default `http://localhost:8090`); the seed spec is `.skip()`'d until Sprint 9 of the Coach Review redesign wires real coverage.
+- `.agent-skills/`: portable per-repo skill pack (Coach Review redesign guardrails, search recipes, QA gates). Load `.agent-skills/README.md` first.
 - `pytest.ini`: pytest-asyncio mode/scope plus narrow filters for third-party Python 3.14 deprecations
 - `docker-compose.yml`: local container runtime — defines `replay` and the `mediamtx` sidecar
 - `mediamtx.yml`: MediaMTX config (RTMP ingest, LL-HLS output, external auth webhook)
