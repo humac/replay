@@ -246,6 +246,50 @@ async def test_formation_drawing_validation(client, auth_headers):
     }, headers=auth_headers)
     assert too_few.status_code == 422
 
+    # hull_points must hold a polygon (3+ vertices). 0 entries is a
+    # geometric no-op that passed an earlier draft of the validator;
+    # cover it explicitly so the regression doesn't return.
+    empty_hull = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 1,
+        "title": "Empty hull",
+        "drawing": {
+            "version": 2,
+            "objects": [{
+                "type": "formation",
+                "anchors": [
+                    {"x": 0.1, "y": 0.1},
+                    {"x": 0.2, "y": 0.2},
+                    {"x": 0.3, "y": 0.1},
+                ],
+                "hull_points": [],
+            }],
+        },
+    }, headers=auth_headers)
+    assert empty_hull.status_code == 422
+
+    # And explicitly reject a 2-point hull (degenerate polygon).
+    short_hull = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 1,
+        "title": "Two-point hull",
+        "drawing": {
+            "version": 2,
+            "objects": [{
+                "type": "formation",
+                "anchors": [
+                    {"x": 0.1, "y": 0.1},
+                    {"x": 0.2, "y": 0.2},
+                    {"x": 0.3, "y": 0.1},
+                ],
+                "hull_points": [{"x": 0.1, "y": 0.1}, {"x": 0.3, "y": 0.1}],
+            }],
+        },
+    }, headers=auth_headers)
+    assert short_hull.status_code == 422
+
 
 @pytest.mark.asyncio
 async def test_visible_playlist_grants_access_to_private_items(client, auth_headers):

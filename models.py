@@ -273,8 +273,8 @@ def validate_drawing_payload(value: dict[str, Any] | None) -> dict[str, Any]:
                 if lab is not None and (not isinstance(lab, str) or len(lab) > 8):
                     raise ValueError("formation anchor label must be a short string")
             hull_points = item.get("hull_points", [])
-            if not isinstance(hull_points, list) or len(hull_points) > 16:
-                raise ValueError("formation hull_points must be a list with at most 16 entries")
+            if not isinstance(hull_points, list) or len(hull_points) < 3 or len(hull_points) > 16:
+                raise ValueError("formation hull_points must be a polygon with 3 to 16 entries")
             for point in hull_points:
                 _validate_drawing_point(point)
     return value

@@ -1261,8 +1261,17 @@ export const coachingMixin = {
             this.showError?.('A formation needs at least 3 anchor points.');
             return;
         }
-        const drawing = this.ensureCoachDrawing();
         const hull = this._computeConvexHull(draft.anchors);
+        // Andrew's monotone-chain returns < 3 points only when every anchor
+        // is collinear (the algorithm pops collinear interior points and
+        // both endpoints). The painter and the backend validator both
+        // require a 3+ point polygon, so reject early with a coach-readable
+        // message instead of silently saving a hull-less formation.
+        if (hull.length < 3) {
+            this.showError?.('Formation anchors are collinear — nudge one off the line so the hull has area.');
+            return;
+        }
+        const drawing = this.ensureCoachDrawing();
         drawing.objects.push({
             type: 'formation',
             color: this._coachDrawingColor,
