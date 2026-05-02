@@ -6218,6 +6218,61 @@ details.diag-row-details[open] > summary::after {
     border-color: rgba(0, 0, 0, 0.08);
 }
 
+/* Themed selects for the compact picker. The repo's standard select styling
+ * is scoped to `.form-group select` (3.8k of styles.css); since the picker
+ * no longer wraps each select in a .form-group, we need a scoped variant.
+ * This must override the browser default — never expose native chrome inside
+ * styled UI (see .agent-skills/css-responsive-accessibility.md). Compacts
+ * the form-group padding from 0.95rem to 0.45rem so the bar stays slim. */
+.coach-review-picker select {
+    padding: 0.45rem 2.2rem 0.45rem 0.7rem;
+    background: rgba(0, 0, 0, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23888890' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 10px 6px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.coach-review-picker select:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+}
+.coach-review-picker select:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    background-color: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
+}
+
+[data-theme="light"] .coach-review-picker select {
+    /* Pure white matches the rest of the light-mode form selects (see
+     * .form-group select rule). rgba() with alpha layered over the off-white
+     * page background produces a low-contrast stripe artifact in some
+     * browsers, so do not use transparency here. */
+    background-color: #ffffff;
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--text-main);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%236b6b75' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+[data-theme="light"] .coach-review-picker select:hover {
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-review-picker select:focus-visible {
+    background-color: #ffffff;
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.18);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%231565c0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+
 /* Top-bar Save Note: compact variant of .btn-primary. The form's full-width
  * Save Note button stays as the secondary affordance for first-time users. */
 .coach-review-picker-save {
