@@ -78,8 +78,10 @@ export const apiMixin = {
         const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
         if (regenThumbBtn && this.activeMatchId) regenThumbBtn.style.display = this.isAdmin() ? 'inline-flex' : 'none';
         this.setAdminPanelVisibility(this.isAdmin());
-        this.setupCoachModeToggle?.();
-        this.renderCoachingPanel?.();
+        if (this.activeMatchId) {
+            const match = this.matches.find((m) => m.id === this.activeMatchId);
+            this.updateCoachThisMatchLink?.(match);
+        }
         if (this.isAdmin()) this.refreshAdminDiagnostics();
     },
 
@@ -101,8 +103,8 @@ export const apiMixin = {
         const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
         if (regenThumbBtn) regenThumbBtn.style.display = 'none';
         this.setAdminPanelVisibility(false);
-        this._coachModeOn = false;
-        this.setupCoachModeToggle?.();
+        const coachLink = document.getElementById('coach-this-match-link');
+        if (coachLink) coachLink.hidden = true;
         this.stopAdminStatusPolling?.();
         if (document.getElementById('admin-view')?.classList.contains('active')) {
             this.cancelEdit();
@@ -152,7 +154,6 @@ export const apiMixin = {
             this.setLoggedIn();
             this.hideLoginModal();
             this.renderSeasonView();
-            this.renderCoachingPanel?.();
         } catch {
             errorEl.textContent = 'Login failed. Please try again.';
             errorEl.style.display = 'block';

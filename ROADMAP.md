@@ -559,6 +559,21 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coaching Platform — UX Restructure ✅ COMPLETE (2026-05-01)
+
+**Goal:** turn the cluttered single-page Coach workspace and the player-facing My Feedback view into focused, intent-driven surfaces, and consolidate note authoring into one place.
+
+- **Coach > sub-tabs** (`index.html`, `js/coaching.js`, `styles.css`): `/coach` is now a sub-tabbed shell — **Roster · Notes · Playlists · Review** — selected via `?tab=` query string and routed through `setCoachTab()`. Roster groups roster CRUD with the player/family Account Link form; Notes and Playlists are list-first with `+ New` modals.
+- **`<template>`-cloned forms** (`index.html`, `js/coaching.js`): note and playlist forms moved into `<template id="coach-note-form-template">` / `<template id="coach-playlist-form-template">` and are mounted via `app.formModal()`. The same modal handles create + edit, with `data-field="..."` lookups so there are no duplicate IDs in the DOM.
+- **Coach > Review tab** (`index.html`, `js/coaching.js`): a new in-Coach video player (`#coach-review-video`) + telestrator (`#coach-drawing-canvas`) lets coaches pick a match + slot, scrub, freeze, draw, and save a note without leaving `/coach`. Reachable three ways — match picker, "Open in Review" on a Notes row, and the new "Coach this match in Review →" deep link from the match page header.
+- **Removed in-match coach side panel** (`index.html`, `js/coaching.js`, `js/views.js`, `script.js`, `styles.css`): `renderCoachingPanel`, `renderCoachTelestratorToolbar`, `toggleCoachMode`, `_coachModeOn`, `#coach-match-panel`, `#coach-mode-bar`, `#coach-mode-toggle`, and the `.coach-match-panel` / `.coach-mode-toggle` / `.sidebar.coach-mode-on …` CSS were deleted. The match page is now clean VOD for everyone; the Coach > Review tab is the single authoring surface.
+- **My Feedback restructure** (`index.html`, `js/coaching.js`, `styles.css`): `/feedback` gets a sub-tab strip — **Playlists** (default) and **Notes** — selected via `?tab=`. Linked players move to a compact chip strip (`#feedback-linked-strip`).
+- **Focused feedback player modal** (`index.html`, `js/coaching.js`): a new `<template id="feedback-player-template">` powers an in-page modal player. Watching a note or playing a playlist now stays inside `/feedback`, loads HLS via the existing `getStreamUrls()`, overlays the drawing on `#feedback-drawing-canvas`, runs `_startFeedbackHeartbeat()` (every 10 s) so admin "kill" still propagates, and tears down cleanly on close. The playlist controller targets the same modal video, so coach playlist *Preview* and player *Play* share one player.
+- **Routing** (`script.js`, `js/coaching.js`): `/coach` and `/feedback` now read `?tab=`, `?match=`, and `?slot=` from the URL on load and on popstate, and `setCoachTab` / `setFeedbackTab` push the new query string via `replaceState` so refresh and copy-link work.
+- **Validation:** `pytest tests/ -v --cov` → 262 passed, coverage 64%.
+
+---
+
 ## Future Track — Fan + Family Engagement
 
 **Goal:** evolve Replay from a working match archive into a club match-day hub that helps families, supporters, and players find the right video moments quickly while preserving the current spoiler-safe public viewing model.
