@@ -574,6 +574,55 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coaching Telestrator — Multi-Player Formation Overlay (Phase 1) ✅ COMPLETE (2026-05-02)
+
+**Goal:** let a coach highlight multiple players at one freeze frame and visualize their formation shape with a single overlay (the [once.sport](https://once.sport/once-telestrator/) "highlight + connect" effect, minus animation).
+
+- **`formation` object type** (`models.py`, `js/coaching.js`): new v2 drawing object — no schema migration. Carries 3–16 anchors (each `{x, y, player_id?, label?}`) plus a `hull_points` array. Validator caps anchors at 16 and `player_id`/`label` lengths.
+- **Painter** (`js/coaching.js paintCoachObject`): paints one dim layer per formation, cuts a spotlight hole at every anchor (mirrors the existing `spotlight` `destination-out` pattern), draws each anchor's outline + numbered/jersey badge, and strokes the convex-hull polygon with a translucent fill in the active swatch color.
+- **Authoring** (`js/coaching.js`): new **Formation** tool in the telestrator. **Quick mode** (default) drops auto-numbered anchors at every click; **Linked mode** lets the coach pick roster players first (in placement order) and binds each anchor to a `player_id` with the player's jersey number as the label. Done finalizes (computes Andrew's monotone-chain convex hull, pushes one `formation` object). Cancel discards. Switching tools mid-draft also discards.
+- **Selection model** (`js/coaching.js`): formations select-as-a-whole and drag as a unit (all anchors + hull points get the same delta). Per-anchor edit deferred to Phase 2.
+- **Forward-compat hook**: per-anchor `player_id` is the seed for Phase 3's animated/tracked anchors. Phase 1 ships static-only.
+- **Validation**: `pytest tests/test_coaching.py::test_formation_drawing_validation` — round-trip + min-anchor reject. Full suite: 263 passed.
+
+---
+
+## Coaching Telestrator — Future Phases (designed, NOT shipped)
+
+These phases were designed alongside Phase 1 but deferred. Each builds cleanly on the `formation` object without breaking it.
+
+### Phase 2 — Connectors and per-anchor edit
+**Goal:** add explicit relationships between formation anchors (passing lanes, marking assignments) and let a coach nudge a single anchor without redrawing the whole formation.
+
+- New optional `connectors: [{from, to, style}]` field on the `formation` object — each pair of integer indices into `anchors`, drawn as a line or arrow with the formation's color.
+- Selection model gains "anchor handle" mode: when a `formation` is selected, render small drag handles on each anchor; dragging a handle updates that one `(x, y)` and re-runs the convex-hull computation.
+- Authoring: hold Shift while clicking the Connector tool to chain pairs.
+- **Effort:** ~1.5 days. **Schema impact:** additive, no migration.
+- **Ship if:** coaches start asking for passing-lane diagrams or can't tolerate "redraw the whole formation to fix one player."
+
+### Phase 3 — Animated keyframes (drawing schema v3)
+**Goal:** the formation moves through the video. A coach sets the formation at t=0:42, scrubs to t=0:46, drags anchors to new positions; the painter interpolates as the video plays.
+
+- New drawing wrapper version: `version: 3`. Each object that supports motion gains a `keyframes: [{t, anchors: […]}]` field; legacy v2 objects are treated as a single keyframe at `t=0`.
+- New `paintCoachCanvas()` mode: when the video is `playing`, register a `requestAnimationFrame` loop that reads `video.currentTime` and re-renders interpolated anchors (linear lerp between the bracketing keyframes). Stop the loop on `pause` / tab change / drawing-canvas-off.
+- Backend migration: `models.py` validators handle both v2 and v3 payloads. v2 reads keep working; v2 writes still allowed for static objects. v3 is opt-in per object.
+- Authoring UX additions: a timeline scrubber inside the telestrator showing keyframe markers; **"Set start"** and **"Set end"** buttons that capture the current anchor positions at the current video time.
+- **Effort:** ~1.5–2 weeks (the schema/migration + interpolation loop are the bulk). **Schema impact:** v3 wrapper, additive object fields, full backwards compatibility.
+- **Ship if:** Phase 1 use confirms coaches actually want the play-through effect — manual keyframing is tedious so validate first. The headline once.sport effect.
+
+### Phase 4 — Server-side player tracking
+**Goal:** drop manual keyframing. The system detects player positions from the video and a formation auto-follows the chosen players.
+
+- Background worker (FFmpeg + a tracking model — e.g. ByteTrack on top of YOLO-pose, or a hosted service) runs over `<slot>.mp4` after upload and produces a per-frame `tracks.json` (`[{t, players: [{id, x, y, conf}]}]`) stored alongside the video on `VIDEOS_DIR`.
+- New `/api/matches/{id}/tracks/{slot}.json` endpoint serves it (cached, immutable like HLS segments).
+- Linked-mode anchors gain a `track_id` field that the painter resolves at runtime — `paintCoachCanvas` looks up the player position at `video.currentTime` and uses it, ignoring the static `(x, y)`.
+- Admin diagnostics: re-run tracking, view confidence, manually correct mis-IDs.
+- **Effort:** very large — pick the model, pick CPU vs. GPU, build the queue, build correction UI. Realistically 2–4 weeks of focused work plus ongoing model maintenance.
+- **Schema impact:** additive — Phase 1 anchors keep working; tracked anchors are a new opt-in field.
+- **Ship if:** Phase 3 sees heavy use AND the team accepts a hosted tracking service or owns ML ops. The "magic" once.sport demos show.
+
+---
+
 ## Future Track — Fan + Family Engagement
 
 **Goal:** evolve Replay from a working match archive into a club match-day hub that helps families, supporters, and players find the right video moments quickly while preserving the current spoiler-safe public viewing model.

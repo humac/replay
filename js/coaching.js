@@ -36,6 +36,11 @@ export const coachingMixin = {
     _coachCanvasId: 'coach-drawing-canvas',
     _coachVideoId: 'coach-review-video',
     _feedbackPlayer: null,
+    // Multi-player formation overlay (Phase 1) — see ROADMAP "Coaching Telestrator".
+    // Draft holds the in-progress anchors while the coach is clicking; gets
+    // committed to a single drawing object on Done.
+    _coachFormationDraft: null,
+    _coachFormationMode: 'quick', // 'quick' | 'linked'
 
     // ===== top-level view entry points =====
 
@@ -696,7 +701,7 @@ export const coachingMixin = {
         const tools = [
             ['select', 'Select'], ['freehand', 'Line'], ['arrow', 'Arrow'],
             ['circle', 'Circle'], ['zone', 'Zone'], ['label', 'Label'],
-            ['spotlight', 'Spot'], ['dim', 'Dim'],
+            ['spotlight', 'Spot'], ['dim', 'Dim'], ['formation', 'Formation'],
         ];
         const colors = ['#38bdf8', '#f97316', '#22c55e', '#facc15', '#f43f5e', '#ffffff'];
         return `
@@ -713,6 +718,7 @@ export const coachingMixin = {
                     <label class="coach-width-control">Width <input type="range" min="2" max="10" value="${this._coachDrawingWidth}" onchange="app.setCoachDrawingWidth(this.value)"></label>
                 </div>
                 <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number">
+                <div id="coach-formation-controls" class="coach-formation-controls" hidden></div>
                 <div class="coach-draw-actions">
                     <button type="button" data-coach-canvas-toggle class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
                     <button type="button" class="mini-action-btn" onclick="app.undoCoachDrawing()">Undo</button>
@@ -816,10 +822,16 @@ export const coachingMixin = {
     },
 
     setCoachDrawingTool(tool) {
+        // Switching away from formation mid-draft discards the in-progress
+        // anchors; the user can restart by re-selecting Formation.
+        if (this._coachDrawingTool === 'formation' && tool !== 'formation') {
+            this._coachFormationDraft = null;
+        }
         this._coachDrawingTool = tool;
         document.querySelectorAll('[data-coach-tool]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.coachTool === tool);
         });
+        this._renderFormationControls();
         this.activateCoachCanvas();
         this.paintCoachCanvas();
     },
@@ -849,6 +861,33 @@ export const coachingMixin = {
         event.preventDefault();
         const drawing = this.ensureCoachDrawing();
         const point = this.coachDrawPoint(event);
+        if (this._coachDrawingTool === 'formation') {
+            if (!this._coachFormationDraft) {
+                this._coachFormationDraft = {
+                    mode: this._coachFormationMode || 'quick',
+                    anchors: [],
+                    queuedPlayerIds: [],
+                };
+                this._renderFormationControls();
+            }
+            const draft = this._coachFormationDraft;
+            if (draft.anchors.length >= 16) {
+                this.showError?.('A formation can hold at most 16 players.');
+                return;
+            }
+            const anchor = { x: point.x, y: point.y };
+            if (draft.mode === 'linked' && draft.queuedPlayerIds.length) {
+                const pid = draft.queuedPlayerIds.shift();
+                const p = (this._coachBundle?.players || []).find((pl) => String(pl.id) === String(pid));
+                if (p) {
+                    anchor.player_id = String(p.id);
+                    anchor.label = String(p.jersey_number || (p.display_name || '?').slice(0, 1)).toUpperCase().slice(0, 8);
+                }
+            }
+            draft.anchors.push(anchor);
+            this._renderFormationDraftPreview();
+            return;
+        }
         if (this._coachDrawingTool === 'select') {
             const index = this.hitCoachDrawingObject(point);
             this._coachSelectedObjectIndex = index;
@@ -1012,6 +1051,56 @@ export const coachingMixin = {
             ctx.fillRect(x - 6, y - 22, metrics.width + 12, 28);
             ctx.fillStyle = color;
             ctx.fillText(text, x, y);
+        } else if (object.type === 'formation') {
+            const anchors = object.anchors || [];
+            const hullPts = object.hull_points || [];
+            // One dim layer per formation, then cut spotlight holes at every
+            // anchor with destination-out (mirrors the existing `spotlight`
+            // tool's pattern; stacking dims per-anchor would compound).
+            if (anchors.length) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalCompositeOperation = 'destination-out';
+                anchors.forEach((a) => {
+                    ctx.beginPath();
+                    ctx.arc(a.x * canvas.width, a.y * canvas.height, 22, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                ctx.globalCompositeOperation = 'source-over';
+            }
+            // Outline + label badge per anchor
+            anchors.forEach((a, idx) => {
+                const x = a.x * canvas.width, y = a.y * canvas.height;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(x, y, 22, 0, Math.PI * 2);
+                ctx.stroke();
+                const label = (a.label && String(a.label)) || String(idx + 1);
+                ctx.font = '700 12px system-ui, sans-serif';
+                const m = ctx.measureText(label);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.78)';
+                ctx.fillRect(x - m.width / 2 - 5, y - 38, m.width + 10, 18);
+                ctx.fillStyle = color;
+                ctx.fillText(label, x - m.width / 2, y - 25);
+            });
+            // Convex hull polygon — translucent fill + crisp stroke
+            if (hullPts.length >= 3) {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                hullPts.forEach((p, idx) => {
+                    const x = p.x * canvas.width, y = p.y * canvas.height;
+                    if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                });
+                ctx.closePath();
+                ctx.save();
+                ctx.globalAlpha = 0.18;
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.restore();
+                ctx.stroke();
+            }
         }
         ctx.restore();
     },
@@ -1046,6 +1135,15 @@ export const coachingMixin = {
             return { x, y, w: Math.max(0.02, Math.max(...xs) - x), h: Math.max(0.02, Math.max(...ys) - y) };
         }
         if (object.type === 'dim') return { x: 0, y: 0, w: 1, h: 1 };
+        if (object.type === 'formation') {
+            const pts = (object.hull_points || []).concat(object.anchors || []);
+            if (!pts.length) return null;
+            const xs = pts.map((p) => p.x);
+            const ys = pts.map((p) => p.y);
+            const x = Math.min(...xs);
+            const y = Math.min(...ys);
+            return { x, y, w: Math.max(0.04, Math.max(...xs) - x), h: Math.max(0.04, Math.max(...ys) - y) };
+        }
         return null;
     },
 
@@ -1076,6 +1174,15 @@ export const coachingMixin = {
         } else if (object.type === 'label') {
             object.x = clamp(object.x + dx);
             object.y = clamp(object.y + dy);
+        } else if (object.type === 'formation') {
+            (object.anchors || []).forEach((a) => {
+                a.x = clamp(a.x + dx);
+                a.y = clamp(a.y + dy);
+            });
+            (object.hull_points || []).forEach((p) => {
+                p.x = clamp(p.x + dx);
+                p.y = clamp(p.y + dy);
+            });
         }
     },
 
@@ -1097,6 +1204,8 @@ export const coachingMixin = {
     clearCoachDrawing() {
         this._coachDrawing = null;
         this._coachSelectedObjectIndex = null;
+        this._coachFormationDraft = null;
+        this._renderFormationControls?.();
         this.deactivateCoachCanvas();
         this.paintCoachCanvas();
     },
@@ -1115,6 +1224,162 @@ export const coachingMixin = {
             canvas.height = Math.max(1, Math.round(rect.height));
         }
         this.paintCoachCanvas();
+    },
+
+    // ===== Formation overlay (multi-player highlight + convex hull) =====
+
+    setCoachFormationMode(mode) {
+        this._coachFormationMode = (mode === 'linked') ? 'linked' : 'quick';
+        if (this._coachFormationDraft) {
+            this._coachFormationDraft.mode = this._coachFormationMode;
+            // Switching mode discards any queued (unconsumed) player selections.
+            this._coachFormationDraft.queuedPlayerIds = [];
+        }
+        this._renderFormationControls();
+    },
+
+    queueFormationPlayer(playerId) {
+        if (!this._coachFormationDraft) {
+            this._coachFormationDraft = { mode: this._coachFormationMode || 'quick', anchors: [], queuedPlayerIds: [] };
+        }
+        const id = String(playerId);
+        const queue = this._coachFormationDraft.queuedPlayerIds;
+        const at = queue.indexOf(id);
+        if (at >= 0) queue.splice(at, 1); else queue.push(id);
+        this._renderFormationControls();
+    },
+
+    cancelFormation() {
+        this._coachFormationDraft = null;
+        this._renderFormationControls();
+        this.paintCoachCanvas();
+    },
+
+    finalizeFormation() {
+        const draft = this._coachFormationDraft;
+        if (!draft || draft.anchors.length < 3) {
+            this.showError?.('A formation needs at least 3 anchor points.');
+            return;
+        }
+        const drawing = this.ensureCoachDrawing();
+        const hull = this._computeConvexHull(draft.anchors);
+        drawing.objects.push({
+            type: 'formation',
+            color: this._coachDrawingColor,
+            width: this._coachDrawingWidth,
+            anchors: draft.anchors.map((a) => ({ ...a })),
+            hull_points: hull,
+        });
+        this._coachFormationDraft = null;
+        this._coachSelectedObjectIndex = drawing.objects.length - 1;
+        this._renderFormationControls();
+        this.paintCoachCanvas();
+    },
+
+    // Andrew's monotone-chain convex hull (counter-clockwise, no duplicates).
+    // Inputs and outputs are normalized 0..1 {x, y} points.
+    _computeConvexHull(points) {
+        if (!Array.isArray(points) || points.length < 3) return points.slice();
+        const pts = points.map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }))
+            .sort((a, b) => (a.x - b.x) || (a.y - b.y));
+        const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+        const lower = [];
+        for (const p of pts) {
+            while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+            lower.push(p);
+        }
+        const upper = [];
+        for (let i = pts.length - 1; i >= 0; i -= 1) {
+            const p = pts[i];
+            while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+            upper.push(p);
+        }
+        upper.pop(); lower.pop();
+        return lower.concat(upper);
+    },
+
+    // Repaint the in-progress draft on top of the existing canvas paint —
+    // shows the user where they've clicked before they hit Done.
+    _renderFormationDraftPreview() {
+        this.paintCoachCanvas();
+        const draft = this._coachFormationDraft;
+        if (!draft || !draft.anchors.length) return;
+        const canvas = document.getElementById(this._coachCanvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const color = this._coachDrawingColor || '#38bdf8';
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 2;
+        draft.anchors.forEach((a, idx) => {
+            const x = a.x * canvas.width, y = a.y * canvas.height;
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.font = '700 11px system-ui, sans-serif';
+            ctx.fillText(a.label || String(idx + 1), x + 12, y - 6);
+        });
+        ctx.restore();
+        this._renderFormationControls();
+    },
+
+    // Render the per-tool controls panel beneath the toolbar. Hidden when
+    // any tool other than Formation is active.
+    _renderFormationControls() {
+        const el = document.getElementById('coach-formation-controls');
+        if (!el) return;
+        if (this._coachDrawingTool !== 'formation') {
+            el.hidden = true;
+            el.innerHTML = '';
+            return;
+        }
+        el.hidden = false;
+        const draft = this._coachFormationDraft;
+        const anchorCount = draft?.anchors?.length || 0;
+        const mode = this._coachFormationMode || 'quick';
+        const players = this._coachBundle?.players || [];
+        const queued = new Set((draft?.queuedPlayerIds || []).map(String));
+        const queueOrderFor = (pid) => {
+            const list = draft?.queuedPlayerIds || [];
+            const at = list.findIndex((q) => String(q) === String(pid));
+            return at >= 0 ? at + 1 : null;
+        };
+        const linkedRoster = mode === 'linked'
+            ? `<div class="coach-formation-roster" role="listbox" aria-label="Players to anchor">
+                 ${players.length
+                    ? players.map((p) => {
+                        const order = queueOrderFor(p.id);
+                        const sel = queued.has(String(p.id));
+                        return `<button type="button" class="coach-check-option ${sel ? 'is-selected' : ''}"
+                                    aria-pressed="${sel}" onclick="app.queueFormationPlayer('${this.esc(p.id)}')">
+                                    <span class="coach-check-box" aria-hidden="true">${order || ''}</span>
+                                    <span class="coach-check-label">${this.esc(this.playerLabel(p))}</span>
+                                </button>`;
+                    }).join('')
+                    : '<div class="coach-check-empty">No roster players yet.</div>'}
+               </div>
+               <p class="coach-formation-hint">Tap players in the order you want to place them, then click their position on the field.</p>`
+            : '<p class="coach-formation-hint">Click each player’s position on the freeze frame, then press Done.</p>';
+        el.innerHTML = `
+            <div class="coach-formation-head">
+                <strong>Formation</strong>
+                <div class="coach-formation-modes" role="tablist">
+                    <button type="button" role="tab" aria-selected="${mode === 'quick'}"
+                        class="mini-action-btn ${mode === 'quick' ? 'active' : ''}"
+                        onclick="app.setCoachFormationMode('quick')">Quick</button>
+                    <button type="button" role="tab" aria-selected="${mode === 'linked'}"
+                        class="mini-action-btn ${mode === 'linked' ? 'active' : ''}"
+                        onclick="app.setCoachFormationMode('linked')">Linked</button>
+                </div>
+            </div>
+            ${linkedRoster}
+            <div class="coach-formation-actions">
+                <span class="coach-formation-count">${anchorCount} anchor${anchorCount === 1 ? '' : 's'} (min 3, max 16)</span>
+                <button type="button" class="mini-action-btn" onclick="app.cancelFormation()" ${draft ? '' : 'disabled'}>Cancel</button>
+                <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.finalizeFormation()" ${anchorCount >= 3 ? '' : 'disabled'}>Done</button>
+            </div>
+        `;
     },
 
     // ===== /feedback view =====
