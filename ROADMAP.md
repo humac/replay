@@ -683,105 +683,15 @@ These phases were designed alongside Phase 1 but deferred. Each builds cleanly o
 
 ## Future Track — Coaching Platform
 
-**Goal:** let coaches turn recorded match video into structured teaching material: timestamped notes, drawing overlays, review playlists, and private player/family feedback.
+The original C1–C7 outline (coach workspace, roster + player-user links, timestamped notes, drawing overlays, review playlists, My Feedback, assignment/review tracking, access rules, test plan) is now **shipped** — see the completed entries above:
 
-**Product assumptions:**
+- `Coaching Platform MVP ✅ COMPLETE (2026-05-01)` — C1, C2, C3, C6, C7, access rules, test plan
+- `Telestrator + Review Playlist Playback ✅ COMPLETE (2026-05-01)` — C4 + C5 with versioned drawing objects, pre/post-roll playback
+- `Coaching Telestrator — Multi-Player Formation Overlay (Phase 1) ✅ COMPLETE (2026-05-02)` — formation tool extension to C4
 
-- Coaching content starts private.
-- Player-specific feedback requires login.
-- Public player profile pages are out of scope for v1.
-- Families are modeled as normal user accounts linked to roster player records.
-- Drawing overlays are stored as metadata only; rendered clip export can come later.
-- Public match viewing remains unchanged.
+**Forward-looking coaching work** has moved into two dedicated planning docs (kept separate from this roadmap so each can iterate without churning the milestone log):
 
-### C1 — Coach workspace and roles
+- [`docs/coaching-analysis-feature-roadmap.md`](docs/coaching-analysis-feature-roadmap.md) — feature backlog (Phases 1–11): structured note quality, review templates, per-note thumbnails, first-class clip builder, player development profiles, action items, match summaries, engagement dashboards, analytics, AI-assisted workflow, CV-assisted clip discovery.
+- [`docs/coach-review-ui-ux-implementation-plan.md`](docs/coach-review-ui-ux-implementation-plan.md) — Coach > Review UX cockpit redesign in 10 sprints (S0–S9): video-first layout, compact match/slot bar, icon-first telestrator toolbar, fast note composer, timeline rail, focus mode, keyboard shortcuts, responsive/a11y polish, QA + docs.
 
-- Add a `coach` capability/role.
-- Coaches can create private coaching notes, drawings, review playlists, and player feedback.
-- Admins can grant users the access they need across admin, coach, uploader, and viewer workflows.
-- Prefer a dedicated `/coach` workspace or a Coach section in the existing admin shell; keep public viewing uncluttered.
-
-### C2 — Roster, player profiles, and family account links
-
-- Add roster records separate from login users.
-- A `player` record represents an athlete on the team: display name, jersey number, active flag, and optional internal notes.
-- A `user` record remains the login identity.
-- Add `player_user_links` so one or more user accounts can access a player's feedback.
-- Support common family cases:
-  - one parent account linked to one player
-  - two parent/guardian accounts linked to the same player
-  - one family account linked to multiple siblings
-  - older player account linked directly to their own player profile
-- Admins/coaches manage roster links manually in v1.
-- Do not add public player profile pages in v1.
-
-Suggested data model:
-
-- `players`: `id`, `display_name`, `jersey_number`, `active`, `notes`, `created_at`, `updated_at`
-- `player_user_links`: `id`, `player_id`, `user_id`, `relationship`, `created_at`
-- Relationship values: `self`, `parent`, `guardian`, `family`
-
-### C3 — Timestamped coaching notes
-
-- Coaches can pause a match and create a note tied to match, slot, and timestamp.
-- Notes include title, body, category, tags, visibility, and optional linked players.
-- Notes appear as timeline markers and in a side-panel list.
-- Clicking a note seeks the video to its timestamp.
-- Suggested categories: shape, pressing, transition, set piece, build-up, finishing, defending, goalkeeper, effort, decision.
-
-Suggested data model:
-
-- `coaching_notes`: `id`, `match_id`, `slot`, `timestamp_seconds`, `title`, `body`, `category`, `visibility`, `created_by`, `created_at`, `updated_at`
-- `coaching_note_players`: `note_id`, `player_id`
-- `coaching_note_tags`: `note_id`, `tag`
-
-### C4 — Drawing overlays and freeze frames
-
-- Coaches can draw arrows, circles, rectangles/zones, player-number labels, and freehand lines on paused video.
-- Drawings are stored as JSON overlay metadata, not burned into video.
-- Each drawing belongs to a coaching note and re-renders when the note is opened.
-- Provide undo, clear, color, and line-width controls.
-- Use a canvas or SVG overlay above the existing video player.
-
-### C5 — Review playlists
-
-- Coaches can group notes into playlists such as "First-half pressing" or "Build-up patterns".
-- A playlist plays moments in sequence with configurable pre-roll and post-roll.
-- Playlists can be private, team-visible, player/family-visible, or unlisted-link visible.
-- Coaches can reorder items and add an intro/summary.
-
-Suggested data model:
-
-- `coaching_playlists`
-- `coaching_playlist_items`
-- `coaching_playlist_players` for player-specific assignments
-
-### C6 — Player and family feedback view
-
-- Signed-in players/families get a **My Feedback** page.
-- The page shows only notes and playlists linked to roster players connected to the signed-in user account.
-- On match pages, published feedback appears as timeline markers only for authorized users.
-- Team-wide published notes can be visible to all signed-in viewers or shared by unlisted link.
-- Private coach notes are never visible outside coach/admin users.
-
-### C7 — Assignments and review tracking
-
-- Coaches can assign notes or playlists to players, families, or the whole team.
-- Players/families can mark feedback as reviewed.
-- Coaches see simple completion status, not invasive watch analytics.
-- Add an optional reflection prompt such as "What did you notice?"
-
-### Coaching access rules
-
-- Anonymous users: public matches, public live stream, and public/unlisted fan highlights only.
-- Viewer users: normal signed-in viewing plus team-visible coaching playlists.
-- Linked family/player users: viewer access plus feedback assigned to linked player records.
-- Coach users: create/edit private notes, drawings, playlists, and assignments.
-- Admin users: manage users, roster records, player-user links, and all coaching content.
-
-### Coaching test plan
-
-- Backend: migrations, role validation, roster CRUD, player-user link permissions, note/playlist CRUD, drawing JSON validation, visibility enforcement.
-- Frontend: coach workspace rendering, note creation, drawing persistence, timeline marker seeking, playlist playback, My Feedback filtering.
-- Privacy: anonymous users cannot access private coaching routes; linked users only see feedback for linked players.
-- Regression: public VOD, live viewing, score hiding, uploads, admin match library, Cast/AirPlay.
+The Telestrator follow-on phases (connectors, animated keyframes v3 schema, server-side player tracking) remain in [Coaching Telestrator — Future Phases](#coaching-telestrator--future-phases-designed-not-shipped) above because they extend a shipped object schema rather than the broader feature/UX backlog.
