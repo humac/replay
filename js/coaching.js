@@ -106,6 +106,10 @@ export const coachingMixin = {
             const panel = document.getElementById(`coach-tab-${tab}`);
             if (panel) panel.hidden = tab !== name;
         });
+        // Sprint 1: drive a video-first layout when Review is the active sub-tab.
+        // Scoping the class to #coach-view keeps Roster/Notes/Playlists untouched.
+        const coachView = document.getElementById('coach-view');
+        if (coachView) coachView.classList.toggle('is-review-mode', name === 'review');
         if (pushHistory) {
             const params = new URLSearchParams(window.location.search);
             if (name === 'roster') params.delete('tab');
@@ -737,6 +741,16 @@ export const coachingMixin = {
         const resize = () => this._resizeCoachCanvas(canvas, video);
         window.addEventListener('resize', resize);
         video.addEventListener('loadedmetadata', resize);
+        // Sprint 1: the inspector is now independently scrollable, which means the
+        // wrapper can change size without window resizing (e.g. inspector grows and
+        // pushes the video column narrower). Observe the wrapper directly so the
+        // canvas bitmap stays aligned with the rendered video.
+        const wrapper = video.closest('.coach-review-wrapper, .feedback-player-wrapper');
+        if (wrapper && typeof ResizeObserver === 'function') {
+            const ro = new ResizeObserver(resize);
+            ro.observe(wrapper);
+            canvas._coachResizeObserver = ro;
+        }
         canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
         canvas.addEventListener('pointermove', (event) => this.coachDrawMove(event));
         canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
@@ -762,6 +776,10 @@ export const coachingMixin = {
         const canvas = document.getElementById(canvasId);
         if (!canvas || !canvas._coachResize) return;
         window.removeEventListener('resize', canvas._coachResize);
+        if (canvas._coachResizeObserver) {
+            canvas._coachResizeObserver.disconnect();
+            canvas._coachResizeObserver = null;
+        }
         canvas._coachResize = null;
         canvas._coachBound = false;
     },
