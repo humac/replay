@@ -6167,6 +6167,76 @@ details.diag-row-details[open] > summary::after {
     margin-bottom: 1rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* Each segment of the compact top bar — Match, Slot, Time, Save Note. */
+.coach-review-picker-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+/* Match segment grows to fill leftover space; Slot/Time stay sized to content. */
+.coach-review-picker-group:first-child {
+    flex: 1 1 280px;
+}
+.coach-review-picker-group:first-child select {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.coach-review-picker-label {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Time readout uses tabular numbers so the digits don't shift while playing. */
+.coach-review-picker-time {
+    padding: 0.35rem 0.65rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+}
+.coach-review-time-value {
+    font-family: var(--font-heading), system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.95rem;
+    color: var(--text-primary, inherit);
+    letter-spacing: 0.04em;
+}
+[data-theme="light"] .coach-review-picker-time {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Top-bar Save Note: compact variant of .btn-primary. The form's full-width
+ * Save Note button stays as the secondary affordance for first-time users. */
+.coach-review-picker-save {
+    flex: 0 0 auto;
+    padding: 0.45rem 0.95rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+    .coach-review-picker {
+        gap: 0.5rem;
+    }
+    .coach-review-picker-group:first-child {
+        flex: 1 1 100%;
+    }
+    .coach-review-picker-save {
+        flex: 1 1 100%;
+    }
 }
 
 .coach-review-grid {

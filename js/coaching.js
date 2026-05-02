@@ -559,6 +559,22 @@ export const coachingMixin = {
         this.deactivateCoachCanvas();
         this.clearCoachDrawing();
         this._coachReview = null;
+        // Sprint 2: reset the top-bar time readout so it doesn't show a
+        // stale clock when the user reopens Review later.
+        const timeEl = document.getElementById('coach-review-time');
+        if (timeEl) timeEl.textContent = '--:--';
+    },
+
+    _renderCoachReviewTime(video) {
+        const el = document.getElementById('coach-review-time');
+        if (!el) return;
+        const t = Number(video?.currentTime || 0);
+        if (!Number.isFinite(t) || t < 0) { el.textContent = '--:--'; return; }
+        const hh = Math.floor(t / 3600);
+        const mm = Math.floor((t % 3600) / 60);
+        const ss = Math.floor(t % 60);
+        const pad = (n) => String(n).padStart(2, '0');
+        el.textContent = hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
     },
 
     handleCoachReviewMatchChange() {
@@ -595,6 +611,17 @@ export const coachingMixin = {
             if (drawing) this.renderCoachDrawing(drawing);
         };
         video.addEventListener('loadedmetadata', onLoaded);
+
+        // Sprint 2: drive the compact top-bar time readout from the video's
+        // timeupdate event. Bound once per video element; subsequent
+        // loadCoachReviewVideo calls re-use the same listener.
+        if (!video._coachReviewTimeBound) {
+            video.addEventListener('timeupdate', () => this._renderCoachReviewTime(video));
+            video.addEventListener('seeked', () => this._renderCoachReviewTime(video));
+            video.addEventListener('loadedmetadata', () => this._renderCoachReviewTime(video));
+            video._coachReviewTimeBound = true;
+        }
+        this._renderCoachReviewTime(video);
         // Keep the VOD session warm: the streams registry reaps idle sessions
         // after 15 s and admin "kill" only propagates to active heartbeaters.
         this._startFeedbackHeartbeat(matchId, slot, video);
