@@ -5737,97 +5737,9 @@ details.diag-row-details[open] > summary::after {
     font-size: 0.84rem;
 }
 
-.coach-match-panel {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.coach-match-panel h3 {
-    margin: 0 0 0.75rem;
-    font-family: var(--font-heading);
-    text-transform: uppercase;
-    letter-spacing: 0;
-}
-
-.coach-mode-bar {
-    display: flex;
-    justify-content: flex-end;
-    padding: 0 0 0.5rem;
-}
-
-.coach-mode-bar[hidden] {
-    display: none;
-}
-
-.coach-mode-toggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    padding: 0.55rem 0.95rem;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--text);
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-    transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
-}
-
-.coach-mode-toggle:hover {
-    border-color: rgba(23, 113, 201, 0.6);
-    background: rgba(23, 113, 201, 0.1);
-    transform: translateY(-1px);
-}
-
-.coach-mode-toggle[aria-expanded="true"] {
-    border-color: rgba(23, 113, 201, 0.75);
-    background: rgba(23, 113, 201, 0.16);
-}
-
-[data-theme="light"] .coach-mode-toggle {
-    border-color: rgba(0, 0, 0, 0.12);
-    background: rgba(0, 0, 0, 0.03);
-}
-
-[data-theme="light"] .coach-mode-toggle:hover {
-    border-color: rgba(23, 113, 201, 0.55);
-    background: rgba(23, 113, 201, 0.08);
-}
-
-[data-theme="light"] .coach-mode-toggle[aria-expanded="true"] {
-    border-color: rgba(23, 113, 201, 0.7);
-    background: rgba(23, 113, 201, 0.12);
-}
-
-.coach-mode-toggle-icon {
-    transition: transform 0.18s ease;
-    display: inline-block;
-    font-size: 0.9rem;
-    line-height: 1;
-}
-
-.coach-mode-toggle[aria-expanded="true"] .coach-mode-toggle-icon {
-    transform: rotate(180deg);
-}
-
-.sidebar:not(.coach-mode-on) .coach-match-panel {
-    display: none;
-}
-
-.sidebar.coach-mode-on .game-details {
-    display: none;
-}
-
-.sidebar.coach-mode-on .coach-match-panel {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: 0;
-}
+/* The in-match coach side panel and toggle (.coach-match-panel,
+   .coach-mode-bar, .coach-mode-toggle, .sidebar.coach-mode-on …) was
+   removed — Coach > Review is now the single authoring surface. */
 
 .coach-mini-form {
     display: grid;
@@ -5872,6 +5784,29 @@ details.diag-row-details[open] > summary::after {
 .coach-telestrator {
     display: grid;
     gap: 0.55rem;
+}
+
+.coach-telestrator input[type="text"] {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.24);
+    color: var(--text-main);
+    border-radius: 6px;
+    padding: 0.55rem 0.65rem;
+    font: inherit;
+    font-size: 0.85rem;
+}
+
+.coach-telestrator input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(23, 113, 201, 0.18);
+}
+
+[data-theme="light"] .coach-telestrator input[type="text"] {
+    background: #fff;
+    color: var(--text);
+    border-color: rgba(0, 0, 0, 0.14);
 }
 
 .coach-tool-grid {
@@ -6003,48 +5938,295 @@ details.diag-row-details[open] > summary::after {
     touch-action: none;
 }
 
-.coach-playlist-session {
-    position: absolute;
-    left: 1rem;
-    right: 1rem;
-    bottom: 1rem;
-    z-index: 7;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border-radius: 8px;
-    background: rgba(5, 10, 18, 0.88);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    backdrop-filter: blur(10px);
+.feedback-content {
+    max-width: 980px;
+    margin: 0 auto;
 }
 
-.coach-playlist-session span,
-.coach-playlist-session small {
+/* ===== Coach + Feedback sub-tab navigation =====
+   Uses the same visual language as `.btn-head`: pill buttons with an
+   accent-tinted active state. One nav, two scopes (coach / feedback). */
+.coach-subnav {
+    max-width: 1180px;
+    margin: 0 auto 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.35rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+}
+
+.coach-subnav-btn {
+    flex: 0 1 auto;
+    padding: 0.55rem 1rem;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: background 0.18s, color 0.18s, border-color 0.18s;
+}
+
+.coach-subnav-btn:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+}
+
+.coach-subnav-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.coach-subnav-btn.is-active,
+.coach-subnav-btn[aria-selected="true"] {
+    background: rgba(23, 113, 201, 0.18);
+    border-color: rgba(23, 113, 201, 0.42);
+    color: var(--text);
+}
+
+[data-theme="light"] .coach-subnav {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .coach-subnav-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .coach-subnav-btn.is-active,
+[data-theme="light"] .coach-subnav-btn[aria-selected="true"] {
+    background: rgba(23, 113, 201, 0.14);
+    border-color: rgba(23, 113, 201, 0.4);
+}
+
+.coach-tab-panel {
+    max-width: 1180px;
+    margin: 0 auto;
+    animation: coachTabFade 0.18s ease-out;
+}
+
+.coach-tab-panel[hidden] { display: none; }
+
+@keyframes coachTabFade {
+    from { opacity: 0; transform: translateY(2px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Coach > Review shell ============================ */
+.coach-review-shell { padding: 1rem 1.25rem; }
+
+.coach-review-picker {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.coach-review-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    gap: 1.25rem;
+}
+
+.coach-review-video {
+    min-width: 0;
+}
+
+.coach-review-wrapper {
+    position: relative;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+}
+
+.coach-review-wrapper video {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.coach-review-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.55);
+    font-size: 0.92rem;
+    text-align: center;
+    padding: 1rem;
+}
+
+.coach-review-side {
+    display: grid;
+    gap: 0.85rem;
+    align-content: start;
+}
+
+.coach-review-side h4 {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+[data-theme="light"] .coach-review-picker {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Match-page deep link to /coach?tab=review (coach/admin only) */
+.coach-this-match-link {
+    text-decoration: none;
+    align-items: center;
+    display: inline-flex;
+}
+
+.coach-this-match-link[hidden] { display: none !important; }
+
+/* /feedback view ============================ */
+.feedback-linked-strip {
+    max-width: 980px;
+    margin: 0 auto 1rem;
+    padding: 0.6rem 0.85rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+}
+
+.feedback-linked-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-right: 0.25rem;
+}
+
+.feedback-linked-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    background: rgba(23, 113, 201, 0.14);
+    border: 1px solid rgba(23, 113, 201, 0.32);
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.feedback-linked-empty {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.feedback-subnav {
+    max-width: 980px;
+}
+
+.feedback-tab-panel {
+    max-width: 980px;
+}
+
+[data-theme="light"] .feedback-linked-strip {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Focused feedback player (modal body) ============================ */
+.feedback-player {
+    display: grid;
+    gap: 0.85rem;
+}
+
+.feedback-player-meta strong {
+    display: block;
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
+    color: var(--text);
+}
+
+.feedback-player-meta span {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.feedback-player-wrapper {
+    position: relative;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+}
+
+.feedback-player-wrapper video {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.feedback-player-rail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0.85rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+}
+
+.feedback-rail-info span,
+.feedback-rail-info small {
     display: block;
     color: var(--text-muted);
     font-size: 0.78rem;
 }
 
-.coach-playlist-session strong {
+.feedback-rail-info strong {
     display: block;
     color: var(--text);
     font-family: var(--font-heading);
-    letter-spacing: 0;
+    font-size: 0.95rem;
 }
 
-.coach-playlist-controls {
+.feedback-rail-controls {
     display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.4rem;
     flex-wrap: wrap;
+    gap: 0.4rem;
 }
 
-.feedback-content {
-    max-width: 980px;
-    margin: 0 auto;
+.feedback-player-body {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+[data-theme="light"] .feedback-player-rail {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+.admin-card-sub {
+    margin: 0.25rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.5;
 }
 
 [data-theme="light"] .coach-row {
@@ -6130,19 +6312,15 @@ details.diag-row-details[open] > summary::after {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .coach-playlist-session {
-        left: 0.5rem;
-        right: 0.5rem;
-        bottom: 0.5rem;
-        flex-direction: column;
-        align-items: stretch;
+    .coach-review-grid {
+        grid-template-columns: 1fr;
     }
 
-    .coach-playlist-controls {
+    .feedback-rail-controls {
         justify-content: stretch;
     }
 
-    .coach-playlist-controls .mini-action-btn {
+    .feedback-rail-controls .mini-action-btn {
         flex: 1 1 42%;
     }
 }

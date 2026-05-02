@@ -135,6 +135,7 @@
 
             <div class="live-stage">
                 <div class="player-wrapper live-player-wrapper">
+                    <!-- allow-native-controls: live VOD player; native HLS chrome is the canonical UX -->
                     <video id="live-video" controls playsinline autoplay muted preload="auto" x-webkit-airplay="allow" class="main-video">
                         Your browser does not support the video tag.
                     </video>
@@ -191,15 +192,16 @@
                     </button>
                     <button type="button" id="game-edit-btn" class="game-edit-btn" style="display:none;" onclick="app.editActiveMatch()">Edit Match</button>
                     <button type="button" id="game-regen-thumb-btn" class="game-edit-btn" style="display:none;" onclick="app.regenerateActiveThumbnail()" title="Regenerate the match thumbnail from a ready video slot">Regen Thumb</button>
+                    <a id="coach-this-match-link" class="game-edit-btn coach-this-match-link" hidden href="/coach?tab=review" title="Open this match in the Coach Review workspace">Coach this match in Review &rarr;</a>
                 </div>
             </div>
             <div class="game-layout">
                 <div class="video-container">
                     <div class="player-wrapper">
+                        <!-- allow-native-controls: match-page VOD player; native HLS chrome is the canonical UX -->
                         <video id="game-video" controls playsinline preload="auto" x-webkit-airplay="allow" class="main-video">
                             Your browser does not support the video tag.
                         </video>
-                        <canvas id="coach-drawing-canvas" class="coach-drawing-canvas" style="display:none;"></canvas>
                         <div class="video-placeholder" id="video-placeholder" style="display: none;">
                             <div class="play-indicator"></div>
                             <span class="player-label">VIDEO NOT AVAILABLE</span>
@@ -244,12 +246,6 @@
                 </div>
 
                 <div class="sidebar" id="game-sidebar">
-                    <div class="coach-mode-bar" id="coach-mode-bar" hidden>
-                        <button type="button" class="coach-mode-toggle" id="coach-mode-toggle" aria-expanded="false" aria-controls="coach-match-panel" onclick="app.toggleCoachMode()">
-                            <span class="coach-mode-toggle-label">Coach Notes</span>
-                            <span class="coach-mode-toggle-icon" aria-hidden="true">▾</span>
-                        </button>
-                    </div>
                     <div class="game-details">
                         <div class="game-matchup" id="game-matchup">
                             <!-- Injected by JS: logo, name, score per team -->
@@ -266,7 +262,6 @@
                             <div id="game-slot-status-list" class="game-slot-status-list"></div>
                         </div>
                     </div>
-                    <div class="coach-match-panel" id="coach-match-panel" hidden></div>
                 </div>
             </div>
         </section>
@@ -276,185 +271,295 @@
             <header class="admin-content-head coach-page-head">
                 <span class="admin-section-kicker">Coach</span>
                 <h2>Coaching Workspace</h2>
-                <p class="admin-section-sub">Create roster links, timestamped notes, drawing overlays, and review playlists.</p>
+                <p class="admin-section-sub">Manage your roster, write timestamped notes, build review playlists, and mark up video — all in one place.</p>
             </header>
-            <div class="coach-grid">
-                <div class="options-card">
-                    <div class="admin-card-head">
-                        <h3>Roster &amp; Family Links</h3>
-                        <span class="admin-card-kicker">Players</span>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Player Name</label>
-                            <input type="text" id="coach-player-name" maxlength="120" placeholder="Display name">
-                        </div>
-                        <div class="form-group">
-                            <label>Jersey #</label>
-                            <input type="text" id="coach-player-number" maxlength="20" placeholder="optional">
-                        </div>
-                    </div>
-                    <button type="button" class="btn-primary" id="coach-add-player-btn" onclick="app.handleCoachAddPlayer()">Add Player</button>
-                    <div id="coach-roster-list" class="coach-list mt-4"></div>
-                </div>
 
-                <div class="options-card">
-                    <div class="admin-card-head">
-                        <h3>Player/Family Account Link</h3>
-                        <span class="admin-card-kicker">Access</span>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Player</label>
-                            <select id="coach-link-player"></select>
-                        </div>
-                        <div class="form-group">
-                            <label>User Account</label>
-                            <select id="coach-link-user"></select>
-                        </div>
-                        <div class="form-group">
-                            <label>Relationship</label>
-                            <select id="coach-link-relationship">
-                                <option value="family">Family</option>
-                                <option value="parent">Parent</option>
-                                <option value="guardian">Guardian</option>
-                                <option value="self">Self</option>
-                            </select>
-                        </div>
-                    </div>
-                    <button type="button" class="btn-secondary" onclick="app.handleCoachLinkAccount()">Link Account</button>
-                </div>
+            <nav class="coach-subnav" role="tablist" aria-label="Coaching sections">
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-coach-tab="roster" onclick="app.setCoachTab('roster')">Roster</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="notes" onclick="app.setCoachTab('notes')">Notes</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="playlists" onclick="app.setCoachTab('playlists')">Playlists</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="review" onclick="app.setCoachTab('review')">Review</button>
+            </nav>
 
-                <div class="options-card coach-wide-card">
-                    <div class="admin-card-head">
-                        <h3>Coaching Notes</h3>
-                        <span class="admin-card-kicker">Timeline</span>
+            <!-- Roster sub-tab -->
+            <div id="coach-tab-roster" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-roster">
+                <div class="coach-grid">
+                    <div class="options-card">
+                        <div class="admin-card-head">
+                            <h3>Roster &amp; Family Links</h3>
+                            <span class="admin-card-kicker">Players</span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Player Name</label>
+                                <input type="text" id="coach-player-name" maxlength="120" placeholder="Display name">
+                            </div>
+                            <div class="form-group">
+                                <label>Jersey #</label>
+                                <input type="text" id="coach-player-number" maxlength="20" placeholder="optional">
+                            </div>
+                        </div>
+                        <button type="button" class="btn-primary" id="coach-add-player-btn" onclick="app.handleCoachAddPlayer()">Add Player</button>
+                        <div id="coach-roster-list" class="coach-list mt-4"></div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Match</label>
-                            <select id="coach-note-match"></select>
+
+                    <div class="options-card">
+                        <div class="admin-card-head">
+                            <h3>Player/Family Account Link</h3>
+                            <span class="admin-card-kicker">Access</span>
                         </div>
-                        <div class="form-group">
-                            <label>Slot</label>
-                            <select id="coach-note-slot">
-                                <option value="full">Full</option>
-                                <option value="first_half">1st Half</option>
-                                <option value="second_half">2nd Half</option>
-                            </select>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Player</label>
+                                <select id="coach-link-player"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>User Account</label>
+                                <select id="coach-link-user"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Relationship</label>
+                                <select id="coach-link-relationship">
+                                    <option value="family">Family</option>
+                                    <option value="parent">Parent</option>
+                                    <option value="guardian">Guardian</option>
+                                    <option value="self">Self</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label>Timestamp (seconds)</label>
-                            <input type="number" id="coach-note-time" min="0" step="0.1" placeholder="0">
+                        <button type="button" class="btn-secondary" onclick="app.handleCoachLinkAccount()">Link Account</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Notes sub-tab -->
+            <div id="coach-tab-notes" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-notes" hidden>
+                <div class="options-card">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Coaching Notes</h3>
+                            <p class="admin-card-sub">Timestamped teaching points with optional drawings. Click <strong>Open in Review</strong> on any note to jump straight to the moment in the Review tab.</p>
+                        </div>
+                        <div class="admin-panel-actions">
+                            <button type="button" class="btn-head" onclick="app.openCoachNoteModal()">+ New note</button>
                         </div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Title</label>
-                            <input type="text" id="coach-note-title" maxlength="160" placeholder="e.g. Back line spacing">
-                        </div>
-                        <div class="form-group">
-                            <label>Category</label>
-                            <select id="coach-note-category">
-                                <option value="shape">Shape</option>
-                                <option value="pressing">Pressing</option>
-                                <option value="transition">Transition</option>
-                                <option value="set_piece">Set piece</option>
-                                <option value="build_up">Build-up</option>
-                                <option value="finishing">Finishing</option>
-                                <option value="defending">Defending</option>
-                                <option value="goalkeeper">Goalkeeper</option>
-                                <option value="effort">Effort</option>
-                                <option value="decision">Decision</option>
-                                <option value="other">Other</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Visibility</label>
-                            <select id="coach-note-visibility">
-                                <option value="private">Private</option>
-                                <option value="team">Team-visible</option>
-                                <option value="player">Player/family</option>
-                                <option value="unlisted">Unlisted link</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Linked Players</label>
-                            <div id="coach-note-players" class="coach-check-list" role="listbox" aria-label="Linked players"></div>
-                        </div>
-                        <div class="form-group">
-                            <label>Tags</label>
-                            <input type="text" id="coach-note-tags" maxlength="300" placeholder="comma,separated,tags">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Note</label>
-                        <textarea id="coach-note-body" rows="4" maxlength="4000" placeholder="What should players notice?"></textarea>
-                    </div>
-                    <button type="button" class="btn-primary" onclick="app.handleCoachCreateNote()">Save Coaching Note</button>
                     <div id="coach-notes-list" class="coach-list mt-4"></div>
                 </div>
+            </div>
 
-                <div class="options-card coach-wide-card">
-                    <div class="admin-card-head">
-                        <h3>Review Playlist</h3>
-                        <span class="admin-card-kicker">Assignments</span>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Playlist Title</label>
-                            <input type="text" id="coach-playlist-title" maxlength="160" placeholder="e.g. Pressing review">
+            <!-- Playlists sub-tab -->
+            <div id="coach-tab-playlists" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-playlists" hidden>
+                <div class="options-card">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Review Playlists</h3>
+                            <p class="admin-card-sub">Stitch notes into a guided session for a player or the team. Players watch playlists in <em>My Feedback</em>.</p>
                         </div>
-                        <div class="form-group">
-                            <label>Visibility</label>
-                            <select id="coach-playlist-visibility">
-                                <option value="private">Private</option>
-                                <option value="team">Team-visible</option>
-                                <option value="player">Player/family</option>
-                                <option value="unlisted">Unlisted link</option>
-                            </select>
+                        <div class="admin-panel-actions">
+                            <button type="button" class="btn-head" onclick="app.openCoachPlaylistModal()">+ New playlist</button>
                         </div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Notes</label>
-                            <div id="coach-playlist-notes" class="coach-check-list" role="listbox" aria-label="Playlist notes"></div>
-                        </div>
-                        <div class="form-group">
-                            <label>Assigned Players</label>
-                            <div id="coach-playlist-players" class="coach-check-list" role="listbox" aria-label="Assigned players"></div>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Pre-roll Seconds</label>
-                            <input type="number" id="coach-playlist-pre-roll" min="0" max="60" step="1" value="5">
-                        </div>
-                        <div class="form-group">
-                            <label>Post-roll Seconds</label>
-                            <input type="number" id="coach-playlist-post-roll" min="0" max="120" step="1" value="8">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Description</label>
-                        <textarea id="coach-playlist-description" rows="3" maxlength="1000" placeholder="Review goal or meeting context"></textarea>
-                    </div>
-                    <button type="button" class="btn-primary" onclick="app.handleCoachCreatePlaylist()">Create Playlist</button>
                     <div id="coach-playlists-list" class="coach-list mt-4"></div>
                 </div>
             </div>
+
+            <!-- Review sub-tab -->
+            <div id="coach-tab-review" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-review" hidden>
+                <div class="options-card coach-review-shell">
+                    <div class="coach-review-picker">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Match</label>
+                                <select id="coach-review-match" onchange="app.handleCoachReviewMatchChange()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Slot</label>
+                                <select id="coach-review-slot" onchange="app.handleCoachReviewSlotChange()">
+                                    <option value="full">Full</option>
+                                    <option value="first_half">1st Half</option>
+                                    <option value="second_half">2nd Half</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="coach-review-grid">
+                        <div class="coach-review-video">
+                            <div class="player-wrapper coach-review-wrapper">
+                                <!-- allow-native-controls: Coach > Review authoring player; native HLS chrome is the canonical UX -->
+                                <video id="coach-review-video" controls playsinline preload="metadata" class="main-video"></video>
+                                <canvas id="coach-drawing-canvas" class="coach-drawing-canvas" style="display:none;"></canvas>
+                                <div class="coach-review-empty" id="coach-review-empty">Pick a match above to start authoring notes.</div>
+                            </div>
+                        </div>
+                        <aside class="coach-review-side">
+                            <h4>Telestrator</h4>
+                            <div id="coach-review-toolbar"></div>
+                            <h4>Save note at current time</h4>
+                            <div id="coach-review-form" class="coach-mini-form"></div>
+                            <h4>Notes for this match</h4>
+                            <div id="coach-review-notes" class="coach-panel-notes"></div>
+                        </aside>
+                    </div>
+                </div>
+            </div>
         </section>
+
+        <!-- Templates: cloned by app.formModal() to avoid duplicate IDs in the DOM. -->
+        <template id="coach-note-form-template">
+            <div class="coach-mini-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Match</label>
+                        <select data-field="match"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Slot</label>
+                        <select data-field="slot">
+                            <option value="full">Full</option>
+                            <option value="first_half">1st Half</option>
+                            <option value="second_half">2nd Half</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Time (seconds)</label>
+                        <input type="number" data-field="time" min="0" step="0.1" value="0">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" data-field="title" maxlength="160" placeholder="e.g. Back line spacing">
+                    </div>
+                    <div class="form-group">
+                        <label>Category</label>
+                        <select data-field="category">
+                            <option value="shape">Shape</option>
+                            <option value="pressing">Pressing</option>
+                            <option value="transition">Transition</option>
+                            <option value="set_piece">Set piece</option>
+                            <option value="build_up">Build-up</option>
+                            <option value="finishing">Finishing</option>
+                            <option value="defending">Defending</option>
+                            <option value="goalkeeper">Goalkeeper</option>
+                            <option value="effort">Effort</option>
+                            <option value="decision">Decision</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Visibility</label>
+                        <select data-field="visibility">
+                            <option value="private">Private</option>
+                            <option value="team">Team-visible</option>
+                            <option value="player">Player/family</option>
+                            <option value="unlisted">Unlisted link</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Linked Players</label>
+                        <div data-field="players" class="coach-check-list" role="listbox" aria-label="Linked players"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Tags</label>
+                        <input type="text" data-field="tags" maxlength="300" placeholder="comma,separated,tags">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Note</label>
+                    <textarea data-field="body" rows="4" maxlength="4000" placeholder="What should players notice?"></textarea>
+                </div>
+            </div>
+        </template>
+
+        <template id="coach-playlist-form-template">
+            <div class="coach-mini-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Playlist Title</label>
+                        <input type="text" data-field="title" maxlength="160" placeholder="e.g. Pressing review">
+                    </div>
+                    <div class="form-group">
+                        <label>Visibility</label>
+                        <select data-field="visibility">
+                            <option value="private">Private</option>
+                            <option value="team">Team-visible</option>
+                            <option value="player">Player/family</option>
+                            <option value="unlisted">Unlisted link</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <div data-field="notes" class="coach-check-list" role="listbox" aria-label="Playlist notes"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Assigned Players</label>
+                        <div data-field="players" class="coach-check-list" role="listbox" aria-label="Assigned players"></div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Pre-roll seconds</label>
+                        <input type="number" data-field="preRoll" min="0" max="60" step="1" value="5">
+                    </div>
+                    <div class="form-group">
+                        <label>Post-roll seconds</label>
+                        <input type="number" data-field="postRoll" min="0" max="120" step="1" value="8">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea data-field="description" rows="3" maxlength="1000" placeholder="Review goal or meeting context"></textarea>
+                </div>
+            </div>
+        </template>
+
+        <template id="feedback-player-template">
+            <div class="feedback-player">
+                <div class="feedback-player-meta">
+                    <strong data-field="title"></strong>
+                    <span data-field="subtitle"></span>
+                </div>
+                <div class="player-wrapper feedback-player-wrapper">
+                    <!-- allow-native-controls: focused feedback player modal; native HLS chrome is the canonical UX -->
+                    <video data-field="video" id="feedback-player-video" controls playsinline preload="metadata" class="main-video"></video>
+                    <canvas data-field="canvas" id="feedback-drawing-canvas" class="coach-drawing-canvas"></canvas>
+                </div>
+                <div class="feedback-player-rail" data-field="rail" hidden></div>
+                <p class="feedback-player-body" data-field="body"></p>
+            </div>
+        </template>
 
         <!-- Player / Family Feedback -->
         <section id="feedback-view" class="view">
             <header class="admin-content-head coach-page-head">
                 <span class="admin-section-kicker">Review</span>
                 <h2>My Feedback</h2>
-                <p class="admin-section-sub">Coach-published notes and playlists linked to your player account.</p>
+                <p class="admin-section-sub">Coach-published playlists and notes linked to your player account.</p>
             </header>
-            <div id="feedback-content" class="feedback-content"></div>
+
+            <div id="feedback-linked-strip" class="feedback-linked-strip" aria-label="Linked players"></div>
+
+            <nav class="coach-subnav feedback-subnav" role="tablist" aria-label="Feedback sections">
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-feedback-tab="playlists" onclick="app.setFeedbackTab('playlists')">Playlists</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="notes" onclick="app.setFeedbackTab('notes')">Notes</button>
+            </nav>
+
+            <div id="feedback-tab-playlists" class="coach-tab-panel feedback-tab-panel">
+                <div class="options-card">
+                    <div id="feedback-playlists-list" class="coach-list"></div>
+                </div>
+            </div>
+
+            <div id="feedback-tab-notes" class="coach-tab-panel feedback-tab-panel" hidden>
+                <div class="options-card">
+                    <div id="feedback-notes-list" class="coach-list"></div>
+                </div>
+            </div>
         </section>
 
         <!-- Admin Dashboard (consolidates Add Match + legacy Settings) -->

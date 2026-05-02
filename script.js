@@ -97,8 +97,11 @@ const app = {
                 window.history.replaceState({ view: 'season' }, '', '/');
                 return;
             }
-            window.history.replaceState({ view: 'coach' }, '', '/coach');
-            this.showCoachView({ pushHistory: false, scrollTop: false });
+            const params = new URLSearchParams(window.location.search);
+            const tab = params.get('tab');
+            const matchId = params.get('match');
+            const slot = params.get('slot');
+            this.showCoachView({ pushHistory: true, replaceHistory: true, scrollTop: false, tab, matchId, slot });
             return;
         }
 
@@ -107,8 +110,9 @@ const app = {
                 window.history.replaceState({ view: 'season' }, '', '/');
                 return;
             }
-            window.history.replaceState({ view: 'feedback' }, '', '/feedback');
-            this.showFeedbackView({ pushHistory: false, scrollTop: false });
+            const params = new URLSearchParams(window.location.search);
+            const tab = params.get('tab');
+            this.showFeedbackView({ pushHistory: true, replaceHistory: true, scrollTop: false, tab });
             return;
         }
 
@@ -189,12 +193,12 @@ const app = {
         }
 
         if (state.view === 'coach') {
-            this.showCoachView({ pushHistory: false, scrollTop });
+            this.showCoachView({ pushHistory: false, scrollTop, tab: state.tab || null, matchId: state.matchId || null, slot: state.slot || null });
             return;
         }
 
         if (state.view === 'feedback') {
-            this.showFeedbackView({ pushHistory: false, scrollTop });
+            this.showFeedbackView({ pushHistory: false, scrollTop, tab: state.tab || null });
             return;
         }
 
@@ -214,7 +218,6 @@ const app = {
     },
 
     teardownGameView() {
-        this.stopCoachingPlaylistSession?.({ keepView: true });
         // Save final position before tearing down
         if (this.activeMatchId && this.activeSlot) {
             const videoEl = document.getElementById('game-video');
@@ -231,6 +234,8 @@ const app = {
         if (gameEditBtn) gameEditBtn.style.display = 'none';
         const regenThumbBtn = document.getElementById('game-regen-thumb-btn');
         if (regenThumbBtn) regenThumbBtn.style.display = 'none';
+        const coachLink = document.getElementById('coach-this-match-link');
+        if (coachLink) coachLink.hidden = true;
         const videoEl = document.getElementById('game-video');
         if (videoEl) {
             videoEl.pause();
@@ -246,10 +251,6 @@ const app = {
             downloadActions.style.display = 'none';
             downloadActions.innerHTML = '';
         }
-        const coachPanel = document.getElementById('coach-match-panel');
-        if (coachPanel) coachPanel.style.display = 'none';
-        const coachCanvas = document.getElementById('coach-drawing-canvas');
-        if (coachCanvas) coachCanvas.style.display = 'none';
         this.updateRemotePlaybackNote();
     },
 

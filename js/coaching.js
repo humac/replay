@@ -1,4 +1,21 @@
-// Coaching workspace, roster links, timestamped notes, drawing overlays, and feedback.
+// Coaching workspace: roster, notes, playlists, in-/coach Review video player + telestrator,
+// player-facing /feedback view with a focused feedback-player modal. The in-match side panel
+// is intentionally absent — Coach > Review is the single authoring surface.
+
+const NOTE_CATEGORIES = [
+    ['shape', 'Shape'], ['pressing', 'Pressing'], ['transition', 'Transition'],
+    ['set_piece', 'Set piece'], ['build_up', 'Build-up'], ['finishing', 'Finishing'],
+    ['defending', 'Defending'], ['goalkeeper', 'Goalkeeper'], ['effort', 'Effort'],
+    ['decision', 'Decision'], ['other', 'Other'],
+];
+
+const VISIBILITY_OPTIONS = [
+    ['private', 'Private'], ['team', 'Team-visible'],
+    ['player', 'Player/family'], ['unlisted', 'Unlisted link'],
+];
+
+const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'review'];
+const VALID_FEEDBACK_TABS = ['playlists', 'notes'];
 
 export const coachingMixin = {
     _coachBundle: null,
@@ -13,9 +30,16 @@ export const coachingMixin = {
     _coachPlaylistSession: null,
     _coachPlaylistMonitor: null,
     _coachPlaylistFreezeTimer: null,
-    _coachModeOn: false,
+    _coachTab: 'roster',
+    _feedbackTab: 'playlists',
+    _coachReview: null,
+    _coachCanvasId: 'coach-drawing-canvas',
+    _coachVideoId: 'coach-review-video',
+    _feedbackPlayer: null,
 
-    async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
+    // ===== top-level view entry points =====
+
+    async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true, tab = null, matchId = null, slot = null } = {}) {
         if (!this.canCoach()) {
             this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
             return;
@@ -24,12 +48,18 @@ export const coachingMixin = {
         this.teardownLiveView?.();
         this.stopSeasonLiveCtaPolling?.();
         this.activateView('coach-view', 'coach');
-        if (pushHistory) this.pushHistoryState({ view: 'coach' }, { replace: replaceHistory, url: '/coach' });
+        const targetTab = VALID_COACH_TABS.includes(tab) ? tab : (this._coachTab || 'roster');
+        if (matchId) this._coachReviewPending = { matchId, slot: slot || 'full' };
+        if (pushHistory) {
+            const url = this._coachUrl(targetTab, matchId, slot);
+            this.pushHistoryState({ view: 'coach', tab: targetTab }, { replace: replaceHistory, url });
+        }
         await this.renderCoachWorkspace();
+        this.setCoachTab(targetTab, { pushHistory: false });
         if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
     },
 
-    async showFeedbackView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
+    async showFeedbackView({ pushHistory = true, replaceHistory = false, scrollTop = true, tab = null } = {}) {
         if (!this.authToken) {
             this.showLoginModal();
             return;
@@ -38,10 +68,73 @@ export const coachingMixin = {
         this.teardownLiveView?.();
         this.stopSeasonLiveCtaPolling?.();
         this.activateView('feedback-view', 'feedback');
-        if (pushHistory) this.pushHistoryState({ view: 'feedback' }, { replace: replaceHistory, url: '/feedback' });
+        const targetTab = VALID_FEEDBACK_TABS.includes(tab) ? tab : (this._feedbackTab || 'playlists');
+        if (pushHistory) {
+            const url = `/feedback?tab=${targetTab}`;
+            this.pushHistoryState({ view: 'feedback', tab: targetTab }, { replace: replaceHistory, url });
+        }
         await this.renderMyFeedback();
+        this.setFeedbackTab(targetTab, { pushHistory: false });
         if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
     },
+
+    _coachUrl(tab, matchId, slot) {
+        const params = new URLSearchParams();
+        if (tab && tab !== 'roster') params.set('tab', tab);
+        if (matchId) params.set('match', String(matchId));
+        if (slot) params.set('slot', slot);
+        const qs = params.toString();
+        return qs ? `/coach?${qs}` : '/coach';
+    },
+
+    // ===== sub-tab routers =====
+
+    setCoachTab(name, { pushHistory = true } = {}) {
+        if (!VALID_COACH_TABS.includes(name)) name = 'roster';
+        this._coachTab = name;
+        document.querySelectorAll('[data-coach-tab]').forEach((btn) => {
+            const active = btn.dataset.coachTab === name;
+            btn.classList.toggle('is-active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        VALID_COACH_TABS.forEach((tab) => {
+            const panel = document.getElementById(`coach-tab-${tab}`);
+            if (panel) panel.hidden = tab !== name;
+        });
+        if (pushHistory) {
+            const params = new URLSearchParams(window.location.search);
+            if (name === 'roster') params.delete('tab');
+            else params.set('tab', name);
+            const qs = params.toString();
+            const url = qs ? `/coach?${qs}` : '/coach';
+            this.pushHistoryState({ view: 'coach', tab: name }, { replace: true, url });
+        }
+        if (name === 'roster') this.renderCoachRoster();
+        if (name === 'notes') this.renderCoachNotes();
+        if (name === 'playlists') this.renderCoachPlaylists();
+        if (name === 'review') this.renderCoachReview();
+        else this.tearDownCoachReview();
+    },
+
+    setFeedbackTab(name, { pushHistory = true } = {}) {
+        if (!VALID_FEEDBACK_TABS.includes(name)) name = 'playlists';
+        this._feedbackTab = name;
+        document.querySelectorAll('[data-feedback-tab]').forEach((btn) => {
+            const active = btn.dataset.feedbackTab === name;
+            btn.classList.toggle('is-active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        VALID_FEEDBACK_TABS.forEach((tab) => {
+            const panel = document.getElementById(`feedback-tab-${tab}`);
+            if (panel) panel.hidden = tab !== name;
+        });
+        if (pushHistory) {
+            const url = `/feedback?tab=${name}`;
+            this.pushHistoryState({ view: 'feedback', tab: name }, { replace: true, url });
+        }
+    },
+
+    // ===== Coach workspace data load =====
 
     async renderCoachWorkspace() {
         const roster = document.getElementById('coach-roster-list');
@@ -51,46 +144,27 @@ export const coachingMixin = {
         try {
             this._coachBundle = await this.loadCoachBundle();
             this.renderCoachRoster();
-            this.renderCoachSelectors();
+            this.renderCoachLinkSelectors();
             this.renderCoachNotes();
             this.renderCoachPlaylists();
+            this.renderCoachReviewPicker();
         } catch (err) {
             this.showError(err.message || 'Could not load coaching workspace.');
         }
     },
 
-    renderCoachSelectors() {
-        const bundle = this._coachBundle || { players: [], users: [], notes: [] };
+    renderCoachLinkSelectors() {
+        const bundle = this._coachBundle || { players: [], users: [] };
         const playerOptions = bundle.players.map((p) => (
             `<option value="${this.esc(p.id)}">${this.esc(this.playerLabel(p))}</option>`
         )).join('');
         const linkPlayerEl = document.getElementById('coach-link-player');
         if (linkPlayerEl) linkPlayerEl.innerHTML = playerOptions || '<option value="">No players yet</option>';
-        this.renderCoachCheckList('coach-note-players', bundle.players.map((p) => ({
-            value: p.id,
-            label: this.playerLabel(p),
-        })), 'No players yet');
-        this.renderCoachCheckList('coach-playlist-players', bundle.players.map((p) => ({
-            value: p.id,
-            label: this.playerLabel(p),
-        })), 'No players yet');
-
         const userOptions = bundle.users.map((u) => (
             `<option value="${this.esc(u.id)}">${this.esc(u.display_name || u.username)} (@${this.esc(u.username)})</option>`
         )).join('');
         const userEl = document.getElementById('coach-link-user');
         if (userEl) userEl.innerHTML = userOptions || '<option value="">Create a user first</option>';
-
-        const matchOptions = this.matches.map((m) => (
-            `<option value="${this.esc(m.id)}">${this.esc(m.home_team)} vs ${this.esc(m.away_team)} · ${this.esc(this.formatDate(m.date))}</option>`
-        )).join('');
-        const matchEl = document.getElementById('coach-note-match');
-        if (matchEl) matchEl.innerHTML = matchOptions || '<option value="">No matches yet</option>';
-
-        this.renderCoachCheckList('coach-playlist-notes', bundle.notes.map((n) => ({
-            value: n.id,
-            label: this.noteLabel(n),
-        })), 'No notes yet');
     },
 
     coachCheckListHtml(items, emptyLabel = 'Nothing available') {
@@ -105,8 +179,8 @@ export const coachingMixin = {
         `).join('');
     },
 
-    renderCoachCheckList(id, items, emptyLabel) {
-        const el = document.getElementById(id);
+    renderCoachCheckList(target, items, emptyLabel) {
+        const el = typeof target === 'string' ? document.getElementById(target) : target;
         if (!el) return;
         el.innerHTML = this.coachCheckListHtml(items, emptyLabel);
     },
@@ -135,6 +209,13 @@ export const coachingMixin = {
         return `${mins}:${String(secs).padStart(2, '0')}`;
     },
 
+    matchLabel(matchId) {
+        const m = this.matches.find((x) => x.id === matchId);
+        return m ? `${m.home_team} vs ${m.away_team} · ${this.formatDate(m.date)}` : String(matchId);
+    },
+
+    // ===== Roster sub-tab =====
+
     renderCoachRoster() {
         const container = document.getElementById('coach-roster-list');
         if (!container) return;
@@ -159,35 +240,167 @@ export const coachingMixin = {
         `).join('');
     },
 
+    async handleCoachAddPlayer() {
+        const display_name = document.getElementById('coach-player-name')?.value.trim();
+        const jersey_number = document.getElementById('coach-player-number')?.value.trim() || '';
+        if (!display_name) { this.showError('Player name is required.'); return; }
+        try {
+            await this.createCoachPlayer({ display_name, jersey_number, active: true });
+            document.getElementById('coach-player-name').value = '';
+            document.getElementById('coach-player-number').value = '';
+            this.showSuccess('Player added.');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    async handleCoachDeletePlayer(playerId) {
+        const ok = await this.confirmAction({
+            title: 'Delete player',
+            message: 'Delete this roster player and remove their feedback links?',
+            confirmLabel: 'Delete player', danger: true,
+        });
+        if (!ok) return;
+        try {
+            const resp = await this.authFetch(`/api/coach/players/${playerId}`, {
+                method: 'DELETE', headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Failed to delete player');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    async handleCoachLinkAccount() {
+        const player_id = document.getElementById('coach-link-player')?.value;
+        const user_id = document.getElementById('coach-link-user')?.value;
+        const relationship = document.getElementById('coach-link-relationship')?.value || 'family';
+        if (!player_id || !user_id) { this.showError('Pick a player and a user account.'); return; }
+        try {
+            await this.linkCoachPlayer({ player_id, user_id, relationship });
+            this.showSuccess('Account linked.');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    async handleCoachUnlink(linkId) {
+        try {
+            await this.unlinkCoachPlayer(linkId);
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    // ===== Notes sub-tab =====
+
     renderCoachNotes() {
         const container = document.getElementById('coach-notes-list');
         if (!container) return;
         const notes = this._coachBundle?.notes || [];
         if (!notes.length) {
-            container.innerHTML = '<div class="session-empty">No coaching notes yet.</div>';
+            container.innerHTML = '<div class="session-empty">No coaching notes yet. Click <strong>+ New note</strong> to add the first one.</div>';
             return;
         }
         container.innerHTML = notes.map((n) => `
             <article class="coach-row">
                 <div>
                     <strong>${this.esc(n.title)}</strong>
-                    <span>${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${this.esc(n.category)} · ${this.esc(n.visibility)}</span>
+                    <span>${this.esc(this.matchLabel(n.match_id))} · ${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${this.esc(n.category)} · ${this.esc(n.visibility)}</span>
                     ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
                 </div>
                 <div class="coach-row-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.openCoachNote(${n.id})">Open</button>
+                    <button type="button" class="mini-action-btn" onclick="app.openNoteInReview(${n.id})">Open in Review</button>
+                    <button type="button" class="mini-action-btn" onclick="app.openCoachNoteModal(${n.id})">Edit</button>
                     <button type="button" class="mini-action-btn" onclick="app.handleCoachDeleteNote(${n.id})">Delete</button>
                 </div>
             </article>
         `).join('');
     },
 
+    async openCoachNoteModal(noteId = null) {
+        const note = noteId ? (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId)) : null;
+        const tpl = document.getElementById('coach-note-form-template');
+        if (!tpl) { this.showError('Note form template missing.'); return; }
+        const body = tpl.content.firstElementChild.cloneNode(true);
+
+        const matchSel = body.querySelector('[data-field="match"]');
+        matchSel.innerHTML = this.matches.map((m) => `<option value="${this.esc(m.id)}">${this.esc(this.matchLabel(m.id))}</option>`).join('') || '<option value="">No matches yet</option>';
+        if (note) matchSel.value = note.match_id;
+
+        const slotSel = body.querySelector('[data-field="slot"]');
+        if (note) slotSel.value = note.slot;
+
+        body.querySelector('[data-field="time"]').value = note ? Number(note.timestamp_seconds || 0) : 0;
+        body.querySelector('[data-field="title"]').value = note?.title || '';
+        body.querySelector('[data-field="category"]').value = note?.category || 'other';
+        body.querySelector('[data-field="visibility"]').value = note?.visibility || 'private';
+        body.querySelector('[data-field="body"]').value = note?.body || '';
+        body.querySelector('[data-field="tags"]').value = (note?.tags || []).join(',');
+
+        const playersBox = body.querySelector('[data-field="players"]');
+        const players = this._coachBundle?.players || [];
+        this.renderCoachCheckList(playersBox, players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet');
+        if (note?.player_ids?.length) {
+            const sel = new Set(note.player_ids.map(String));
+            playersBox.querySelectorAll('.coach-check-option').forEach((btn) => {
+                if (sel.has(btn.dataset.value)) {
+                    btn.classList.add('is-selected');
+                    btn.setAttribute('aria-pressed', 'true');
+                }
+            });
+        }
+
+        const result = await this.formModal({
+            title: note ? 'Edit Coaching Note' : 'New Coaching Note',
+            kicker: 'Coaching',
+            body,
+            confirmLabel: note ? 'Save changes' : 'Save note',
+            onSubmit: (close) => {
+                const root = body;
+                const titleVal = root.querySelector('[data-field="title"]').value.trim();
+                if (!titleVal) { this.showError('Title is required.'); return; }
+                const matchVal = root.querySelector('[data-field="match"]').value;
+                if (!matchVal) { this.showError('Match is required.'); return; }
+                close({
+                    match_id: matchVal,
+                    slot: root.querySelector('[data-field="slot"]').value || 'full',
+                    timestamp_seconds: Number(root.querySelector('[data-field="time"]').value || 0),
+                    title: titleVal,
+                    body: root.querySelector('[data-field="body"]').value.trim(),
+                    category: root.querySelector('[data-field="category"]').value || 'other',
+                    visibility: root.querySelector('[data-field="visibility"]').value || 'private',
+                    player_ids: Array.from(root.querySelector('[data-field="players"]').querySelectorAll('.coach-check-option.is-selected')).map((b) => b.dataset.value),
+                    tags: (root.querySelector('[data-field="tags"]').value || '').split(',').map((s) => s.trim()).filter(Boolean),
+                    drawing: note?.drawing || {},
+                });
+            },
+        });
+        if (!result) return;
+        try {
+            if (note) await this.updateCoachNote(note.id, result);
+            else await this.createCoachNote(result);
+            this.showSuccess(note ? 'Note updated.' : 'Note saved.');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    async handleCoachDeleteNote(noteId) {
+        const ok = await this.confirmAction({
+            title: 'Delete note', message: 'Delete this coaching note?',
+            confirmLabel: 'Delete note', danger: true,
+        });
+        if (!ok) return;
+        try {
+            await this.deleteCoachNote(noteId);
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    // ===== Playlists sub-tab =====
+
     renderCoachPlaylists() {
         const container = document.getElementById('coach-playlists-list');
         if (!container) return;
         const playlists = this._coachBundle?.playlists || [];
         if (!playlists.length) {
-            container.innerHTML = '<div class="session-empty">No review playlists yet.</div>';
+            container.innerHTML = '<div class="session-empty">No review playlists yet. Click <strong>+ New playlist</strong> to build one.</div>';
             return;
         }
         container.innerHTML = playlists.map((p) => `
@@ -198,332 +411,288 @@ export const coachingMixin = {
                     ${p.description ? `<p>${this.esc(p.description)}</p>` : ''}
                 </div>
                 <div class="coach-row-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.startCoachPlaylist(${p.id})">Play</button>
-                    <button type="button" class="mini-action-btn" onclick="app.openCoachPlaylistEditor(${p.id})">Edit</button>
+                    <button type="button" class="mini-action-btn" onclick="app.previewCoachPlaylist(${p.id})">Preview</button>
+                    <button type="button" class="mini-action-btn" onclick="app.openCoachPlaylistModal(${p.id})">Edit</button>
+                    <button type="button" class="mini-action-btn" onclick="app.handleCoachDeletePlaylist(${p.id})">Delete</button>
                 </div>
             </article>
         `).join('');
     },
 
-    selectedValues(id) {
-        const el = document.getElementById(id);
-        if (!el) return [];
-        const themedOptions = el.querySelectorAll?.('.coach-check-option.is-selected');
-        if (themedOptions?.length) {
-            return Array.from(themedOptions).map((opt) => opt.dataset.value).filter(Boolean);
-        }
-        return Array.from(el.selectedOptions || []).map((opt) => opt.value).filter(Boolean);
-    },
+    async openCoachPlaylistModal(playlistId = null) {
+        const playlist = playlistId ? (this._coachBundle?.playlists || []).find((p) => Number(p.id) === Number(playlistId)) : null;
+        const tpl = document.getElementById('coach-playlist-form-template');
+        if (!tpl) { this.showError('Playlist form template missing.'); return; }
+        const body = tpl.content.firstElementChild.cloneNode(true);
 
-    async handleCoachAddPlayer() {
-        const display_name = document.getElementById('coach-player-name')?.value.trim();
-        const jersey_number = document.getElementById('coach-player-number')?.value.trim() || '';
-        if (!display_name) {
-            this.showError('Player name is required.');
-            return;
-        }
-        try {
-            await this.createCoachPlayer({ display_name, jersey_number, active: true });
-            document.getElementById('coach-player-name').value = '';
-            document.getElementById('coach-player-number').value = '';
-            this.showSuccess('Player added.');
-            await this.renderCoachWorkspace();
-        } catch (err) {
-            this.showError(err.message);
-        }
-    },
+        body.querySelector('[data-field="title"]').value = playlist?.title || '';
+        body.querySelector('[data-field="visibility"]').value = playlist?.visibility || 'private';
+        body.querySelector('[data-field="preRoll"]').value = Number(playlist?.pre_roll_seconds ?? 5);
+        body.querySelector('[data-field="postRoll"]').value = Number(playlist?.post_roll_seconds ?? 8);
+        body.querySelector('[data-field="description"]').value = playlist?.description || '';
 
-    async handleCoachDeletePlayer(playerId) {
-        const ok = await this.confirmAction({
-            title: 'Delete player',
-            message: 'Delete this roster player and remove their feedback links?',
-            confirmLabel: 'Delete player',
-            danger: true,
-        });
-        if (!ok) return;
-        try {
-            const resp = await this.authFetch(`/api/coach/players/${playerId}`, {
-                method: 'DELETE',
-                headers: this.getAuthHeaders(),
+        const notes = this._coachBundle?.notes || [];
+        const notesBox = body.querySelector('[data-field="notes"]');
+        this.renderCoachCheckList(notesBox, notes.map((n) => ({ value: n.id, label: this.noteLabel(n) })), 'No notes yet');
+        if (playlist?.note_ids?.length) {
+            const sel = new Set(playlist.note_ids.map(String));
+            notesBox.querySelectorAll('.coach-check-option').forEach((btn) => {
+                if (sel.has(btn.dataset.value)) {
+                    btn.classList.add('is-selected');
+                    btn.setAttribute('aria-pressed', 'true');
+                }
             });
-            if (!resp.ok) throw new Error('Failed to delete player');
-            await this.renderCoachWorkspace();
-        } catch (err) {
-            this.showError(err.message);
         }
-    },
 
-    async handleCoachLinkAccount() {
-        const player_id = document.getElementById('coach-link-player')?.value;
-        const user_id = document.getElementById('coach-link-user')?.value;
-        const relationship = document.getElementById('coach-link-relationship')?.value || 'family';
-        if (!player_id || !user_id) {
-            this.showError('Pick a player and a user account.');
-            return;
-        }
-        try {
-            await this.linkCoachPlayer({ player_id, user_id, relationship });
-            this.showSuccess('Account linked.');
-            await this.renderCoachWorkspace();
-        } catch (err) {
-            this.showError(err.message);
-        }
-    },
-
-    async handleCoachUnlink(linkId) {
-        try {
-            await this.unlinkCoachPlayer(linkId);
-            await this.renderCoachWorkspace();
-        } catch (err) {
-            this.showError(err.message);
-        }
-    },
-
-    coachNotePayloadFromForm(prefix = 'coach-note') {
-        return {
-            match_id: document.getElementById(`${prefix}-match`)?.value,
-            slot: document.getElementById(`${prefix}-slot`)?.value || 'full',
-            timestamp_seconds: Number(document.getElementById(`${prefix}-time`)?.value || 0),
-            title: document.getElementById(`${prefix}-title`)?.value.trim(),
-            body: document.getElementById(`${prefix}-body`)?.value.trim() || '',
-            category: document.getElementById(`${prefix}-category`)?.value || 'other',
-            visibility: document.getElementById(`${prefix}-visibility`)?.value || 'private',
-            player_ids: this.selectedValues(`${prefix}-players`),
-            tags: (document.getElementById(`${prefix}-tags`)?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
-            drawing: this._coachDrawing || {},
-        };
-    },
-
-    async handleCoachCreateNote(payload = null) {
-        const body = payload || this.coachNotePayloadFromForm();
-        if (!body.match_id || !body.title) {
-            this.showError('Match and note title are required.');
-            return;
-        }
-        try {
-            await this.createCoachNote(body);
-            this.showSuccess('Coaching note saved.');
-            ['coach-note-title', 'coach-note-body', 'coach-note-tags'].forEach((id) => {
-                const el = document.getElementById(id);
-                if (el) el.value = '';
+        const playersBox = body.querySelector('[data-field="players"]');
+        const players = this._coachBundle?.players || [];
+        this.renderCoachCheckList(playersBox, players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet');
+        if (playlist?.player_ids?.length) {
+            const sel = new Set(playlist.player_ids.map(String));
+            playersBox.querySelectorAll('.coach-check-option').forEach((btn) => {
+                if (sel.has(btn.dataset.value)) {
+                    btn.classList.add('is-selected');
+                    btn.setAttribute('aria-pressed', 'true');
+                }
             });
-            this.clearCoachDrawing();
-            if (document.getElementById('coach-view')?.classList.contains('active')) await this.renderCoachWorkspace();
-            if (this.activeMatchId) await this.renderCoachingPanel();
-        } catch (err) {
-            this.showError(err.message);
         }
-    },
 
-    async handleCoachDeleteNote(noteId) {
-        const ok = await this.confirmAction({
-            title: 'Delete note',
-            message: 'Delete this coaching note?',
-            confirmLabel: 'Delete note',
-            danger: true,
-        });
-        if (!ok) return;
-        try {
-            await this.deleteCoachNote(noteId);
-            await this.renderCoachWorkspace();
-            if (this.activeMatchId) await this.renderCoachingPanel();
-        } catch (err) {
-            this.showError(err.message);
-        }
-    },
-
-    async handleCoachCreatePlaylist() {
-        const title = document.getElementById('coach-playlist-title')?.value.trim();
-        if (!title) {
-            this.showError('Playlist title is required.');
-            return;
-        }
-        try {
-            await this.createCoachPlaylist({
-                title,
-                description: document.getElementById('coach-playlist-description')?.value.trim() || '',
-                visibility: document.getElementById('coach-playlist-visibility')?.value || 'private',
-                note_ids: this.selectedValues('coach-playlist-notes').map((v) => Number(v)),
-                player_ids: this.selectedValues('coach-playlist-players'),
-                pre_roll_seconds: Number(document.getElementById('coach-playlist-pre-roll')?.value || 5),
-                post_roll_seconds: Number(document.getElementById('coach-playlist-post-roll')?.value || 8),
-            });
-            this.showSuccess('Review playlist created.');
-            await this.renderCoachWorkspace();
-        } catch (err) {
-            this.showError(err.message);
-        }
-    },
-
-    async openCoachPlaylistEditor(playlistId) {
-        const playlist = (this._coachBundle?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
-        if (!playlist) return;
-        const body = document.createElement('div');
-        body.className = 'coach-mini-form';
-        body.innerHTML = `
-            <label>Title<input type="text" id="playlist-edit-title" maxlength="160" value="${this.esc(playlist.title)}"></label>
-            <label>Pre-roll Seconds<input type="number" id="playlist-edit-pre" min="0" max="60" step="1" value="${Number(playlist.pre_roll_seconds ?? 5)}"></label>
-            <label>Post-roll Seconds<input type="number" id="playlist-edit-post" min="0" max="120" step="1" value="${Number(playlist.post_roll_seconds ?? 8)}"></label>
-        `;
-        const values = await this.formModal({
-            title: 'Edit Playlist',
-            kicker: 'Review session',
+        const result = await this.formModal({
+            title: playlist ? 'Edit Review Playlist' : 'New Review Playlist',
+            kicker: 'Coaching',
             body,
-            confirmLabel: 'Save playlist',
-            onSubmit: async (close) => {
+            confirmLabel: playlist ? 'Save changes' : 'Create playlist',
+            onSubmit: (close) => {
+                const root = body;
+                const titleVal = root.querySelector('[data-field="title"]').value.trim();
+                if (!titleVal) { this.showError('Playlist title is required.'); return; }
                 close({
-                    title: document.getElementById('playlist-edit-title')?.value.trim(),
-                    pre_roll_seconds: Number(document.getElementById('playlist-edit-pre')?.value || 5),
-                    post_roll_seconds: Number(document.getElementById('playlist-edit-post')?.value || 8),
+                    title: titleVal,
+                    description: root.querySelector('[data-field="description"]').value.trim(),
+                    visibility: root.querySelector('[data-field="visibility"]').value || 'private',
+                    note_ids: Array.from(root.querySelector('[data-field="notes"]').querySelectorAll('.coach-check-option.is-selected')).map((b) => Number(b.dataset.value)),
+                    player_ids: Array.from(root.querySelector('[data-field="players"]').querySelectorAll('.coach-check-option.is-selected')).map((b) => b.dataset.value),
+                    pre_roll_seconds: Number(root.querySelector('[data-field="preRoll"]').value || 5),
+                    post_roll_seconds: Number(root.querySelector('[data-field="postRoll"]').value || 8),
                 });
             },
         });
-        if (!values) return;
+        if (!result) return;
         try {
-            await this.updateCoachPlaylist(playlist.id, values);
-            this.showSuccess('Playlist updated.');
+            if (playlist) await this.updateCoachPlaylist(playlist.id, result);
+            else await this.createCoachPlaylist(result);
+            this.showSuccess(playlist ? 'Playlist updated.' : 'Playlist created.');
             await this.renderCoachWorkspace();
-        } catch (err) {
-            this.showError(err.message);
+        } catch (err) { this.showError(err.message); }
+    },
+
+    async handleCoachDeletePlaylist(playlistId) {
+        const ok = await this.confirmAction({
+            title: 'Delete playlist', message: 'Delete this review playlist?',
+            confirmLabel: 'Delete playlist', danger: true,
+        });
+        if (!ok) return;
+        try {
+            const resp = await this.authFetch(`/api/coach/playlists/${playlistId}`, {
+                method: 'DELETE', headers: this.getAuthHeaders(),
+            });
+            if (!resp.ok) throw new Error('Failed to delete playlist');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    previewCoachPlaylist(playlistId) {
+        const playlist = (this._coachBundle?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
+        if (!playlist) return;
+        this.openFeedbackPlayer({ mode: 'playlist', playlist, playerSource: 'coach' });
+    },
+
+    // ===== Review sub-tab =====
+
+    renderCoachReviewPicker() {
+        const matchSel = document.getElementById('coach-review-match');
+        if (!matchSel) return;
+        const opts = ['<option value="">Select a match…</option>'].concat(
+            this.matches.map((m) => `<option value="${this.esc(m.id)}">${this.esc(this.matchLabel(m.id))}</option>`)
+        ).join('');
+        matchSel.innerHTML = opts;
+    },
+
+    async renderCoachReview() {
+        this.renderCoachReviewPicker();
+        const toolbar = document.getElementById('coach-review-toolbar');
+        if (toolbar) toolbar.innerHTML = this.renderCoachTelestratorToolbar();
+        this.renderCoachReviewForm();
+
+        const pending = this._coachReviewPending || this._coachReview;
+        if (pending?.matchId) {
+            const matchSel = document.getElementById('coach-review-match');
+            const slotSel = document.getElementById('coach-review-slot');
+            if (matchSel) matchSel.value = pending.matchId;
+            if (slotSel) slotSel.value = pending.slot || 'full';
+            await this.loadCoachReviewVideo(pending.matchId, pending.slot || 'full', pending.seekTo || 0, pending.drawing || null);
+            this._coachReviewPending = null;
+        } else {
+            const empty = document.getElementById('coach-review-empty');
+            if (empty) empty.style.display = 'flex';
+            await this.renderCoachReviewNotes(null);
         }
     },
 
-    async openCoachNote(noteId) {
+    tearDownCoachReview() {
+        const video = document.getElementById(this._coachVideoId);
+        if (video) {
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+        }
+        this.deactivateCoachCanvas();
+        this.clearCoachDrawing();
+        this._coachReview = null;
+    },
+
+    handleCoachReviewMatchChange() {
+        const matchId = document.getElementById('coach-review-match')?.value;
+        const slot = document.getElementById('coach-review-slot')?.value || 'full';
+        if (!matchId) { this.tearDownCoachReview(); this.renderCoachReviewNotes(null); return; }
+        this.loadCoachReviewVideo(matchId, slot, 0, null);
+    },
+
+    handleCoachReviewSlotChange() {
+        const matchId = document.getElementById('coach-review-match')?.value;
+        const slot = document.getElementById('coach-review-slot')?.value || 'full';
+        if (!matchId) return;
+        this.loadCoachReviewVideo(matchId, slot, 0, null);
+    },
+
+    async loadCoachReviewVideo(matchId, slot, seekTo = 0, drawing = null) {
+        const video = document.getElementById(this._coachVideoId);
+        const empty = document.getElementById('coach-review-empty');
+        if (!video) return;
+        if (empty) empty.style.display = 'none';
+        this._coachReview = { matchId, slot };
+
+        const { hlsUrl, mp4Url } = this.getStreamUrls(matchId, slot);
+        this._playRequestToken = (this._playRequestToken || 0) + 1;
+        const token = this._playRequestToken;
+        this.destroyHlsPlayer();
+        this.loadPlaybackSource(video, hlsUrl, mp4Url, token);
+
+        const onLoaded = () => {
+            video.removeEventListener('loadedmetadata', onLoaded);
+            if (seekTo > 0) video.currentTime = seekTo;
+            this.setupCoachCanvas();
+            if (drawing) this.renderCoachDrawing(drawing);
+        };
+        video.addEventListener('loadedmetadata', onLoaded);
+
+        const url = this._coachUrl('review', matchId, slot);
+        this.pushHistoryState({ view: 'coach', tab: 'review', matchId, slot }, { replace: true, url });
+
+        await this.renderCoachReviewNotes(matchId);
+    },
+
+    async renderCoachReviewNotes(matchId) {
+        const container = document.getElementById('coach-review-notes');
+        if (!container) return;
+        if (!matchId) { container.innerHTML = '<div class="session-empty">Select a match to see its notes.</div>'; return; }
+        const allNotes = this._coachBundle?.notes || [];
+        const notes = allNotes.filter((n) => n.match_id === matchId);
+        if (!notes.length) { container.innerHTML = '<div class="session-empty">No notes for this match yet.</div>'; return; }
+        container.innerHTML = notes.map((n) => `
+            <button type="button" class="coach-note-jump" onclick="app.seekCoachReviewNote(${n.id})">
+                <span>${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))}</span>
+                <strong>${this.esc(n.title)}</strong>
+            </button>
+        `).join('');
+    },
+
+    seekCoachReviewNote(noteId) {
         const note = (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId));
         if (!note) return;
-        this.openMatch(note.match_id, { initialSlot: note.slot });
-        window.setTimeout(() => {
-            const video = document.getElementById('game-video');
-            if (video) video.currentTime = Math.max(0, Number(note.timestamp_seconds || 0));
-            this.renderCoachDrawing(note.drawing || {});
-        }, 700);
-    },
-
-    async renderCoachingPanel() {
-        const panel = document.getElementById('coach-match-panel');
-        if (!panel) return;
-        if (!this.canCoach() || !this.activeMatchId) {
-            panel.hidden = true;
+        const review = this._coachReview;
+        if (!review || review.matchId !== note.match_id || review.slot !== note.slot) {
+            this.loadCoachReviewVideo(note.match_id, note.slot, Math.max(0, Number(note.timestamp_seconds || 0)), note.drawing || null);
+            const matchSel = document.getElementById('coach-review-match');
+            const slotSel = document.getElementById('coach-review-slot');
+            if (matchSel) matchSel.value = note.match_id;
+            if (slotSel) slotSel.value = note.slot;
             return;
         }
-        panel.hidden = false;
-        let bundle = this._coachBundle;
-        try {
-            bundle = await this.loadCoachBundle(this.activeMatchId);
-            this._coachBundle = { ...(this._coachBundle || {}), ...bundle };
-        } catch {
-            bundle = { players: [], notes: [] };
-        }
-        const players = bundle.players || [];
-        const notes = bundle.notes || [];
-        const playerChecklist = this.coachCheckListHtml(players.map((p) => ({
-            value: p.id,
-            label: this.playerLabel(p),
-        })), 'No players yet');
-        panel.innerHTML = `
-            <h3>Coach Notes</h3>
-            <div class="coach-mini-form">
-                <input type="text" id="coach-panel-title" placeholder="Teaching point">
-                <textarea id="coach-panel-body" rows="3" placeholder="What should players notice?"></textarea>
-                <div class="coach-panel-grid">
-                    <select id="coach-panel-category">
-                        <option value="shape">Shape</option><option value="pressing">Pressing</option>
-                        <option value="transition">Transition</option><option value="decision">Decision</option>
-                        <option value="defending">Defending</option><option value="finishing">Finishing</option>
-                        <option value="other">Other</option>
-                    </select>
-                    <select id="coach-panel-visibility">
-                        <option value="private">Private</option>
-                        <option value="team">Team</option>
-                        <option value="player">Player/family</option>
-                    </select>
-                </div>
-                <div id="coach-panel-players" class="coach-check-list compact" role="listbox" aria-label="Linked players">${playerChecklist}</div>
-                <input type="text" id="coach-panel-tags" placeholder="tags,comma,separated">
-                ${this.renderCoachTelestratorToolbar()}
-                <button type="button" class="mini-action-btn" onclick="app.saveCoachPanelNote()">Save at current time</button>
+        const video = document.getElementById(this._coachVideoId);
+        if (video) video.currentTime = Math.max(0, Number(note.timestamp_seconds || 0));
+        this.renderCoachDrawing(note.drawing || {});
+    },
+
+    renderCoachReviewForm() {
+        const container = document.getElementById('coach-review-form');
+        if (!container) return;
+        const players = this._coachBundle?.players || [];
+        container.innerHTML = `
+            <input type="text" id="coach-review-title" maxlength="160" placeholder="Title (e.g. Back line spacing)">
+            <textarea id="coach-review-body" rows="3" maxlength="4000" placeholder="What should players notice?"></textarea>
+            <div class="coach-panel-grid">
+                <select id="coach-review-category">
+                    ${NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+                </select>
+                <select id="coach-review-visibility">
+                    ${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+                </select>
             </div>
-            <div class="coach-panel-notes">
-                ${notes.length ? notes.map((n) => `
-                    <button type="button" class="coach-note-jump" onclick="app.seekCoachNote(${n.id})">
-                        <span>${this.esc(this.formatClock(n.timestamp_seconds))}</span>
-                        <strong>${this.esc(n.title)}</strong>
-                    </button>
-                `).join('') : '<div class="session-empty">No notes for this match yet.</div>'}
-            </div>
+            <div id="coach-review-players" class="coach-check-list compact" role="listbox" aria-label="Linked players">${this.coachCheckListHtml(players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet')}</div>
+            <input type="text" id="coach-review-tags" maxlength="300" placeholder="tags,comma,separated">
+            <button type="button" class="btn-primary" onclick="app.saveReviewNote()">Save note at current time</button>
         `;
-        if (this._coachModeOn) this.activateCoachCanvas();
-        else this.setupCoachCanvas();
     },
 
-    setupCoachModeToggle() {
-        const bar = document.getElementById('coach-mode-bar');
-        if (!bar) return;
-        bar.hidden = !this.canCoach();
-        const sidebar = document.getElementById('game-sidebar');
-        if (sidebar) sidebar.classList.toggle('coach-mode-on', this._coachModeOn && this.canCoach());
-        const btn = document.getElementById('coach-mode-toggle');
-        if (btn) btn.setAttribute('aria-expanded', this._coachModeOn ? 'true' : 'false');
+    async openNoteInReview(noteId) {
+        const note = (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId));
+        if (!note) return;
+        this._coachReviewPending = {
+            matchId: note.match_id, slot: note.slot,
+            seekTo: Math.max(0, Number(note.timestamp_seconds || 0)),
+            drawing: note.drawing || null,
+        };
+        this.setCoachTab('review');
     },
 
-    toggleCoachMode(force) {
-        if (!this.canCoach() || !this.activeMatchId) return;
-        const next = typeof force === 'boolean' ? force : !this._coachModeOn;
-        this._coachModeOn = next;
-        const sidebar = document.getElementById('game-sidebar');
-        if (sidebar) sidebar.classList.toggle('coach-mode-on', next);
-        const btn = document.getElementById('coach-mode-toggle');
-        if (btn) btn.setAttribute('aria-expanded', next ? 'true' : 'false');
-        if (next) {
-            this.renderCoachingPanel();
-        } else {
-            this.deactivateCoachCanvas();
-        }
-    },
-
-    async saveCoachPanelNote() {
-        const video = document.getElementById('game-video');
-        const title = document.getElementById('coach-panel-title')?.value.trim();
-        if (!title) {
-            this.showError('Add a title for the coaching note.');
-            return;
-        }
+    async saveReviewNote() {
+        const review = this._coachReview;
+        if (!review?.matchId) { this.showError('Pick a match in the Review tab first.'); return; }
+        const video = document.getElementById(this._coachVideoId);
+        const title = document.getElementById('coach-review-title')?.value.trim();
+        if (!title) { this.showError('Add a title for the coaching note.'); return; }
         const payload = {
-            match_id: this.activeMatchId,
-            slot: this.activeSlot || 'full',
+            match_id: review.matchId,
+            slot: review.slot || 'full',
             timestamp_seconds: video?.currentTime || 0,
             title,
-            body: document.getElementById('coach-panel-body')?.value.trim() || '',
-            category: document.getElementById('coach-panel-category')?.value || 'other',
-            visibility: document.getElementById('coach-panel-visibility')?.value || 'private',
-            player_ids: this.selectedValues('coach-panel-players'),
-            tags: (document.getElementById('coach-panel-tags')?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
+            body: document.getElementById('coach-review-body')?.value.trim() || '',
+            category: document.getElementById('coach-review-category')?.value || 'other',
+            visibility: document.getElementById('coach-review-visibility')?.value || 'private',
+            player_ids: Array.from(document.querySelectorAll('#coach-review-players .coach-check-option.is-selected')).map((b) => b.dataset.value),
+            tags: (document.getElementById('coach-review-tags')?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
             drawing: this._coachDrawing || {},
         };
-        await this.handleCoachCreateNote(payload);
+        try {
+            await this.createCoachNote(payload);
+            this.showSuccess('Coaching note saved.');
+            ['coach-review-title', 'coach-review-body', 'coach-review-tags'].forEach((id) => {
+                const el = document.getElementById(id); if (el) el.value = '';
+            });
+            this.clearCoachDrawing();
+            this._coachBundle = await this.loadCoachBundle();
+            await this.renderCoachReviewNotes(review.matchId);
+        } catch (err) { this.showError(err.message); }
     },
 
-    seekCoachNote(noteId) {
-        const note = (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId));
-        if (!note) return;
-        if (this.activeSlot !== note.slot) this.playSlot(note.match_id, note.slot);
-        window.setTimeout(() => {
-            const video = document.getElementById('game-video');
-            if (video) video.currentTime = Math.max(0, Number(note.timestamp_seconds || 0));
-            this.renderCoachDrawing(note.drawing || {});
-        }, 300);
-    },
+    // ===== Telestrator (operates on whichever canvas/video pair is current) =====
 
     renderCoachTelestratorToolbar() {
         const tools = [
-            ['select', 'Select'],
-            ['freehand', 'Line'],
-            ['arrow', 'Arrow'],
-            ['circle', 'Circle'],
-            ['zone', 'Zone'],
-            ['label', 'Label'],
-            ['spotlight', 'Spot'],
-            ['dim', 'Dim'],
+            ['select', 'Select'], ['freehand', 'Line'], ['arrow', 'Arrow'],
+            ['circle', 'Circle'], ['zone', 'Zone'], ['label', 'Label'],
+            ['spotlight', 'Spot'], ['dim', 'Dim'],
         ];
         const colors = ['#38bdf8', '#f97316', '#22c55e', '#facc15', '#f43f5e', '#ffffff'];
         return `
@@ -551,15 +720,11 @@ export const coachingMixin = {
     },
 
     setupCoachCanvas() {
-        const canvas = document.getElementById('coach-drawing-canvas');
-        const video = document.getElementById('game-video');
-        if (!canvas || !video || canvas._coachBound) return;
-        const resize = () => {
-            const rect = video.getBoundingClientRect();
-            canvas.width = Math.max(1, Math.round(rect.width));
-            canvas.height = Math.max(1, Math.round(rect.height));
-            this.paintCoachCanvas();
-        };
+        const canvas = document.getElementById(this._coachCanvasId);
+        const video = document.getElementById(this._coachVideoId);
+        if (!canvas || !video) return;
+        if (canvas._coachBound) { this._resizeCoachCanvas(canvas, video); return; }
+        const resize = () => this._resizeCoachCanvas(canvas, video);
         window.addEventListener('resize', resize);
         video.addEventListener('loadedmetadata', resize);
         canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
@@ -567,12 +732,20 @@ export const coachingMixin = {
         canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
         canvas.addEventListener('pointerleave', (event) => this.coachDrawEnd(event));
         canvas._coachBound = true;
+        canvas._coachResize = resize;
         resize();
+    },
+
+    _resizeCoachCanvas(canvas, video) {
+        const rect = video.getBoundingClientRect();
+        canvas.width = Math.max(1, Math.round(rect.width));
+        canvas.height = Math.max(1, Math.round(rect.height));
+        this.paintCoachCanvas();
     },
 
     activateCoachCanvas() {
         this.setupCoachCanvas();
-        const canvas = document.getElementById('coach-drawing-canvas');
+        const canvas = document.getElementById(this._coachCanvasId);
         if (!canvas) return;
         this._coachDrawingActive = true;
         canvas.style.display = 'block';
@@ -581,7 +754,7 @@ export const coachingMixin = {
     },
 
     deactivateCoachCanvas() {
-        const canvas = document.getElementById('coach-drawing-canvas');
+        const canvas = document.getElementById(this._coachCanvasId);
         if (!canvas) return;
         this._coachDrawingActive = false;
         canvas.style.display = this._coachDrawing ? 'block' : 'none';
@@ -646,7 +819,7 @@ export const coachingMixin = {
     },
 
     coachDrawPoint(event) {
-        const canvas = document.getElementById('coach-drawing-canvas');
+        const canvas = document.getElementById(this._coachCanvasId);
         const rect = canvas.getBoundingClientRect();
         return {
             x: (event.clientX - rect.left) / Math.max(1, rect.width),
@@ -740,7 +913,7 @@ export const coachingMixin = {
     },
 
     paintCoachCanvas() {
-        const canvas = document.getElementById('coach-drawing-canvas');
+        const canvas = document.getElementById(this._coachCanvasId);
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -914,11 +1087,11 @@ export const coachingMixin = {
     renderCoachDrawing(drawing) {
         this._coachDrawing = this.normalizeCoachDrawing(drawing);
         this._coachSelectedObjectIndex = null;
-        const canvas = document.getElementById('coach-drawing-canvas');
+        const canvas = document.getElementById(this._coachCanvasId);
         if (canvas) canvas.style.display = this._coachDrawing ? 'block' : (this._coachDrawingActive ? 'block' : 'none');
         if (canvas) canvas.style.pointerEvents = this._coachDrawingActive ? 'auto' : 'none';
         this.setupCoachCanvas();
-        const video = document.getElementById('game-video');
+        const video = document.getElementById(this._coachVideoId);
         if (canvas && video) {
             const rect = video.getBoundingClientRect();
             canvas.width = Math.max(1, Math.round(rect.width));
@@ -927,61 +1100,208 @@ export const coachingMixin = {
         this.paintCoachCanvas();
     },
 
+    // ===== /feedback view =====
+
     async renderMyFeedback() {
-        const container = document.getElementById('feedback-content');
-        if (!container) return;
-        container.innerHTML = '<div class="options-card"><div class="session-empty">Loading feedback...</div></div>';
+        const linkedStrip = document.getElementById('feedback-linked-strip');
+        const playlistsList = document.getElementById('feedback-playlists-list');
+        const notesList = document.getElementById('feedback-notes-list');
+        if (linkedStrip) linkedStrip.innerHTML = '';
+        if (playlistsList) playlistsList.innerHTML = '<div class="session-empty">Loading…</div>';
+        if (notesList) notesList.innerHTML = '<div class="session-empty">Loading…</div>';
         try {
             const data = await this.loadMyFeedback();
-            const reviewedNotes = new Set((data.reviews || []).filter((r) => r.note_id).map((r) => Number(r.note_id)));
-            const reviewedPlaylists = new Set((data.reviews || []).filter((r) => r.playlist_id).map((r) => Number(r.playlist_id)));
-            container.innerHTML = `
-                <div class="options-card">
-                    <div class="admin-card-head"><h3>Linked Players</h3><span class="admin-card-kicker">${(data.players || []).length}</span></div>
-                    ${(data.players || []).length ? data.players.map((p) => `<span class="coach-link-pill">${this.esc(this.playerLabel(p))}</span>`).join('') : '<div class="session-empty">No roster player is linked to this account yet.</div>'}
-                </div>
-                <div class="options-card mt-4">
-                    <div class="admin-card-head"><h3>Review Playlists</h3><span class="admin-card-kicker">${(data.playlists || []).length}</span></div>
-                    ${(data.playlists || []).length ? data.playlists.map((p) => `
-                        <article class="coach-row">
-                            <div><strong>${this.esc(p.title)}</strong><span>${p.note_ids?.length || 0} notes · ${reviewedPlaylists.has(Number(p.id)) ? 'Reviewed' : 'New'}</span><p>${this.esc(p.description || '')}</p></div>
-                            <div class="coach-row-actions">
-                                <button type="button" class="mini-action-btn" onclick="app.startFeedbackPlaylist(${p.id})">Play</button>
-                                <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">Mark reviewed</button>
-                            </div>
-                        </article>
-                    `).join('') : '<div class="session-empty">No playlists have been shared with you yet.</div>'}
-                </div>
-                <div class="options-card mt-4">
-                    <div class="admin-card-head"><h3>Coaching Notes</h3><span class="admin-card-kicker">${(data.notes || []).length}</span></div>
-                    ${(data.notes || []).length ? data.notes.map((n) => `
-                        <article class="coach-row">
-                            <div><strong>${this.esc(n.title)}</strong><span>${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${reviewedNotes.has(Number(n.id)) ? 'Reviewed' : 'New'}</span><p>${this.esc(n.body || '')}</p></div>
-                            <div class="coach-row-actions">
-                                <button type="button" class="mini-action-btn" onclick="app.openFeedbackNote(${n.id})">Watch</button>
-                                <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">Reviewed</button>
-                            </div>
-                        </article>
-                    `).join('') : '<div class="session-empty">No coaching notes have been shared with you yet.</div>'}
-                </div>
-            `;
             this._feedbackData = data;
+            this.renderFeedbackLinkedStrip(data);
+            this.renderFeedbackPlaylists(data);
+            this.renderFeedbackNotes(data);
         } catch (err) {
-            container.innerHTML = '<div class="options-card"><div class="session-empty">Could not load feedback.</div></div>';
+            if (playlistsList) playlistsList.innerHTML = '<div class="session-empty">Could not load feedback.</div>';
+            if (notesList) notesList.innerHTML = '';
             this.showError(err.message);
         }
+    },
+
+    renderFeedbackLinkedStrip(data) {
+        const el = document.getElementById('feedback-linked-strip');
+        if (!el) return;
+        const players = data?.players || [];
+        if (!players.length) {
+            el.innerHTML = '<span class="feedback-linked-empty">No roster player is linked to your account yet. Ask a coach to link you.</span>';
+            return;
+        }
+        el.innerHTML = `<span class="feedback-linked-label">Linked players:</span>` + players.map((p) => `<span class="feedback-linked-pill">${this.esc(this.playerLabel(p))}</span>`).join('');
+    },
+
+    renderFeedbackPlaylists(data) {
+        const container = document.getElementById('feedback-playlists-list');
+        if (!container) return;
+        const playlists = data?.playlists || [];
+        const reviewed = new Set((data?.reviews || []).filter((r) => r.playlist_id).map((r) => Number(r.playlist_id)));
+        if (!playlists.length) {
+            container.innerHTML = '<div class="session-empty">No review playlists have been shared with you yet.</div>';
+            return;
+        }
+        container.innerHTML = playlists.map((p) => `
+            <article class="coach-row">
+                <div>
+                    <strong>${this.esc(p.title)}</strong>
+                    <span>${p.note_ids?.length || 0} clip${p.note_ids?.length === 1 ? '' : 's'} · ${reviewed.has(Number(p.id)) ? 'Reviewed' : 'New'}</span>
+                    ${p.description ? `<p>${this.esc(p.description)}</p>` : ''}
+                </div>
+                <div class="coach-row-actions">
+                    <button type="button" class="btn-primary" onclick="app.openFeedbackPlaylist(${p.id})">Play</button>
+                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">Mark reviewed</button>
+                </div>
+            </article>
+        `).join('');
+    },
+
+    renderFeedbackNotes(data) {
+        const container = document.getElementById('feedback-notes-list');
+        if (!container) return;
+        const notes = data?.notes || [];
+        const reviewed = new Set((data?.reviews || []).filter((r) => r.note_id).map((r) => Number(r.note_id)));
+        if (!notes.length) {
+            container.innerHTML = '<div class="session-empty">No coaching notes have been shared with you yet.</div>';
+            return;
+        }
+        container.innerHTML = notes.map((n) => `
+            <article class="coach-row">
+                <div>
+                    <strong>${this.esc(n.title)}</strong>
+                    <span>${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${reviewed.has(Number(n.id)) ? 'Reviewed' : 'New'}</span>
+                    ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
+                </div>
+                <div class="coach-row-actions">
+                    <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">Watch</button>
+                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">Reviewed</button>
+                </div>
+            </article>
+        `).join('');
     },
 
     openFeedbackNote(noteId) {
         const note = (this._feedbackData?.notes || []).find((n) => Number(n.id) === Number(noteId));
         if (!note) return;
-        this.openMatch(note.match_id, { initialSlot: note.slot });
-        window.setTimeout(() => {
-            const video = document.getElementById('game-video');
-            if (video) video.currentTime = Number(note.timestamp_seconds || 0);
-            this.renderCoachDrawing(note.drawing || {});
-        }, 700);
+        this.openFeedbackPlayer({ mode: 'note', note });
     },
+
+    openFeedbackPlaylist(playlistId) {
+        const playlist = (this._feedbackData?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
+        if (!playlist) return;
+        this.openFeedbackPlayer({ mode: 'playlist', playlist, playerSource: 'feedback' });
+    },
+
+    // ===== Focused feedback / playlist player modal =====
+
+    async openFeedbackPlayer({ mode, note = null, playlist = null, playerSource = 'feedback' }) {
+        const tpl = document.getElementById('feedback-player-template');
+        if (!tpl) { this.showError('Feedback player template missing.'); return; }
+        const body = tpl.content.firstElementChild.cloneNode(true);
+
+        // Snapshot the canvas/video ids the telestrator points at, so we can restore on close.
+        const prevCanvasId = this._coachCanvasId;
+        const prevVideoId = this._coachVideoId;
+        // Rebind the painter to the modal's elements.
+        this._coachCanvasId = 'feedback-drawing-canvas';
+        this._coachVideoId = 'feedback-player-video';
+
+        const cleanup = () => {
+            this._stopFeedbackHeartbeat();
+            this.stopFeedbackPlaylistSession();
+            this.destroyHlsPlayer();
+            this.deactivateCoachCanvas();
+            this._coachDrawing = null;
+            this._coachCanvasId = prevCanvasId;
+            this._coachVideoId = prevVideoId;
+            this._feedbackPlayer = null;
+        };
+
+        const onMount = () => {
+            this._feedbackPlayer = { body, mode, note, playlist, playerSource };
+            if (mode === 'note') {
+                body.querySelector('[data-field="title"]').textContent = note.title || 'Coaching note';
+                body.querySelector('[data-field="subtitle"]').textContent = `${this.matchLabel(note.match_id)} · ${this.formatClock(note.timestamp_seconds)} · ${this.slotLabel(note.slot)}`;
+                body.querySelector('[data-field="body"]').textContent = note.body || '';
+                this._loadFeedbackVideoForNote(note);
+            } else if (mode === 'playlist') {
+                body.querySelector('[data-field="title"]').textContent = playlist.title || 'Review playlist';
+                body.querySelector('[data-field="subtitle"]').textContent = `${(playlist.note_ids || []).length} clips`;
+                body.querySelector('[data-field="body"]').textContent = playlist.description || '';
+                this.startCoachingPlaylistSession(playlist, { playerSource });
+            }
+        };
+
+        await this.formModal({
+            title: mode === 'playlist' ? 'Review Session' : 'Coaching Note',
+            kicker: 'Feedback',
+            body,
+            confirmLabel: 'Mark reviewed',
+            cancelLabel: 'Close',
+            size: 'wide',
+            onMount,
+            onSubmit: async (close) => {
+                try {
+                    if (mode === 'note' && note) await this.markFeedbackReviewed({ note_id: note.id });
+                    else if (mode === 'playlist' && playlist) await this.markFeedbackReviewed({ playlist_id: playlist.id });
+                    this.showSuccess('Marked reviewed.');
+                    await this.renderMyFeedback();
+                } catch (err) { this.showError(err.message); }
+                close(true);
+            },
+        });
+        cleanup();
+    },
+
+    async _loadFeedbackVideoForNote(note) {
+        const video = document.getElementById('feedback-player-video');
+        if (!video) return;
+        const { hlsUrl, mp4Url } = this.getStreamUrls(note.match_id, note.slot);
+        this._playRequestToken = (this._playRequestToken || 0) + 1;
+        const token = this._playRequestToken;
+        this.destroyHlsPlayer();
+        this.loadPlaybackSource(video, hlsUrl, mp4Url, token);
+
+        const onLoaded = () => {
+            video.removeEventListener('loadedmetadata', onLoaded);
+            video.currentTime = Math.max(0, Number(note.timestamp_seconds || 0));
+            this.setupCoachCanvas();
+            this.renderCoachDrawing(note.drawing || {});
+            video.play().catch(() => {});
+        };
+        video.addEventListener('loadedmetadata', onLoaded);
+        this._startFeedbackHeartbeat(note.match_id, note.slot, video);
+    },
+
+    _startFeedbackHeartbeat(matchId, slot, videoEl) {
+        this._stopFeedbackHeartbeat();
+        if (!matchId || !slot) return;
+        const url = `/api/matches/${encodeURIComponent(matchId)}/heartbeat?slot=${encodeURIComponent(slot)}`;
+        const ping = async ({ skipPausedCheck = false } = {}) => {
+            if (!skipPausedCheck && videoEl && (videoEl.paused || videoEl.ended)) return;
+            try {
+                const resp = await fetch(url, { method: 'POST', credentials: 'same-origin' });
+                if (resp.status === 403) {
+                    if (videoEl) videoEl.pause();
+                    this.showError?.('This stream was disconnected by an administrator.');
+                    this._stopFeedbackHeartbeat();
+                    this.destroyHlsPlayer();
+                }
+            } catch { /* transient — try again next tick */ }
+        };
+        ping({ skipPausedCheck: true });
+        this._feedbackHeartbeatTimer = window.setInterval(() => ping(), 10000);
+    },
+
+    _stopFeedbackHeartbeat() {
+        if (this._feedbackHeartbeatTimer) {
+            window.clearInterval(this._feedbackHeartbeatTimer);
+            this._feedbackHeartbeatTimer = null;
+        }
+    },
+
+    // ===== Playlist controller (operates on whichever video the modal exposes) =====
 
     playlistItems(playlist) {
         if (Array.isArray(playlist?.items) && playlist.items.length) return playlist.items;
@@ -990,35 +1310,22 @@ export const coachingMixin = {
         return (playlist?.note_ids || []).map((id) => byId.get(Number(id))).filter(Boolean);
     },
 
-    startCoachPlaylist(playlistId) {
-        const playlist = (this._coachBundle?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
-        if (playlist) this.startCoachingPlaylistSession(playlist);
-    },
-
-    startFeedbackPlaylist(playlistId) {
-        const playlist = (this._feedbackData?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
-        if (playlist) this.startCoachingPlaylistSession(playlist);
-    },
-
-    startCoachingPlaylistSession(playlist) {
+    startCoachingPlaylistSession(playlist, { playerSource = 'feedback' } = {}) {
         const items = this.playlistItems(playlist);
         if (!items.length) {
             this.showError('This playlist has no playable notes.');
             return;
         }
-        this.stopCoachingPlaylistSession({ keepView: true });
+        this.stopFeedbackPlaylistSession();
         this._coachPlaylistSession = {
-            playlist,
-            items,
-            index: 0,
-            frozeCurrentItem: false,
-            paused: false,
-            opening: false,
+            playlist, items, index: 0,
+            frozeCurrentItem: false, paused: false, opening: false,
+            playerSource,
         };
         this.openCoachingPlaylistItem(0);
     },
 
-    openCoachingPlaylistItem(index) {
+    async openCoachingPlaylistItem(index) {
         const session = this._coachPlaylistSession;
         if (!session) return;
         if (index < 0 || index >= session.items.length) {
@@ -1030,24 +1337,30 @@ export const coachingMixin = {
         session.frozeCurrentItem = false;
         session.opening = true;
         this.renderPlaylistSessionRail();
-        this.openMatch(item.match_id, { initialSlot: item.slot, pushHistory: false, scrollTop: false });
-        window.setTimeout(() => {
-            if (this._coachPlaylistSession !== session) return;
-            const video = document.getElementById('game-video');
-            if (!video) return;
+        const video = document.getElementById('feedback-player-video');
+        if (!video) { session.opening = false; return; }
+        const { hlsUrl, mp4Url } = this.getStreamUrls(item.match_id, item.slot);
+        this._playRequestToken = (this._playRequestToken || 0) + 1;
+        const token = this._playRequestToken;
+        this.destroyHlsPlayer();
+        this.loadPlaybackSource(video, hlsUrl, mp4Url, token);
+        const onLoaded = () => {
+            video.removeEventListener('loadedmetadata', onLoaded);
             const start = Math.max(0, Number(item.timestamp_seconds || 0) - Number(session.playlist.pre_roll_seconds ?? 5));
             video.currentTime = start;
             video.play().catch(() => {});
             session.opening = false;
             this.startPlaylistMonitor();
-        }, 700);
+            this._startFeedbackHeartbeat(item.match_id, item.slot, video);
+        };
+        video.addEventListener('loadedmetadata', onLoaded);
     },
 
     startPlaylistMonitor() {
         this.stopPlaylistMonitor();
         this._coachPlaylistMonitor = window.setInterval(() => {
             const session = this._coachPlaylistSession;
-            const video = document.getElementById('game-video');
+            const video = document.getElementById('feedback-player-video');
             if (!session || !video || session.opening || session.paused) return;
             const item = session.items[session.index];
             const timestamp = Number(item.timestamp_seconds || 0);
@@ -1082,39 +1395,32 @@ export const coachingMixin = {
     },
 
     renderPlaylistSessionRail() {
-        let rail = document.getElementById('coach-playlist-session');
-        const wrapper = document.querySelector('.player-wrapper');
+        const player = this._feedbackPlayer;
+        if (!player) return;
+        const rail = player.body.querySelector('[data-field="rail"]');
+        if (!rail) return;
         const session = this._coachPlaylistSession;
-        if (!wrapper || !session) {
-            if (rail) rail.remove();
-            return;
-        }
-        if (!rail) {
-            rail = document.createElement('div');
-            rail.id = 'coach-playlist-session';
-            rail.className = 'coach-playlist-session';
-            wrapper.appendChild(rail);
-        }
+        if (!session) { rail.hidden = true; rail.innerHTML = ''; return; }
+        rail.hidden = false;
         const item = session.items[session.index];
         rail.innerHTML = `
-            <div>
+            <div class="feedback-rail-info">
                 <span>Review Session</span>
                 <strong>${this.esc(session.playlist.title)}</strong>
                 <small>${session.index + 1} of ${session.items.length} · ${this.esc(item.title)} · ${this.esc(item.category || 'note')}</small>
             </div>
-            <div class="coach-playlist-controls">
+            <div class="feedback-rail-controls">
                 <button type="button" class="mini-action-btn" onclick="app.previousCoachingPlaylistItem()">Prev</button>
                 <button type="button" class="mini-action-btn" onclick="app.toggleCoachingPlaylistPause()">${session.paused ? 'Resume' : 'Pause'}</button>
                 <button type="button" class="mini-action-btn" onclick="app.restartCoachingPlaylistItem()">Restart</button>
                 <button type="button" class="mini-action-btn" onclick="app.nextCoachingPlaylistItem()">Next</button>
-                <button type="button" class="mini-action-btn" onclick="app.stopCoachingPlaylistSession()">Exit</button>
             </div>
         `;
     },
 
     toggleCoachingPlaylistPause() {
         const session = this._coachPlaylistSession;
-        const video = document.getElementById('game-video');
+        const video = document.getElementById('feedback-player-video');
         if (!session || !video) return;
         session.paused = !session.paused;
         if (session.paused) video.pause();
@@ -1141,22 +1447,30 @@ export const coachingMixin = {
         this.stopPlaylistMonitor();
         const session = this._coachPlaylistSession;
         this._coachPlaylistSession = null;
-        const rail = document.getElementById('coach-playlist-session');
-        if (rail) rail.remove();
-        const video = document.getElementById('game-video');
+        this.renderPlaylistSessionRail();
+        const video = document.getElementById('feedback-player-video');
         if (video) video.pause();
         if (session) this.showSuccess('Playlist finished.');
     },
 
-    stopCoachingPlaylistSession({ keepView = false } = {}) {
+    stopFeedbackPlaylistSession() {
         this.stopPlaylistMonitor();
         this._coachPlaylistSession = null;
-        const rail = document.getElementById('coach-playlist-session');
-        if (rail) rail.remove();
-        if (!keepView) {
-            const video = document.getElementById('game-video');
-            if (video) video.pause();
-        }
+        this.renderPlaylistSessionRail();
+    },
+
+    // Backwards-compat shims for any lingering callers (e.g. teardownGameView).
+    stopCoachingPlaylistSession() { this.stopFeedbackPlaylistSession(); },
+
+    // ===== Match-page deep link to /coach?tab=review =====
+
+    updateCoachThisMatchLink(match) {
+        const link = document.getElementById('coach-this-match-link');
+        if (!link) return;
+        if (!match || !this.canCoach()) { link.hidden = true; return; }
+        const slot = this.activeSlot || 'full';
+        link.href = this._coachUrl('review', match.id, slot);
+        link.hidden = false;
     },
 
     async markFeedbackItemReviewed(data) {
@@ -1164,8 +1478,6 @@ export const coachingMixin = {
             await this.markFeedbackReviewed(data);
             this.showSuccess('Marked reviewed.');
             await this.renderMyFeedback();
-        } catch (err) {
-            this.showError(err.message);
-        }
+        } catch (err) { this.showError(err.message); }
     },
 };
