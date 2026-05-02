@@ -160,7 +160,7 @@ _VALID_NOTE_CATEGORIES = {
 }
 _VALID_COACHING_VISIBILITY = {"private", "team", "player", "unlisted"}
 _VALID_SLOTS = {"full", "first_half", "second_half"}
-_VALID_DRAWING_TYPES = {"freehand", "arrow", "circle", "zone", "label", "spotlight", "dim"}
+_VALID_DRAWING_TYPES = {"freehand", "arrow", "circle", "zone", "label", "spotlight", "dim", "formation"}
 _VALID_DRAWING_POINT_KEYS = {"x", "y", "x1", "y1", "x2", "y2", "w", "h", "opacity"}
 
 
@@ -255,6 +255,28 @@ def validate_drawing_payload(value: dict[str, Any] | None) -> dict[str, Any]:
                 raise ValueError("label drawing text must be 1 to 40 characters")
         elif item_type == "dim" and "opacity" in item:
             _validate_unit_number(item["opacity"], "opacity")
+        elif item_type == "formation":
+            anchors = item.get("anchors", [])
+            if not isinstance(anchors, list) or len(anchors) < 3 or len(anchors) > 16:
+                raise ValueError("formation anchors must be a list of 3 to 16 entries")
+            for anchor in anchors:
+                if not isinstance(anchor, dict):
+                    raise ValueError("formation anchor must be an object")
+                for key in ("x", "y"):
+                    if key not in anchor:
+                        raise ValueError("formation anchor requires x and y")
+                    _validate_unit_number(anchor[key], key)
+                pid = anchor.get("player_id")
+                if pid is not None and (not isinstance(pid, str) or len(pid) > 64):
+                    raise ValueError("formation anchor player_id must be a short string")
+                lab = anchor.get("label")
+                if lab is not None and (not isinstance(lab, str) or len(lab) > 8):
+                    raise ValueError("formation anchor label must be a short string")
+            hull_points = item.get("hull_points", [])
+            if not isinstance(hull_points, list) or len(hull_points) < 3 or len(hull_points) > 16:
+                raise ValueError("formation hull_points must be a polygon with 3 to 16 entries")
+            for point in hull_points:
+                _validate_drawing_point(point)
     return value
 
 

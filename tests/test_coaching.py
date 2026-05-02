@@ -183,6 +183,115 @@ async def test_v2_drawing_validation(client, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_formation_drawing_validation(client, auth_headers):
+    """The formation object type carries N anchors + a convex-hull polygon.
+
+    Roundtrip a valid formation; reject one with fewer than 3 anchors.
+    """
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel",
+        "away_team": "Formation FC",
+        "date": "2026-05-03",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    valid = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "first_half",
+        "timestamp_seconds": 30,
+        "title": "Back line spacing",
+        "category": "shape",
+        "visibility": "team",
+        "drawing": {
+            "version": 2,
+            "objects": [
+                {
+                    "type": "formation",
+                    "color": "#38bdf8",
+                    "width": 3,
+                    "anchors": [
+                        {"x": 0.20, "y": 0.30, "player_id": "p-ava", "label": "7"},
+                        {"x": 0.50, "y": 0.40},
+                        {"x": 0.60, "y": 0.20, "label": "9"},
+                    ],
+                    "hull_points": [
+                        {"x": 0.20, "y": 0.30},
+                        {"x": 0.60, "y": 0.20},
+                        {"x": 0.50, "y": 0.40},
+                    ],
+                },
+            ],
+        },
+    }, headers=auth_headers)
+    assert valid.status_code == 200
+    obj = valid.json()["note"]["drawing"]["objects"][0]
+    assert obj["type"] == "formation"
+    assert len(obj["anchors"]) == 3
+    assert obj["anchors"][0]["player_id"] == "p-ava"
+    assert obj["anchors"][0]["label"] == "7"
+
+    too_few = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 1,
+        "title": "Bad formation",
+        "drawing": {
+            "version": 2,
+            "objects": [{
+                "type": "formation",
+                "anchors": [{"x": 0.1, "y": 0.1}, {"x": 0.2, "y": 0.2}],
+                "hull_points": [{"x": 0.1, "y": 0.1}, {"x": 0.2, "y": 0.2}],
+            }],
+        },
+    }, headers=auth_headers)
+    assert too_few.status_code == 422
+
+    # hull_points must hold a polygon (3+ vertices). 0 entries is a
+    # geometric no-op that passed an earlier draft of the validator;
+    # cover it explicitly so the regression doesn't return.
+    empty_hull = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 1,
+        "title": "Empty hull",
+        "drawing": {
+            "version": 2,
+            "objects": [{
+                "type": "formation",
+                "anchors": [
+                    {"x": 0.1, "y": 0.1},
+                    {"x": 0.2, "y": 0.2},
+                    {"x": 0.3, "y": 0.1},
+                ],
+                "hull_points": [],
+            }],
+        },
+    }, headers=auth_headers)
+    assert empty_hull.status_code == 422
+
+    # And explicitly reject a 2-point hull (degenerate polygon).
+    short_hull = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 1,
+        "title": "Two-point hull",
+        "drawing": {
+            "version": 2,
+            "objects": [{
+                "type": "formation",
+                "anchors": [
+                    {"x": 0.1, "y": 0.1},
+                    {"x": 0.2, "y": 0.2},
+                    {"x": 0.3, "y": 0.1},
+                ],
+                "hull_points": [{"x": 0.1, "y": 0.1}, {"x": 0.3, "y": 0.1}],
+            }],
+        },
+    }, headers=auth_headers)
+    assert short_hull.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_visible_playlist_grants_access_to_private_items(client, auth_headers):
     await client.post("/api/users", json={
         "username": "playlistviewer",

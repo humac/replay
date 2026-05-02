@@ -5832,6 +5832,125 @@ details.diag-row-details[open] > summary::after {
     border-color: rgba(0, 0, 0, 0.14);
 }
 
+/* Formation tool — controls panel under the toolbar (Quick/Linked toggle,
+   roster picker, anchor counter, Cancel/Done). */
+.coach-formation-controls {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.coach-formation-controls[hidden] { display: none; }
+
+.coach-formation-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+}
+
+.coach-formation-head strong {
+    font-family: var(--font-heading);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.coach-formation-modes {
+    display: inline-flex;
+    gap: 0.3rem;
+}
+
+.coach-formation-roster {
+    max-height: 168px;
+    overflow: auto;
+    display: grid;
+    gap: 0.3rem;
+    padding: 0.3rem;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.18);
+    /* Match .coach-check-list scrollbar theming so realistic team rosters
+       (15-25 players) overflow into a styled scrollbar, not the wider
+       global default. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(23, 113, 201, 0.75) rgba(255, 255, 255, 0.06);
+}
+
+.coach-formation-roster::-webkit-scrollbar {
+    width: 8px;
+}
+
+.coach-formation-roster::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+}
+
+.coach-formation-roster::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(23, 113, 201, 0.85), rgba(56, 189, 248, 0.65));
+    border: 2px solid rgba(6, 10, 18, 0.92);
+    border-radius: 999px;
+}
+
+[data-theme="light"] .coach-formation-roster {
+    scrollbar-color: rgba(23, 113, 201, 0.7) rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .coach-formation-roster::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .coach-formation-roster::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(23, 113, 201, 0.78), rgba(15, 118, 178, 0.62));
+    border-color: rgba(255, 255, 255, 0.85);
+}
+
+/* Reuse the `.coach-check-option` pill but show queue order in the box.
+   The number in the box is the placement order, not a checkmark. */
+.coach-formation-roster .coach-check-option .coach-check-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.coach-formation-hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.coach-formation-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.coach-formation-count {
+    margin-right: auto;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+}
+
+[data-theme="light"] .coach-formation-controls {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .coach-formation-roster {
+    background: rgba(255, 255, 255, 0.6);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
 .coach-tool-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
