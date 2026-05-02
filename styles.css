@@ -2097,6 +2097,29 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     border-color: var(--accent);
 }
 
+/* Variant for the row's primary action (e.g. Watch / Play in My Feedback).
+   Same footprint as .mini-action-btn so it stays in the row-level tier; the
+   accent fill just signals which button is the dominant one in the row. */
+.mini-action-btn-primary {
+    background: rgba(23, 113, 201, 0.18);
+    border-color: rgba(23, 113, 201, 0.42);
+    color: var(--text);
+}
+
+.mini-action-btn-primary:hover {
+    background: rgba(23, 113, 201, 0.28);
+    border-color: var(--accent);
+}
+
+[data-theme="light"] .mini-action-btn-primary {
+    background: rgba(23, 113, 201, 0.14);
+    border-color: rgba(23, 113, 201, 0.4);
+}
+
+[data-theme="light"] .mini-action-btn-primary:hover {
+    background: rgba(23, 113, 201, 0.22);
+}
+
 .session-empty {
     color: var(--text-muted);
     font-size: 0.88rem;

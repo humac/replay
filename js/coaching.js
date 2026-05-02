@@ -540,6 +540,7 @@ export const coachingMixin = {
     },
 
     tearDownCoachReview() {
+        this._stopFeedbackHeartbeat();
         const video = document.getElementById(this._coachVideoId);
         if (video) {
             video.pause();
@@ -585,6 +586,9 @@ export const coachingMixin = {
             if (drawing) this.renderCoachDrawing(drawing);
         };
         video.addEventListener('loadedmetadata', onLoaded);
+        // Keep the VOD session warm: the streams registry reaps idle sessions
+        // after 15 s and admin "kill" only propagates to active heartbeaters.
+        this._startFeedbackHeartbeat(matchId, slot, video);
 
         const url = this._coachUrl('review', matchId, slot);
         this.pushHistoryState({ view: 'coach', tab: 'review', matchId, slot }, { replace: true, url });
@@ -741,6 +745,19 @@ export const coachingMixin = {
         canvas.width = Math.max(1, Math.round(rect.width));
         canvas.height = Math.max(1, Math.round(rect.height));
         this.paintCoachCanvas();
+    },
+
+    // Detach the global resize listener registered by setupCoachCanvas.
+    // The Review tab's canvas is persistent in the DOM, so this is only
+    // needed for the feedback player modal whose canvas is removed when
+    // the modal closes — without this the closure stays attached to
+    // window, leaking the canvas it captured.
+    teardownCoachCanvasListeners(canvasId) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || !canvas._coachResize) return;
+        window.removeEventListener('resize', canvas._coachResize);
+        canvas._coachResize = null;
+        canvas._coachBound = false;
     },
 
     activateCoachCanvas() {
@@ -1150,7 +1167,7 @@ export const coachingMixin = {
                     ${p.description ? `<p>${this.esc(p.description)}</p>` : ''}
                 </div>
                 <div class="coach-row-actions">
-                    <button type="button" class="btn-primary" onclick="app.openFeedbackPlaylist(${p.id})">Play</button>
+                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openFeedbackPlaylist(${p.id})">Play</button>
                     <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">Mark reviewed</button>
                 </div>
             </article>
@@ -1174,7 +1191,7 @@ export const coachingMixin = {
                     ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
                 </div>
                 <div class="coach-row-actions">
-                    <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">Watch</button>
+                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openFeedbackNote(${n.id})">Watch</button>
                     <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">Reviewed</button>
                 </div>
             </article>
@@ -1212,6 +1229,11 @@ export const coachingMixin = {
             this.stopFeedbackPlaylistSession();
             this.destroyHlsPlayer();
             this.deactivateCoachCanvas();
+            // Modal canvas was cloned fresh from the template and is removed
+            // from the DOM when the modal closes. Detach the window-resize
+            // listener bound to it so the closure (and the canvas it captured)
+            // can be garbage-collected.
+            this.teardownCoachCanvasListeners('feedback-drawing-canvas');
             this._coachDrawing = null;
             this._coachCanvasId = prevCanvasId;
             this._coachVideoId = prevVideoId;

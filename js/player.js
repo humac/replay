@@ -415,6 +415,9 @@ export const playerMixin = {
                 '', url,
             );
         }
+        // The "Coach this match in Review →" deep-link encodes the active
+        // slot in its href; refresh it whenever the coach switches halves.
+        this.updateCoachThisMatchLink?.(match);
         const playRequestToken = ++this._playRequestToken;
         const videoEl = document.getElementById('game-video');
         const placeholder = document.getElementById('video-placeholder');
