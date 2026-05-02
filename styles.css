@@ -6266,16 +6266,28 @@ details.diag-row-details[open] > summary::after {
     padding-bottom: 0.6rem;
 }
 
-/* Review mode is wider than the rest of the coach workspace so the video can
- * actually breathe on a 1440+ monitor. The 1600px cap keeps text + form rows
- * from sprawling on a 24" screen, while the gutters scale down naturally on
- * narrow viewports. The page-head + subnav are widened in lockstep so the
- * "Coaching workspace" eyebrow + Review pill align with the cockpit edges. */
+/* Review mode is wider than the rest of the coach workspace so the video
+ * can actually breathe on a 1440+ monitor. We need to lift two caps:
+ *   1. #app-container (the outer page shell) caps everything at 1600px and
+ *      pads 3rem on each side — relax both for review mode.
+ *   2. .coach-page-head, .coach-subnav, .coach-tab-panel default to 1180px
+ *      to match the rest of the workspace — widen them.
+ * The cockpit then scales with the viewport up to ~2200px, after which it
+ * holds (form rows look weird sprawling across a 28" monitor).
+ * The body:has(...) selector confines the relaxation to Review mode only;
+ * Roster / Notes / Playlists / Admin / public Season keep their original
+ * 1600px cap and 3rem padding. */
 @media (min-width: 1024px) {
+    body:has(#coach-view.is-review-mode) #app-container {
+        max-width: min(100% - 1.5rem, 2200px);
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+    }
+
     #coach-view.is-review-mode .coach-page-head,
     #coach-view.is-review-mode .coach-subnav,
     #coach-view.is-review-mode .coach-tab-panel {
-        max-width: min(100% - 2rem, 1600px);
+        max-width: 100%;
     }
 }
 
