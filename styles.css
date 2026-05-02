@@ -6266,6 +6266,19 @@ details.diag-row-details[open] > summary::after {
     padding-bottom: 0.6rem;
 }
 
+/* Review mode is wider than the rest of the coach workspace so the video can
+ * actually breathe on a 1440+ monitor. The 1600px cap keeps text + form rows
+ * from sprawling on a 24" screen, while the gutters scale down naturally on
+ * narrow viewports. The page-head + subnav are widened in lockstep so the
+ * "Coaching workspace" eyebrow + Review pill align with the cockpit edges. */
+@media (min-width: 1024px) {
+    #coach-view.is-review-mode .coach-page-head,
+    #coach-view.is-review-mode .coach-subnav,
+    #coach-view.is-review-mode .coach-tab-panel {
+        max-width: min(100% - 2rem, 1600px);
+    }
+}
+
 @media (min-width: 1024px) {
     #coach-view.is-review-mode .coach-review-grid {
         /* Video column is the dominant flex; inspector is fixed at 340px so it
