@@ -7083,6 +7083,134 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.18);
 }
 
+/* ============================================================
+ * Sprint 7: Coach Review keyboard shortcuts help popover
+ *
+ * Compact themed dialog above the cockpit. Toggled by the picker bar
+ * "?" button OR by pressing the "?" key anywhere in Coach Review. The
+ * "?" key shortcut is wired in js/coaching.js _handleCoachReviewShortcut.
+ * ============================================================ */
+.coach-shortcuts-help {
+    margin: 0 0 0.6rem;
+    padding: 0.7rem 0.85rem;
+    background: var(--bg-panel, rgba(255, 255, 255, 0.04));
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+    animation: coachShortcutsHelpFade 160ms ease-out;
+}
+.coach-shortcuts-help[hidden] { display: none; }
+
+.coach-shortcuts-help-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    margin-bottom: 0.4rem;
+}
+.coach-shortcuts-help-head h4 {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.coach-shortcuts-help-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.35rem 0.85rem;
+}
+.coach-shortcuts-help-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--text-main);
+}
+.coach-shortcuts-help-list li > span {
+    color: var(--text-muted);
+    flex: 1 1 auto;
+}
+.coach-shortcuts-help kbd {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    color: var(--text-main);
+    line-height: 1.4;
+    min-width: 1.4em;
+    text-align: center;
+}
+
+@keyframes coachShortcutsHelpFade {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+[data-theme="light"] .coach-shortcuts-help {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+[data-theme="light"] .coach-shortcuts-help kbd {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(0, 0, 0, 0.18);
+    color: #1f2937;
+}
+
+/* ============================================================
+ * Sprint 8: pointer-coarse / mobile a11y polish
+ *
+ * On touch devices and narrow viewports bump compact controls up to
+ * the 44 px WCAG-recommended tap target. The Sprint 3 telestrator
+ * toolbar already does this; extend the same rule to the Sprint 2
+ * picker bar buttons (Save, Focus, Tools, Shortcuts), Sprint 5
+ * timeline chips, and Sprint 6 focus toggle.
+ * ============================================================ */
+@media (pointer: coarse), (max-width: 899px) {
+    /* Catch every interactive element inside the picker bar in one pass
+     * so a future button added without the *-save / *-focus class still
+     * meets the 44 px minimum. */
+    .coach-review-picker button,
+    .coach-review-picker select,
+    .coach-review-picker [role="button"],
+    .coach-review-picker-save,
+    .coach-review-picker-focus,
+    .coach-timeline-chip,
+    .coach-shortcuts-help-head .mini-action-btn {
+        min-height: 44px;
+    }
+}
+
+/* ============================================================
+ * Sprint 8: visible focus rings on every new interactive control
+ *
+ * Browser-default focus outlines are inconsistent (different colour
+ * on Chrome vs Safari, sometimes invisible in dark mode); we already
+ * theme tool buttons + chips, but the Sprint 7 shortcuts dialog's
+ * <kbd> tags and a few less-trafficked buttons need a uniform
+ * :focus-visible ring so keyboard users always see where focus is.
+ * ============================================================ */
+.coach-shortcuts-help button:focus-visible,
+.coach-review-picker-save:focus-visible,
+.coach-timeline-chip:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.40);
+    border-color: var(--accent, #298bed);
+}
+[data-theme="light"] .coach-shortcuts-help button:focus-visible,
+[data-theme="light"] .coach-review-picker-save:focus-visible,
+[data-theme="light"] .coach-timeline-chip:focus-visible {
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.32);
+    border-color: var(--accent, #1565c0);
+}
+
 /* Match-page deep link to /coach?tab=review (coach/admin only) */
 .coach-this-match-link {
     text-decoration: none;

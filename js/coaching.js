@@ -54,6 +54,10 @@ export const coachingMixin = {
     _coachFocusEscapeHandler: null,
     _coachFocusInspectorOpen: false,
 
+    // Sprint 7: Coach Review keyboard shortcut handler. Bound only while
+    // Review is the active sub-tab; uninstalled on tab change / teardown.
+    _coachShortcutsHandler: null,
+
     // ===== top-level view entry points =====
 
     async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true, tab = null, matchId = null, slot = null } = {}) {
@@ -125,6 +129,12 @@ export const coachingMixin = {
         // Sprint 6: exit focus mode when leaving Review so it doesn't leak
         // into Roster/Notes/Playlists. Idempotent — no-op if not in focus.
         if (name !== 'review') this.exitCoachFocusMode();
+        // Sprint 7: install / tear down Coach-Review-scoped keyboard
+        // shortcuts. Listener is bound only while Review is active so the
+        // shortcuts (Space, J/L, S, A/F/Z/C/T/D, …) don't intercept keys
+        // on Roster / Notes / Playlists / Feedback / public match.
+        if (name === 'review') this.installCoachReviewShortcuts();
+        else this.uninstallCoachReviewShortcuts();
         // Sprint 2 polish: install a window-resize listener that keeps the
         // inspector height matched to the video wrapper. Bound once globally;
         // _syncCoachReviewSideHeight no-ops when the Review tab isn't active.
@@ -606,6 +616,11 @@ export const coachingMixin = {
         // different code path (e.g. external API call to tearDownCoachReview),
         // make sure the listener + body class are cleaned up.
         this.exitCoachFocusMode();
+        // Sprint 7: defense-in-depth — if a caller invokes tearDownCoachReview
+        // without going through setCoachTab() (which already toggles install/
+        // uninstall in lockstep), make sure the global keydown listener is
+        // also removed. Safe to call when no handler is installed.
+        this.uninstallCoachReviewShortcuts();
     },
 
     _renderCoachReviewTime(video) {
@@ -993,6 +1008,152 @@ export const coachingMixin = {
     toggleCoachFocusInspector() {
         if (this._coachFocusInspectorOpen) this.closeCoachFocusInspector();
         else this.openCoachFocusInspector();
+    },
+
+    // ===== Sprint 7: Coach Review keyboard shortcuts =====
+    //
+    // Per the plan: scoped to Coach > Review only. Listener installed on
+    // setCoachTab('review') and removed when leaving the sub-tab so other
+    // surfaces (Roster, Notes, Playlists, Feedback, public match) are
+    // unaffected. Skips while focus is in any text input / textarea /
+    // select / contenteditable so typing isn't intercepted. Reuses
+    // existing video methods (currentTime mutation, paused) and existing
+    // tool / save methods so behavior stays consistent with mouse use.
+
+    installCoachReviewShortcuts() {
+        if (this._coachShortcutsHandler) return;  // already installed
+        this._coachShortcutsHandler = (event) => this._handleCoachReviewShortcut(event);
+        window.addEventListener('keydown', this._coachShortcutsHandler);
+    },
+
+    uninstallCoachReviewShortcuts() {
+        if (!this._coachShortcutsHandler) return;
+        window.removeEventListener('keydown', this._coachShortcutsHandler);
+        this._coachShortcutsHandler = null;
+    },
+
+    _coachShortcutShouldSkip(event) {
+        // Don't intercept when typing or operating a form control.
+        const target = event.target;
+        if (!target) return false;
+        const tag = (target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+        if (target.isContentEditable) return true;
+        // Don't fight other modifier-driven shortcuts (Cmd+S, Ctrl+R, …).
+        if (event.metaKey || event.ctrlKey || event.altKey) return true;
+        return false;
+    },
+
+    _handleCoachReviewShortcut(event) {
+        if (this._coachShortcutShouldSkip(event)) return;
+        // The Sprint 6 focus-mode Escape handler runs in the capture
+        // phase, so it wins over this bubble-phase handler when active.
+        // We still bind Escape here as a fallback for cancelling a
+        // formation draft when focus mode is OFF. (Skip-typing guard
+        // above already lets Escape pass through native input handling
+        // when a form control is focused.)
+        if (event.key === 'Escape' && !this._coachFocusMode) {
+            if (this._coachFormationDraft) {
+                event.preventDefault();
+                this._coachFormationDraft = null;
+                this._renderFormationControls?.();
+                this.paintCoachCanvas?.();
+            }
+            return;
+        }
+        // Only intercept when the Review tab is actually showing.
+        const reviewPanel = document.getElementById('coach-tab-review');
+        if (!reviewPanel || reviewPanel.hidden) return;
+        const video = document.getElementById(this._coachVideoId);
+
+        switch (event.key) {
+            case ' ':
+            case 'k':
+                if (!video) return;
+                event.preventDefault();
+                if (video.paused) video.play().catch(() => {});
+                else video.pause();
+                return;
+            case 'ArrowLeft':
+                if (!video) return;
+                event.preventDefault();
+                video.currentTime = Math.max(0, (video.currentTime || 0) - (event.shiftKey ? 10 : 1));
+                return;
+            case 'ArrowRight':
+                if (!video) return;
+                event.preventDefault();
+                video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + (event.shiftKey ? 10 : 1));
+                return;
+            case 'j':
+            case 'J':
+                if (!video) return;
+                event.preventDefault();
+                video.currentTime = Math.max(0, (video.currentTime || 0) - 5);
+                return;
+            case 'l':
+            case 'L':
+                if (!video) return;
+                event.preventDefault();
+                video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + 5);
+                return;
+            case 's':
+            case 'S':
+                event.preventDefault();
+                this.saveReviewNote();
+                return;
+            case 'a':
+            case 'A':
+                event.preventDefault();
+                this.setCoachDrawingTool('arrow');
+                return;
+            case 'f':
+            case 'F':
+                event.preventDefault();
+                this.setCoachDrawingTool('freehand');
+                return;
+            case 'z':
+            case 'Z':
+                event.preventDefault();
+                this.setCoachDrawingTool('zone');
+                return;
+            case 'c':
+            case 'C':
+                event.preventDefault();
+                this.setCoachDrawingTool('circle');
+                return;
+            case 't':
+            case 'T':
+                event.preventDefault();
+                this.setCoachDrawingTool('label');
+                return;
+            case 'd':
+            case 'D':
+                // Per the plan: "D — Dim/spotlight tool, whichever is most useful".
+                // Spotlight is the more interactive of the two (the dim is just
+                // a global overlay), so favour it.
+                event.preventDefault();
+                this.setCoachDrawingTool('spotlight');
+                return;
+            case '?':
+                // Toggle the shortcuts help popover. The plan asks for "a
+                // small keyboard shortcuts help popover or tooltip".
+                event.preventDefault();
+                this.toggleCoachShortcutsHelp();
+                return;
+        }
+    },
+
+    toggleCoachShortcutsHelp() {
+        const dialog = document.getElementById('coach-shortcuts-help');
+        if (!dialog) return;
+        const willOpen = dialog.hidden;
+        dialog.hidden = !willOpen;
+        // Keep the trigger button's aria-pressed in sync with the popover
+        // state so screen readers correctly report whether help is showing.
+        // Matches the pattern used by enterCoachFocusMode / setCoachDrawingTool
+        // and is exercised by the Sprint 8 a11y audit.
+        const toggle = document.getElementById('coach-review-shortcuts-toggle');
+        if (toggle) toggle.setAttribute('aria-pressed', willOpen ? 'true' : 'false');
     },
 
     renderCoachReviewForm() {
