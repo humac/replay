@@ -206,7 +206,13 @@ configs:
         record: no
 
       authMethod: http
-      authHTTPAddress: http://replay:8090/api/live/auth
+      # MediaMTX 1.18 dropped authHTTPHeaders, so the shared secret travels
+      # as the password half of HTTP Basic Auth in the URL itself. Compose
+      # interpolates ${LIVE_AUTH_SECRET} at deploy time from Komodo's env
+      # and bakes it into the rendered config. The replay app's
+      # /api/live/auth handler reads the password from the Authorization
+      # header and 401s if it doesn't match LIVE_AUTH_SECRET.
+      authHTTPAddress: http://_:${LIVE_AUTH_SECRET}@replay:8090/api/live/auth
       authHTTPExclude:
         - action: read
         - action: playback
