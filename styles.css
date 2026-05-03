@@ -3287,10 +3287,12 @@ input[type="time"]::-webkit-calendar-picker-indicator {
    Consolidates Add Match + Settings into one /admin/* shell.
    ============================================================ */
 
+/* Admin shell — no inner cap, fills the universal page shell so it
+ * matches Coach Review and the rest of the site at wide widths.
+ * Padding tightened from `1.75rem 2.5rem 4rem` to a uniform value
+ * that lets the dashboard reach the new edges. */
 #admin-view {
-    padding: 1.75rem 2.5rem 4rem;
-    max-width: 1320px;
-    margin: 0 auto;
+    padding: 1.5rem 0 4rem;
 }
 
 /* ----- Status strip ----- */
@@ -5588,15 +5590,16 @@ details.diag-row-details[open] > summary::after {
     animation: libraryWatchingPulse 2.4s ease-in-out infinite;
 }
 
-/* ===== Coaching workspace ===== */
+/* ===== Coaching workspace =====
+ * No inner max-width cap — the Coach surfaces fill the universal
+ * page shell (`#app-container`) end-to-end so they read like the
+ * Coach Review cockpit on a wide monitor instead of leaving large
+ * empty bands on either side. */
 .coach-page-head {
-    max-width: 1440px;
-    margin: 0 auto 1.25rem;
+    margin: 0 0 1.25rem;
 }
 
 .coach-grid {
-    max-width: 1440px;
-    margin: 0 auto;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1rem;
@@ -6315,17 +6318,16 @@ details.diag-row-details[open] > summary::after {
     touch-action: none;
 }
 
+/* No inner max-width cap — fills the universal page shell. */
 .feedback-content {
-    max-width: 980px;
-    margin: 0 auto;
+    margin: 0;
 }
 
 /* ===== Coach + Feedback sub-tab navigation =====
    Uses the same visual language as `.btn-head`: pill buttons with an
    accent-tinted active state. One nav, two scopes (coach / feedback). */
 .coach-subnav {
-    max-width: 1440px;
-    margin: 0 auto 1rem;
+    margin: 0 0 1rem;
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
@@ -6383,8 +6385,6 @@ details.diag-row-details[open] > summary::after {
 }
 
 .coach-tab-panel {
-    max-width: 1440px;
-    margin: 0 auto;
     animation: coachTabFade 0.18s ease-out;
 }
 
@@ -7222,8 +7222,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 
 /* /feedback view ============================ */
 .feedback-linked-strip {
-    max-width: 980px;
-    margin: 0 auto 1rem;
+    margin: 0 0 1rem;
     padding: 0.6rem 0.85rem;
     display: flex;
     flex-wrap: wrap;
@@ -7259,13 +7258,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     font-size: 0.85rem;
 }
 
-.feedback-subnav {
-    max-width: 980px;
-}
-
-.feedback-tab-panel {
-    max-width: 980px;
-}
+/* No inner caps on the feedback rails — fill the universal shell. */
 
 [data-theme="light"] .feedback-linked-strip {
     background: rgba(0, 0, 0, 0.03);
