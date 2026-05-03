@@ -808,6 +808,14 @@ export const coachingMixin = {
         if (this._coachFocusMode) return;
         this._coachFocusMode = true;
         this._coachFocusInspectorOpen = false;
+        // Sprint 6 fix: snap the page to the top so the cockpit isn't
+        // anchored to wherever the user happened to be scrolled (e.g. they
+        // scrolled down to see the timeline rail). The fixed-position drawer
+        // is viewport-relative, so a scrolled page would render the drawer
+        // at the right edge of an ambiguous slice of the cockpit. Saving the
+        // previous scroll position lets us restore it on exit.
+        this._coachFocusPreviousScrollY = window.scrollY;
+        window.scrollTo({ top: 0, behavior: 'instant' });
         const coachView = document.getElementById('coach-view');
         if (coachView) coachView.classList.add('is-focus-mode');
         document.body.classList.add('coach-focus-mode');  // for global overlays / scrollbar gutters
@@ -854,6 +862,13 @@ export const coachingMixin = {
         if (coachView) {
             coachView.classList.remove('is-focus-mode');
             coachView.classList.remove('is-focus-drawer-open');
+        }
+        // Restore the page scroll position the user had before entering focus.
+        if (typeof this._coachFocusPreviousScrollY === 'number') {
+            requestAnimationFrame(() => {
+                window.scrollTo({ top: this._coachFocusPreviousScrollY, behavior: 'instant' });
+                this._coachFocusPreviousScrollY = null;
+            });
         }
         document.body.classList.remove('coach-focus-mode');
         const toggle = document.getElementById('coach-review-focus-toggle');
@@ -906,7 +921,24 @@ export const coachingMixin = {
         if (side && !this._coachFocusSideOriginalParent) {
             this._coachFocusSideOriginalParent = side.parentElement;
             this._coachFocusSideOriginalNextSibling = side.nextSibling;
+            // Sprint 6 fix: clear the inline `max-height` that Sprint 1's
+            // _syncCoachReviewSideHeight set while the panel was inline in
+            // the grid. That value (matched to the video wrapper height)
+            // would clip the drawer's content vertically once the drawer's
+            // own `bottom: 1rem` rule takes over. We save the inline value
+            // and restore it on close.
+            this._coachFocusSideOriginalMaxHeight = side.style.maxHeight;
+            side.style.maxHeight = '';
             document.body.appendChild(side);
+        }
+        // Sprint 6: scroll the drawer to its top so the telestrator section is
+        // visible. .coach-review-side carries a scrollTop value from when it
+        // lived inline in the inspector column (Sprint 1 height-sync) — that
+        // stale offset would crop the top tools out of view if not reset.
+        if (side) {
+            // requestAnimationFrame so layout settles after re-parenting before
+            // we scroll.
+            requestAnimationFrame(() => { side.scrollTop = 0; });
         }
     },
 
@@ -929,6 +961,14 @@ export const coachingMixin = {
                 parent.insertBefore(side, next);
             } else {
                 parent.appendChild(side);
+            }
+            // Restore the inline max-height we cleared in openCoachFocusInspector
+            // so Sprint 1's height-sync continues to work. _syncCoachReviewSideHeight
+            // will overwrite it on the next resize regardless, but restoring here
+            // keeps the layout from flickering at zero height for one frame.
+            if (this._coachFocusSideOriginalMaxHeight !== undefined) {
+                side.style.maxHeight = this._coachFocusSideOriginalMaxHeight;
+                this._coachFocusSideOriginalMaxHeight = undefined;
             }
             this._coachFocusSideOriginalParent = null;
             this._coachFocusSideOriginalNextSibling = null;

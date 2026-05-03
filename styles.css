@@ -7007,7 +7007,11 @@ details.diag-row-details[open] > summary::after {
  * that point. Without this re-parenting, an ancestor stacking context
  * (e.g. .coach-tab-panel's coachTabFade animation) traps the drawer's
  * z-index and the backdrop renders above the drawer, intercepting all
- * clicks and showing a zoom-out cursor over the panel. */
+ * clicks and showing a zoom-out cursor over the panel.
+ *
+ * z-index 110 (and 105 for the backdrop) puts both above .main-nav
+ * (z-index: 100, position: sticky). Without this the drawer's top
+ * ~75px gets hidden behind the sticky nav. */
 body.coach-focus-drawer-open > .coach-review-side {
     display: grid;
     position: fixed;
@@ -7016,7 +7020,7 @@ body.coach-focus-drawer-open > .coach-review-side {
     bottom: 1rem;
     width: min(380px, calc(100vw - 2rem));
     max-height: none;
-    z-index: 60;
+    z-index: 110;
     background: var(--bg-panel, #0e1320);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 12px;
@@ -7034,7 +7038,7 @@ body.coach-focus-drawer-open > .coach-review-side {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.35);
-    z-index: 55;
+    z-index: 105;       /* Above .main-nav (z-index: 100), below the drawer (110). */
     animation: coachFocusBackdropFade 180ms ease-out;
     cursor: zoom-out;
 }
