@@ -7468,3 +7468,172 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     font-size: 0.78rem;
     font-variant-numeric: tabular-nums;
 }
+
+/* ============================================================
+ * Coach section alignment pass (post-Sprint 9)
+ *
+ * Goal: make Roster / Notes / Playlists feel as compact and
+ * scannable as the new Coach Review cockpit (PR #57-#60).
+ * Without this pass the non-Review tabs use the wider
+ * "options-card" admin treatment (1.6rem padding, 1.35rem h3,
+ * heavy intro paragraphs) which made the section feel jarring
+ * when switching tabs.
+ *
+ * Strategy:
+ *   - Coach-scoped layout vars at #coach-view (no global side effects)
+ *   - Tighten card padding + heading on desktop pointer:fine
+ *   - Tighter list rows, with the dominant row action elevated
+ *     via .mini-action-btn-primary (no new tier — reuse the
+ *     existing modifier already used by My Feedback)
+ *   - Touch widths keep the existing comfortable spacing so
+ *     mobile / tablet remain easy to tap
+ *   - All overrides scoped to #coach-view :not(.is-review-mode)
+ *     so the Review cockpit's own tighter shell rules win
+ * ============================================================ */
+#coach-view {
+    --coach-shell-gap: 1rem;
+    --coach-card-padding: 1.1rem;
+    --coach-card-padding-y: 0.95rem;
+    --coach-row-padding-y: 0.6rem;
+    --coach-compact-control-height: 30px;
+    --coach-row-gap: 0.55rem;
+}
+
+/* Desktop / pointer:fine — tighten the workspace cards so they
+ * read like a coach worklist, not an admin form dashboard. */
+@media (pointer: fine) and (min-width: 900px) {
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card {
+        padding: var(--coach-card-padding-y) var(--coach-card-padding);
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card h3 {
+        font-size: 1.05rem;
+        margin-bottom: 0.6rem;
+        letter-spacing: 0.02em;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .admin-card-head,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .admin-panel-head {
+        margin-bottom: 0.7rem;
+        gap: 0.6rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .admin-card-head h3 {
+        font-size: 1.05rem;
+        margin: 0;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .admin-card-sub,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .admin-section-sub {
+        font-size: 0.82rem;
+        line-height: 1.45;
+        margin: 0.2rem 0 0;
+    }
+    #coach-view:not(.is-review-mode) .coach-grid {
+        gap: var(--coach-shell-gap);
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .form-group {
+        margin-bottom: 0.7rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .form-row {
+        gap: 0.7rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .form-group label {
+        margin-bottom: 0.3rem;
+        font-size: 0.7rem;
+    }
+    /* Tighten Roster / Notes / Playlists list density. The .coach-list
+     * grid gap was 0.65rem; bring rows closer together so a 5-10
+     * row list reads like a worklist instead of a stack of cards. */
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-list {
+        gap: 0;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row {
+        padding: var(--coach-row-padding-y) 0;
+        gap: 0.75rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row strong {
+        font-size: 0.95rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row span,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row p {
+        font-size: 0.78rem;
+        margin-top: 0.1rem;
+    }
+    /* Make row action buttons compact on desktop — same height tier
+     * as Review's picker-bar buttons (~30 px) so the eye doesn't
+     * jump between tabs. */
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row-actions .mini-action-btn,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .admin-panel-head .btn-head,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card > .btn-primary,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card > .btn-secondary {
+        min-height: var(--coach-compact-control-height);
+        line-height: 1;
+    }
+    /* Section intro paragraph — keep readable but pull it closer to
+     * the subnav so the page doesn't open with a giant header band. */
+    #coach-view:not(.is-review-mode) .coach-page-head {
+        margin-bottom: 0.85rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-page-head h2 {
+        font-size: 1.45rem;
+        margin: 0 0 0.15rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-page-head .admin-section-sub {
+        margin: 0;
+    }
+    #coach-view:not(.is-review-mode) .coach-subnav {
+        margin-bottom: 0.9rem;
+    }
+    /* Player checkboxes inside the note composer + roster sections —
+     * compact density for desktop. Touch widths fall back to the
+     * default comfortable size below. */
+    #coach-view:not(.is-review-mode) .coach-check-list {
+        min-height: 100px;
+        max-height: 180px;
+    }
+}
+
+/* Touch / pointer:coarse — keep comfortable tap targets (≥44 px)
+ * on the row-level actions and the Add Player / Link Account
+ * primary CTAs. We DO tighten the card padding a little so mobile
+ * doesn't feel like an admin form, but never below the 44 px tap
+ * minimum on actual buttons. */
+@media (pointer: coarse), (max-width: 899px) {
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card {
+        padding: 1rem;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row-actions .mini-action-btn,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .admin-panel-head .btn-head,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card .btn-primary,
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card .btn-secondary {
+        min-height: 44px;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row-actions {
+        justify-content: flex-start;
+    }
+}
+
+/* Notes / Playlists — show the dominant row action a little
+ * elevated. We use the existing .mini-action-btn-primary modifier
+ * (already themed for both light and dark) — `js/coaching.js`
+ * adds it to "Open in Review" and "Preview" so the eye lands on
+ * the play action first. No new design tier introduced. */
+#coach-view:not(.is-review-mode) .coach-tab-panel .coach-row-actions .mini-action-btn-primary {
+    /* visual lift only — keep it the same physical height as siblings */
+    font-weight: 700;
+}
+
+/* Empty state — make it feel like part of the new compact list
+ * instead of a standalone admin card. */
+#coach-view:not(.is-review-mode) .coach-tab-panel .session-empty {
+    padding: 0.9rem 0.5rem;
+    border: 1px dashed rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    text-align: center;
+}
+[data-theme="light"] #coach-view:not(.is-review-mode) .coach-tab-panel .session-empty {
+    border-color: rgba(0, 0, 0, 0.10);
+    background: rgba(0, 0, 0, 0.02);
+}

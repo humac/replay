@@ -358,7 +358,7 @@ export const coachingMixin = {
                     ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
                 </div>
                 <div class="coach-row-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.openNoteInReview(${n.id})">Open in Review</button>
+                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openNoteInReview(${n.id})">Open in Review</button>
                     <button type="button" class="mini-action-btn" onclick="app.openCoachNoteModal(${n.id})">Edit</button>
                     <button type="button" class="mini-action-btn" onclick="app.handleCoachDeleteNote(${n.id})">Delete</button>
                 </div>
@@ -455,20 +455,30 @@ export const coachingMixin = {
             container.innerHTML = '<div class="session-empty">No review playlists yet. Click <strong>+ New playlist</strong> to build one.</div>';
             return;
         }
-        container.innerHTML = playlists.map((p) => `
+        container.innerHTML = playlists.map((p) => {
+            const noteCount = p.note_ids?.length || 0;
+            const playerCount = p.player_ids?.length || 0;
+            const meta = [
+                `${noteCount} note${noteCount === 1 ? '' : 's'}`,
+                this.esc(p.visibility),
+                `${Number(p.pre_roll_seconds ?? 5)}s pre / ${Number(p.post_roll_seconds ?? 8)}s post`,
+            ];
+            if (playerCount) meta.push(`${playerCount} player${playerCount === 1 ? '' : 's'}`);
+            return `
             <article class="coach-row">
                 <div>
                     <strong>${this.esc(p.title)}</strong>
-                    <span>${p.note_ids?.length || 0} notes · ${this.esc(p.visibility)} · ${Number(p.pre_roll_seconds ?? 5)}s pre / ${Number(p.post_roll_seconds ?? 8)}s post</span>
+                    <span>${meta.join(' · ')}</span>
                     ${p.description ? `<p>${this.esc(p.description)}</p>` : ''}
                 </div>
                 <div class="coach-row-actions">
-                    <button type="button" class="mini-action-btn" onclick="app.previewCoachPlaylist(${p.id})">Preview</button>
+                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.previewCoachPlaylist(${p.id})">Preview</button>
                     <button type="button" class="mini-action-btn" onclick="app.openCoachPlaylistModal(${p.id})">Edit</button>
                     <button type="button" class="mini-action-btn" onclick="app.handleCoachDeletePlaylist(${p.id})">Delete</button>
                 </div>
             </article>
-        `).join('');
+        `;
+        }).join('');
     },
 
     async openCoachPlaylistModal(playlistId = null) {
