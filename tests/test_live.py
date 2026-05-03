@@ -306,19 +306,40 @@ def _patch_hls_fetch(monkeypatch, *, text: str | None = None,
     """Replace httpx.AsyncClient.get with a stub that returns / raises
     whatever the test wants. The helper reaches into the live module's
     httpx import so existing httpx.AsyncClient instances elsewhere are
-    unaffected."""
+    unaffected.
+
+    `_last_segment_age` issues TWO sequential GETs: first the master
+    `index.m3u8`, then the variant playlist whose URL is parsed out of
+    the master. The stub returns a tiny synthetic master for the first
+    call (status_code permitting) and the test-specified `text` for the
+    second. To simulate "master fetch fails", pass status_code != 200
+    or raise_exc — the stub returns/raises the same response for the
+    first call, which short-circuits before the variant fetch.
+    """
     import live as _live
 
     class _StubClient:
         def __init__(self, *_args, **_kwargs):
-            pass
+            self._call = 0
         async def __aenter__(self):
             return self
         async def __aexit__(self, *_exc):
             return False
         async def get(self, _url):
+            self._call += 1
             if raise_exc is not None:
                 raise raise_exc
+            if self._call == 1 and status_code == 200:
+                # Synthesize a minimal master playlist that points at
+                # main_stream.m3u8 — same shape MediaMTX 1.18 emits.
+                master = (
+                    "#EXTM3U\n"
+                    "#EXT-X-VERSION:3\n"
+                    "#EXT-X-INDEPENDENT-SEGMENTS\n"
+                    "#EXT-X-STREAM-INF:BANDWIDTH=1000000\n"
+                    "main_stream.m3u8?session=test\n"
+                )
+                return _FakeResp(200, master)
             return _FakeResp(status_code, text or "")
 
     monkeypatch.setattr(_live.httpx, "AsyncClient", _StubClient)
@@ -537,6 +558,76 @@ async def test_live_hls_proxy_overrides_mediamtx_cache_control(monkeypatch):
         pass
     # Single Cache-Control header with our value, not MediaMTX's no-store.
     assert headers["Cache-Control"] == "public, max-age=60, immutable"
+
+
+async def test_live_hls_proxy_forwards_query_string(monkeypatch):
+    """MediaMTX 1.18's master playlist references variants with a
+    `?session=<uuid>` token; without forwarding the query string the
+    variant fetch 404s and HLS playback never starts."""
+    import live as _live
+
+    captured = {}
+
+    class _StubResp:
+        status_code = 200
+        headers = {"Content-Type": "application/vnd.apple.mpegurl"}
+        async def aiter_bytes(self):
+            yield b"#EXTM3U\n"
+        async def aclose(self):
+            pass
+
+    class _StubClient:
+        def __init__(self, *_a, **_k):
+            pass
+        def build_request(self, _method, url, headers=None):
+            captured["url"] = url
+            return object()
+        async def send(self, _req, stream=False):
+            return _StubResp()
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(_live.httpx, "AsyncClient", _StubClient)
+
+    _, _, body = await _live.proxy_hls(
+        "main_stream.m3u8", "any-key", query_string="session=abc123"
+    )
+    async for _ in body:
+        pass
+    assert captured["url"].endswith("/main_stream.m3u8?session=abc123")
+
+
+async def test_live_hls_proxy_omits_question_mark_when_no_query(monkeypatch):
+    """No query string → no trailing `?` on the upstream URL."""
+    import live as _live
+
+    captured = {}
+
+    class _StubResp:
+        status_code = 200
+        headers = {"Content-Type": "application/vnd.apple.mpegurl"}
+        async def aiter_bytes(self):
+            yield b"#EXTM3U\n"
+        async def aclose(self):
+            pass
+
+    class _StubClient:
+        def __init__(self, *_a, **_k):
+            pass
+        def build_request(self, _method, url, headers=None):
+            captured["url"] = url
+            return object()
+        async def send(self, _req, stream=False):
+            return _StubResp()
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(_live.httpx, "AsyncClient", _StubClient)
+
+    _, _, body = await _live.proxy_hls("index.m3u8", "any-key")
+    async for _ in body:
+        pass
+    assert "?" not in captured["url"]
 
 
 # ---------------------------------------------------------------------------

@@ -1133,6 +1133,7 @@ async def live_hls_proxy(asset_path: str, request: Request):
             key,
             method=request.method,
             request_headers=dict(request.headers),
+            query_string=request.url.query,
         )
     except ValueError:
         raise HTTPException(400, "Invalid HLS asset path")
