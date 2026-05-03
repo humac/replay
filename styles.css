@@ -6490,7 +6490,6 @@ details.diag-row-details[open] > summary::after {
     #coach-view.is-review-mode .coach-mini-form textarea {
         min-height: 56px;
     }
-}
 
     #coach-view.is-review-mode .coach-review-side::-webkit-scrollbar {
         width: 6px;

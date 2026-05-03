@@ -823,8 +823,12 @@ export const coachingMixin = {
         // current rendered height so they always look like sibling columns
         // of equal height. Only applies in Review mode; the feedback modal
         // doesn't need it. Skip on narrow viewports where the layout is
-        // already single-column.
+        // already single-column, and skip when the Review sub-tab isn't the
+        // active one (the global resize handler in setCoachTab fires on every
+        // tab — relying solely on null DOM lookups would still work today but
+        // the explicit gate survives any future refactor of tab visibility).
         if (window.innerWidth < 1024) return;
+        if (this._coachTab !== 'review') return;
         const wrapper = video.closest('.coach-review-wrapper');
         const side = document.querySelector('#coach-tab-review .coach-review-side');
         if (!wrapper || !side) return;
