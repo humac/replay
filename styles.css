@@ -176,9 +176,20 @@ button {
 
 /* ===== LAYOUT ===== */
 
+/* Global page shell. The width policy is the same one the Coach Review
+ * cockpit needs (PR #57+), now applied universally so every view —
+ * public season / match, admin, coach (all 4 tabs), my feedback —
+ * shares one outer rhythm and tab-switching never jumps the page edges.
+ * `min(100% - 1.5rem, 2200px)` lets the shell scale with the viewport
+ * up to ~2200 px (after which form rows look weird sprawling across a
+ * 28" monitor) and keeps a consistent ~12 px gutter on every side at
+ * narrower widths. Padding is reduced from the historical 3rem to
+ * 1.25rem so the content actually reaches the new edges; views that
+ * want a narrower readable measure should cap their *inner* containers
+ * (e.g. `.coach-grid { max-width: 1320px }`), not the outer shell. */
 #app-container {
-    padding: 3rem;
-    max-width: 1600px;
+    padding: 1.25rem;
+    max-width: min(100% - 1.5rem, 2200px);
     margin: 0 auto;
 }
 
@@ -5579,12 +5590,12 @@ details.diag-row-details[open] > summary::after {
 
 /* ===== Coaching workspace ===== */
 .coach-page-head {
-    max-width: 1180px;
+    max-width: 1440px;
     margin: 0 auto 1.25rem;
 }
 
 .coach-grid {
-    max-width: 1180px;
+    max-width: 1440px;
     margin: 0 auto;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6313,7 +6324,7 @@ details.diag-row-details[open] > summary::after {
    Uses the same visual language as `.btn-head`: pill buttons with an
    accent-tinted active state. One nav, two scopes (coach / feedback). */
 .coach-subnav {
-    max-width: 1180px;
+    max-width: 1440px;
     margin: 0 auto 1rem;
     display: flex;
     flex-wrap: wrap;
@@ -6372,7 +6383,7 @@ details.diag-row-details[open] > summary::after {
 }
 
 .coach-tab-panel {
-    max-width: 1180px;
+    max-width: 1440px;
     margin: 0 auto;
     animation: coachTabFade 0.18s ease-out;
 }
@@ -6615,24 +6626,13 @@ details.diag-row-details[open] > summary::after {
     padding-bottom: 0.6rem;
 }
 
-/* Review mode is wider than the rest of the coach workspace so the video
- * can actually breathe on a 1440+ monitor. We need to lift two caps:
- *   1. #app-container (the outer page shell) caps everything at 1600px and
- *      pads 3rem on each side — relax both for review mode.
- *   2. .coach-page-head, .coach-subnav, .coach-tab-panel default to 1180px
- *      to match the rest of the workspace — widen them.
- * The cockpit then scales with the viewport up to ~2200px, after which it
- * holds (form rows look weird sprawling across a 28" monitor).
- * The body:has(...) selector confines the relaxation to Review mode only;
- * Roster / Notes / Playlists / Admin / public Season keep their original
- * 1600px cap and 3rem padding. */
+/* Review mode lets the cockpit fill the full shell. The outer page
+ * shell width itself is now uniform across the whole site (see
+ * `#app-container` ~L179); here we only need to lift the inner
+ * 1180 px cap on the Coach page-head / subnav / tab-panel so the
+ * cockpit reaches the page edges. The non-Review Coach tabs keep
+ * the inner 1180 px cap so form rows stay a comfortable measure. */
 @media (min-width: 1024px) {
-    body:has(#coach-view.is-review-mode) #app-container {
-        max-width: min(100% - 1.5rem, 2200px);
-        padding-left: 1.25rem;
-        padding-right: 1.25rem;
-    }
-
     #coach-view.is-review-mode .coach-page-head,
     #coach-view.is-review-mode .coach-subnav,
     #coach-view.is-review-mode .coach-tab-panel {
@@ -7658,3 +7658,4 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     border-color: rgba(0, 0, 0, 0.10);
     background: rgba(0, 0, 0, 0.02);
 }
+
