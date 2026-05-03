@@ -110,10 +110,16 @@ async def _last_segment_age(stream_key: str) -> float | None:
     """Seconds since the most recent EXT-X-PROGRAM-DATE-TIME in the live
     playlist, or ``None`` when the playlist can't be fetched or has no
     PDT entries (e.g. before the first segment cut).
+
+    With ``hlsVariant: mpegts`` MediaMTX serves the segment-bearing playlist
+    at ``index.m3u8`` directly — there is no master/variant split. Earlier
+    versions of this code referenced ``main_stream.m3u8`` from the
+    ``lowLatency`` variant, which always 404s under mpegts and turned the
+    stale-publisher detector into a no-op.
     """
     if not stream_key:
         return None
-    url = f"{MEDIAMTX_HLS_URL}/{stream_path(stream_key)}/main_stream.m3u8"
+    url = f"{MEDIAMTX_HLS_URL}/{stream_path(stream_key)}/index.m3u8"
     try:
         async with httpx.AsyncClient(timeout=_STATUS_TIMEOUT) as c:
             resp = await c.get(url)
