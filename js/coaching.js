@@ -581,6 +581,9 @@ export const coachingMixin = {
         // stale clock when the user reopens Review later.
         const timeEl = document.getElementById('coach-review-time');
         if (timeEl) timeEl.textContent = '--:--';
+        // Sprint 4: same invariant for the form's Save-at-MM:SS button.
+        const saveFormBtn = document.getElementById('coach-review-save-form');
+        if (saveFormBtn) saveFormBtn.textContent = 'Save at --:--';
     },
 
     _renderCoachReviewTime(video) {

@@ -6065,7 +6065,15 @@ details.diag-row-details[open] > summary::after {
 
 /* Soft destructive variant for Clear — still legible as text but
  * visually different from neutral Undo / Delete. The plan asks to keep
- * text labels for destructive actions, so this stays a text button. */
+ * text labels for destructive actions, so this stays a text button.
+ *
+ * NOT a new button tier — `.btn-danger-soft` is a modifier applied to
+ * the existing `.mini-action-btn` tier (the CLAUDE.md three-tier rule
+ * tracks top-level button structure, not emphasis variants). The
+ * destructive accent is a translucent rose; both dark and light mode
+ * get explicit overrides so the user's "no native chrome / themed in
+ * both modes" rule holds at every breakpoint.
+ */
 .mini-action-btn.btn-danger-soft {
     color: rgba(244, 63, 94, 0.95);
     border-color: rgba(244, 63, 94, 0.28);
@@ -6073,6 +6081,14 @@ details.diag-row-details[open] > summary::after {
 .mini-action-btn.btn-danger-soft:hover {
     background: rgba(244, 63, 94, 0.12);
     border-color: rgba(244, 63, 94, 0.55);
+}
+[data-theme="light"] .mini-action-btn.btn-danger-soft {
+    color: rgba(190, 18, 60, 0.95);
+    border-color: rgba(190, 18, 60, 0.32);
+}
+[data-theme="light"] .mini-action-btn.btn-danger-soft:hover {
+    background: rgba(190, 18, 60, 0.08);
+    border-color: rgba(190, 18, 60, 0.55);
 }
 
 /* ============================================================
@@ -6108,6 +6124,9 @@ details.diag-row-details[open] > summary::after {
 }
 .coach-review-advanced > summary::-webkit-details-marker {
     display: none;           /* remove the native triangle (Safari/Chrome) */
+}
+.coach-review-advanced > summary::marker {
+    display: none;           /* remove the native triangle (Firefox / standards) */
 }
 .coach-review-advanced > summary::before {
     content: "";
