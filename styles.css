@@ -6891,6 +6891,168 @@ details.diag-row-details[open] > summary::after {
     box-shadow: 0 0 0 1px rgba(21, 101, 192, 0.22);
 }
 
+/* ============================================================
+ * Sprint 6: Wide / Focus mode
+ *
+ * Toggle that hides page chrome and collapses the right inspector
+ * so the video + drawing canvas use nearly the entire screen. Tools
+ * and the note composer stay reachable through a slide-over drawer
+ * triggered from the picker bar's "Tools" button. Escape exits.
+ * State is session-local — js/coaching.js manages the keydown
+ * listener lifecycle so it's only bound while focus mode is on.
+ *
+ * Two cooperating states:
+ *   #coach-view.is-focus-mode             — hide chrome, expand video
+ *   #coach-view.is-focus-drawer-open      — slide the inspector in
+ *
+ * Focus mode is layered on top of is-review-mode (Sprint 1), so all
+ * Sprint 1+ scoped overrides still apply.
+ * ============================================================ */
+
+/* The Tools / drawer toggle is hidden by default and only shown in
+ * focus mode (where the inspector is otherwise unreachable).
+ * Higher-specificity selector so it wins over the .coach-review-picker-focus
+ * rule that sets `display: inline-flex` (the drawer button has both classes). */
+.coach-review-picker-focus.coach-review-picker-drawer { display: none; }
+#coach-view.is-focus-mode .coach-review-picker-focus.coach-review-picker-drawer {
+    display: inline-flex;
+}
+
+/* Focus toggle button itself — same compact icon-button style as the
+ * other picker controls. Active state mirrors the icon-toolbar pattern
+ * so the user can tell at a glance that focus mode is on. */
+.coach-review-picker-focus {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.6rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    white-space: nowrap;
+}
+.coach-review-picker-focus svg {
+    width: 16px;
+    height: 16px;
+    color: currentColor;
+    flex: 0 0 auto;
+}
+.coach-review-picker-focus:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+.coach-review-picker-focus:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.32);
+}
+.coach-review-picker-focus.is-active,
+.coach-review-picker-focus[aria-pressed="true"] {
+    background: rgba(23, 113, 201, 0.18);
+    border-color: rgba(23, 113, 201, 0.55);
+    color: var(--text-main);
+}
+[data-theme="light"] .coach-review-picker-focus {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+[data-theme="light"] .coach-review-picker-focus:hover {
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-review-picker-focus.is-active,
+[data-theme="light"] .coach-review-picker-focus[aria-pressed="true"] {
+    background: rgba(21, 101, 192, 0.10);
+    border-color: rgba(21, 101, 192, 0.45);
+}
+
+/* ----- Focus mode ON ----- */
+@media (min-width: 1024px) {
+    /* Inspector hidden by default in focus mode. The grid collapses to a
+     * single (full-width) column for the video. */
+    #coach-view.is-focus-mode .coach-review-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    #coach-view.is-focus-mode .coach-review-side {
+        display: none;
+    }
+
+    /* Hide the page-head + subnav entirely in focus mode — Esc returns
+     * the user to the normal cockpit so they aren't stranded. */
+    #coach-view.is-focus-mode .coach-page-head,
+    #coach-view.is-focus-mode .coach-subnav {
+        display: none;
+    }
+
+    /* Tighten the picker bar a hair so it reads as compact heads-up
+     * controls layered over the video, not a content header. */
+    #coach-view.is-focus-mode .coach-review-shell {
+        padding: 0.45rem 0.6rem;
+    }
+
+    /* When the drawer is open, the inspector slides in from the right as
+     * a fixed-position panel. The video keeps its full width — the
+     * inspector overlays it instead of resizing the grid. */
+    #coach-view.is-focus-mode.is-focus-drawer-open .coach-review-side {
+        display: grid;
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        bottom: 1rem;
+        width: min(380px, calc(100vw - 2rem));
+        max-height: none;
+        z-index: 60;
+        background: var(--bg-panel, #0e1320);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 12px;
+        padding: 0.85rem;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+        overflow: auto;
+        animation: coachFocusDrawerSlide 180ms ease-out;
+    }
+
+}
+
+/* Backdrop dim so the drawer reads as a modal layer. The element is
+ * mounted by openCoachFocusInspector() in js/coaching.js so it can
+ * receive a real click handler for click-outside-to-close.
+ * Hidden by default; visible only while the drawer is open. */
+.coach-focus-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 55;
+    animation: coachFocusBackdropFade 180ms ease-out;
+    cursor: zoom-out;
+}
+.coach-focus-backdrop[hidden] { display: none; }
+[data-theme="light"] .coach-focus-backdrop {
+    background: rgba(0, 0, 0, 0.18);
+}
+
+@keyframes coachFocusDrawerSlide {
+    from { transform: translateX(8px); opacity: 0; }
+    to   { transform: translateX(0);   opacity: 1; }
+}
+@keyframes coachFocusBackdropFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+[data-theme="light"] #coach-view.is-focus-mode.is-focus-drawer-open .coach-review-side {
+    background: var(--bg-panel, #ffffff);
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
 /* Match-page deep link to /coach?tab=review (coach/admin only) */
 .coach-this-match-link {
     text-decoration: none;

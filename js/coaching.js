@@ -42,6 +42,13 @@ export const coachingMixin = {
     _coachFormationDraft: null,
     _coachFormationMode: 'quick', // 'quick' | 'linked'
 
+    // Sprint 6: Wide / Focus mode. Session-local — never persisted; resets
+    // on tab leave or page reload. The keydown listener is bound only when
+    // focus mode is on, so an Escape press elsewhere in the app is unaffected.
+    _coachFocusMode: false,
+    _coachFocusEscapeHandler: null,
+    _coachFocusInspectorOpen: false,
+
     // ===== top-level view entry points =====
 
     async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true, tab = null, matchId = null, slot = null } = {}) {
@@ -110,6 +117,9 @@ export const coachingMixin = {
         // Scoping the class to #coach-view keeps Roster/Notes/Playlists untouched.
         const coachView = document.getElementById('coach-view');
         if (coachView) coachView.classList.toggle('is-review-mode', name === 'review');
+        // Sprint 6: exit focus mode when leaving Review so it doesn't leak
+        // into Roster/Notes/Playlists. Idempotent — no-op if not in focus.
+        if (name !== 'review') this.exitCoachFocusMode();
         // Sprint 2 polish: install a window-resize listener that keeps the
         // inspector height matched to the video wrapper. Bound once globally;
         // _syncCoachReviewSideHeight no-ops when the Review tab isn't active.
@@ -587,6 +597,10 @@ export const coachingMixin = {
         // Sprint 5: drop active timeline-chip selection so it doesn't carry
         // over into a different match's notes on next entry.
         this._coachActiveNoteId = null;
+        // Sprint 6: defense-in-depth — if focus mode somehow survived a
+        // different code path (e.g. external API call to tearDownCoachReview),
+        // make sure the listener + body class are cleaned up.
+        this.exitCoachFocusMode();
     },
 
     _renderCoachReviewTime(video) {
@@ -775,6 +789,120 @@ export const coachingMixin = {
         if (activeChip) {
             activeChip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
         }
+    },
+
+    // ===== Sprint 6: Wide / Focus mode =====
+    //
+    // Toggle that hides page chrome + collapses the right inspector so the
+    // video and drawing canvas use nearly the entire screen. Tools and
+    // composer remain reachable via a slide-over inspector drawer triggered
+    // from a small floating button. Escape exits. State is session-local
+    // and resets when the user leaves the Review sub-tab.
+
+    toggleCoachFocusMode() {
+        if (this._coachFocusMode) this.exitCoachFocusMode();
+        else this.enterCoachFocusMode();
+    },
+
+    enterCoachFocusMode() {
+        if (this._coachFocusMode) return;
+        this._coachFocusMode = true;
+        this._coachFocusInspectorOpen = false;
+        const coachView = document.getElementById('coach-view');
+        if (coachView) coachView.classList.add('is-focus-mode');
+        document.body.classList.add('coach-focus-mode');  // for global overlays / scrollbar gutters
+        const toggle = document.getElementById('coach-review-focus-toggle');
+        if (toggle) {
+            toggle.setAttribute('aria-pressed', 'true');
+            toggle.classList.add('is-active');
+        }
+        // Close the drawer if it was somehow left open from a previous session.
+        document.getElementById('coach-view')?.classList.remove('is-focus-drawer-open');
+        // Bind Escape (capturing handler so it wins over <details>/canvas).
+        this._coachFocusEscapeHandler = (event) => {
+            if (event.key !== 'Escape') return;
+            // Close the drawer first if it's open; otherwise exit focus mode.
+            if (this._coachFocusInspectorOpen) {
+                event.preventDefault();
+                this.closeCoachFocusInspector();
+                return;
+            }
+            event.preventDefault();
+            this.exitCoachFocusMode();
+        };
+        window.addEventListener('keydown', this._coachFocusEscapeHandler);
+        // The wrapper just changed size — re-sync canvas + inspector height.
+        const video = document.getElementById(this._coachVideoId);
+        if (video) {
+            requestAnimationFrame(() => {
+                this._syncCoachReviewSideHeight(video);
+                const canvas = document.getElementById(this._coachCanvasId);
+                if (canvas) this._resizeCoachCanvas(canvas, video);
+            });
+        }
+    },
+
+    exitCoachFocusMode() {
+        if (!this._coachFocusMode) return;
+        this._coachFocusMode = false;
+        this._coachFocusInspectorOpen = false;
+        const coachView = document.getElementById('coach-view');
+        if (coachView) {
+            coachView.classList.remove('is-focus-mode');
+            coachView.classList.remove('is-focus-drawer-open');
+        }
+        document.body.classList.remove('coach-focus-mode');
+        const toggle = document.getElementById('coach-review-focus-toggle');
+        if (toggle) {
+            toggle.setAttribute('aria-pressed', 'false');
+            toggle.classList.remove('is-active');
+        }
+        if (this._coachFocusEscapeHandler) {
+            window.removeEventListener('keydown', this._coachFocusEscapeHandler);
+            this._coachFocusEscapeHandler = null;
+        }
+        // Re-sync canvas + inspector height for the restored layout.
+        const video = document.getElementById(this._coachVideoId);
+        if (video) {
+            requestAnimationFrame(() => {
+                this._syncCoachReviewSideHeight(video);
+                const canvas = document.getElementById(this._coachCanvasId);
+                if (canvas) this._resizeCoachCanvas(canvas, video);
+            });
+        }
+    },
+
+    openCoachFocusInspector() {
+        if (!this._coachFocusMode) return;
+        this._coachFocusInspectorOpen = true;
+        document.getElementById('coach-view')?.classList.add('is-focus-drawer-open');
+        const t = document.getElementById('coach-review-focus-inspector-toggle');
+        if (t) t.setAttribute('aria-pressed', 'true');
+        // Mount a real backdrop element so clicking outside the drawer
+        // closes it. Pseudo-elements can't receive click events.
+        let backdrop = document.getElementById('coach-focus-backdrop');
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.id = 'coach-focus-backdrop';
+            backdrop.className = 'coach-focus-backdrop';
+            backdrop.addEventListener('click', () => this.closeCoachFocusInspector());
+            document.body.appendChild(backdrop);
+        }
+        backdrop.hidden = false;
+    },
+
+    closeCoachFocusInspector() {
+        this._coachFocusInspectorOpen = false;
+        document.getElementById('coach-view')?.classList.remove('is-focus-drawer-open');
+        const t = document.getElementById('coach-review-focus-inspector-toggle');
+        if (t) t.setAttribute('aria-pressed', 'false');
+        const backdrop = document.getElementById('coach-focus-backdrop');
+        if (backdrop) backdrop.hidden = true;
+    },
+
+    toggleCoachFocusInspector() {
+        if (this._coachFocusInspectorOpen) this.closeCoachFocusInspector();
+        else this.openCoachFocusInspector();
     },
 
     renderCoachReviewForm() {
