@@ -419,6 +419,43 @@
                             </svg>
                             <span class="coach-review-picker-focus-label">Tools</span>
                         </button>
+                        <!-- Sprint 7: keyboard-shortcuts help toggle. The
+                             ?-key opens the same popover from anywhere in
+                             Coach Review. -->
+                        <button type="button"
+                                id="coach-review-shortcuts-toggle"
+                                class="coach-review-picker-focus coach-review-picker-shortcuts"
+                                aria-pressed="false"
+                                aria-controls="coach-shortcuts-help"
+                                title="Keyboard shortcuts (press ?)"
+                                aria-label="Show keyboard shortcuts"
+                                onclick="app.toggleCoachShortcutsHelp()">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M12 18v.01M9 9a3 3 0 016 0c0 1.5-2 2-3 3.5"
+                                      fill="none" stroke="currentColor" stroke-width="1.8"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-review-picker-focus-label">Shortcuts</span>
+                        </button>
+                    </div>
+                    <!-- Sprint 7: keyboard shortcuts help popover. Hidden by
+                         default; toggled by the picker bar's "?" button or by
+                         pressing "?" anywhere in Coach Review. -->
+                    <div id="coach-shortcuts-help" class="coach-shortcuts-help" hidden role="dialog" aria-label="Keyboard shortcuts" aria-modal="false">
+                        <div class="coach-shortcuts-help-head">
+                            <h4>Keyboard shortcuts</h4>
+                            <button type="button" class="mini-action-btn" aria-label="Close shortcuts help" onclick="app.toggleCoachShortcutsHelp()">Close</button>
+                        </div>
+                        <ul class="coach-shortcuts-help-list">
+                            <li><kbd>Space</kbd> / <kbd>K</kbd><span>Play / pause</span></li>
+                            <li><kbd>J</kbd> / <kbd>L</kbd><span>Back / forward 5 s</span></li>
+                            <li><kbd>←</kbd> / <kbd>→</kbd><span>Back / forward 1 s</span></li>
+                            <li><kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>→</kbd><span>Back / forward 10 s</span></li>
+                            <li><kbd>S</kbd><span>Save note at current time</span></li>
+                            <li><kbd>A</kbd> <kbd>F</kbd> <kbd>Z</kbd> <kbd>C</kbd> <kbd>T</kbd> <kbd>D</kbd><span>Arrow / Freehand / Zone / Circle / Label / Spotlight</span></li>
+                            <li><kbd>Esc</kbd><span>Exit focus mode or cancel formation draft</span></li>
+                            <li><kbd>?</kbd><span>Show / hide this help</span></li>
+                        </ul>
                     </div>
                     <div class="coach-review-grid">
                         <div class="coach-review-video">

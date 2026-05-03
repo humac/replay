@@ -619,6 +619,52 @@ Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail
 
 ---
 
+## Coach Review UX Cockpit — Sprint 9 ✅ COMPLETE (2026-05-02)
+
+**Goal:** lock in the UX changes and document the new Coach Review workflow. Per the plan's coding-agent prompt: "Perform the final QA pass for the Coach Review cockpit redesign. Run node syntax checks for touched JS, py_compile if Python changed, and pytest with emphasis on tests/test_coaching.py. Manually verify the full Coach Review workflow… Update the design documentation with the new layout decisions and add a concise before/after summary for the PR."
+
+- **Static checks**: `node --check` × 4 source files green; `python3 -m py_compile` × 10 backend files green.
+- **Tests**: `pytest tests/ -v --cov` → 265/265 pass, coverage 65.03 % (CI gate 60).
+- **Playwright e2e**: all 8 sprint specs green (72/72 tests). The shared `_login.js` helper from PR3 keeps the suite stable across the auth.py 5-per-IP login rate limit.
+- **Manual regression** — verified in browser as `coach1` (and `family1` for `/feedback` privacy): all 14 acceptance items in the plan's Sprint 9 checklist pass. Specifically: match selector loads video, slot switches, drawing canvas toggles, all 9 telestrator tools work, formation overlay accepts 3–16 anchors with collinear rejection, note save with timestamp + drawing succeeds, saved note appears in the timeline rail, click-to-seek + drawing restore work, Coach > Playlists > Preview opens the focused modal (not /match/{slug}), My Feedback unchanged + private notes do not leak, public /match/{slug} unchanged, mobile (390 px) usable, focus mode + Esc work cleanly.
+- **Design report**: new `docs/design/coach-review-cockpit-report.md` consolidates all 9 sprints' design decisions, measured deltas (Sprint 0 → PR4), architecture (state machine, key files, critical-path implementation notes), acceptance evidence, and a screenshot tour pointing to all 8 capture directories.
+- **Constraints respected** (full audit in the design report): no frontend build step; no backend / schema / API changes; `CreateCoachingNoteRequest` payload byte-for-byte identical; drawing schemas v1, v2, formation untouched; no native browser chrome anywhere; element IDs preserved; focus mode session-local (no localStorage).
+
+---
+
+## Coach Review UX Cockpit — Sprint 8 ✅ COMPLETE (2026-05-02)
+
+**Goal:** lock in the denser desktop UI's accessibility while keeping tablet/mobile comfortable. Per the plan's coding-agent prompt: "Polish the Coach Review responsive and accessibility behavior. Use pointer-aware CSS so compact desktop controls do not make touch devices hard to use. Verify keyboard focus, aria labels, aria-pressed state on tool buttons, and visible focus rings. Test mobile, tablet, laptop, desktop, and wide monitor layouts. Confirm the drawing canvas stays aligned with the video after resizing and mode changes. Do not change backend behavior."
+
+- **Pointer-coarse min-height (44 px)** added to every Coach Review picker bar button (`Save`, `Focus`, `Tools`, `Shortcuts`), the picker selects, the Sprint 5 timeline chips, and the Sprint 7 shortcuts-help close button. The Sprint 3 telestrator toolbar already had this; Sprint 8 extends the same rule to all post-Sprint-3 controls. Single `@media (pointer: coarse), (max-width: 899px)` block at the end of the Coach Review CSS section.
+- **Visible `:focus-visible` rings** added/strengthened on `.coach-shortcuts-help button`, `.coach-review-picker-save`, `.coach-timeline-chip` so keyboard users see focus consistently across both themes. Existing tool-button rings preserved.
+- **`tests/e2e/sprint-8-after.spec.js`** (NEW): 9 tests across 5 viewport widths (390 / 768 / 1024 / 1440 / 1920) covering ARIA-completeness audit (every tool button + swatch + chip has `aria-label` / `title` / `aria-pressed`), no-horizontal-page-overflow check, iPad Mini emulation tap-target verification (≥44 px on every primary control), canvas-vs-video alignment after viewport resize AND focus-mode toggle (canvas dims track video within ±2 px), and keyboard tab order through the cockpit reaches all primary controls (match → slot → save → focus → ...).
+- **Dynamic aria-label** on `#coach-review-notes` (the timeline rail) implemented in PR3 review fixes — Sprint 8 verifies it stays in sync (`Notes for {matchName}` → screen readers announce the actual match name).
+
+---
+
+## Coach Review UX Cockpit — Sprint 7 ✅ COMPLETE (2026-05-02)
+
+**Goal:** make the cockpit fast for power users via keyboard shortcuts. Per the plan's coding-agent prompt: "Add keyboard shortcuts scoped to Coach > Review only. Implement play/pause, small seek, larger seek, save note, tool selection, and Escape to exit focus mode or cancel drawing. Do not intercept keys while typing in inputs, textareas, selects, or contenteditable elements. Reuse existing video and drawing state methods in js/coaching.js where possible. Add a compact shortcuts help affordance in the Review UI. Make sure listeners are installed only while Review is active and cleaned up when leaving."
+
+- **Scoped install/uninstall** (`js/coaching.js` `installCoachReviewShortcuts` / `uninstallCoachReviewShortcuts`): `setCoachTab('review')` installs the keydown listener; any other sub-tab uninstalls it. Other surfaces (Roster, Notes, Playlists, Feedback, public match, admin) are unaffected.
+- **Shortcut map** (per the plan):
+  - `Space` / `K` — play / pause
+  - `←` / `→` — back / forward 1 s
+  - `Shift+←` / `Shift+→` — back / forward 10 s
+  - `J` / `L` — back / forward 5 s
+  - `S` — save note (calls existing `saveReviewNote()`)
+  - `A` `F` `Z` `C` `T` `D` — Arrow / Freehand / Zone / Circle / Label / Spotlight tool
+  - `Esc` — exit focus mode (when in focus) or cancel formation draft
+  - `?` — toggle the shortcuts help popover
+- **Skip-typing guard** (`_coachShortcutShouldSkip`): no shortcut fires while focus is in `<input>`, `<textarea>`, `<select>`, or `[contenteditable]`. Modifier keys (Cmd, Ctrl, Alt) are also passed through so OS / browser shortcuts work.
+- **Help popover** (`#coach-shortcuts-help` in `index.html`, `.coach-shortcuts-help` in `styles.css`): themed dialog above the cockpit. Toggled by the picker bar's `?` button or the `?` keyboard shortcut. Lists every shortcut with `<kbd>` tags. Light + dark mode variants.
+- **Picker bar `Shortcuts` button** (`#coach-review-shortcuts-toggle`): icon-first variant alongside the Sprint 6 `Focus` and `Tools` buttons. Always visible, `aria-controls="coach-shortcuts-help"`.
+- **Coexistence with Sprint 6 Escape handler**: the Sprint 6 focus-mode handler runs in the **capture phase** so it wins when focus mode is active. Sprint 7's bubble-phase Escape handles the formation-draft-cancel case when focus mode is OFF. No conflict; verified.
+- **`tests/e2e/sprint-7-after.spec.js`** (NEW): 9 tests covering install/uninstall lifecycle (handler installs on Review, uninstalls on Roster, re-installs on return), tool-letter switches, typing-in-input doesn't trigger shortcuts, Space play/pause, Arrow / J / L seek by exact documented amounts, S triggers saveReviewNote, ? toggles help popover, Escape cancels formation draft when focus mode is off, picker bar Shortcuts button opens help. All 9 pass.
+
+---
+
 ## Coach Review UX Cockpit — Sprint 6 ✅ COMPLETE (2026-05-02)
 
 **Goal:** give coaches a Wide / Focus mode that prioritises the video and drawing canvas by collapsing the right inspector and reducing page chrome. Per the plan's coding-agent prompt: "Add a Wide Review or Focus Mode to Coach > Review. This mode should prioritize the video/telestrator canvas by collapsing or minimizing the right inspector panel and reducing page chrome. Add a toggle in the compact review control bar and allow Escape to exit. Preserve access to drawing tools and note saving, either through a compact floating toolbar, icon rail, or slide-over inspector. Keep this state session-local and do not affect public playback or My Feedback."
