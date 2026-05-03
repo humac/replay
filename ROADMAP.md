@@ -619,6 +619,24 @@ Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail
 
 ---
 
+## Coach Review UX Cockpit — Sprint 3 ✅ COMPLETE (2026-05-02)
+
+**Goal:** shrink the telestrator controls so they do not crowd the video canvas. Icon-first desktop toolbar with pointer-aware sizing — compact at `pointer: fine`, ≥44 px tap target at `pointer: coarse`.
+
+- **Icon-first tool buttons** (`js/coaching.js renderCoachTelestratorToolbar`): nine drawing tools (`select`, `freehand`, `arrow`, `circle`, `zone`, `label`, `spotlight`, `dim`, `formation`) now render as inline-SVG icon buttons. No font dependency; the SVG `<path>` data is embedded in the render template alongside its tool id, label, and tooltip. Each button uses `currentColor` so the icon picks up the button's foreground in both themes. `data-coach-tool` values, the `setCoachDrawingTool()` handler, and the drawing payload are unchanged.
+- **Grouped toolbar sections** (`role="toolbar"` + `role="group"` per section): drawing tools in a 5-column grid; color swatches + width slider in a wrap row; canvas actions (Canvas On/Off, Undo, Delete, Clear) in their own row. Clear keeps a text label and is given a soft destructive variant (`.btn-danger-soft`) — per the plan: "Keep text labels for destructive actions like Clear if needed."
+- **Accessibility**: every icon button carries `title`, `aria-label`, and `aria-pressed`. `setCoachDrawingTool`, `setCoachDrawingColor`, and `updateCoachCanvasToggleLabel` now keep `aria-pressed` in sync with the visual `.active` class, so screen readers announce toggle changes without re-rendering. Color swatches expose human-readable names (`Color: Sky blue`, `Color: Orange`, …). Width slider has `aria-label="Stroke width"`.
+- **Pointer-aware sizing** (`styles.css .coach-tool-btn`): default state is touch-first with `min-height: 44px` and visible icon + label. `@media (pointer: fine) and (min-width: 900px)` collapses each button to a 34 × 34 px square with the text label visually hidden via the standard sr-only clip. `@media (pointer: coarse)` and narrow viewports keep the larger target.
+- **Visible focus** (`:focus-visible`): every tool button has an accent-colored 2 px box-shadow ring on keyboard focus.
+- **Measured deltas vs. Sprint 2 baseline (1440 px desktop):**
+  - Tool button size: text rectangles (~32 × 84 px each) → **34 × 34 px** square icons (-58% width per button)
+  - Tool grid height: ~136 px → **74 px** (-62 px)
+  - Total telestrator section: ~277 px → **232 px** (-45 px)
+- **Pointer-coarse verification**: Playwright iPad Mini emulation profile yields 46 px tool buttons (above the 44 px minimum).
+- **`tests/e2e/sprint-3-after.spec.js`**: 9 tests covering 5-width capture, ARIA assertions, dynamic `aria-pressed` sync, color swatch state, canvas-toggle text + `aria-pressed`, and the iPad Mini tap-target check. All 9 pass; sprint-1-after / sprint-2-after specs remain 18/18 green (no regressions).
+
+---
+
 ## Coaching Telestrator — Future Phases (designed, NOT shipped)
 
 These phases were designed alongside Phase 1 but deferred. Each builds cleanly on the `formation` object without breaking it.

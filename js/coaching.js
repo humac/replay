@@ -747,32 +747,105 @@ export const coachingMixin = {
     // ===== Telestrator (operates on whichever canvas/video pair is current) =====
 
     renderCoachTelestratorToolbar() {
+        // Sprint 3: icon-first toolbar grouped into three sections — drawing
+        // tools, paint controls (color + width), and canvas/destructive
+        // actions. Each tool button uses inline SVG (no font dependency)
+        // plus a visually-hidden text label that re-appears on touch
+        // devices via the pointer-aware CSS in styles.css. Every icon
+        // button carries title + aria-label + aria-pressed so AT users
+        // and tooltip hover stay first-class. Drawing payload, handler
+        // names, and data-coach-tool values are unchanged so existing
+        // saved drawings + click handlers keep working.
         const tools = [
-            ['select', 'Select'], ['freehand', 'Line'], ['arrow', 'Arrow'],
-            ['circle', 'Circle'], ['zone', 'Zone'], ['label', 'Label'],
-            ['spotlight', 'Spot'], ['dim', 'Dim'], ['formation', 'Formation'],
+            ['select',    'Select',         'Select / move objects',
+                'M5 3l14 8-6 1.5L11 19z'],
+            ['freehand',  'Freehand line',  'Freehand line',
+                'M3 17c2-4 4-6 6-6s2 4 4 4 4-4 6-6'],
+            ['arrow',     'Arrow',          'Arrow',
+                'M4 12h13m-4-5l5 5-5 5'],
+            ['circle',    'Circle',         'Circle',
+                'M12 4a8 8 0 100 16 8 8 0 000-16z'],
+            ['zone',      'Zone',           'Zone (dashed rectangle)',
+                'M4 6h4M10 6h4M16 6h4M20 8v4M20 14v4M20 18h-4M14 18h-4M8 18H4M4 16v-4M4 10V6'],
+            ['label',     'Label',          'Text label / player number',
+                'M6 6h12M12 6v12'],
+            ['spotlight', 'Spotlight',      'Spotlight (highlight one player)',
+                'M12 4v3M12 17v3M4 12h3M17 12h3M6.3 6.3l2 2M15.7 15.7l2 2M6.3 17.7l2-2M15.7 8.3l2-2M12 9a3 3 0 100 6 3 3 0 000-6z'],
+            ['dim',       'Dim',            'Dim the field',
+                'M12 4a8 8 0 100 16 8 8 0 008-8 6 6 0 01-8-8z'],
+            ['formation', 'Formation',      'Formation (multi-player highlight)',
+                'M7 7a2 2 0 110 4 2 2 0 010-4zm10 0a2 2 0 110 4 2 2 0 010-4zM7 15a2 2 0 110 4 2 2 0 010-4zm10 0a2 2 0 110 4 2 2 0 010-4zM12 10a2 2 0 110 4 2 2 0 010-4z'],
         ];
         const colors = ['#38bdf8', '#f97316', '#22c55e', '#facc15', '#f43f5e', '#ffffff'];
+        const colorNames = {
+            '#38bdf8': 'Sky blue',
+            '#f97316': 'Orange',
+            '#22c55e': 'Green',
+            '#facc15': 'Yellow',
+            '#f43f5e': 'Red',
+            '#ffffff': 'White',
+        };
+        const renderToolBtn = ([tool, label, tip, path]) => {
+            const active = this._coachDrawingTool === tool;
+            return `
+                <button type="button"
+                        data-coach-tool="${tool}"
+                        class="coach-tool-btn ${active ? 'active' : ''}"
+                        title="${tip}"
+                        aria-label="${tip}"
+                        aria-pressed="${active ? 'true' : 'false'}"
+                        onclick="app.setCoachDrawingTool('${tool}')">
+                    <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="${path}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="coach-tool-label">${label}</span>
+                </button>
+            `;
+        };
         return `
-            <div class="coach-telestrator">
-                <div class="coach-tool-grid">
-                    ${tools.map(([tool, label]) => `
-                        <button type="button" data-coach-tool="${tool}" class="mini-action-btn ${this._coachDrawingTool === tool ? 'active' : ''}" onclick="app.setCoachDrawingTool('${tool}')">${label}</button>
-                    `).join('')}
+            <div class="coach-telestrator" role="toolbar" aria-label="Telestrator tools">
+                <div class="coach-tool-grid" role="group" aria-label="Drawing tools">
+                    ${tools.map(renderToolBtn).join('')}
                 </div>
-                <div class="coach-tool-row">
-                    ${colors.map((color) => `
-                        <button type="button" data-coach-color="${color}" class="coach-color-swatch ${this._coachDrawingColor === color ? 'active' : ''}" style="--swatch:${color}" title="${color}" onclick="app.setCoachDrawingColor('${color}')"></button>
-                    `).join('')}
-                    <label class="coach-width-control">Width <input type="range" min="2" max="10" value="${this._coachDrawingWidth}" onchange="app.setCoachDrawingWidth(this.value)"></label>
+                <div class="coach-tool-row" role="group" aria-label="Color and width">
+                    ${colors.map((color) => {
+                        const active = this._coachDrawingColor === color;
+                        const name = colorNames[color] || color;
+                        return `
+                            <button type="button"
+                                    data-coach-color="${color}"
+                                    class="coach-color-swatch ${active ? 'active' : ''}"
+                                    style="--swatch:${color}"
+                                    title="${name}"
+                                    aria-label="Color: ${name}"
+                                    aria-pressed="${active ? 'true' : 'false'}"
+                                    onclick="app.setCoachDrawingColor('${color}')"></button>
+                        `;
+                    }).join('')}
+                    <label class="coach-width-control" title="Stroke width">
+                        <span class="coach-width-label" aria-hidden="true">W</span>
+                        <input type="range" min="2" max="10" value="${this._coachDrawingWidth}"
+                               aria-label="Stroke width"
+                               onchange="app.setCoachDrawingWidth(this.value)">
+                    </label>
                 </div>
-                <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number">
+                <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number"
+                       aria-label="Text label or player number for the next label drawing">
                 <div id="coach-formation-controls" class="coach-formation-controls" hidden></div>
-                <div class="coach-draw-actions">
-                    <button type="button" data-coach-canvas-toggle class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
-                    <button type="button" class="mini-action-btn" onclick="app.undoCoachDrawing()">Undo</button>
-                    <button type="button" class="mini-action-btn" onclick="app.deleteSelectedCoachObject()">Delete</button>
-                    <button type="button" class="mini-action-btn" onclick="app.clearCoachDrawing()">Clear</button>
+                <div class="coach-draw-actions" role="group" aria-label="Canvas actions">
+                    <button type="button" data-coach-canvas-toggle
+                            class="mini-action-btn"
+                            aria-pressed="${this._coachDrawingActive ? 'true' : 'false'}"
+                            onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
+                    <button type="button" class="mini-action-btn"
+                            title="Undo last object"
+                            onclick="app.undoCoachDrawing()">Undo</button>
+                    <button type="button" class="mini-action-btn"
+                            title="Delete selected object"
+                            onclick="app.deleteSelectedCoachObject()">Delete</button>
+                    <button type="button" class="mini-action-btn btn-danger-soft"
+                            title="Clear all drawings on this freeze frame"
+                            onclick="app.clearCoachDrawing()">Clear</button>
                 </div>
             </div>
         `;
@@ -875,6 +948,7 @@ export const coachingMixin = {
     updateCoachCanvasToggleLabel() {
         document.querySelectorAll('[data-coach-canvas-toggle]').forEach((btn) => {
             btn.textContent = `Canvas ${this._coachDrawingActive ? 'On' : 'Off'}`;
+            btn.setAttribute('aria-pressed', this._coachDrawingActive ? 'true' : 'false');
         });
     },
 
@@ -916,7 +990,12 @@ export const coachingMixin = {
         }
         this._coachDrawingTool = tool;
         document.querySelectorAll('[data-coach-tool]').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.coachTool === tool);
+            const active = btn.dataset.coachTool === tool;
+            btn.classList.toggle('active', active);
+            // Sprint 3: keep aria-pressed in sync with the visual active
+            // state so screen readers announce the toggle change without
+            // re-rendering the toolbar.
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
         this._renderFormationControls();
         this.activateCoachCanvas();
@@ -926,7 +1005,9 @@ export const coachingMixin = {
     setCoachDrawingColor(color) {
         this._coachDrawingColor = color;
         document.querySelectorAll('[data-coach-color]').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.coachColor === color);
+            const active = btn.dataset.coachColor === color;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
     },
 
