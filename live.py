@@ -61,6 +61,42 @@ STALE_SEGMENT_AGE_SECONDS = float(
 _PDT_RE = re.compile(r"#EXT-X-PROGRAM-DATE-TIME:([^\r\n]+)")
 
 
+_LIVE_PROXY_PREFIX = "/api/live/hls"
+
+
+def _rewrite_proxy_location(location: str, stream_key: str) -> str:
+    """Rewrite a MediaMTX redirect Location so it stays inside the proxy.
+
+    MediaMTX's HLS redirects look like ``/live/<stream-key>/index.m3u8?session=<uuid>``.
+    For an absolute upstream URL we strip the scheme + host, then peel off
+    the ``/live/<stream-key>/`` prefix and re-prefix with ``/api/live/hls/``
+    so the browser keeps talking to us instead of escaping to the public
+    origin (where it would 404).
+    """
+    if not location:
+        return location
+    rest = location
+
+    # Strip scheme + host if absolute. MediaMTX usually emits a relative
+    # Location, but defend against either.
+    for prefix in ("https://", "http://"):
+        if rest.startswith(prefix):
+            after_scheme = rest[len(prefix):]
+            slash = after_scheme.find("/")
+            rest = after_scheme[slash:] if slash != -1 else "/"
+            break
+
+    expected = f"/{stream_path(stream_key)}/"  # e.g. "/live/<key>/"
+    if rest.startswith(expected):
+        suffix = rest[len(expected):]
+        return f"{_LIVE_PROXY_PREFIX}/{suffix}"
+
+    # Not a path we recognise — return as-is rather than mangling it. The
+    # browser will follow whatever MediaMTX intended; if it 404s the user
+    # will see the same symptom we had before but at least nothing is worse.
+    return location
+
+
 def _first_variant_url(master_playlist: str, base_url: str) -> str | None:
     """Extract the first variant URL from a master HLS playlist.
 
@@ -414,6 +450,23 @@ async def proxy_hls(
         "access-control-expose-headers",
     }
     headers = {k: v for k, v in resp.headers.items() if k.lower() not in drop}
+
+    # Rewrite Location headers on 3xx so redirects keep flowing through this
+    # proxy instead of escaping to the public origin. MediaMTX 1.18 issues
+    # 302s on the master playlist to attach a session token (e.g.
+    # ``Location: /live/<stream-key>/index.m3u8?session=<uuid>``). If we
+    # forward that Location verbatim, the browser resolves it against the
+    # public host and lands at ``https://<host>/live/<stream-key>/...``
+    # — which doesn't go back through ``/api/live/hls/...`` and 404s at
+    # the edge. Rewrite to point at the same proxy path.
+    if 300 <= resp.status_code < 400:
+        loc_key = next(
+            (k for k in list(headers) if k.lower() == "location"),
+            None,
+        )
+        if loc_key is not None:
+            new_location = _rewrite_proxy_location(headers.pop(loc_key), stream_key)
+            headers["Location"] = new_location
 
     # Cache-Control by asset type — gives a CDN (Cloudflare, BunnyCDN, etc.)
     # something to dedupe on. Playlists change every segment, so cache them
