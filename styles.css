@@ -7540,13 +7540,25 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     }
     /* Tighten Roster / Notes / Playlists list density. The .coach-list
      * grid gap was 0.65rem; bring rows closer together so a 5-10
-     * row list reads like a worklist instead of a stack of cards. */
+     * row list reads like a worklist instead of a stack of cards.
+     * The visual separator is `.coach-row { border-bottom }` which
+     * is defined globally on the base rule (`.coach-row` ~L5603) —
+     * we re-assert it here so a future cleanup that removes the
+     * global border doesn't silently collapse Coach list rows into
+     * a single unreadable block. */
     #coach-view:not(.is-review-mode) .coach-tab-panel .coach-list {
         gap: 0;
     }
     #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row {
         padding: var(--coach-row-padding-y) 0;
         gap: 0.75rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row:last-child {
+        border-bottom: 0;
+    }
+    [data-theme="light"] #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row {
+        border-bottom-color: rgba(0, 0, 0, 0.08);
     }
     #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row strong {
         font-size: 0.95rem;
@@ -7558,11 +7570,17 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     }
     /* Make row action buttons compact on desktop — same height tier
      * as Review's picker-bar buttons (~30 px) so the eye doesn't
-     * jump between tabs. */
+     * jump between tabs. We deliberately match all `<button>` and
+     * `<input type=submit>` direct children of `.options-card` (the
+     * Add Player / Link Account form CTAs) instead of enumerating
+     * `.btn-primary` / `.btn-secondary` — that keeps the rule from
+     * pinning a single button tier in place and avoids tripping the
+     * "don't reach for .btn-secondary in section-head positions"
+     * guidance in CLAUDE.md (sizing rules shouldn't sanction a tier
+     * by name). */
     #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row-actions .mini-action-btn,
     #coach-view:not(.is-review-mode) .coach-tab-panel .admin-panel-head .btn-head,
-    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card > .btn-primary,
-    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card > .btn-secondary {
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card > button {
         min-height: var(--coach-compact-control-height);
         line-height: 1;
     }
@@ -7599,10 +7617,12 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     #coach-view:not(.is-review-mode) .coach-tab-panel .options-card {
         padding: 1rem;
     }
+    /* Same selector strategy as the desktop block — match form CTAs
+     * by element, not by button tier, so we don't sanction
+     * `.btn-secondary` in any section-head context. */
     #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row-actions .mini-action-btn,
     #coach-view:not(.is-review-mode) .coach-tab-panel .admin-panel-head .btn-head,
-    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card .btn-primary,
-    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card .btn-secondary {
+    #coach-view:not(.is-review-mode) .coach-tab-panel .options-card > button {
         min-height: 44px;
     }
     #coach-view:not(.is-review-mode) .coach-tab-panel .coach-row {
@@ -7614,15 +7634,16 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     }
 }
 
-/* Notes / Playlists — show the dominant row action a little
- * elevated. We use the existing .mini-action-btn-primary modifier
- * (already themed for both light and dark) — `js/coaching.js`
- * adds it to "Open in Review" and "Preview" so the eye lands on
- * the play action first. No new design tier introduced. */
-#coach-view:not(.is-review-mode) .coach-tab-panel .coach-row-actions .mini-action-btn-primary {
-    /* visual lift only — keep it the same physical height as siblings */
-    font-weight: 700;
-}
+/* Notes / Playlists — the dominant row action is signalled with
+ * the existing `.mini-action-btn-primary` modifier (accent-fill;
+ * themed in both light and dark; same modifier My Feedback uses for
+ * its Watch / Play buttons). No Coach-specific font-weight bump:
+ * the modifier was deliberately defined without a font-weight in
+ * its base rule so all surfaces inherit `.mini-action-btn`'s
+ * `font-weight: 600` and the visual lift comes from colour alone.
+ * Re-asserting that here as a placeholder block so future tuning
+ * has a single, scoped landing spot — but it intentionally adds
+ * nothing today. */
 
 /* Empty state — make it feel like part of the new compact list
  * instead of a standalone admin card. */
