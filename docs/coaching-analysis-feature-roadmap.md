@@ -4,6 +4,10 @@ This roadmap covers the product features needed to evolve Replay from a strong m
 
 This is separate from `docs/coach-review-ui-ux-implementation-plan.md`, which focuses on Coach Review layout, compact controls, telestration workspace design, keyboard shortcuts, and responsive UI polish.
 
+Related roadmap:
+
+- `docs/ai-video-analysis-roadmap.md` expands the computer-vision and video-analysis phases in more technical detail.
+
 ## Product goal
 
 Replay should help coaches answer:
@@ -21,6 +25,9 @@ The current system already supports match upload, playback, live viewing, roster
 5. Prefer simple, coach-usable workflows over complex analytics dashboards.
 6. Preserve privacy and role boundaries.
 7. Avoid breaking existing replay, live, upload, My Feedback, and telestrator behavior.
+8. Treat computer vision as a suggestion engine until it proves reliable on real match footage.
+9. Do not expose experimental AI/video-analysis output to players without coach approval.
+10. Do not claim physical KPIs such as distance covered or sprint speed unless field calibration, identity tracking, and confidence scoring are in place.
 
 ## Current foundation
 
@@ -43,6 +50,8 @@ Existing useful foundation:
 Main gap:
 
 Replay currently behaves mostly like a video-attached coaching notebook. The next phase should make it a player-development system with clip packages, player history, goals, review completion, summaries, and eventually AI-assisted coaching workflows.
+
+Computer vision can later help Replay find candidate moments, player tracks, tactical shapes, highlights, and heatmaps. It should be built after the manual coaching workflow is solid.
 
 ---
 
@@ -603,46 +612,180 @@ Add optional AI-assisted coaching helpers using existing notes and metadata firs
 
 ---
 
-## Phase 11: Computer-vision-assisted clip discovery
+## Phase 11: Computer-vision analysis foundation
 
 ### Goal
 
-Use automated detection to help coaches find candidate moments faster.
+Add a detector-agnostic video-analysis foundation so Replay can store and inspect detections from Roboflow, a local model, soccer360, or another future provider.
 
-This should come after the manual coaching workflow is solid.
+Candidate provider:
 
-### Possible sources
+- Roboflow Universe football player detection model: `https://universe.roboflow.com/roboflow-jvuqo/football-players-detection-3zvbc`
 
-- Existing match video.
-- Future integration with soccer360 pipeline.
-- Object/action detection outputs.
-- Manually uploaded event files.
+Important caveat:
 
-### Candidate moments
+- Treat Roboflow as a swappable candidate provider, not a permanent architectural dependency.
+- Before enabling it, verify model license, API terms, current availability, inference cost, rate limits, export options, data retention, and performance on your actual match footage.
+- Because footage may include minors, external frame upload should be opt-in and disabled by default.
 
-- goals
-- shots
-- corners
-- throw-ins
-- goalkeeper possession
-- long breaks in play
-- pressing sequences
-- transitions
-- repeated possession losses
-- set pieces
+### Features
 
-### Data model
+1. Analysis job framework:
+   - queue offline analysis for a match slot
+   - status: queued, running, completed, failed, cancelled
+   - provider: mock, roboflow, local_yolo, soccer360_import
+   - model name/version
+   - frame sample rate
+   - errors and metadata
 
-New table:
+2. Detector-agnostic detections:
+   - frame index
+   - timestamp
+   - class: player, ball, referee, goalkeeper, unknown
+   - confidence
+   - normalized bounding box coordinates
+   - optional track ID
+
+3. Track storage:
+   - track ID
+   - class
+   - team label
+   - optional roster player ID
+   - start/end time
+   - confidence
+
+4. Coach/admin-only APIs:
+   - create/list/read/cancel analysis jobs
+   - query detections by match, slot, and time range
+   - query tracks by match, slot, and time range
+
+### Backend data model suggestions
+
+Add tables:
+
+- `video_analysis_jobs`
+- `video_detections`
+- `video_tracks`
+
+### Acceptance criteria
+
+- Replay can store detections from any provider.
+- The app works with no provider configured.
+- Mock provider exists for tests.
+- Detection coordinates are normalized 0..1 for reliable overlay rendering.
+- No analysis output is player-facing by default.
+
+### Coding agent prompt
+
+```text
+Add a detector-agnostic video analysis foundation to Replay. Create video_analysis_jobs, video_detections, and video_tracks through a migration. Add Pydantic models and coach/admin-only endpoints to create/list/read/cancel analysis jobs and query detections/tracks by match, slot, and time range. Add a provider abstraction with a mock provider first. Do not integrate Roboflow yet. Store normalized coordinates. Do not expose analysis output to My Feedback.
+```
+
+---
+
+## Phase 12: Offline player detection job runner
+
+### Goal
+
+Run offline player detection against uploaded match video and store detections for coach review.
+
+### Why offline first
+
+Offline detection is safer, cheaper, easier to validate, and does not risk live playback. Live overlays should come much later.
+
+### Features
+
+1. Coach/admin clicks Analyze Match.
+2. Backend samples frames from a ready video slot.
+3. Worker runs detection through configured provider.
+4. Worker stores normalized detections.
+5. Job status is visible in Coach/Admin UI.
+
+### Sampling strategy
+
+Start conservative:
+
+- 1 frame per second by default
+- configurable sample rate
+- configurable max frames per job
+- no full-frame every-frame processing in MVP
+
+Suggested environment variables:
+
+```text
+REPLAY_ANALYSIS_PROVIDER=mock|roboflow|local_yolo|soccer360_import
+REPLAY_ANALYSIS_FRAME_SAMPLE_RATE=1
+REPLAY_ANALYSIS_MAX_FRAMES_PER_JOB=600
+ROBOFLOW_API_KEY=
+ROBOFLOW_MODEL_ID=football-players-detection-3zvbc
+ROBOFLOW_MODEL_VERSION=
+ROBOFLOW_CONFIDENCE_THRESHOLD=0.35
+```
+
+### Roboflow integration rule
+
+Only add the real Roboflow provider after the mock provider and job framework are tested.
+
+### Acceptance criteria
+
+- A ready match slot can be analyzed offline.
+- Jobs run asynchronously.
+- Detection failures do not break match playback.
+- Mock provider is used in tests.
+- Roboflow is optional and disabled if credentials are missing.
+
+### Coding agent prompt
+
+```text
+Implement the offline video analysis job runner. Sample frames from a ready match slot, run detection through the provider abstraction, normalize boxes, and store detections. Start with 1 fps and a configurable max-frame limit. Use the mock provider in tests. Add robust job status and error handling. Then add an optional Roboflow provider using environment variables for API key, model ID, version, confidence threshold, sample rate, and max frames. Replay must work when Roboflow is not configured.
+```
+
+---
+
+## Phase 13: Coach Review detection overlay and detected moments queue
+
+### Goal
+
+Let coaches inspect detections visually and convert useful moments into coaching notes or clips.
+
+### Features
+
+1. Coach Review overlay toggle:
+   - Off
+   - Players
+   - Tracks
+   - Teams
+   - Confidence
+
+2. Separate analysis overlay layer:
+   - do not store detection boxes in coaching drawing JSON
+   - keep coach-authored drawings separate from model output
+
+3. Overlay rendering:
+   - bounding boxes
+   - confidence
+   - track ID
+   - team label where available
+
+4. Detected moments queue:
+   - generated from conservative heuristics
+   - coach can jump to timestamp
+   - coach can accept, reject, convert to note, or convert to clip
+
+### Data model suggestion
+
+Add table:
 
 - `detected_moments`
 
 Fields:
 
+- `job_id`
 - `match_id`
 - `slot`
 - `timestamp_seconds`
 - `moment_type`
+- `title`
 - `confidence`
 - `source`
 - `metadata_json`
@@ -650,15 +793,164 @@ Fields:
 
 ### Acceptance criteria
 
+- Detection overlays stay aligned with the video during resize and focus mode.
 - Detected moments are suggestions only.
-- Coach can accept, reject, convert to note, or convert to clip.
-- False positives do not pollute player-facing feedback.
-- Integration is optional.
+- Coach must convert/accept suggestions before they become notes, clips, or player-facing feedback.
+- False positives can be rejected.
 
 ### Coding agent prompt
 
 ```text
-Add a detected moments framework for future computer-vision-assisted clip discovery. Create a detected_moments model with match_id, slot, timestamp_seconds, moment_type, confidence, source, metadata_json, and review_status. Add coach-only UI to review suggestions and accept, reject, convert to coaching note, or convert to clip. Do not publish detected moments to players automatically. Keep this source-agnostic so it can later ingest outputs from the soccer360 pipeline or other detection jobs.
+Add Coach Review analysis overlays and a detected moments queue. Render stored detections/tracks over the coach review video in a separate overlay layer, not in the coach drawing payload. Add overlay modes for players, tracks, teams, and confidence where data exists. Create detected_moments and a coach-only review queue with actions to jump to timestamp, accept, reject, convert to note, and convert to clip. Do not publish detected moments to players automatically.
+```
+
+---
+
+## Phase 14: Tracking, tactical snapshots, and semi-automatic player identification
+
+### Goal
+
+Turn raw detections into more useful tactical and player-specific coaching views.
+
+### Features
+
+1. Tracking and smoothing:
+   - assign track IDs
+   - bridge short detection gaps
+   - smooth bounding boxes
+   - store track confidence
+
+2. Tactical shape snapshots:
+   - show player positions at a timestamp
+   - convex hull / formation polygon
+   - average positions over a short window
+   - convert snapshot to coaching note drawing if coach chooses
+
+3. Team labels:
+   - unknown, home, away, goalkeeper_home, goalkeeper_away, referee
+   - start with manual or semi-automatic labels
+   - kit-color clustering can come later
+
+4. Track-to-player assignment:
+   - representative player crops
+   - coach assigns track to roster player or jersey number
+   - assignment applies to match/slot/job unless explicitly reused elsewhere
+
+### Acceptance criteria
+
+- Track IDs are stable enough for coach review.
+- Coach can view tactical shape snapshots.
+- Coach can assign tracks to roster players.
+- Bad tracks do not pollute My Feedback automatically.
+
+### Coding agent prompt
+
+```text
+Add tracking and tactical analysis on top of stored detections. Implement a simple tracking stage that assigns track IDs, smooths boxes, and bridges short gaps. Add tactical shape snapshots showing player positions and convex hulls at a selected timestamp or short time window. Add manual track-to-player assignment using representative crops. Keep all outputs coach/admin-only until explicitly converted to notes or clips.
+```
+
+---
+
+## Phase 15: Heatmaps and player performance metrics
+
+### Goal
+
+Summarize activity zones and player involvement without overstating accuracy.
+
+### Important limitation
+
+Video-frame coordinates are not field coordinates. True distance covered, sprint speed, and field-zone heatmaps require field calibration/homography, stable identity tracking, and confidence scoring.
+
+### Metric maturity levels
+
+Level 1: Safe without field calibration
+
+- visible analyzed time
+- track appearances
+- average screen position
+- involvement in accepted clips
+- notes/clips by category
+- review completion
+
+Level 2: Approximate with field calibration
+
+- zone occupancy
+- left/central/right tendency
+- team shape width/depth estimates
+- movement density
+
+Level 3: Physical KPIs with strong confidence warnings
+
+- estimated total distance covered
+- estimated top speed
+- sprint count
+- high-intensity movement count
+
+### Heatmap approach
+
+1. Start with video-frame heatmaps.
+2. Clearly label them as frame-space if no calibration exists.
+3. Add field calibration later:
+   - coach identifies field corners/lines
+   - estimate homography
+   - map player bottom-center points to field coordinates
+
+### Acceptance criteria
+
+- MVP does not present frame-space analysis as true physical performance.
+- Metrics include confidence labels.
+- Field-based metrics require calibration.
+- Player-facing metrics are curated by coach.
+
+### Coding agent prompt
+
+```text
+Add heatmaps and player metrics in conservative maturity levels. Start with safe non-field-calibrated metrics: visible analyzed time, track appearances, average screen position, involvement in accepted clips, notes/clips by category, and review completion. Add video-frame heatmaps clearly labeled as frame-space. Do not calculate or display distance covered, sprint speed, or field-zone heatmaps as physical truth unless field calibration and identity tracking confidence are available.
+```
+
+---
+
+## Phase 16: Broadcast-style stat-tags and live analysis
+
+### Goal
+
+Eventually support broadcast enhancements such as player highlighting, following stat-tags, and near-live overlays.
+
+### Features
+
+Offline replay overlays first:
+
+- highlight selected player
+- stat-tag follows assigned track
+- roster name or jersey number label
+- team shape overlay
+- possession-like sequence only if ball/team tracking exists
+
+Live or near-live later:
+
+- sample live feed frames asynchronously
+- run detection with clear delay/confidence indicators
+- show coach/admin-only delayed overlays first
+- public live overlays only after reliability is proven
+
+### Guardrails
+
+- Live stream playback must never depend on analysis.
+- Analysis failure must not impact viewing.
+- Experimental overlays are off by default.
+- Coach/admin previews come before public broadcast features.
+
+### Acceptance criteria
+
+- Offline stat-tags work from stored tracks.
+- Overlays are optional and off by default.
+- Live analysis is asynchronous and kill-switchable.
+- Public viewers do not see experimental overlays unless explicitly enabled.
+
+### Coding agent prompt
+
+```text
+Add optional broadcast-style overlays in stages. Start offline only: let a coach select an assigned track/player and show a following highlight/stat-tag during replay. Keep overlays off by default and coach/admin-only. Design near-live analysis as an optional asynchronous service that samples live frames and never blocks playback. Include a kill switch and clear latency/confidence indicators. Do not implement public live overlays until offline tracking is reliable.
 ```
 
 ---
@@ -677,7 +969,12 @@ Recommended order:
 8. Phase 8: Review completion and engagement dashboard
 9. Phase 9: Coaching analytics dashboards
 10. Phase 10: AI-assisted coaching workflow
-11. Phase 11: Computer-vision-assisted clip discovery
+11. Phase 11: Computer-vision analysis foundation
+12. Phase 12: Offline player detection job runner
+13. Phase 13: Coach Review detection overlay and detected moments queue
+14. Phase 14: Tracking, tactical snapshots, and semi-automatic player identification
+15. Phase 15: Heatmaps and player performance metrics
+16. Phase 16: Broadcast-style stat-tags and live analysis
 
 Reasoning:
 
@@ -686,8 +983,9 @@ Reasoning:
 - Thumbnails and clips make review more usable.
 - Player profiles and goals create the development loop.
 - Summaries and dashboards build on accumulated structured data.
-- AI should come after the workflow and data model are stable.
-- Computer vision should come last because suggestions need a strong manual review system to be useful.
+- Text-based AI should come after the workflow and data model are stable.
+- Computer vision should come after the manual coaching loop because detections need a strong human review path.
+- Physical KPIs and live/broadcast overlays should come last because they require reliable tracking, calibration, and confidence handling.
 
 ---
 
@@ -754,7 +1052,7 @@ Includes:
 - drill-down links
 - tests where practical
 
-## PR 7: Optional AI assistance
+## PR 7: Optional text AI assistance
 
 Includes:
 
@@ -766,15 +1064,53 @@ Includes:
 - playlist suggestions
 - no-auto-publish guardrails
 
-## PR 8: Detected moments framework
+## PR 8: Computer-vision analysis foundation
 
 Includes:
 
 - Phase 11
-- detected moments data model
-- review queue
+- detector-agnostic job/detection/track schema
+- provider abstraction
+- mock provider
+- coach/admin-only APIs
+
+## PR 9: Offline detection provider and job runner
+
+Includes:
+
+- Phase 12
+- offline frame sampling
+- optional Roboflow provider
+- job status UI
+- tests with mock provider
+
+## PR 10: Detection overlays and detected moments
+
+Includes:
+
+- Phase 13
+- Coach Review analysis overlay
+- detected moments queue
 - convert to note/clip actions
-- optional integration hooks
+
+## PR 11: Tracking, tactical snapshots, player identification
+
+Includes:
+
+- Phase 14
+- tracking/smoothing
+- shape snapshots
+- manual track-to-player assignment
+
+## PR 12: Heatmaps, metrics, and broadcast overlays
+
+Includes:
+
+- Phase 15
+- Phase 16, offline portions first
+- conservative metric labels
+- optional stat-tags
+- no live dependency on analysis
 
 ---
 
@@ -787,7 +1123,9 @@ Includes:
 - SQLite schema migrations.
 - Role-based access control.
 - Data aggregation queries.
-- ffmpeg thumbnail extraction.
+- Background job orchestration.
+- Detector/provider abstraction design.
+- ffmpeg frame extraction and thumbnail extraction.
 - Secure static/media serving with authorization checks.
 - Test-driven backend changes with pytest.
 
@@ -800,6 +1138,7 @@ Includes:
 - My Feedback rendering.
 - Video playback control.
 - Drawing overlay compatibility.
+- Separate analysis overlay rendering.
 - Accessibility and keyboard-friendly controls.
 
 ## Product/UX
@@ -809,15 +1148,17 @@ Includes:
 - Coach-admin workflow design.
 - Privacy-aware family/player access.
 - Analytics that remain actionable instead of noisy.
+- Human-in-the-loop AI/video-analysis review.
 
 ## Media
 
 - ffmpeg still extraction.
+- ffmpeg frame sampling.
 - HLS/MP4 playback behavior.
 - Clip range playback.
 - Optional MP4 clip export later.
 
-## AI, later phases only
+## AI
 
 - Prompting for short player-friendly feedback.
 - Draft generation with human approval.
@@ -825,12 +1166,16 @@ Includes:
 - Summary generation from structured notes.
 - Safe fallback when AI is unavailable.
 
-## Computer vision, later phases only
+## Computer vision
 
-- Importing detection results.
-- Timestamp confidence handling.
-- Human-in-the-loop review queues.
+- Provider abstraction.
+- Roboflow or local detector integration.
+- Bounding box normalization.
+- Detection confidence handling.
+- Tracking and smoothing.
+- Human-in-the-loop detected moment review.
 - Optional soccer360 integration.
+- Field calibration and homography concepts for later physical metrics.
 
 ---
 
@@ -841,6 +1186,10 @@ Do not do these without a dedicated design decision:
 - Do not publish AI-generated feedback without coach approval.
 - Do not expose private coach notes to player/family accounts.
 - Do not auto-publish computer-vision-detected moments.
+- Do not send youth footage to external providers unless explicitly configured and documented.
+- Do not make Roboflow or any external provider required for Replay to run.
+- Do not present video-frame heatmaps as true field-position heatmaps.
+- Do not present distance covered, sprint speed, or possession tracking as accurate without calibration and confidence scoring.
 - Do not break existing note visibility rules.
 - Do not remove existing category/tag support.
 - Do not change drawing schema casually.
@@ -863,6 +1212,8 @@ Do not do these without a dedicated design decision:
 - My Feedback only shows allowed content.
 - Private content does not leak to viewers.
 - Review tracking still works.
+- Analysis outputs are coach/admin-only unless explicitly published.
+- Replay works with AI/video analysis disabled.
 - Existing tests pass.
 
 ---
@@ -882,6 +1233,9 @@ The eventual coach workflow should be:
 9. Coach tracks completion and reflections.
 10. Player profile shows growth over time.
 11. AI drafts summaries and suggestions, coach approves.
-12. Computer vision suggests candidate moments, coach accepts or rejects.
+12. Offline video analysis suggests detections, tracks, tactical snapshots, and candidate moments.
+13. Coach accepts/rejects detected moments and converts the useful ones into notes or clips.
+14. Player/team heatmaps and metrics are shown with confidence and calibration context.
+15. Broadcast-style stat-tags and live overlays are enabled only after offline analysis is reliable.
 
 That is the path from replay archive to real player-development platform.
