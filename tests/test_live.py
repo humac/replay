@@ -630,6 +630,82 @@ async def test_live_hls_proxy_omits_question_mark_when_no_query(monkeypatch):
     assert "?" not in captured["url"]
 
 
+async def test_live_hls_proxy_rewrites_redirect_location(monkeypatch):
+    """MediaMTX 1.18 redirects /live/<key>/index.m3u8 →
+    /live/<key>/index.m3u8?session=<uuid> to attach the session token.
+    If we forward the Location verbatim, the browser resolves it against
+    the public origin and lands at /live/<key>/... which 404s at the edge.
+    Rewrite to /api/live/hls/... so the browser stays inside our proxy."""
+    import live as _live
+
+    class _StubResp:
+        status_code = 302
+        headers = {
+            "Location": "/live/test-key/index.m3u8?session=abc-123",
+            "Content-Type": "text/plain",
+        }
+        async def aiter_bytes(self):
+            yield b""
+        async def aclose(self):
+            pass
+
+    class _StubClient:
+        def __init__(self, *_a, **_k):
+            pass
+        def build_request(self, _method, _url, headers=None):
+            return object()
+        async def send(self, _req, stream=False):
+            return _StubResp()
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(_live.httpx, "AsyncClient", _StubClient)
+
+    status, headers, body = await _live.proxy_hls("index.m3u8", "test-key")
+    async for _ in body:
+        pass
+    assert status == 302
+    # Rewritten — the browser will follow this back through our proxy.
+    assert headers["Location"] == "/api/live/hls/index.m3u8?session=abc-123"
+    # Original lower-case key shouldn't survive (would be a duplicate).
+    assert "location" not in headers
+
+
+async def test_live_hls_proxy_rewrites_absolute_redirect_location(monkeypatch):
+    """If MediaMTX ever issues an absolute Location (some versions do
+    when behind a proxy that preserves the public Host), strip the host
+    and still rewrite the path."""
+    import live as _live
+
+    class _StubResp:
+        status_code = 302
+        headers = {
+            "Location": "http://mediamtx:8888/live/test-key/index.m3u8?session=xyz",
+            "Content-Type": "text/plain",
+        }
+        async def aiter_bytes(self):
+            yield b""
+        async def aclose(self):
+            pass
+
+    class _StubClient:
+        def __init__(self, *_a, **_k):
+            pass
+        def build_request(self, _method, _url, headers=None):
+            return object()
+        async def send(self, _req, stream=False):
+            return _StubResp()
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(_live.httpx, "AsyncClient", _StubClient)
+
+    _, headers, body = await _live.proxy_hls("index.m3u8", "test-key")
+    async for _ in body:
+        pass
+    assert headers["Location"] == "/api/live/hls/index.m3u8?session=xyz"
+
+
 # ---------------------------------------------------------------------------
 # /api/admin/live/* — admin-only management
 # ---------------------------------------------------------------------------
