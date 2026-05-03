@@ -619,6 +619,23 @@ Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail
 
 ---
 
+## Coach Review UX Cockpit — Sprint 5 ✅ COMPLETE (2026-05-02)
+
+**Goal:** replace the bulky stacked notes list with a compact horizontal timeline rail so coaches can scan and jump between moments without losing the inspector to a long list of notes. Per the plan's coding-agent prompt: "Create a compact current-match notes timeline rail for Coach Review. The rail should sit under the video or directly below the review grid and render timestamp chips instead of large note rows. Each chip should show the clock time, short title, category, and player indicator if available. Clicking a chip must reuse existing seekCoachReviewNote behavior: seek to timestamp and render the saved drawing. Use horizontal scrolling for many notes. Keep accessibility and keyboard focus states."
+
+- **`#coach-review-notes` relocated out of `.coach-review-side`** (`index.html`): the container now lives as the third child of `.coach-review-grid` with `grid-column: 1 / -1` so it spans both video and inspector columns. Existing element ID and `renderCoachReviewNotes(matchId)` entry point preserved so all callers keep working.
+- **`renderCoachReviewNotes` rewritten** (`js/coaching.js`): emits horizontally-scrollable `.coach-timeline-chip` buttons instead of stacked `.coach-note-jump` rows. Each chip shows `MM:SS · player indicator · category dot · short title` with `aria-label` formatted as "Jump to MM:SS, player X, Category: Title". Notes are now sorted by timestamp so the rail reads left-to-right in match order.
+- **Player indicator logic**: single linked player → `#7` (jersey number) or first-name fallback; multiple players → `+N`; no players → `Team`. The `aria-label` includes a human-readable player phrase ("player 7", "team-wide", "3 players") so screen readers don't read the bare `+3`.
+- **Category dot color hints** (`styles.css`): each `.coach-timeline-chip-cat[data-cat="X"]` gets a 8 px circle in a category-specific color (sky for shape, orange for pressing, purple for transition, green for build-up, etc.). Decorative — the category name lives in the `aria-label` for AT users.
+- **Active-chip state** (`js/coaching.js _setActiveCoachReviewNote`): `seekCoachReviewNote` now calls `_setActiveCoachReviewNote(noteId)` which toggles `is-active` + `aria-pressed` on the matching chip and uses `scrollIntoView({ inline: 'center' })` to nudge a far-right chip back into view. Cleared on match/slot change and on tear-down so a stale active chip never carries over.
+- **Empty state** (`.coach-timeline-empty`): coach-friendly placeholder ("No notes for this match yet — save your first one above.") in a dashed border so the rail still has visual presence when empty.
+- **Themed scrollbar** on the rail (`scrollbar-width: thin` + `::-webkit-scrollbar` rules) — never expose native chrome inside styled UI. Light-mode variant included.
+- **Measured deltas vs. Sprint 4 (1440 px desktop)**: stacked notes list (height grew with note count, ~120 px for 5 notes, ~270 px for 10) → **single 50 px horizontal rail** that doesn't grow vertically regardless of note count. Frees the inspector slot entirely for the telestrator + composer.
+- **`tests/e2e/sprint-5-after.spec.js`**: 9 tests covering layout assertions (rail not in inspector, spans full grid width, lives below video AND below inspector), chip composition (time + player + category + title + ARIA), click → active state + scroll-into-view, slot-change clears active state, empty-state rendering, and 4-width screenshot capture. All 9 pass; sprint-1 / 2 / 3 / 4 specs remain 35/35 green (no regressions).
+- **No backend changes**, no payload schema changes, no role-gating changes.
+
+---
+
 ## Coach Review UX Cockpit — Sprint 4 ✅ COMPLETE (2026-05-02)
 
 **Goal:** let coaches save useful notes quickly without filling out a full form every time. Compact composer (title + player chips + category + Save at MM:SS) with visibility / body / tags collapsed behind a "More details" disclosure.

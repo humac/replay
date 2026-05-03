@@ -584,6 +584,9 @@ export const coachingMixin = {
         // Sprint 4: same invariant for the form's Save-at-MM:SS button.
         const saveFormBtn = document.getElementById('coach-review-save-form');
         if (saveFormBtn) saveFormBtn.textContent = 'Save at --:--';
+        // Sprint 5: drop active timeline-chip selection so it doesn't carry
+        // over into a different match's notes on next entry.
+        this._coachActiveNoteId = null;
     },
 
     _renderCoachReviewTime(video) {
@@ -608,6 +611,8 @@ export const coachingMixin = {
     handleCoachReviewMatchChange() {
         const matchId = document.getElementById('coach-review-match')?.value;
         const slot = document.getElementById('coach-review-slot')?.value || 'full';
+        // Sprint 5: clear any selected timeline chip when switching matches.
+        this._coachActiveNoteId = null;
         if (!matchId) { this.tearDownCoachReview(); this.renderCoachReviewNotes(null); return; }
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -615,6 +620,9 @@ export const coachingMixin = {
     handleCoachReviewSlotChange() {
         const matchId = document.getElementById('coach-review-match')?.value;
         const slot = document.getElementById('coach-review-slot')?.value || 'full';
+        // Sprint 5: clear active chip when slot changes (the active note may
+        // belong to a different slot of the same match).
+        this._coachActiveNoteId = null;
         if (!matchId) return;
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -661,23 +669,85 @@ export const coachingMixin = {
     },
 
     async renderCoachReviewNotes(matchId) {
+        // Sprint 5: render notes for the current match as a horizontal
+        // chip rail under the video instead of stacked button rows in the
+        // right inspector. Each chip shows MM:SS · jersey/team indicator
+        // · category dot · short title; clicking still goes through
+        // seekCoachReviewNote so the existing seek + drawing-restore flow
+        // is unchanged. The rail itself horizontally scrolls (themed
+        // scrollbar in styles.css) so a match with 30+ notes doesn't
+        // stretch the page vertically.
         const container = document.getElementById('coach-review-notes');
         if (!container) return;
-        if (!matchId) { container.innerHTML = '<div class="session-empty">Select a match to see its notes.</div>'; return; }
+        if (!matchId) {
+            container.innerHTML = '<div class="coach-timeline-empty">Select a match to see its notes.</div>';
+            return;
+        }
         const allNotes = this._coachBundle?.notes || [];
-        const notes = allNotes.filter((n) => n.match_id === matchId);
-        if (!notes.length) { container.innerHTML = '<div class="session-empty">No notes for this match yet.</div>'; return; }
-        container.innerHTML = notes.map((n) => `
-            <button type="button" class="coach-note-jump" onclick="app.seekCoachReviewNote(${n.id})">
-                <span>${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))}</span>
-                <strong>${this.esc(n.title)}</strong>
-            </button>
-        `).join('');
+        const notes = allNotes
+            .filter((n) => n.match_id === matchId)
+            // Sort by timestamp so the rail reads left-to-right in match order.
+            .slice()
+            .sort((a, b) => Number(a.timestamp_seconds || 0) - Number(b.timestamp_seconds || 0));
+        if (!notes.length) {
+            container.innerHTML = '<div class="coach-timeline-empty">No notes for this match yet — save your first one above.</div>';
+            return;
+        }
+        const playersById = new Map();
+        (this._coachBundle?.players || []).forEach((p) => playersById.set(String(p.id), p));
+        const categoryLabel = Object.fromEntries(NOTE_CATEGORIES);
+        container.innerHTML = notes.map((n) => {
+            const ids = (n.player_ids || []).map(String);
+            let playerIndicator = '';
+            let playerAria = '';
+            if (ids.length === 1) {
+                const p = playersById.get(ids[0]);
+                if (p?.jersey_number) {
+                    playerIndicator = `#${this.esc(p.jersey_number)}`;
+                    playerAria = `, player ${p.jersey_number}`;
+                } else if (p?.display_name) {
+                    playerIndicator = this.esc(p.display_name.split(' ')[0]);
+                    playerAria = `, player ${p.display_name}`;
+                }
+            } else if (ids.length > 1) {
+                playerIndicator = `+${ids.length}`;
+                playerAria = `, ${ids.length} players`;
+            } else {
+                playerIndicator = 'Team';
+                playerAria = ', team-wide';
+            }
+            const cat = String(n.category || 'other');
+            const catTitle = this.esc(categoryLabel[cat] || cat);
+            const active = this._coachActiveNoteId === Number(n.id);
+            const ts = this.esc(this.formatClock(n.timestamp_seconds));
+            const ariaLabel = `Jump to ${ts}${playerAria}, ${catTitle}: ${this.esc(n.title)}`;
+            return `
+                <button type="button"
+                        class="coach-timeline-chip ${active ? 'is-active' : ''}"
+                        data-coach-note-id="${n.id}"
+                        data-coach-category="${this.esc(cat)}"
+                        title="${ariaLabel}"
+                        aria-label="${ariaLabel}"
+                        aria-pressed="${active ? 'true' : 'false'}"
+                        onclick="app.seekCoachReviewNote(${n.id})">
+                    <span class="coach-timeline-chip-time">${ts}</span>
+                    <span class="coach-timeline-chip-player">${playerIndicator}</span>
+                    <span class="coach-timeline-chip-cat" aria-hidden="true" data-cat="${this.esc(cat)}"></span>
+                    <span class="coach-timeline-chip-title">${this.esc(n.title)}</span>
+                </button>
+            `;
+        }).join('');
     },
 
     seekCoachReviewNote(noteId) {
         const note = (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId));
         if (!note) return;
+        // Sprint 5: track which note is currently focused so the timeline
+        // chip can render an active state. _setActiveCoachReviewNote handles
+        // both the in-place class swap (no full re-render) and the
+        // scroll-into-view nudge so the active chip is visible after a
+        // long-rail seek.
+        this._setActiveCoachReviewNote(Number(note.id));
         const review = this._coachReview;
         if (!review || review.matchId !== note.match_id || review.slot !== note.slot) {
             this.loadCoachReviewVideo(note.match_id, note.slot, Math.max(0, Number(note.timestamp_seconds || 0)), note.drawing || null);
@@ -690,6 +760,21 @@ export const coachingMixin = {
         const video = document.getElementById(this._coachVideoId);
         if (video) video.currentTime = Math.max(0, Number(note.timestamp_seconds || 0));
         this.renderCoachDrawing(note.drawing || {});
+    },
+
+    _setActiveCoachReviewNote(noteId) {
+        this._coachActiveNoteId = noteId;
+        const chips = document.querySelectorAll('#coach-review-notes .coach-timeline-chip');
+        let activeChip = null;
+        chips.forEach((chip) => {
+            const active = Number(chip.dataset.coachNoteId) === noteId;
+            chip.classList.toggle('is-active', active);
+            chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+            if (active) activeChip = chip;
+        });
+        if (activeChip) {
+            activeChip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        }
     },
 
     renderCoachReviewForm() {

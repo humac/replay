@@ -6734,6 +6734,163 @@ details.diag-row-details[open] > summary::after {
     background: rgba(0, 0, 0, 0.18);
 }
 
+/* ============================================================
+ * Sprint 5: current-match timeline rail
+ *
+ * Replaces the bulky stacked notes list (used to live inside the
+ * right inspector) with a horizontal chip rail under the video. Each
+ * chip shows MM:SS · player indicator · category dot · short title;
+ * clicking still routes through the existing seekCoachReviewNote
+ * handler (drawing render + canvas paint preserved). The rail spans
+ * the full width of .coach-review-grid so it sits cleanly under both
+ * the video column and the inspector column at desktop, and falls
+ * naturally into the single-column flow on mobile.
+ *
+ * Horizontal-scroll-only: the rail keeps a themed thin scrollbar
+ * (never expose native chrome — see standing rule). Vertical wrap is
+ * disabled so the rail never pushes the page taller as notes
+ * accumulate; instead, the user scrolls horizontally or the active
+ * chip auto-scrolls into view via _setActiveCoachReviewNote.
+ * ============================================================ */
+.coach-timeline-rail {
+    /* In the .coach-review-grid (display: grid) this is the third item;
+     * span both columns at desktop so the rail sits below both video and
+     * inspector. At narrow widths the grid collapses to one column and
+     * this naturally lays out below them. */
+    grid-column: 1 / -1;
+    margin-top: 0.75rem;
+    padding: 0.4rem 0;
+    display: flex;
+    gap: 0.45rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Themed scrollbar — never expose native chrome inside styled UI. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    /* Stop the rail from pushing the page taller as notes accumulate;
+     * chips wrap horizontally instead. */
+    flex-wrap: nowrap;
+}
+.coach-timeline-rail::-webkit-scrollbar {
+    height: 6px;
+}
+.coach-timeline-rail::-webkit-scrollbar-track {
+    background: transparent;
+}
+.coach-timeline-rail::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+}
+
+.coach-timeline-empty {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px dashed rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    flex: 1 1 auto;
+    text-align: center;
+}
+
+.coach-timeline-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main);
+    border-radius: 999px;
+    cursor: pointer;
+    max-width: 22rem;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.coach-timeline-chip:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+.coach-timeline-chip:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.32);
+}
+.coach-timeline-chip.is-active {
+    background: rgba(23, 113, 201, 0.18);
+    border-color: rgba(23, 113, 201, 0.55);
+    box-shadow: 0 0 0 1px rgba(23, 113, 201, 0.28);
+}
+
+.coach-timeline-chip-time {
+    font-family: var(--font-heading);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+.coach-timeline-chip.is-active .coach-timeline-chip-time {
+    color: var(--text-main);
+}
+.coach-timeline-chip-player {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+.coach-timeline-chip-cat {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    background: rgba(255, 255, 255, 0.4);
+}
+.coach-timeline-chip-cat[data-cat="shape"]      { background: #38bdf8; }
+.coach-timeline-chip-cat[data-cat="pressing"]   { background: #f97316; }
+.coach-timeline-chip-cat[data-cat="transition"] { background: #a855f7; }
+.coach-timeline-chip-cat[data-cat="set_piece"]  { background: #facc15; }
+.coach-timeline-chip-cat[data-cat="build_up"]   { background: #22c55e; }
+.coach-timeline-chip-cat[data-cat="finishing"]  { background: #f43f5e; }
+.coach-timeline-chip-cat[data-cat="defending"]  { background: #6366f1; }
+.coach-timeline-chip-cat[data-cat="goalkeeper"] { background: #14b8a6; }
+.coach-timeline-chip-cat[data-cat="effort"]     { background: #eab308; }
+.coach-timeline-chip-cat[data-cat="decision"]   { background: #ec4899; }
+.coach-timeline-chip-cat[data-cat="other"]      { background: rgba(255, 255, 255, 0.4); }
+
+.coach-timeline-chip-title {
+    font-size: 0.85rem;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+[data-theme="light"] .coach-timeline-rail {
+    scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+[data-theme="light"] .coach-timeline-rail::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+}
+[data-theme="light"] .coach-timeline-empty {
+    border-color: rgba(0, 0, 0, 0.10);
+}
+[data-theme="light"] .coach-timeline-chip {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+[data-theme="light"] .coach-timeline-chip:hover {
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-timeline-chip.is-active {
+    background: rgba(21, 101, 192, 0.10);
+    border-color: rgba(21, 101, 192, 0.45);
+    box-shadow: 0 0 0 1px rgba(21, 101, 192, 0.22);
+}
+
 /* Match-page deep link to /coach?tab=review (coach/admin only) */
 .coach-this-match-link {
     text-decoration: none;
