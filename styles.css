@@ -6998,27 +6998,32 @@ details.diag-row-details[open] > summary::after {
         padding: 0.45rem 0.6rem;
     }
 
-    /* When the drawer is open, the inspector slides in from the right as
-     * a fixed-position panel. The video keeps its full width — the
-     * inspector overlays it instead of resizing the grid. */
-    #coach-view.is-focus-mode.is-focus-drawer-open .coach-review-side {
-        display: grid;
-        position: fixed;
-        top: 1rem;
-        right: 1rem;
-        bottom: 1rem;
-        width: min(380px, calc(100vw - 2rem));
-        max-height: none;
-        z-index: 60;
-        background: var(--bg-panel, #0e1320);
-        border: 1px solid rgba(255, 255, 255, 0.10);
-        border-radius: 12px;
-        padding: 0.85rem;
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-        overflow: auto;
-        animation: coachFocusDrawerSlide 180ms ease-out;
-    }
+}
 
+/* When the drawer is open, the inspector is moved to <body> by JS (see
+ * openCoachFocusInspector) so it shares the root stacking context with
+ * the backdrop. The selector is keyed on body.coach-focus-drawer-open
+ * because the side panel is no longer a descendant of #coach-view at
+ * that point. Without this re-parenting, an ancestor stacking context
+ * (e.g. .coach-tab-panel's coachTabFade animation) traps the drawer's
+ * z-index and the backdrop renders above the drawer, intercepting all
+ * clicks and showing a zoom-out cursor over the panel. */
+body.coach-focus-drawer-open > .coach-review-side {
+    display: grid;
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    width: min(380px, calc(100vw - 2rem));
+    max-height: none;
+    z-index: 60;
+    background: var(--bg-panel, #0e1320);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 12px;
+    padding: 0.85rem;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    overflow: auto;
+    animation: coachFocusDrawerSlide 180ms ease-out;
 }
 
 /* Backdrop dim so the drawer reads as a modal layer. The element is
@@ -7047,7 +7052,7 @@ details.diag-row-details[open] > summary::after {
     to   { opacity: 1; }
 }
 
-[data-theme="light"] #coach-view.is-focus-mode.is-focus-drawer-open .coach-review-side {
+[data-theme="light"] body.coach-focus-drawer-open > .coach-review-side {
     background: var(--bg-panel, #ffffff);
     border-color: rgba(0, 0, 0, 0.12);
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);

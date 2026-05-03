@@ -844,6 +844,10 @@ export const coachingMixin = {
 
     exitCoachFocusMode() {
         if (!this._coachFocusMode) return;
+        // Close the inspector first so the side panel returns to its
+        // original DOM parent before focus mode exits. closeCoachFocusInspector
+        // is a no-op if the inspector wasn't mounted to body.
+        this.closeCoachFocusInspector();
         this._coachFocusMode = false;
         this._coachFocusInspectorOpen = false;
         const coachView = document.getElementById('coach-view');
@@ -876,6 +880,10 @@ export const coachingMixin = {
         if (!this._coachFocusMode) return;
         this._coachFocusInspectorOpen = true;
         document.getElementById('coach-view')?.classList.add('is-focus-drawer-open');
+        // Body class lets the CSS target the side panel after it gets
+        // re-parented to <body> below — bypasses the bounded stacking
+        // context created by .coach-tab-panel's animation property.
+        document.body.classList.add('coach-focus-drawer-open');
         const t = document.getElementById('coach-review-focus-inspector-toggle');
         if (t) t.setAttribute('aria-pressed', 'true');
         // Mount a real backdrop element so clicking outside the drawer
@@ -889,15 +897,42 @@ export const coachingMixin = {
             document.body.appendChild(backdrop);
         }
         backdrop.hidden = false;
+        // Move the inspector to <body> so it shares the root stacking context
+        // with the backdrop. Without this, an ancestor with animation /
+        // transform / filter (e.g. .coach-tab-panel's coachTabFade animation)
+        // creates a bounded stacking context that traps the drawer's z-index
+        // — the backdrop renders ABOVE the drawer and intercepts every click.
+        const side = document.querySelector('.coach-review-side');
+        if (side && !this._coachFocusSideOriginalParent) {
+            this._coachFocusSideOriginalParent = side.parentElement;
+            this._coachFocusSideOriginalNextSibling = side.nextSibling;
+            document.body.appendChild(side);
+        }
     },
 
     closeCoachFocusInspector() {
         this._coachFocusInspectorOpen = false;
         document.getElementById('coach-view')?.classList.remove('is-focus-drawer-open');
+        document.body.classList.remove('coach-focus-drawer-open');
         const t = document.getElementById('coach-review-focus-inspector-toggle');
         if (t) t.setAttribute('aria-pressed', 'false');
         const backdrop = document.getElementById('coach-focus-backdrop');
         if (backdrop) backdrop.hidden = true;
+        // Restore the inspector to its original DOM position so the rest of
+        // the layout (Sprint 1 height-sync ResizeObserver, the timeline rail
+        // grid placement) keeps working when focus mode exits.
+        const side = document.querySelector('.coach-review-side');
+        if (side && this._coachFocusSideOriginalParent) {
+            const parent = this._coachFocusSideOriginalParent;
+            const next = this._coachFocusSideOriginalNextSibling;
+            if (next && next.parentElement === parent) {
+                parent.insertBefore(side, next);
+            } else {
+                parent.appendChild(side);
+            }
+            this._coachFocusSideOriginalParent = null;
+            this._coachFocusSideOriginalNextSibling = null;
+        }
     },
 
     toggleCoachFocusInspector() {
