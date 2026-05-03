@@ -619,6 +619,38 @@ Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail
 
 ---
 
+## Coach Review UX Cockpit — Sprint 4 ✅ COMPLETE (2026-05-02)
+
+**Goal:** let coaches save useful notes quickly without filling out a full form every time. Compact composer (title + player chips + category + Save at MM:SS) with visibility / body / tags collapsed behind a "More details" disclosure.
+
+- **Compact default composer** (`js/coaching.js renderCoachReviewForm`): five visible fields by default — title input, player chip strip, category select, Save-at-MM:SS button, "More details" disclosure. The plan's UX target sequence preserved.
+- **Live timestamp on the Save button** (`js/coaching.js _renderCoachReviewTime`): the form's Save button now reads `Save at MM:SS` and updates from the same `timeupdate` listener that drives the top-bar readout. Coaches can see the exact timestamp the note will land on without glancing up.
+- **`<details>` disclosure for advanced fields** (`styles.css .coach-review-advanced`): visibility, long-form notes (`coach-review-body`), and tags collapse into a `<details>` element. Default: closed. Native browser triangle hidden in both Firefox and WebKit; replaced with a CSS chevron that rotates on open. CSS gates the body via `.coach-review-advanced[open] > .coach-review-advanced-body { display: grid }` so the browser's default `display:none` for closed `<details>` children is preserved (without the gate, my own `display: grid` rule overrode it and the advanced fields rendered while collapsed — caught in browser verify).
+- **Sticky reset behavior** (`js/coaching.js saveReviewNote`): only title, body, and tags clear after save. Category, visibility, and selected players stay sticky so a coach reviewing one player can save several notes in a row without re-tagging. Per the plan: "category/type may remain sticky for fast repeated note creation; selected players should optionally remain sticky while reviewing one player."
+- **No backend changes**. Per the plan task 3 ("If not, do not add backend changes in this sprint"): the existing `category` enum is sufficient; an additional `note_type` field would require a `models.py` + DB migration. Deferred.
+- **All existing element IDs preserved** (`#coach-review-title`, `#coach-review-body`, `#coach-review-category`, `#coach-review-visibility`, `#coach-review-players`, `#coach-review-tags`) so `saveReviewNote()` and the existing `CreateCoachingNoteRequest` payload chain need no changes. The new form button (`#coach-review-save-form`) calls the same `app.saveReviewNote()` handler as the top-bar Save Note button.
+- **`tests/e2e/sprint-4-after.spec.js`**: 8 tests covering collapsed-state assertions, expanded-state assertions, Save-at-MM:SS timestamp tracking, save-handler binding, and 4-width screenshot capture. All 8 pass; sprint-1/2/3 specs remain 27/27 green (no regressions).
+
+---
+
+## Coach Review UX Cockpit — Sprint 3 ✅ COMPLETE (2026-05-02)
+
+**Goal:** shrink the telestrator controls so they do not crowd the video canvas. Icon-first desktop toolbar with pointer-aware sizing — compact at `pointer: fine`, ≥44 px tap target at `pointer: coarse`.
+
+- **Icon-first tool buttons** (`js/coaching.js renderCoachTelestratorToolbar`): nine drawing tools (`select`, `freehand`, `arrow`, `circle`, `zone`, `label`, `spotlight`, `dim`, `formation`) now render as inline-SVG icon buttons. No font dependency; the SVG `<path>` data is embedded in the render template alongside its tool id, label, and tooltip. Each button uses `currentColor` so the icon picks up the button's foreground in both themes. `data-coach-tool` values, the `setCoachDrawingTool()` handler, and the drawing payload are unchanged.
+- **Grouped toolbar sections** (`role="toolbar"` + `role="group"` per section): drawing tools in a 5-column grid; color swatches + width slider in a wrap row; canvas actions (Canvas On/Off, Undo, Delete, Clear) in their own row. Clear keeps a text label and is given a soft destructive variant (`.btn-danger-soft`) — per the plan: "Keep text labels for destructive actions like Clear if needed."
+- **Accessibility**: every icon button carries `title`, `aria-label`, and `aria-pressed`. `setCoachDrawingTool`, `setCoachDrawingColor`, and `updateCoachCanvasToggleLabel` now keep `aria-pressed` in sync with the visual `.active` class, so screen readers announce toggle changes without re-rendering. Color swatches expose human-readable names (`Color: Sky blue`, `Color: Orange`, …). Width slider has `aria-label="Stroke width"`.
+- **Pointer-aware sizing** (`styles.css .coach-tool-btn`): default state is touch-first with `min-height: 44px` and visible icon + label. `@media (pointer: fine) and (min-width: 900px)` collapses each button to a 34 × 34 px square with the text label visually hidden via the standard sr-only clip. `@media (pointer: coarse)` and narrow viewports keep the larger target.
+- **Visible focus** (`:focus-visible`): every tool button has an accent-colored 2 px box-shadow ring on keyboard focus.
+- **Measured deltas vs. Sprint 2 baseline (1440 px desktop):**
+  - Tool button size: text rectangles (~32 × 84 px each) → **34 × 34 px** square icons (-58% width per button)
+  - Tool grid height: ~136 px → **74 px** (-62 px)
+  - Total telestrator section: ~277 px → **232 px** (-45 px)
+- **Pointer-coarse verification**: Playwright iPad Mini emulation profile yields 46 px tool buttons (above the 44 px minimum).
+- **`tests/e2e/sprint-3-after.spec.js`**: 9 tests covering 5-width capture, ARIA assertions, dynamic `aria-pressed` sync, color swatch state, canvas-toggle text + `aria-pressed`, and the iPad Mini tap-target check. All 9 pass; sprint-1-after / sprint-2-after specs remain 18/18 green (no regressions).
+
+---
+
 ## Coaching Telestrator — Future Phases (designed, NOT shipped)
 
 These phases were designed alongside Phase 1 but deferred. Each builds cleanly on the `formation` object without breaking it.

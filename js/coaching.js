@@ -581,18 +581,28 @@ export const coachingMixin = {
         // stale clock when the user reopens Review later.
         const timeEl = document.getElementById('coach-review-time');
         if (timeEl) timeEl.textContent = '--:--';
+        // Sprint 4: same invariant for the form's Save-at-MM:SS button.
+        const saveFormBtn = document.getElementById('coach-review-save-form');
+        if (saveFormBtn) saveFormBtn.textContent = 'Save at --:--';
     },
 
     _renderCoachReviewTime(video) {
         const el = document.getElementById('coach-review-time');
-        if (!el) return;
+        const formBtn = document.getElementById('coach-review-save-form');
         const t = Number(video?.currentTime || 0);
-        if (!Number.isFinite(t) || t < 0) { el.textContent = '--:--'; return; }
-        const hh = Math.floor(t / 3600);
-        const mm = Math.floor((t % 3600) / 60);
-        const ss = Math.floor(t % 60);
-        const pad = (n) => String(n).padStart(2, '0');
-        el.textContent = hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
+        let display = '--:--';
+        if (Number.isFinite(t) && t >= 0) {
+            const hh = Math.floor(t / 3600);
+            const mm = Math.floor((t % 3600) / 60);
+            const ss = Math.floor(t % 60);
+            const pad = (n) => String(n).padStart(2, '0');
+            display = hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
+        }
+        if (el) el.textContent = display;
+        // Sprint 4: the form's Save button now reads `Save at MM:SS` so the
+        // coach can see the exact timestamp the note will land on without
+        // glancing up at the top bar.
+        if (formBtn) formBtn.textContent = `Save at ${display}`;
     },
 
     handleCoachReviewMatchChange() {
@@ -683,24 +693,48 @@ export const coachingMixin = {
     },
 
     renderCoachReviewForm() {
+        // Sprint 4: fast compact composer. Default state shows the four
+        // fields a coach actually fills in every time — title, players,
+        // category, and a Save-at-MM:SS primary button. Visibility, tags,
+        // and the long-form body collapse behind a <details> disclosure
+        // ("More details") so they're available without dominating the
+        // inspector vertically. All existing element IDs are preserved so
+        // saveReviewNote() and the existing payload/handler chain need no
+        // changes; the backend payload (CreateCoachingNoteRequest) is
+        // byte-for-byte identical to before.
         const container = document.getElementById('coach-review-form');
         if (!container) return;
         const players = this._coachBundle?.players || [];
         container.innerHTML = `
-            <input type="text" id="coach-review-title" maxlength="160" placeholder="Title (e.g. Back line spacing)">
-            <textarea id="coach-review-body" rows="3" maxlength="4000" placeholder="What should players notice?"></textarea>
-            <div class="coach-panel-grid">
-                <select id="coach-review-category">
-                    ${NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
-                </select>
-                <select id="coach-review-visibility">
-                    ${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
-                </select>
-            </div>
+            <input type="text" id="coach-review-title" maxlength="160" placeholder="Title (e.g. Back line spacing)" aria-label="Note title">
             <div id="coach-review-players" class="coach-check-list compact" role="listbox" aria-label="Linked players">${this.coachCheckListHtml(players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet')}</div>
-            <input type="text" id="coach-review-tags" maxlength="300" placeholder="tags,comma,separated">
-            <button type="button" class="btn-primary" onclick="app.saveReviewNote()">Save note at current time</button>
+            <select id="coach-review-category" aria-label="Category">
+                ${NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+            </select>
+            <button type="button" id="coach-review-save-form" class="btn-primary" onclick="app.saveReviewNote()">Save at --:--</button>
+            <details class="coach-review-advanced">
+                <summary>More details</summary>
+                <div class="coach-review-advanced-body">
+                    <label class="coach-review-field-label">
+                        <span>Visibility</span>
+                        <select id="coach-review-visibility" aria-label="Visibility">
+                            ${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+                        </select>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Notes</span>
+                        <textarea id="coach-review-body" rows="3" maxlength="4000" placeholder="What should players notice?"></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Tags</span>
+                        <input type="text" id="coach-review-tags" maxlength="300" placeholder="tags,comma,separated">
+                    </label>
+                </div>
+            </details>
         `;
+        // Stamp the current timestamp onto the new Save button immediately.
+        const v = document.getElementById(this._coachVideoId);
+        if (v) this._renderCoachReviewTime(v);
     },
 
     async openNoteInReview(noteId) {
@@ -735,6 +769,11 @@ export const coachingMixin = {
         try {
             await this.createCoachNote(payload);
             this.showSuccess('Coaching note saved.');
+            // Sprint 4: only clear fields the coach is unlikely to repeat
+            // verbatim. Category, visibility, and selected players stay
+            // sticky so a coach reviewing one player can save several notes
+            // in a row without re-tagging. Title, body, and tags are cleared
+            // because they describe the specific moment.
             ['coach-review-title', 'coach-review-body', 'coach-review-tags'].forEach((id) => {
                 const el = document.getElementById(id); if (el) el.value = '';
             });
@@ -747,32 +786,105 @@ export const coachingMixin = {
     // ===== Telestrator (operates on whichever canvas/video pair is current) =====
 
     renderCoachTelestratorToolbar() {
+        // Sprint 3: icon-first toolbar grouped into three sections — drawing
+        // tools, paint controls (color + width), and canvas/destructive
+        // actions. Each tool button uses inline SVG (no font dependency)
+        // plus a visually-hidden text label that re-appears on touch
+        // devices via the pointer-aware CSS in styles.css. Every icon
+        // button carries title + aria-label + aria-pressed so AT users
+        // and tooltip hover stay first-class. Drawing payload, handler
+        // names, and data-coach-tool values are unchanged so existing
+        // saved drawings + click handlers keep working.
         const tools = [
-            ['select', 'Select'], ['freehand', 'Line'], ['arrow', 'Arrow'],
-            ['circle', 'Circle'], ['zone', 'Zone'], ['label', 'Label'],
-            ['spotlight', 'Spot'], ['dim', 'Dim'], ['formation', 'Formation'],
+            ['select',    'Select',         'Select / move objects',
+                'M5 3l14 8-6 1.5L11 19z'],
+            ['freehand',  'Freehand line',  'Freehand line',
+                'M3 17c2-4 4-6 6-6s2 4 4 4 4-4 6-6'],
+            ['arrow',     'Arrow',          'Arrow',
+                'M4 12h13m-4-5l5 5-5 5'],
+            ['circle',    'Circle',         'Circle',
+                'M12 4a8 8 0 100 16 8 8 0 000-16z'],
+            ['zone',      'Zone',           'Zone (dashed rectangle)',
+                'M4 6h4M10 6h4M16 6h4M20 8v4M20 14v4M20 18h-4M14 18h-4M8 18H4M4 16v-4M4 10V6'],
+            ['label',     'Label',          'Text label / player number',
+                'M6 6h12M12 6v12'],
+            ['spotlight', 'Spotlight',      'Spotlight (highlight one player)',
+                'M12 4v3M12 17v3M4 12h3M17 12h3M6.3 6.3l2 2M15.7 15.7l2 2M6.3 17.7l2-2M15.7 8.3l2-2M12 9a3 3 0 100 6 3 3 0 000-6z'],
+            ['dim',       'Dim',            'Dim the field',
+                'M12 4a8 8 0 100 16 8 8 0 008-8 6 6 0 01-8-8z'],
+            ['formation', 'Formation',      'Formation (multi-player highlight)',
+                'M7 7a2 2 0 110 4 2 2 0 010-4zm10 0a2 2 0 110 4 2 2 0 010-4zM7 15a2 2 0 110 4 2 2 0 010-4zm10 0a2 2 0 110 4 2 2 0 010-4zM12 10a2 2 0 110 4 2 2 0 010-4z'],
         ];
         const colors = ['#38bdf8', '#f97316', '#22c55e', '#facc15', '#f43f5e', '#ffffff'];
+        const colorNames = {
+            '#38bdf8': 'Sky blue',
+            '#f97316': 'Orange',
+            '#22c55e': 'Green',
+            '#facc15': 'Yellow',
+            '#f43f5e': 'Red',
+            '#ffffff': 'White',
+        };
+        const renderToolBtn = ([tool, label, tip, path]) => {
+            const active = this._coachDrawingTool === tool;
+            return `
+                <button type="button"
+                        data-coach-tool="${tool}"
+                        class="coach-tool-btn ${active ? 'active' : ''}"
+                        title="${tip}"
+                        aria-label="${tip}"
+                        aria-pressed="${active ? 'true' : 'false'}"
+                        onclick="app.setCoachDrawingTool('${tool}')">
+                    <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="${path}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="coach-tool-label">${label}</span>
+                </button>
+            `;
+        };
         return `
-            <div class="coach-telestrator">
-                <div class="coach-tool-grid">
-                    ${tools.map(([tool, label]) => `
-                        <button type="button" data-coach-tool="${tool}" class="mini-action-btn ${this._coachDrawingTool === tool ? 'active' : ''}" onclick="app.setCoachDrawingTool('${tool}')">${label}</button>
-                    `).join('')}
+            <div class="coach-telestrator" role="toolbar" aria-label="Telestrator tools">
+                <div class="coach-tool-grid" role="group" aria-label="Drawing tools">
+                    ${tools.map(renderToolBtn).join('')}
                 </div>
-                <div class="coach-tool-row">
-                    ${colors.map((color) => `
-                        <button type="button" data-coach-color="${color}" class="coach-color-swatch ${this._coachDrawingColor === color ? 'active' : ''}" style="--swatch:${color}" title="${color}" onclick="app.setCoachDrawingColor('${color}')"></button>
-                    `).join('')}
-                    <label class="coach-width-control">Width <input type="range" min="2" max="10" value="${this._coachDrawingWidth}" onchange="app.setCoachDrawingWidth(this.value)"></label>
+                <div class="coach-tool-row" role="group" aria-label="Color and width">
+                    ${colors.map((color) => {
+                        const active = this._coachDrawingColor === color;
+                        const name = colorNames[color] || color;
+                        return `
+                            <button type="button"
+                                    data-coach-color="${color}"
+                                    class="coach-color-swatch ${active ? 'active' : ''}"
+                                    style="--swatch:${color}"
+                                    title="${name}"
+                                    aria-label="Color: ${name}"
+                                    aria-pressed="${active ? 'true' : 'false'}"
+                                    onclick="app.setCoachDrawingColor('${color}')"></button>
+                        `;
+                    }).join('')}
+                    <label class="coach-width-control" title="Stroke width">
+                        <span class="coach-width-label" aria-hidden="true">W</span>
+                        <input type="range" min="2" max="10" value="${this._coachDrawingWidth}"
+                               aria-label="Stroke width"
+                               onchange="app.setCoachDrawingWidth(this.value)">
+                    </label>
                 </div>
-                <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number">
+                <input type="text" id="coach-label-text" maxlength="40" placeholder="Label / player number"
+                       aria-label="Text label or player number for the next label drawing">
                 <div id="coach-formation-controls" class="coach-formation-controls" hidden></div>
-                <div class="coach-draw-actions">
-                    <button type="button" data-coach-canvas-toggle class="mini-action-btn" onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
-                    <button type="button" class="mini-action-btn" onclick="app.undoCoachDrawing()">Undo</button>
-                    <button type="button" class="mini-action-btn" onclick="app.deleteSelectedCoachObject()">Delete</button>
-                    <button type="button" class="mini-action-btn" onclick="app.clearCoachDrawing()">Clear</button>
+                <div class="coach-draw-actions" role="group" aria-label="Canvas actions">
+                    <button type="button" data-coach-canvas-toggle
+                            class="mini-action-btn"
+                            aria-pressed="${this._coachDrawingActive ? 'true' : 'false'}"
+                            onclick="app.toggleCoachDrawing()">Canvas ${this._coachDrawingActive ? 'On' : 'Off'}</button>
+                    <button type="button" class="mini-action-btn"
+                            title="Undo last object"
+                            onclick="app.undoCoachDrawing()">Undo</button>
+                    <button type="button" class="mini-action-btn"
+                            title="Delete selected object"
+                            onclick="app.deleteSelectedCoachObject()">Delete</button>
+                    <button type="button" class="mini-action-btn btn-danger-soft"
+                            title="Clear all drawings on this freeze frame"
+                            onclick="app.clearCoachDrawing()">Clear</button>
                 </div>
             </div>
         `;
@@ -875,6 +987,7 @@ export const coachingMixin = {
     updateCoachCanvasToggleLabel() {
         document.querySelectorAll('[data-coach-canvas-toggle]').forEach((btn) => {
             btn.textContent = `Canvas ${this._coachDrawingActive ? 'On' : 'Off'}`;
+            btn.setAttribute('aria-pressed', this._coachDrawingActive ? 'true' : 'false');
         });
     },
 
@@ -916,7 +1029,12 @@ export const coachingMixin = {
         }
         this._coachDrawingTool = tool;
         document.querySelectorAll('[data-coach-tool]').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.coachTool === tool);
+            const active = btn.dataset.coachTool === tool;
+            btn.classList.toggle('active', active);
+            // Sprint 3: keep aria-pressed in sync with the visual active
+            // state so screen readers announce the toggle change without
+            // re-rendering the toolbar.
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
         this._renderFormationControls();
         this.activateCoachCanvas();
@@ -926,7 +1044,9 @@ export const coachingMixin = {
     setCoachDrawingColor(color) {
         this._coachDrawingColor = color;
         document.querySelectorAll('[data-coach-color]').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.coachColor === color);
+            const active = btn.dataset.coachColor === color;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
     },
 
