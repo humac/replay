@@ -61,6 +61,29 @@ STALE_SEGMENT_AGE_SECONDS = float(
 _PDT_RE = re.compile(r"#EXT-X-PROGRAM-DATE-TIME:([^\r\n]+)")
 
 
+def _first_variant_url(master_playlist: str, base_url: str) -> str | None:
+    """Extract the first variant URL from a master HLS playlist.
+
+    Master playlists are line-oriented: each ``#EXT-X-STREAM-INF`` tag is
+    followed by exactly one URL line (relative or absolute). We don't need
+    to pick the "best" variant — there's only ever one for the live stream
+    — so we just return the first URL line we find.
+    """
+    found_inf = False
+    for raw_line in master_playlist.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#EXT-X-STREAM-INF"):
+            found_inf = True
+            continue
+        if found_inf and not line.startswith("#"):
+            if line.startswith("http://") or line.startswith("https://"):
+                return line
+            return f"{base_url}/{line}"
+    return None
+
+
 def stream_path(stream_key: str) -> str:
     """The MediaMTX path name for the configured stream key."""
     return f"{STREAM_PATH_PREFIX}/{stream_key}"
@@ -111,18 +134,24 @@ async def _last_segment_age(stream_key: str) -> float | None:
     playlist, or ``None`` when the playlist can't be fetched or has no
     PDT entries (e.g. before the first segment cut).
 
-    With ``hlsVariant: mpegts`` MediaMTX serves the segment-bearing playlist
-    at ``index.m3u8`` directly — there is no master/variant split. Earlier
-    versions of this code referenced ``main_stream.m3u8`` from the
-    ``lowLatency`` variant, which always 404s under mpegts and turned the
-    stale-publisher detector into a no-op.
+    MediaMTX serves a two-level playlist regardless of `hlsVariant`:
+    ``index.m3u8`` is a master playlist that points at a variant playlist
+    like ``main_stream.m3u8?session=<uuid>``. The PDT entries live on the
+    variant, so we fetch the master, parse out the first variant URL,
+    then fetch that.
     """
     if not stream_key:
         return None
-    url = f"{MEDIAMTX_HLS_URL}/{stream_path(stream_key)}/index.m3u8"
+    base = f"{MEDIAMTX_HLS_URL}/{stream_path(stream_key)}"
     try:
         async with httpx.AsyncClient(timeout=_STATUS_TIMEOUT) as c:
-            resp = await c.get(url)
+            master = await c.get(f"{base}/index.m3u8")
+            if master.status_code != 200:
+                return None
+            variant_url = _first_variant_url(master.text, base)
+            if not variant_url:
+                return None
+            resp = await c.get(variant_url)
     except httpx.HTTPError:
         return None
     if resp.status_code != 200:
@@ -311,6 +340,7 @@ async def proxy_hls(
     *,
     method: str = "GET",
     request_headers: dict | None = None,
+    query_string: str = "",
 ) -> tuple[int, dict, AsyncIterator[bytes]]:
     """Stream a MediaMTX HLS asset back through the replay origin.
 
@@ -327,11 +357,19 @@ async def proxy_hls(
     forward client headers like ``Range`` so segment fetches return
     ``206 Partial Content`` instead of a full body — Apple TV refuses to
     play HLS when a ranged request is answered with a 200.
+
+    ``query_string`` is forwarded verbatim so MediaMTX's per-stream session
+    tokens (``?session=<uuid>``) survive the round-trip. The master
+    ``index.m3u8`` references variant playlists like
+    ``main_stream.m3u8?session=…`` and MediaMTX 1.18+ returns 404 if the
+    session token is missing on the variant fetch.
     """
     if ".." in asset_path or asset_path.startswith("/"):
         raise ValueError("invalid hls asset path")
 
     url = f"{MEDIAMTX_HLS_URL}/{stream_path(stream_key)}/{asset_path}"
+    if query_string:
+        url = f"{url}?{query_string}"
     client = httpx.AsyncClient(timeout=_PROXY_TIMEOUT)
 
     # Pass through only the conditional / range headers that affect the
