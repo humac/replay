@@ -585,14 +585,21 @@ export const coachingMixin = {
 
     _renderCoachReviewTime(video) {
         const el = document.getElementById('coach-review-time');
-        if (!el) return;
+        const formBtn = document.getElementById('coach-review-save-form');
         const t = Number(video?.currentTime || 0);
-        if (!Number.isFinite(t) || t < 0) { el.textContent = '--:--'; return; }
-        const hh = Math.floor(t / 3600);
-        const mm = Math.floor((t % 3600) / 60);
-        const ss = Math.floor(t % 60);
-        const pad = (n) => String(n).padStart(2, '0');
-        el.textContent = hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
+        let display = '--:--';
+        if (Number.isFinite(t) && t >= 0) {
+            const hh = Math.floor(t / 3600);
+            const mm = Math.floor((t % 3600) / 60);
+            const ss = Math.floor(t % 60);
+            const pad = (n) => String(n).padStart(2, '0');
+            display = hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
+        }
+        if (el) el.textContent = display;
+        // Sprint 4: the form's Save button now reads `Save at MM:SS` so the
+        // coach can see the exact timestamp the note will land on without
+        // glancing up at the top bar.
+        if (formBtn) formBtn.textContent = `Save at ${display}`;
     },
 
     handleCoachReviewMatchChange() {
@@ -683,24 +690,48 @@ export const coachingMixin = {
     },
 
     renderCoachReviewForm() {
+        // Sprint 4: fast compact composer. Default state shows the four
+        // fields a coach actually fills in every time — title, players,
+        // category, and a Save-at-MM:SS primary button. Visibility, tags,
+        // and the long-form body collapse behind a <details> disclosure
+        // ("More details") so they're available without dominating the
+        // inspector vertically. All existing element IDs are preserved so
+        // saveReviewNote() and the existing payload/handler chain need no
+        // changes; the backend payload (CreateCoachingNoteRequest) is
+        // byte-for-byte identical to before.
         const container = document.getElementById('coach-review-form');
         if (!container) return;
         const players = this._coachBundle?.players || [];
         container.innerHTML = `
-            <input type="text" id="coach-review-title" maxlength="160" placeholder="Title (e.g. Back line spacing)">
-            <textarea id="coach-review-body" rows="3" maxlength="4000" placeholder="What should players notice?"></textarea>
-            <div class="coach-panel-grid">
-                <select id="coach-review-category">
-                    ${NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
-                </select>
-                <select id="coach-review-visibility">
-                    ${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
-                </select>
-            </div>
+            <input type="text" id="coach-review-title" maxlength="160" placeholder="Title (e.g. Back line spacing)" aria-label="Note title">
             <div id="coach-review-players" class="coach-check-list compact" role="listbox" aria-label="Linked players">${this.coachCheckListHtml(players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet')}</div>
-            <input type="text" id="coach-review-tags" maxlength="300" placeholder="tags,comma,separated">
-            <button type="button" class="btn-primary" onclick="app.saveReviewNote()">Save note at current time</button>
+            <select id="coach-review-category" aria-label="Category">
+                ${NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+            </select>
+            <button type="button" id="coach-review-save-form" class="btn-primary" onclick="app.saveReviewNote()">Save at --:--</button>
+            <details class="coach-review-advanced">
+                <summary>More details</summary>
+                <div class="coach-review-advanced-body">
+                    <label class="coach-review-field-label">
+                        <span>Visibility</span>
+                        <select id="coach-review-visibility" aria-label="Visibility">
+                            ${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+                        </select>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Notes</span>
+                        <textarea id="coach-review-body" rows="3" maxlength="4000" placeholder="What should players notice?"></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Tags</span>
+                        <input type="text" id="coach-review-tags" maxlength="300" placeholder="tags,comma,separated">
+                    </label>
+                </div>
+            </details>
         `;
+        // Stamp the current timestamp onto the new Save button immediately.
+        const v = document.getElementById(this._coachVideoId);
+        if (v) this._renderCoachReviewTime(v);
     },
 
     async openNoteInReview(noteId) {
@@ -735,6 +766,11 @@ export const coachingMixin = {
         try {
             await this.createCoachNote(payload);
             this.showSuccess('Coaching note saved.');
+            // Sprint 4: only clear fields the coach is unlikely to repeat
+            // verbatim. Category, visibility, and selected players stay
+            // sticky so a coach reviewing one player can save several notes
+            // in a row without re-tagging. Title, body, and tags are cleared
+            // because they describe the specific moment.
             ['coach-review-title', 'coach-review-body', 'coach-review-tags'].forEach((id) => {
                 const el = document.getElementById(id); if (el) el.value = '';
             });

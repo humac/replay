@@ -6075,6 +6075,99 @@ details.diag-row-details[open] > summary::after {
     border-color: rgba(244, 63, 94, 0.55);
 }
 
+/* ============================================================
+ * Sprint 4: fast note composer with collapsed advanced details
+ *
+ * The default composer shows title → players → category → Save-at-MM:SS.
+ * Visibility, body, and tags collapse into a <details> disclosure so
+ * they're available without dominating the inspector vertically. The
+ * disclosure summary uses a small chevron drawn via CSS so we don't
+ * expose the native browser triangle (which differs across platforms
+ * and would clash with the rest of the themed UI).
+ * ============================================================ */
+.coach-review-advanced {
+    margin-top: 0.1rem;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    overflow: hidden;
+}
+.coach-review-advanced > summary {
+    list-style: none;        /* remove the native triangle (Firefox) */
+    cursor: pointer;
+    padding: 0.45rem 0.7rem;
+    font-family: var(--font-heading);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.coach-review-advanced > summary::-webkit-details-marker {
+    display: none;           /* remove the native triangle (Safari/Chrome) */
+}
+.coach-review-advanced > summary::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+    flex: 0 0 auto;
+}
+.coach-review-advanced[open] > summary::before {
+    transform: rotate(45deg);
+}
+.coach-review-advanced > summary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+}
+.coach-review-advanced > summary:focus-visible {
+    outline: none;
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: inset 0 0 0 2px rgba(23, 113, 201, 0.32);
+}
+/* Default-hide the body when <details> is closed. Without this gate the
+ * `display: grid` rule below overrides the browser default
+ * `details:not([open]) > *:not(summary) { display: none }` and the
+ * advanced fields render regardless of the toggle state. */
+.coach-review-advanced:not([open]) > .coach-review-advanced-body {
+    display: none;
+}
+.coach-review-advanced[open] > .coach-review-advanced-body {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.5rem 0.7rem 0.7rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.coach-review-field-label {
+    display: grid;
+    gap: 0.25rem;
+}
+.coach-review-field-label > span {
+    font-family: var(--font-heading);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+[data-theme="light"] .coach-review-advanced {
+    border-color: rgba(0, 0, 0, 0.08);
+    background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .coach-review-advanced > summary:hover,
+[data-theme="light"] .coach-review-advanced > summary:focus-visible {
+    background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .coach-review-advanced-body {
+    border-top-color: rgba(0, 0, 0, 0.05);
+}
+
 .coach-tool-row {
     display: flex;
     align-items: center;

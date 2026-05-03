@@ -619,6 +619,20 @@ Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail
 
 ---
 
+## Coach Review UX Cockpit — Sprint 4 ✅ COMPLETE (2026-05-02)
+
+**Goal:** let coaches save useful notes quickly without filling out a full form every time. Compact composer (title + player chips + category + Save at MM:SS) with visibility / body / tags collapsed behind a "More details" disclosure.
+
+- **Compact default composer** (`js/coaching.js renderCoachReviewForm`): five visible fields by default — title input, player chip strip, category select, Save-at-MM:SS button, "More details" disclosure. The plan's UX target sequence preserved.
+- **Live timestamp on the Save button** (`js/coaching.js _renderCoachReviewTime`): the form's Save button now reads `Save at MM:SS` and updates from the same `timeupdate` listener that drives the top-bar readout. Coaches can see the exact timestamp the note will land on without glancing up.
+- **`<details>` disclosure for advanced fields** (`styles.css .coach-review-advanced`): visibility, long-form notes (`coach-review-body`), and tags collapse into a `<details>` element. Default: closed. Native browser triangle hidden in both Firefox and WebKit; replaced with a CSS chevron that rotates on open. CSS gates the body via `.coach-review-advanced[open] > .coach-review-advanced-body { display: grid }` so the browser's default `display:none` for closed `<details>` children is preserved (without the gate, my own `display: grid` rule overrode it and the advanced fields rendered while collapsed — caught in browser verify).
+- **Sticky reset behavior** (`js/coaching.js saveReviewNote`): only title, body, and tags clear after save. Category, visibility, and selected players stay sticky so a coach reviewing one player can save several notes in a row without re-tagging. Per the plan: "category/type may remain sticky for fast repeated note creation; selected players should optionally remain sticky while reviewing one player."
+- **No backend changes**. Per the plan task 3 ("If not, do not add backend changes in this sprint"): the existing `category` enum is sufficient; an additional `note_type` field would require a `models.py` + DB migration. Deferred.
+- **All existing element IDs preserved** (`#coach-review-title`, `#coach-review-body`, `#coach-review-category`, `#coach-review-visibility`, `#coach-review-players`, `#coach-review-tags`) so `saveReviewNote()` and the existing `CreateCoachingNoteRequest` payload chain need no changes. The new form button (`#coach-review-save-form`) calls the same `app.saveReviewNote()` handler as the top-bar Save Note button.
+- **`tests/e2e/sprint-4-after.spec.js`**: 8 tests covering collapsed-state assertions, expanded-state assertions, Save-at-MM:SS timestamp tracking, save-handler binding, and 4-width screenshot capture. All 8 pass; sprint-1/2/3 specs remain 27/27 green (no regressions).
+
+---
+
 ## Coach Review UX Cockpit — Sprint 3 ✅ COMPLETE (2026-05-02)
 
 **Goal:** shrink the telestrator controls so they do not crowd the video canvas. Icon-first desktop toolbar with pointer-aware sizing — compact at `pointer: fine`, ≥44 px tap target at `pointer: coarse`.
