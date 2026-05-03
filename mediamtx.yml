@@ -8,6 +8,13 @@
 
 logLevel: info
 
+# Default readTimeout/writeTimeout is 10s, which is too tight for RTMP
+# ingest from real cameras and OBS. Brief network jitter or a long GOP
+# gap (some IP cameras emit a keyframe only every 4–8s) drops the publish
+# socket and forces a reconnect loop. 60s is the canonical safe value.
+readTimeout: 60s
+writeTimeout: 60s
+
 api: yes
 apiAddress: :9997
 
