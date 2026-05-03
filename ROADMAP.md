@@ -589,13 +589,28 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
-## Site-wide Outer Shell Unification + Coach Tab Inner Caps ✅ COMPLETE (2026-05-03)
+## Every-view Fills the Universal Page Shell ✅ COMPLETE (2026-05-03)
+
+**Goal:** the previous unification (below) widened `#app-container` to 2200 px but each view still capped its inner content (Coach 1440, Feedback 980, Admin 1320), leaving large dead bands on either side at 1920 px on every surface except Coach Review. This pass removes those inner caps so each view actually fills the shell.
+
+- **Coach inner caps removed** — `.coach-page-head`, `.coach-grid`, `.coach-subnav`, `.coach-tab-panel` no longer cap; form rows now stretch with the shell. The two-column `.coach-grid` keeps `repeat(2, minmax(0, 1fr))` so the Roster two-card layout still works.
+- **Feedback inner caps removed** — `.feedback-content`, `.feedback-linked-strip`, `.feedback-subnav`, `.feedback-tab-panel` (all were 980 px). My Feedback now fills the shell to match Coach.
+- **Admin inner cap removed** — `#admin-view` is no longer capped at 1320 px. A small horizontal pad (`0.75rem`) preserves a visible gutter between the sticky sidebar / status strip and the outer `#app-container` edge so the dense control panel still has breathing room.
+- **`is-review-mode` width override** in `styles.css` (the `@media (min-width: 1024px) { .coach-page-head, .coach-subnav, .coach-tab-panel { max-width: 100% } }` block) removed — it became a no-op once the inner caps it lifted were gone.
+- **AGENTS.md** rewritten under Editing Guidance: "One width for the whole site. Every view fills the shell end-to-end. Don't add per-view outer OR inner max-width caps."
+- **Public season + match pages** unchanged — they already used grid `auto-fill` / flex, so they fill naturally.
+- **Validation**: `node --check` clean, `pytest tests/` 269 passed; measured at 1920 px — every surface reports container `12 → 1908` with active-view content `32 → 1888`. No body overflow at 1920 / 1440 / 1024 / 768 / 390 px.
+- **Screenshots**: `docs/screenshots/site-width-after/` — refreshed.
+
+---
+
+## Site-wide Outer Shell Unification + Coach Tab Inner Caps ✅ COMPLETE (2026-05-03) — *superseded same day by the entry above*
 
 **Goal:** make every view (public season, public match, coach all 4 tabs, my feedback, admin) share one outer page-shell width, so navigating between them never jumps the page edges.
 
 - **Global page-shell width** (`styles.css` `#app-container` ~L179) — promoted the Review-mode `min(100% - 1.5rem, 2200px)` policy to the universal default. Padding dropped from `3rem` to `1.25rem` so content actually reaches the new edges. The previous Review-only override (`body:has(#coach-view.is-review-mode)` block ~L6628) is dropped — it became a no-op once global matched it.
-- **Coach inner caps** lifted from `1180px` to `1440px` on `.coach-page-head`, `.coach-grid`, `.coach-subnav`, `.coach-tab-panel` so the non-Review tabs visually fill the wider shell while keeping form rows at a comfortable measure.
-- **Admin shell** keeps its dedicated `1320px` inner cap (`#admin-view`) — admin is a control panel, not a content surface, and the dense tile grid + sidebar shouldn't spread across a 28" monitor.
+- **Coach inner caps** lifted from `1180px` to `1440px` on `.coach-page-head`, `.coach-grid`, `.coach-subnav`, `.coach-tab-panel`. *(Removed entirely the same day — see entry above.)*
+- **Admin shell** kept its dedicated `1320px` inner cap (`#admin-view`). *(Removed the same day — see entry above; admin instead uses a small horizontal pad for sidebar gutter.)*
 - **Mobile padding** unchanged — `@media (max-width: 768px)` still sets `1.5rem`, `(max-width: 480px)` still sets `1.1rem`. The new `1.25rem` global only fires above the existing breakpoints.
 - **Validation**: `node --check` clean, `pytest tests/` 265 passed; live verified at 1920 / 1440 / 1024 / 390 px across season / public match / coach (all 4 tabs) / my feedback / admin — no body overflow at any width, edges align tab-to-tab and view-to-view.
 - **Screenshots**: `docs/screenshots/site-width-after/` — 7 surfaces × 4 widths = 28 PNGs.

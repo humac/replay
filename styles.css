@@ -176,17 +176,20 @@ button {
 
 /* ===== LAYOUT ===== */
 
-/* Global page shell. The width policy is the same one the Coach Review
- * cockpit needs (PR #57+), now applied universally so every view —
- * public season / match, admin, coach (all 4 tabs), my feedback —
- * shares one outer rhythm and tab-switching never jumps the page edges.
- * `min(100% - 1.5rem, 2200px)` lets the shell scale with the viewport
- * up to ~2200 px (after which form rows look weird sprawling across a
- * 28" monitor) and keeps a consistent ~12 px gutter on every side at
- * narrower widths. Padding is reduced from the historical 3rem to
- * 1.25rem so the content actually reaches the new edges; views that
- * want a narrower readable measure should cap their *inner* containers
- * (e.g. `.coach-grid { max-width: 1320px }`), not the outer shell. */
+/* Global page shell. One width policy for the entire site — the
+ * Coach Review cockpit's policy (PR #57+) is now applied universally
+ * so every view (public season / match, admin, coach all 4 tabs,
+ * my feedback) shares one outer rhythm and tab-switching never
+ * jumps the page edges. `min(100% - 1.5rem, 2200px)` scales the
+ * shell with the viewport up to ~2200 px (after which content looks
+ * weird sprawling across a 28" monitor) and keeps a consistent ~12 px
+ * gutter on every side at narrower widths. Padding is reduced from
+ * the historical 3rem to 1.25rem so content actually reaches the
+ * new edges. **Do not add per-view max-width caps.** Every view
+ * fills the shell end-to-end; rare components that genuinely need
+ * a narrower readable measure (a long prose article, a focused
+ * playback modal) cap themselves at the component level. See
+ * AGENTS.md "One width for the whole site" for the rationale. */
 #app-container {
     padding: 1.25rem;
     max-width: min(100% - 1.5rem, 2200px);
@@ -3289,10 +3292,13 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 
 /* Admin shell — no inner cap, fills the universal page shell so it
  * matches Coach Review and the rest of the site at wide widths.
- * Padding tightened from `1.75rem 2.5rem 4rem` to a uniform value
- * that lets the dashboard reach the new edges. */
+ * A small horizontal pad (`0.75rem`) preserves a visible gutter
+ * between the sticky sidebar / status strip and the outer
+ * `#app-container` edge — without it the sidebar abuts the page
+ * gutter at desktop widths. Mobile (`@media (max-width: 900px)`
+ * ~L3735) overrides this to `1rem` for touch ergonomics. */
 #admin-view {
-    padding: 1.5rem 0 4rem;
+    padding: 1.5rem 0.75rem 4rem;
 }
 
 /* ----- Status strip ----- */
@@ -6626,19 +6632,12 @@ details.diag-row-details[open] > summary::after {
     padding-bottom: 0.6rem;
 }
 
-/* Review mode lets the cockpit fill the full shell. The outer page
- * shell width itself is now uniform across the whole site (see
- * `#app-container` ~L179); here we only need to lift the inner
- * 1180 px cap on the Coach page-head / subnav / tab-panel so the
- * cockpit reaches the page edges. The non-Review Coach tabs keep
- * the inner 1180 px cap so form rows stay a comfortable measure. */
-@media (min-width: 1024px) {
-    #coach-view.is-review-mode .coach-page-head,
-    #coach-view.is-review-mode .coach-subnav,
-    #coach-view.is-review-mode .coach-tab-panel {
-        max-width: 100%;
-    }
-}
+/* Review mode no longer needs special width handling: the universal
+ * page shell + the no-inner-cap policy mean every Coach surface
+ * (Roster / Notes / Playlists / Review) already fills `#app-container`
+ * end-to-end. The previous `max-width: 100%` overrides on
+ * `.coach-page-head` / `.coach-subnav` / `.coach-tab-panel` were
+ * removed because the inner 1180 px caps they lifted are gone. */
 
 @media (min-width: 1024px) {
     #coach-view.is-review-mode .coach-review-grid {
