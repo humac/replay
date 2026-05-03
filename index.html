@@ -385,6 +385,40 @@
                             <span id="coach-review-time" class="coach-review-time-value" aria-label="Current video time">--:--</span>
                         </div>
                         <button type="button" id="coach-review-save-top" class="btn-primary coach-review-picker-save" onclick="app.saveReviewNote()">Save Note</button>
+                        <!-- Sprint 6: focus-mode toggle. Lives at the right of
+                             the top bar so it stays one click away whether
+                             the inspector is collapsed or visible. -->
+                        <button type="button"
+                                id="coach-review-focus-toggle"
+                                class="coach-review-picker-focus"
+                                aria-pressed="false"
+                                title="Focus mode (Esc to exit)"
+                                aria-label="Toggle focus mode"
+                                onclick="app.toggleCoachFocusMode()">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                                      fill="none" stroke="currentColor" stroke-width="1.8"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-review-picker-focus-label">Focus</span>
+                        </button>
+                        <!-- Sprint 6: drawer toggle. Visible only in focus
+                             mode (CSS hides it otherwise). Opens the
+                             telestrator + composer as a slide-over. -->
+                        <button type="button"
+                                id="coach-review-focus-inspector-toggle"
+                                class="coach-review-picker-focus coach-review-picker-drawer"
+                                aria-pressed="false"
+                                title="Open tools and note composer"
+                                aria-label="Open tools and note composer"
+                                onclick="app.toggleCoachFocusInspector()">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 6h16M4 12h16M4 18h10"
+                                      fill="none" stroke="currentColor" stroke-width="1.8"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-review-picker-focus-label">Tools</span>
+                        </button>
                     </div>
                     <div class="coach-review-grid">
                         <div class="coach-review-video">
@@ -400,9 +434,11 @@
                             <div id="coach-review-toolbar"></div>
                             <h4>Save note at current time</h4>
                             <div id="coach-review-form" class="coach-mini-form"></div>
-                            <h4>Notes for this match</h4>
-                            <div id="coach-review-notes" class="coach-panel-notes"></div>
                         </aside>
+                        <!-- Sprint 5: timeline rail spans the full grid width below
+                             the video + inspector. Notes for the current match
+                             render as horizontally-scrollable timestamp chips. -->
+                        <div id="coach-review-notes" class="coach-timeline-rail" role="toolbar" aria-label="Notes for this match"></div>
                     </div>
                 </div>
             </div>

@@ -8,6 +8,7 @@
 
 import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'fs';
+import { login, gotoAndSettle, pickMatchWithMostNotes } from './_login.js';
 
 const COACH_USER = 'coach1';
 const COACH_PASS = 'Replay!Demo123';
@@ -16,55 +17,6 @@ const FAMILY_PASS = 'Replay!Demo123';
 
 const OUT = '../../docs/screenshots/sprint-1-after';
 mkdirSync(OUT, { recursive: true });
-
-// Cache tokens per username so we don't trip the 5-logins-per-IP backend rate
-// limit while the spec authenticates ~12 times across all tests.
-const _tokenCache = {};
-
-async function login(page, user, pass) {
-    // Acquire a token via the API, then inject it into sessionStorage on EVERY
-    // future page load via addInitScript. This avoids the race where init() on
-    // the first navigation runs before the token is stored — which previously
-    // caused some regression-tab screenshots to capture the season page
-    // because `app.canCoach()` returned false during init.
-    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
-    if (!_tokenCache[user]) {
-        const resp = await page.request.post(`${baseURL}/api/login`, {
-            data: { username: user, password: pass },
-        });
-        const j = await resp.json();
-        _tokenCache[user] = j.token;
-    }
-    const token = _tokenCache[user];
-    await page.addInitScript((t) => {
-        sessionStorage.setItem('replay_admin_token', t);
-    }, token);
-    return token;
-}
-
-async function gotoAndSettle(page, url) {
-    // Navigate and wait until init() finished — `app.matches` is populated by
-    // loadMatches() which runs after checkAuth(). Once it's an array (even
-    // empty), init() has progressed past auth and history routing.
-    await page.goto(url);
-    await page.waitForFunction(() => Array.isArray(window.app?.matches), null, { timeout: 5000 });
-    // Give the view's render() pass a tick to swap the active view class.
-    await page.waitForFunction(() => document.querySelector('.view.active') !== null, null, { timeout: 5000 });
-    await page.waitForTimeout(200);
-}
-
-async function pickMatchWithMostNotes(page, token) {
-    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
-    const resp = await page.request.get(`${baseURL}/api/coach/notes`, {
-        headers: { Authorization: 'Bearer ' + token },
-    });
-    const j = await resp.json();
-    const counts = {};
-    (j.notes || []).forEach((n) => { counts[n.match_id] = (counts[n.match_id] || 0) + 1; });
-    let bestId = null, bestN = 0;
-    for (const [id, n] of Object.entries(counts)) if (n > bestN) { bestN = n; bestId = id; }
-    return bestId;
-}
 
 async function dims(page) {
     return page.evaluate(() => {

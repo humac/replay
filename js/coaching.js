@@ -42,6 +42,18 @@ export const coachingMixin = {
     _coachFormationDraft: null,
     _coachFormationMode: 'quick', // 'quick' | 'linked'
 
+    // Sprint 5: id of the timeline-rail chip currently flagged as the
+    // active note (highlighted blue, aria-pressed=true). Cleared on
+    // match/slot change and tab teardown.
+    _coachActiveNoteId: null,
+
+    // Sprint 6: Wide / Focus mode. Session-local — never persisted; resets
+    // on tab leave or page reload. The keydown listener is bound only when
+    // focus mode is on, so an Escape press elsewhere in the app is unaffected.
+    _coachFocusMode: false,
+    _coachFocusEscapeHandler: null,
+    _coachFocusInspectorOpen: false,
+
     // ===== top-level view entry points =====
 
     async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true, tab = null, matchId = null, slot = null } = {}) {
@@ -110,6 +122,9 @@ export const coachingMixin = {
         // Scoping the class to #coach-view keeps Roster/Notes/Playlists untouched.
         const coachView = document.getElementById('coach-view');
         if (coachView) coachView.classList.toggle('is-review-mode', name === 'review');
+        // Sprint 6: exit focus mode when leaving Review so it doesn't leak
+        // into Roster/Notes/Playlists. Idempotent — no-op if not in focus.
+        if (name !== 'review') this.exitCoachFocusMode();
         // Sprint 2 polish: install a window-resize listener that keeps the
         // inspector height matched to the video wrapper. Bound once globally;
         // _syncCoachReviewSideHeight no-ops when the Review tab isn't active.
@@ -584,6 +599,13 @@ export const coachingMixin = {
         // Sprint 4: same invariant for the form's Save-at-MM:SS button.
         const saveFormBtn = document.getElementById('coach-review-save-form');
         if (saveFormBtn) saveFormBtn.textContent = 'Save at --:--';
+        // Sprint 5: drop active timeline-chip selection so it doesn't carry
+        // over into a different match's notes on next entry.
+        this._coachActiveNoteId = null;
+        // Sprint 6: defense-in-depth — if focus mode somehow survived a
+        // different code path (e.g. external API call to tearDownCoachReview),
+        // make sure the listener + body class are cleaned up.
+        this.exitCoachFocusMode();
     },
 
     _renderCoachReviewTime(video) {
@@ -608,6 +630,8 @@ export const coachingMixin = {
     handleCoachReviewMatchChange() {
         const matchId = document.getElementById('coach-review-match')?.value;
         const slot = document.getElementById('coach-review-slot')?.value || 'full';
+        // Sprint 5: clear any selected timeline chip when switching matches.
+        this._coachActiveNoteId = null;
         if (!matchId) { this.tearDownCoachReview(); this.renderCoachReviewNotes(null); return; }
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -615,6 +639,9 @@ export const coachingMixin = {
     handleCoachReviewSlotChange() {
         const matchId = document.getElementById('coach-review-match')?.value;
         const slot = document.getElementById('coach-review-slot')?.value || 'full';
+        // Sprint 5: clear active chip when slot changes (the active note may
+        // belong to a different slot of the same match).
+        this._coachActiveNoteId = null;
         if (!matchId) return;
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -661,23 +688,91 @@ export const coachingMixin = {
     },
 
     async renderCoachReviewNotes(matchId) {
+        // Sprint 5: render notes for the current match as a horizontal
+        // chip rail under the video instead of stacked button rows in the
+        // right inspector. Each chip shows MM:SS · jersey/team indicator
+        // · category dot · short title; clicking still goes through
+        // seekCoachReviewNote so the existing seek + drawing-restore flow
+        // is unchanged. The rail itself horizontally scrolls (themed
+        // scrollbar in styles.css) so a match with 30+ notes doesn't
+        // stretch the page vertically.
         const container = document.getElementById('coach-review-notes');
         if (!container) return;
-        if (!matchId) { container.innerHTML = '<div class="session-empty">Select a match to see its notes.</div>'; return; }
+        if (!matchId) {
+            container.setAttribute('aria-label', 'Notes timeline (no match selected)');
+            container.innerHTML = '<div class="coach-timeline-empty">Select a match to see its notes.</div>';
+            return;
+        }
+        // Sprint 5: keep the rail's aria-label in sync with the active
+        // match so screen readers announce which match's notes the user
+        // is navigating, instead of the static "Notes for this match".
+        const matchName = this.matchLabel(matchId);
+        container.setAttribute('aria-label', `Notes for ${matchName}`);
         const allNotes = this._coachBundle?.notes || [];
-        const notes = allNotes.filter((n) => n.match_id === matchId);
-        if (!notes.length) { container.innerHTML = '<div class="session-empty">No notes for this match yet.</div>'; return; }
-        container.innerHTML = notes.map((n) => `
-            <button type="button" class="coach-note-jump" onclick="app.seekCoachReviewNote(${n.id})">
-                <span>${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))}</span>
-                <strong>${this.esc(n.title)}</strong>
-            </button>
-        `).join('');
+        const notes = allNotes
+            .filter((n) => n.match_id === matchId)
+            // Sort by timestamp so the rail reads left-to-right in match order.
+            .slice()
+            .sort((a, b) => Number(a.timestamp_seconds || 0) - Number(b.timestamp_seconds || 0));
+        if (!notes.length) {
+            container.innerHTML = '<div class="coach-timeline-empty">No notes for this match yet — save your first one above.</div>';
+            return;
+        }
+        const playersById = new Map();
+        (this._coachBundle?.players || []).forEach((p) => playersById.set(String(p.id), p));
+        const categoryLabel = Object.fromEntries(NOTE_CATEGORIES);
+        container.innerHTML = notes.map((n) => {
+            const ids = (n.player_ids || []).map(String);
+            let playerIndicator = '';
+            let playerAria = '';
+            if (ids.length === 1) {
+                const p = playersById.get(ids[0]);
+                if (p?.jersey_number) {
+                    playerIndicator = `#${this.esc(p.jersey_number)}`;
+                    playerAria = `, player ${p.jersey_number}`;
+                } else if (p?.display_name) {
+                    playerIndicator = this.esc(p.display_name.split(' ')[0]);
+                    playerAria = `, player ${p.display_name}`;
+                }
+            } else if (ids.length > 1) {
+                playerIndicator = `+${ids.length}`;
+                playerAria = `, ${ids.length} players`;
+            } else {
+                playerIndicator = 'Team';
+                playerAria = ', team-wide';
+            }
+            const cat = String(n.category || 'other');
+            const catTitle = this.esc(categoryLabel[cat] || cat);
+            const active = this._coachActiveNoteId === Number(n.id);
+            const ts = this.esc(this.formatClock(n.timestamp_seconds));
+            const ariaLabel = `Jump to ${ts}${playerAria}, ${catTitle}: ${this.esc(n.title)}`;
+            return `
+                <button type="button"
+                        class="coach-timeline-chip ${active ? 'is-active' : ''}"
+                        data-coach-note-id="${n.id}"
+                        data-coach-category="${this.esc(cat)}"
+                        title="${ariaLabel}"
+                        aria-label="${ariaLabel}"
+                        aria-pressed="${active ? 'true' : 'false'}"
+                        onclick="app.seekCoachReviewNote(${n.id})">
+                    <span class="coach-timeline-chip-time">${ts}</span>
+                    <span class="coach-timeline-chip-player">${playerIndicator}</span>
+                    <span class="coach-timeline-chip-cat" aria-hidden="true" data-cat="${this.esc(cat)}"></span>
+                    <span class="coach-timeline-chip-title">${this.esc(n.title)}</span>
+                </button>
+            `;
+        }).join('');
     },
 
     seekCoachReviewNote(noteId) {
         const note = (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId));
         if (!note) return;
+        // Sprint 5: track which note is currently focused so the timeline
+        // chip can render an active state. _setActiveCoachReviewNote handles
+        // both the in-place class swap (no full re-render) and the
+        // scroll-into-view nudge so the active chip is visible after a
+        // long-rail seek.
+        this._setActiveCoachReviewNote(Number(note.id));
         const review = this._coachReview;
         if (!review || review.matchId !== note.match_id || review.slot !== note.slot) {
             this.loadCoachReviewVideo(note.match_id, note.slot, Math.max(0, Number(note.timestamp_seconds || 0)), note.drawing || null);
@@ -690,6 +785,214 @@ export const coachingMixin = {
         const video = document.getElementById(this._coachVideoId);
         if (video) video.currentTime = Math.max(0, Number(note.timestamp_seconds || 0));
         this.renderCoachDrawing(note.drawing || {});
+    },
+
+    _setActiveCoachReviewNote(noteId) {
+        this._coachActiveNoteId = noteId;
+        const chips = document.querySelectorAll('#coach-review-notes .coach-timeline-chip');
+        let activeChip = null;
+        chips.forEach((chip) => {
+            const active = Number(chip.dataset.coachNoteId) === noteId;
+            chip.classList.toggle('is-active', active);
+            chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+            if (active) activeChip = chip;
+        });
+        if (activeChip) {
+            activeChip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        }
+    },
+
+    // ===== Sprint 6: Wide / Focus mode =====
+    //
+    // Toggle that hides page chrome + collapses the right inspector so the
+    // video and drawing canvas use nearly the entire screen. Tools and
+    // composer remain reachable via a slide-over inspector drawer triggered
+    // from a small floating button. Escape exits. State is session-local
+    // and resets when the user leaves the Review sub-tab.
+
+    toggleCoachFocusMode() {
+        if (this._coachFocusMode) this.exitCoachFocusMode();
+        else this.enterCoachFocusMode();
+    },
+
+    enterCoachFocusMode() {
+        if (this._coachFocusMode) return;
+        this._coachFocusMode = true;
+        this._coachFocusInspectorOpen = false;
+        // Sprint 6 fix: snap the page to the top so the cockpit isn't
+        // anchored to wherever the user happened to be scrolled (e.g. they
+        // scrolled down to see the timeline rail). The fixed-position drawer
+        // is viewport-relative, so a scrolled page would render the drawer
+        // at the right edge of an ambiguous slice of the cockpit. Saving the
+        // previous scroll position lets us restore it on exit.
+        this._coachFocusPreviousScrollY = window.scrollY;
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        const coachView = document.getElementById('coach-view');
+        if (coachView) coachView.classList.add('is-focus-mode');
+        document.body.classList.add('coach-focus-mode');  // for global overlays / scrollbar gutters
+        const toggle = document.getElementById('coach-review-focus-toggle');
+        if (toggle) {
+            toggle.setAttribute('aria-pressed', 'true');
+            toggle.classList.add('is-active');
+        }
+        // Close the drawer if it was somehow left open from a previous session.
+        document.getElementById('coach-view')?.classList.remove('is-focus-drawer-open');
+        // Bind Escape (capturing handler so it wins over <details>/canvas).
+        this._coachFocusEscapeHandler = (event) => {
+            if (event.key !== 'Escape') return;
+            // Close the drawer first if it's open; otherwise exit focus mode.
+            if (this._coachFocusInspectorOpen) {
+                event.preventDefault();
+                this.closeCoachFocusInspector();
+                return;
+            }
+            event.preventDefault();
+            this.exitCoachFocusMode();
+        };
+        // Capture phase so the handler runs before any descendant Escape
+        // listener (e.g. the browser's default <details> toggle), matching
+        // the comment above. Stored phase mirrored on removal in
+        // exitCoachFocusMode for symmetry.
+        window.addEventListener('keydown', this._coachFocusEscapeHandler, true);
+        // The wrapper just changed size — re-sync canvas + inspector height.
+        const video = document.getElementById(this._coachVideoId);
+        if (video) {
+            requestAnimationFrame(() => {
+                this._syncCoachReviewSideHeight(video);
+                const canvas = document.getElementById(this._coachCanvasId);
+                if (canvas) this._resizeCoachCanvas(canvas, video);
+            });
+        }
+    },
+
+    exitCoachFocusMode() {
+        if (!this._coachFocusMode) return;
+        // Close the inspector first so the side panel returns to its
+        // original DOM parent before focus mode exits. closeCoachFocusInspector
+        // is a no-op if the inspector wasn't mounted to body.
+        this.closeCoachFocusInspector();
+        this._coachFocusMode = false;
+        this._coachFocusInspectorOpen = false;
+        const coachView = document.getElementById('coach-view');
+        if (coachView) {
+            coachView.classList.remove('is-focus-mode');
+            coachView.classList.remove('is-focus-drawer-open');
+        }
+        // Restore the page scroll position the user had before entering focus.
+        if (typeof this._coachFocusPreviousScrollY === 'number') {
+            requestAnimationFrame(() => {
+                window.scrollTo({ top: this._coachFocusPreviousScrollY, behavior: 'instant' });
+                this._coachFocusPreviousScrollY = null;
+            });
+        }
+        document.body.classList.remove('coach-focus-mode');
+        const toggle = document.getElementById('coach-review-focus-toggle');
+        if (toggle) {
+            toggle.setAttribute('aria-pressed', 'false');
+            toggle.classList.remove('is-active');
+        }
+        if (this._coachFocusEscapeHandler) {
+            window.removeEventListener('keydown', this._coachFocusEscapeHandler, true);
+            this._coachFocusEscapeHandler = null;
+        }
+        // Re-sync canvas + inspector height for the restored layout.
+        const video = document.getElementById(this._coachVideoId);
+        if (video) {
+            requestAnimationFrame(() => {
+                this._syncCoachReviewSideHeight(video);
+                const canvas = document.getElementById(this._coachCanvasId);
+                if (canvas) this._resizeCoachCanvas(canvas, video);
+            });
+        }
+    },
+
+    openCoachFocusInspector() {
+        if (!this._coachFocusMode) return;
+        this._coachFocusInspectorOpen = true;
+        document.getElementById('coach-view')?.classList.add('is-focus-drawer-open');
+        // Body class lets the CSS target the side panel after it gets
+        // re-parented to <body> below — bypasses the bounded stacking
+        // context created by .coach-tab-panel's animation property.
+        document.body.classList.add('coach-focus-drawer-open');
+        const t = document.getElementById('coach-review-focus-inspector-toggle');
+        if (t) t.setAttribute('aria-pressed', 'true');
+        // Mount a real backdrop element so clicking outside the drawer
+        // closes it. Pseudo-elements can't receive click events.
+        let backdrop = document.getElementById('coach-focus-backdrop');
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.id = 'coach-focus-backdrop';
+            backdrop.className = 'coach-focus-backdrop';
+            backdrop.addEventListener('click', () => this.closeCoachFocusInspector());
+            document.body.appendChild(backdrop);
+        }
+        backdrop.hidden = false;
+        // Move the inspector to <body> so it shares the root stacking context
+        // with the backdrop. Without this, an ancestor with animation /
+        // transform / filter (e.g. .coach-tab-panel's coachTabFade animation)
+        // creates a bounded stacking context that traps the drawer's z-index
+        // — the backdrop renders ABOVE the drawer and intercepts every click.
+        const side = document.querySelector('.coach-review-side');
+        if (side && !this._coachFocusSideOriginalParent) {
+            this._coachFocusSideOriginalParent = side.parentElement;
+            this._coachFocusSideOriginalNextSibling = side.nextSibling;
+            // Sprint 6 fix: clear the inline `max-height` that Sprint 1's
+            // _syncCoachReviewSideHeight set while the panel was inline in
+            // the grid. That value (matched to the video wrapper height)
+            // would clip the drawer's content vertically once the drawer's
+            // own `bottom: 1rem` rule takes over. We save the inline value
+            // and restore it on close.
+            this._coachFocusSideOriginalMaxHeight = side.style.maxHeight;
+            side.style.maxHeight = '';
+            document.body.appendChild(side);
+        }
+        // Sprint 6: scroll the drawer to its top so the telestrator section is
+        // visible. .coach-review-side carries a scrollTop value from when it
+        // lived inline in the inspector column (Sprint 1 height-sync) — that
+        // stale offset would crop the top tools out of view if not reset.
+        if (side) {
+            // requestAnimationFrame so layout settles after re-parenting before
+            // we scroll.
+            requestAnimationFrame(() => { side.scrollTop = 0; });
+        }
+    },
+
+    closeCoachFocusInspector() {
+        this._coachFocusInspectorOpen = false;
+        document.getElementById('coach-view')?.classList.remove('is-focus-drawer-open');
+        document.body.classList.remove('coach-focus-drawer-open');
+        const t = document.getElementById('coach-review-focus-inspector-toggle');
+        if (t) t.setAttribute('aria-pressed', 'false');
+        const backdrop = document.getElementById('coach-focus-backdrop');
+        if (backdrop) backdrop.hidden = true;
+        // Restore the inspector to its original DOM position so the rest of
+        // the layout (Sprint 1 height-sync ResizeObserver, the timeline rail
+        // grid placement) keeps working when focus mode exits.
+        const side = document.querySelector('.coach-review-side');
+        if (side && this._coachFocusSideOriginalParent) {
+            const parent = this._coachFocusSideOriginalParent;
+            const next = this._coachFocusSideOriginalNextSibling;
+            if (next && next.parentElement === parent) {
+                parent.insertBefore(side, next);
+            } else {
+                parent.appendChild(side);
+            }
+            // Restore the inline max-height we cleared in openCoachFocusInspector
+            // so Sprint 1's height-sync continues to work. _syncCoachReviewSideHeight
+            // will overwrite it on the next resize regardless, but restoring here
+            // keeps the layout from flickering at zero height for one frame.
+            if (this._coachFocusSideOriginalMaxHeight !== undefined) {
+                side.style.maxHeight = this._coachFocusSideOriginalMaxHeight;
+                this._coachFocusSideOriginalMaxHeight = undefined;
+            }
+            this._coachFocusSideOriginalParent = null;
+            this._coachFocusSideOriginalNextSibling = null;
+        }
+    },
+
+    toggleCoachFocusInspector() {
+        if (this._coachFocusInspectorOpen) this.closeCoachFocusInspector();
+        else this.openCoachFocusInspector();
     },
 
     renderCoachReviewForm() {

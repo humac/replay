@@ -619,6 +619,46 @@ Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail
 
 ---
 
+## Coach Review UX Cockpit — Sprint 6 ✅ COMPLETE (2026-05-02)
+
+**Goal:** give coaches a Wide / Focus mode that prioritises the video and drawing canvas by collapsing the right inspector and reducing page chrome. Per the plan's coding-agent prompt: "Add a Wide Review or Focus Mode to Coach > Review. This mode should prioritize the video/telestrator canvas by collapsing or minimizing the right inspector panel and reducing page chrome. Add a toggle in the compact review control bar and allow Escape to exit. Preserve access to drawing tools and note saving, either through a compact floating toolbar, icon rail, or slide-over inspector. Keep this state session-local and do not affect public playback or My Feedback."
+
+- **Focus toggle in the picker bar** (`index.html` + `styles.css`): a new icon-first `Focus` button (`#coach-review-focus-toggle`) sits at the right of the Sprint 2 top bar, visible at all times. `aria-pressed` mirrors the active state. Companion `Tools` button (`#coach-review-focus-inspector-toggle`) appears only in focus mode and opens the slide-over drawer.
+- **State machine** (`js/coaching.js`):
+  - `_coachFocusMode` (boolean, session-local — no persistence)
+  - `_coachFocusInspectorOpen` (drawer state)
+  - `_coachFocusEscapeHandler` (the active keydown listener so it can be removed cleanly)
+- **Class-based layout switch** (`#coach-view.is-focus-mode`):
+  - `.coach-page-head` and `.coach-subnav` hidden (chrome reduced)
+  - `.coach-review-grid` collapses to a single full-width column
+  - `.coach-review-side` hidden by default; mounts as a `position: fixed` slide-over (380 px, themed border + shadow) when `is-focus-drawer-open` is also set
+  - `.coach-focus-backdrop` element created in `openCoachFocusInspector` so click-outside-to-close works (pseudo-elements can't fire click events)
+- **Escape behavior** (capturing keydown handler, bound only while focus mode is on): drawer-open → close drawer; drawer-closed → exit focus mode. The handler is removed in `exitCoachFocusMode` so an Escape press elsewhere in the app is unaffected.
+- **Lifecycle resets**: `setCoachTab('roster' | 'notes' | 'playlists')` calls `exitCoachFocusMode()` so focus mode never leaks into other Coach sub-tabs. `tearDownCoachReview()` is also belt-and-suspenders defensive. State does NOT persist across page reloads (no localStorage).
+- **Canvas + inspector height re-sync**: both `enterCoachFocusMode` and `exitCoachFocusMode` re-run `_resizeCoachCanvas` and `_syncCoachReviewSideHeight` via `requestAnimationFrame` so the drawing canvas stays aligned with the resized video wrapper across the layout switch.
+- **Measured deltas at 1440 px**: video wrapper width grows from **1462 → 1824 px (+362, +25 %)** when entering focus mode. Page-head, subnav, and inspector all collapse to zero pixels.
+- **`tests/e2e/_login.js`** (shared helper): extracted the per-spec inline `login` / `gotoAndSettle` / `pickMatchWithMostNotes` helpers into a single module with retry-on-429 backoff. The auth.py rate limit (5 logins per IP per window) used to flake when 5 spec files ran back-to-back; the shared cache + retry chain kills that flake. All 6 spec files now `import { login, gotoAndSettle, pickMatchWithMostNotes } from './_login.js'`.
+- **`tests/e2e/sprint-6-after.spec.js`**: 11 tests covering toggle existence, chrome hiding + video expansion, drawer slide-over + backdrop, Escape behavior (drawer-then-exit two-press semantics), leaving Review auto-exits, click-backdrop-to-close, no localStorage persistence, and 3-width screenshot capture. All 11 pass; sprint-1 / 2 / 3 / 4 / 5 specs remain 43/43 green (54/54 total).
+
+---
+
+## Coach Review UX Cockpit — Sprint 5 ✅ COMPLETE (2026-05-02)
+
+**Goal:** replace the bulky stacked notes list with a compact horizontal timeline rail so coaches can scan and jump between moments without losing the inspector to a long list of notes. Per the plan's coding-agent prompt: "Create a compact current-match notes timeline rail for Coach Review. The rail should sit under the video or directly below the review grid and render timestamp chips instead of large note rows. Each chip should show the clock time, short title, category, and player indicator if available. Clicking a chip must reuse existing seekCoachReviewNote behavior: seek to timestamp and render the saved drawing. Use horizontal scrolling for many notes. Keep accessibility and keyboard focus states."
+
+- **`#coach-review-notes` relocated out of `.coach-review-side`** (`index.html`): the container now lives as the third child of `.coach-review-grid` with `grid-column: 1 / -1` so it spans both video and inspector columns. Existing element ID and `renderCoachReviewNotes(matchId)` entry point preserved so all callers keep working.
+- **`renderCoachReviewNotes` rewritten** (`js/coaching.js`): emits horizontally-scrollable `.coach-timeline-chip` buttons instead of stacked `.coach-note-jump` rows. Each chip shows `MM:SS · player indicator · category dot · short title` with `aria-label` formatted as "Jump to MM:SS, player X, Category: Title". Notes are now sorted by timestamp so the rail reads left-to-right in match order.
+- **Player indicator logic**: single linked player → `#7` (jersey number) or first-name fallback; multiple players → `+N`; no players → `Team`. The `aria-label` includes a human-readable player phrase ("player 7", "team-wide", "3 players") so screen readers don't read the bare `+3`.
+- **Category dot color hints** (`styles.css`): each `.coach-timeline-chip-cat[data-cat="X"]` gets a 8 px circle in a category-specific color (sky for shape, orange for pressing, purple for transition, green for build-up, etc.). Decorative — the category name lives in the `aria-label` for AT users.
+- **Active-chip state** (`js/coaching.js _setActiveCoachReviewNote`): `seekCoachReviewNote` now calls `_setActiveCoachReviewNote(noteId)` which toggles `is-active` + `aria-pressed` on the matching chip and uses `scrollIntoView({ inline: 'center' })` to nudge a far-right chip back into view. Cleared on match/slot change and on tear-down so a stale active chip never carries over.
+- **Empty state** (`.coach-timeline-empty`): coach-friendly placeholder ("No notes for this match yet — save your first one above.") in a dashed border so the rail still has visual presence when empty.
+- **Themed scrollbar** on the rail (`scrollbar-width: thin` + `::-webkit-scrollbar` rules) — never expose native chrome inside styled UI. Light-mode variant included.
+- **Measured deltas vs. Sprint 4 (1440 px desktop)**: stacked notes list (height grew with note count, ~120 px for 5 notes, ~270 px for 10) → **single 50 px horizontal rail** that doesn't grow vertically regardless of note count. Frees the inspector slot entirely for the telestrator + composer.
+- **`tests/e2e/sprint-5-after.spec.js`**: 9 tests covering layout assertions (rail not in inspector, spans full grid width, lives below video AND below inspector), chip composition (time + player + category + title + ARIA), click → active state + scroll-into-view, slot-change clears active state, empty-state rendering, and 4-width screenshot capture. All 9 pass; sprint-1 / 2 / 3 / 4 specs remain 35/35 green (no regressions).
+- **No backend changes**, no payload schema changes, no role-gating changes.
+
+---
+
 ## Coach Review UX Cockpit — Sprint 4 ✅ COMPLETE (2026-05-02)
 
 **Goal:** let coaches save useful notes quickly without filling out a full form every time. Compact composer (title + player chips + category + Save at MM:SS) with visibility / body / tags collapsed behind a "More details" disclosure.

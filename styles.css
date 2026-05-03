@@ -6734,6 +6734,355 @@ details.diag-row-details[open] > summary::after {
     background: rgba(0, 0, 0, 0.18);
 }
 
+/* ============================================================
+ * Sprint 5: current-match timeline rail
+ *
+ * Replaces the bulky stacked notes list (used to live inside the
+ * right inspector) with a horizontal chip rail under the video. Each
+ * chip shows MM:SS · player indicator · category dot · short title;
+ * clicking still routes through the existing seekCoachReviewNote
+ * handler (drawing render + canvas paint preserved). The rail spans
+ * the full width of .coach-review-grid so it sits cleanly under both
+ * the video column and the inspector column at desktop, and falls
+ * naturally into the single-column flow on mobile.
+ *
+ * Horizontal-scroll-only: the rail keeps a themed thin scrollbar
+ * (never expose native chrome — see standing rule). Vertical wrap is
+ * disabled so the rail never pushes the page taller as notes
+ * accumulate; instead, the user scrolls horizontally or the active
+ * chip auto-scrolls into view via _setActiveCoachReviewNote.
+ * ============================================================ */
+.coach-timeline-rail {
+    /* In the .coach-review-grid (display: grid) this is the third item;
+     * span both columns at desktop so the rail sits below both video and
+     * inspector. At narrow widths the grid collapses to one column and
+     * this naturally lays out below them. */
+    grid-column: 1 / -1;
+    margin-top: 0.75rem;
+    padding: 0.4rem 0;
+    display: flex;
+    gap: 0.45rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Themed scrollbar — never expose native chrome inside styled UI. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    /* Stop the rail from pushing the page taller as notes accumulate;
+     * chips wrap horizontally instead. */
+    flex-wrap: nowrap;
+}
+.coach-timeline-rail::-webkit-scrollbar {
+    height: 6px;
+}
+.coach-timeline-rail::-webkit-scrollbar-track {
+    background: transparent;
+}
+.coach-timeline-rail::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+}
+
+.coach-timeline-empty {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px dashed rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    flex: 1 1 auto;
+    text-align: center;
+}
+
+.coach-timeline-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main);
+    border-radius: 999px;
+    cursor: pointer;
+    max-width: 22rem;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.coach-timeline-chip:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+.coach-timeline-chip:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.32);
+}
+.coach-timeline-chip.is-active {
+    background: rgba(23, 113, 201, 0.18);
+    border-color: rgba(23, 113, 201, 0.55);
+    box-shadow: 0 0 0 1px rgba(23, 113, 201, 0.28);
+}
+
+.coach-timeline-chip-time {
+    font-family: var(--font-heading);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+.coach-timeline-chip.is-active .coach-timeline-chip-time {
+    color: var(--text-main);
+}
+.coach-timeline-chip-player {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+.coach-timeline-chip-cat {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    background: rgba(255, 255, 255, 0.4);
+}
+.coach-timeline-chip-cat[data-cat="shape"]      { background: #38bdf8; }
+.coach-timeline-chip-cat[data-cat="pressing"]   { background: #f97316; }
+.coach-timeline-chip-cat[data-cat="transition"] { background: #a855f7; }
+.coach-timeline-chip-cat[data-cat="set_piece"]  { background: #facc15; }
+.coach-timeline-chip-cat[data-cat="build_up"]   { background: #22c55e; }
+.coach-timeline-chip-cat[data-cat="finishing"]  { background: #f43f5e; }
+.coach-timeline-chip-cat[data-cat="defending"]  { background: #6366f1; }
+.coach-timeline-chip-cat[data-cat="goalkeeper"] { background: #14b8a6; }
+.coach-timeline-chip-cat[data-cat="effort"]     { background: #eab308; }
+.coach-timeline-chip-cat[data-cat="decision"]   { background: #ec4899; }
+.coach-timeline-chip-cat[data-cat="other"]      { background: rgba(255, 255, 255, 0.4); }
+
+.coach-timeline-chip-title {
+    font-size: 0.85rem;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+[data-theme="light"] .coach-timeline-rail {
+    scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+[data-theme="light"] .coach-timeline-rail::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+}
+[data-theme="light"] .coach-timeline-empty {
+    border-color: rgba(0, 0, 0, 0.10);
+}
+[data-theme="light"] .coach-timeline-chip {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+[data-theme="light"] .coach-timeline-chip:hover {
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-timeline-chip.is-active {
+    background: rgba(21, 101, 192, 0.10);
+    border-color: rgba(21, 101, 192, 0.45);
+    box-shadow: 0 0 0 1px rgba(21, 101, 192, 0.22);
+}
+
+/* ============================================================
+ * Sprint 6: Wide / Focus mode
+ *
+ * Toggle that hides page chrome and collapses the right inspector
+ * so the video + drawing canvas use nearly the entire screen. Tools
+ * and the note composer stay reachable through a slide-over drawer
+ * triggered from the picker bar's "Tools" button. Escape exits.
+ * State is session-local — js/coaching.js manages the keydown
+ * listener lifecycle so it's only bound while focus mode is on.
+ *
+ * Two cooperating states:
+ *   #coach-view.is-focus-mode             — hide chrome, expand video
+ *   #coach-view.is-focus-drawer-open      — slide the inspector in
+ *
+ * Focus mode is layered on top of is-review-mode (Sprint 1), so all
+ * Sprint 1+ scoped overrides still apply.
+ * ============================================================ */
+
+/* The Tools / drawer toggle is hidden by default and only shown in
+ * focus mode (where the inspector is otherwise unreachable).
+ * Higher-specificity selector so it wins over the .coach-review-picker-focus
+ * rule that sets `display: inline-flex` (the drawer button has both classes). */
+.coach-review-picker-focus.coach-review-picker-drawer { display: none; }
+#coach-view.is-focus-mode .coach-review-picker-focus.coach-review-picker-drawer {
+    display: inline-flex;
+}
+
+/* Focus toggle button itself — same compact icon-button style as the
+ * other picker controls. Active state mirrors the icon-toolbar pattern
+ * so the user can tell at a glance that focus mode is on. */
+.coach-review-picker-focus {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.6rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    white-space: nowrap;
+}
+.coach-review-picker-focus svg {
+    width: 16px;
+    height: 16px;
+    color: currentColor;
+    flex: 0 0 auto;
+}
+.coach-review-picker-focus:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+.coach-review-picker-focus:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.32);
+}
+.coach-review-picker-focus.is-active,
+.coach-review-picker-focus[aria-pressed="true"] {
+    background: rgba(23, 113, 201, 0.18);
+    border-color: rgba(23, 113, 201, 0.55);
+    color: var(--text-main);
+}
+[data-theme="light"] .coach-review-picker-focus {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+[data-theme="light"] .coach-review-picker-focus:hover {
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-review-picker-focus.is-active,
+[data-theme="light"] .coach-review-picker-focus[aria-pressed="true"] {
+    background: rgba(21, 101, 192, 0.10);
+    border-color: rgba(21, 101, 192, 0.45);
+}
+
+/* ----- Focus mode ON ----- */
+@media (min-width: 1024px) {
+    /* Inspector hidden by default in focus mode. The grid collapses to a
+     * single (full-width) column for the video. */
+    #coach-view.is-focus-mode .coach-review-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    #coach-view.is-focus-mode .coach-review-side {
+        display: none;
+    }
+
+    /* Hide the page-head + subnav entirely in focus mode — Esc returns
+     * the user to the normal cockpit so they aren't stranded. */
+    #coach-view.is-focus-mode .coach-page-head,
+    #coach-view.is-focus-mode .coach-subnav {
+        display: none;
+    }
+
+    /* Tighten the picker bar a hair so it reads as compact heads-up
+     * controls layered over the video, not a content header. */
+    #coach-view.is-focus-mode .coach-review-shell {
+        padding: 0.45rem 0.6rem;
+    }
+
+}
+
+/* When the drawer is open, the inspector is moved to <body> by JS (see
+ * openCoachFocusInspector) so it shares the root stacking context with
+ * the backdrop. The selector is keyed on body.coach-focus-drawer-open
+ * because the side panel is no longer a descendant of #coach-view at
+ * that point. Without this re-parenting, an ancestor stacking context
+ * (e.g. .coach-tab-panel's coachTabFade animation) traps the drawer's
+ * z-index and the backdrop renders above the drawer, intercepting all
+ * clicks and showing a zoom-out cursor over the panel.
+ *
+ * z-index 110 (and 105 for the backdrop) puts both above .main-nav
+ * (z-index: 100, position: sticky). Without this the drawer's top
+ * ~75px gets hidden behind the sticky nav. */
+body.coach-focus-drawer-open > .coach-review-side {
+    display: grid;
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    width: min(380px, calc(100vw - 2rem));
+    max-height: none;
+    z-index: 110;
+    background: var(--bg-panel, #0e1320);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 12px;
+    padding: 0.85rem;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    overflow: auto;
+    animation: coachFocusDrawerSlide 180ms ease-out;
+    /* Themed scrollbar — never expose native chrome inside styled UI.
+     * The Sprint 1 themed-scrollbar rules are scoped under
+     * #coach-view.is-review-mode .coach-review-side, but we re-parented
+     * the side panel to <body> in openCoachFocusInspector — so those
+     * rules no longer match here. Re-declare them in this scope. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar {
+    width: 6px;
+}
+body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-track {
+    background: transparent;
+}
+body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+}
+
+/* Backdrop dim so the drawer reads as a modal layer. The element is
+ * mounted by openCoachFocusInspector() in js/coaching.js so it can
+ * receive a real click handler for click-outside-to-close.
+ * Hidden by default; visible only while the drawer is open. */
+.coach-focus-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 105;       /* Above .main-nav (z-index: 100), below the drawer (110). */
+    animation: coachFocusBackdropFade 180ms ease-out;
+    cursor: zoom-out;
+}
+.coach-focus-backdrop[hidden] { display: none; }
+[data-theme="light"] .coach-focus-backdrop {
+    background: rgba(0, 0, 0, 0.18);
+}
+
+@keyframes coachFocusDrawerSlide {
+    from { transform: translateX(8px); opacity: 0; }
+    to   { transform: translateX(0);   opacity: 1; }
+}
+@keyframes coachFocusBackdropFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+[data-theme="light"] body.coach-focus-drawer-open > .coach-review-side {
+    scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+    background: var(--bg-panel, #ffffff);
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+[data-theme="light"] body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+}
+
 /* Match-page deep link to /coach?tab=review (coach/admin only) */
 .coach-this-match-link {
     text-decoration: none;
