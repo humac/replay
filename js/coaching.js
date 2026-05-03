@@ -616,6 +616,11 @@ export const coachingMixin = {
         // different code path (e.g. external API call to tearDownCoachReview),
         // make sure the listener + body class are cleaned up.
         this.exitCoachFocusMode();
+        // Sprint 7: defense-in-depth — if a caller invokes tearDownCoachReview
+        // without going through setCoachTab() (which already toggles install/
+        // uninstall in lockstep), make sure the global keydown listener is
+        // also removed. Safe to call when no handler is installed.
+        this.uninstallCoachReviewShortcuts();
     },
 
     _renderCoachReviewTime(video) {
@@ -1040,10 +1045,13 @@ export const coachingMixin = {
     },
 
     _handleCoachReviewShortcut(event) {
+        if (this._coachShortcutShouldSkip(event)) return;
         // The Sprint 6 focus-mode Escape handler runs in the capture
         // phase, so it wins over this bubble-phase handler when active.
         // We still bind Escape here as a fallback for cancelling a
-        // formation draft when focus mode is OFF.
+        // formation draft when focus mode is OFF. (Skip-typing guard
+        // above already lets Escape pass through native input handling
+        // when a form control is focused.)
         if (event.key === 'Escape' && !this._coachFocusMode) {
             if (this._coachFormationDraft) {
                 event.preventDefault();
@@ -1053,7 +1061,6 @@ export const coachingMixin = {
             }
             return;
         }
-        if (this._coachShortcutShouldSkip(event)) return;
         // Only intercept when the Review tab is actually showing.
         const reviewPanel = document.getElementById('coach-tab-review');
         if (!reviewPanel || reviewPanel.hidden) return;
@@ -1139,8 +1146,14 @@ export const coachingMixin = {
     toggleCoachShortcutsHelp() {
         const dialog = document.getElementById('coach-shortcuts-help');
         if (!dialog) return;
-        if (dialog.hidden) dialog.hidden = false;
-        else dialog.hidden = true;
+        const willOpen = dialog.hidden;
+        dialog.hidden = !willOpen;
+        // Keep the trigger button's aria-pressed in sync with the popover
+        // state so screen readers correctly report whether help is showing.
+        // Matches the pattern used by enterCoachFocusMode / setCoachDrawingTool
+        // and is exercised by the Sprint 8 a11y audit.
+        const toggle = document.getElementById('coach-review-shortcuts-toggle');
+        if (toggle) toggle.setAttribute('aria-pressed', willOpen ? 'true' : 'false');
     },
 
     renderCoachReviewForm() {

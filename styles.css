@@ -7174,9 +7174,14 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
  * timeline chips, and Sprint 6 focus toggle.
  * ============================================================ */
 @media (pointer: coarse), (max-width: 899px) {
+    /* Catch every interactive element inside the picker bar in one pass
+     * so a future button added without the *-save / *-focus class still
+     * meets the 44 px minimum. */
+    .coach-review-picker button,
+    .coach-review-picker select,
+    .coach-review-picker [role="button"],
     .coach-review-picker-save,
     .coach-review-picker-focus,
-    .coach-review-picker select,
     .coach-timeline-chip,
     .coach-shortcuts-help-head .mini-action-btn {
         min-height: 44px;
