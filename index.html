@@ -367,21 +367,24 @@
             <!-- Review sub-tab -->
             <div id="coach-tab-review" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-review" hidden>
                 <div class="options-card coach-review-shell">
-                    <div class="coach-review-picker">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Match</label>
-                                <select id="coach-review-match" onchange="app.handleCoachReviewMatchChange()"></select>
-                            </div>
-                            <div class="form-group">
-                                <label>Slot</label>
-                                <select id="coach-review-slot" onchange="app.handleCoachReviewSlotChange()">
-                                    <option value="full">Full</option>
-                                    <option value="first_half">1st Half</option>
-                                    <option value="second_half">2nd Half</option>
-                                </select>
-                            </div>
+                    <div class="coach-review-picker" role="toolbar" aria-label="Coach Review controls">
+                        <div class="coach-review-picker-group">
+                            <label class="coach-review-picker-label" for="coach-review-match">Match</label>
+                            <select id="coach-review-match" onchange="app.handleCoachReviewMatchChange()"></select>
                         </div>
+                        <div class="coach-review-picker-group">
+                            <label class="coach-review-picker-label" for="coach-review-slot">Slot</label>
+                            <select id="coach-review-slot" onchange="app.handleCoachReviewSlotChange()">
+                                <option value="full">Full</option>
+                                <option value="first_half">1st Half</option>
+                                <option value="second_half">2nd Half</option>
+                            </select>
+                        </div>
+                        <div class="coach-review-picker-group coach-review-picker-time" aria-live="off">
+                            <span class="coach-review-picker-label">Time</span>
+                            <span id="coach-review-time" class="coach-review-time-value" aria-label="Current video time">--:--</span>
+                        </div>
+                        <button type="button" id="coach-review-save-top" class="btn-primary coach-review-picker-save" onclick="app.saveReviewNote()">Save Note</button>
                     </div>
                     <div class="coach-review-grid">
                         <div class="coach-review-video">

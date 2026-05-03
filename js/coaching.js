@@ -106,6 +106,28 @@ export const coachingMixin = {
             const panel = document.getElementById(`coach-tab-${tab}`);
             if (panel) panel.hidden = tab !== name;
         });
+        // Sprint 1: drive a video-first layout when Review is the active sub-tab.
+        // Scoping the class to #coach-view keeps Roster/Notes/Playlists untouched.
+        const coachView = document.getElementById('coach-view');
+        if (coachView) coachView.classList.toggle('is-review-mode', name === 'review');
+        // Sprint 2 polish: install a window-resize listener that keeps the
+        // inspector height matched to the video wrapper. Bound once globally;
+        // _syncCoachReviewSideHeight no-ops when the Review tab isn't active.
+        if (!this._coachReviewSideSyncBound) {
+            window.addEventListener('resize', () => {
+                const v = document.getElementById(this._coachVideoId);
+                if (v) this._syncCoachReviewSideHeight(v);
+            });
+            this._coachReviewSideSyncBound = true;
+        }
+        if (name === 'review') {
+            // Run once after the panel becomes visible so the heights match
+            // even before any video loads.
+            requestAnimationFrame(() => {
+                const v = document.getElementById(this._coachVideoId);
+                if (v) this._syncCoachReviewSideHeight(v);
+            });
+        }
         if (pushHistory) {
             const params = new URLSearchParams(window.location.search);
             if (name === 'roster') params.delete('tab');
@@ -555,6 +577,22 @@ export const coachingMixin = {
         this.deactivateCoachCanvas();
         this.clearCoachDrawing();
         this._coachReview = null;
+        // Sprint 2: reset the top-bar time readout so it doesn't show a
+        // stale clock when the user reopens Review later.
+        const timeEl = document.getElementById('coach-review-time');
+        if (timeEl) timeEl.textContent = '--:--';
+    },
+
+    _renderCoachReviewTime(video) {
+        const el = document.getElementById('coach-review-time');
+        if (!el) return;
+        const t = Number(video?.currentTime || 0);
+        if (!Number.isFinite(t) || t < 0) { el.textContent = '--:--'; return; }
+        const hh = Math.floor(t / 3600);
+        const mm = Math.floor((t % 3600) / 60);
+        const ss = Math.floor(t % 60);
+        const pad = (n) => String(n).padStart(2, '0');
+        el.textContent = hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
     },
 
     handleCoachReviewMatchChange() {
@@ -591,6 +629,17 @@ export const coachingMixin = {
             if (drawing) this.renderCoachDrawing(drawing);
         };
         video.addEventListener('loadedmetadata', onLoaded);
+
+        // Sprint 2: drive the compact top-bar time readout from the video's
+        // timeupdate event. Bound once per video element; subsequent
+        // loadCoachReviewVideo calls re-use the same listener.
+        if (!video._coachReviewTimeBound) {
+            video.addEventListener('timeupdate', () => this._renderCoachReviewTime(video));
+            video.addEventListener('seeked', () => this._renderCoachReviewTime(video));
+            video.addEventListener('loadedmetadata', () => this._renderCoachReviewTime(video));
+            video._coachReviewTimeBound = true;
+        }
+        this._renderCoachReviewTime(video);
         // Keep the VOD session warm: the streams registry reaps idle sessions
         // after 15 s and admin "kill" only propagates to active heartbeaters.
         this._startFeedbackHeartbeat(matchId, slot, video);
@@ -734,9 +783,25 @@ export const coachingMixin = {
         const video = document.getElementById(this._coachVideoId);
         if (!canvas || !video) return;
         if (canvas._coachBound) { this._resizeCoachCanvas(canvas, video); return; }
-        const resize = () => this._resizeCoachCanvas(canvas, video);
+        const resize = () => {
+            this._resizeCoachCanvas(canvas, video);
+            // Sprint 2 polish: keep the inspector's max-height matched to the
+            // video wrapper so the side panel and player are visually the same
+            // height. Re-runs whenever the wrapper resizes (window or layout).
+            this._syncCoachReviewSideHeight(video);
+        };
         window.addEventListener('resize', resize);
         video.addEventListener('loadedmetadata', resize);
+        // Sprint 1: the inspector is now independently scrollable, which means the
+        // wrapper can change size without window resizing (e.g. inspector grows and
+        // pushes the video column narrower). Observe the wrapper directly so the
+        // canvas bitmap stays aligned with the rendered video.
+        const wrapper = video.closest('.coach-review-wrapper, .feedback-player-wrapper');
+        if (wrapper && typeof ResizeObserver === 'function') {
+            const ro = new ResizeObserver(resize);
+            ro.observe(wrapper);
+            canvas._coachResizeObserver = ro;
+        }
         canvas.addEventListener('pointerdown', (event) => this.coachDrawStart(event));
         canvas.addEventListener('pointermove', (event) => this.coachDrawMove(event));
         canvas.addEventListener('pointerup', (event) => this.coachDrawEnd(event));
@@ -753,6 +818,24 @@ export const coachingMixin = {
         this.paintCoachCanvas();
     },
 
+    _syncCoachReviewSideHeight(video) {
+        // Match the right inspector's max-height to the video wrapper's
+        // current rendered height so they always look like sibling columns
+        // of equal height. Only applies in Review mode; the feedback modal
+        // doesn't need it. Skip on narrow viewports where the layout is
+        // already single-column, and skip when the Review sub-tab isn't the
+        // active one (the global resize handler in setCoachTab fires on every
+        // tab — relying solely on null DOM lookups would still work today but
+        // the explicit gate survives any future refactor of tab visibility).
+        if (window.innerWidth < 1024) return;
+        if (this._coachTab !== 'review') return;
+        const wrapper = video.closest('.coach-review-wrapper');
+        const side = document.querySelector('#coach-tab-review .coach-review-side');
+        if (!wrapper || !side) return;
+        const h = Math.round(wrapper.getBoundingClientRect().height);
+        if (h > 0) side.style.maxHeight = `${h}px`;
+    },
+
     // Detach the global resize listener registered by setupCoachCanvas.
     // The Review tab's canvas is persistent in the DOM, so this is only
     // needed for the feedback player modal whose canvas is removed when
@@ -762,6 +845,10 @@ export const coachingMixin = {
         const canvas = document.getElementById(canvasId);
         if (!canvas || !canvas._coachResize) return;
         window.removeEventListener('resize', canvas._coachResize);
+        if (canvas._coachResizeObserver) {
+            canvas._coachResizeObserver.disconnect();
+            canvas._coachResizeObserver = null;
+        }
         canvas._coachResize = null;
         canvas._coachBound = false;
     },

@@ -857,6 +857,34 @@ async def feedback_deep_link():
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
+# Dev-only: when REPLAY_DEV=1, rewrite ES-module `import './js/foo.js'`
+# statements at serve time so each import URL carries `?v=<mtime_ns>`. This
+# closes the soft-refresh staleness gap — without it, a Cmd+R after editing
+# js/coaching.js would re-fetch script.js (already versioned) but reuse the
+# disk-cached coaching.js because the `import './js/coaching.js'` URL never
+# changes. With this on, every save flips the URL the import resolves to.
+# Strictly opt-in via env var so prod is byte-for-byte unchanged.
+_REPLAY_DEV = os.environ.get("REPLAY_DEV", "").strip().lower() in ("1", "true", "yes")
+
+_DEV_IMPORT_RE = re.compile(rb"""(import\s+(?:[\w*{}\s,]+\s+from\s+)?['"])(\./js/[\w-]+\.js)(['"])""")
+
+
+def _rewrite_dev_imports(path: Path, body: bytes) -> bytes:
+    """Add ?v=<mtime_ns> to relative ./js/*.js imports inside script.js / js/*.js."""
+    static_root = STATIC_DIR.resolve()
+    def repl(match: "re.Match[bytes]") -> bytes:
+        rel = match.group(2).decode()  # "./js/foo.js"
+        target = (path.parent / rel).resolve()
+        try:
+            target.relative_to(static_root)  # safety: stay inside /static
+            v = target.stat().st_mtime_ns
+        except (FileNotFoundError, ValueError):
+            return match.group(0)
+        new_url = f"{rel}?v={v}".encode()
+        return match.group(1) + new_url + match.group(3)
+    return _DEV_IMPORT_RE.sub(repl, body)
+
+
 @app.get("/static/{filepath:path}")
 async def static_file(filepath: str):
     filepath = filepath.split("?", 1)[0]
@@ -880,6 +908,18 @@ async def static_file(filepath: str):
     cache_header = "public, max-age=31536000, immutable"
     if path.suffix in {".css", ".js", ".html"}:
         cache_header = "no-store, no-cache, must-revalidate, max-age=0"
+
+    # Dev-only soft-refresh helper: rewrite JS module imports to include
+    # ?v=<mtime>. Off by default; set REPLAY_DEV=1 to enable.
+    if _REPLAY_DEV and path.suffix == ".js":
+        body = path.read_bytes()
+        rewritten = _rewrite_dev_imports(path, body)
+        return Response(
+            content=rewritten,
+            media_type=mt,
+            headers={"Cache-Control": cache_header},
+        )
+
     return FileResponse(
         str(path),
         media_type=mt,

@@ -6167,6 +6167,131 @@ details.diag-row-details[open] > summary::after {
     margin-bottom: 1rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* Each segment of the compact top bar — Match, Slot, Time, Save Note. */
+.coach-review-picker-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+/* Match segment grows to fill leftover space; Slot/Time stay sized to content. */
+.coach-review-picker-group:first-child {
+    flex: 1 1 280px;
+}
+.coach-review-picker-group:first-child select {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.coach-review-picker-label {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Time readout uses tabular numbers so the digits don't shift while playing. */
+.coach-review-picker-time {
+    padding: 0.35rem 0.65rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+}
+.coach-review-time-value {
+    font-family: var(--font-heading), system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.95rem;
+    color: var(--text-primary, inherit);
+    letter-spacing: 0.04em;
+}
+[data-theme="light"] .coach-review-picker-time {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Themed selects for the compact picker. The repo's standard select styling
+ * is scoped to `.form-group select` (3.8k of styles.css); since the picker
+ * no longer wraps each select in a .form-group, we need a scoped variant.
+ * This must override the browser default — never expose native chrome inside
+ * styled UI (see .agent-skills/css-responsive-accessibility.md). Compacts
+ * the form-group padding from 0.95rem to 0.45rem so the bar stays slim. */
+.coach-review-picker select {
+    padding: 0.45rem 2.2rem 0.45rem 0.7rem;
+    background: rgba(0, 0, 0, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23888890' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 10px 6px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.coach-review-picker select:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+}
+.coach-review-picker select:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    background-color: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
+}
+
+[data-theme="light"] .coach-review-picker select {
+    /* Pure white matches the rest of the light-mode form selects (see
+     * .form-group select rule). rgba() with alpha layered over the off-white
+     * page background produces a low-contrast stripe artifact in some
+     * browsers, so do not use transparency here. */
+    background-color: #ffffff;
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--text-main);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%236b6b75' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+[data-theme="light"] .coach-review-picker select:hover {
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-review-picker select:focus-visible {
+    background-color: #ffffff;
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.18);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%231565c0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+
+/* Top-bar Save Note: compact variant of .btn-primary. The form's full-width
+ * Save Note button stays as the secondary affordance for first-time users. */
+.coach-review-picker-save {
+    flex: 0 0 auto;
+    padding: 0.45rem 0.95rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+    .coach-review-picker {
+        gap: 0.5rem;
+    }
+    .coach-review-picker-group:first-child {
+        flex: 1 1 100%;
+    }
+    .coach-review-picker-save {
+        flex: 1 1 100%;
+    }
 }
 
 .coach-review-grid {
@@ -6223,6 +6348,166 @@ details.diag-row-details[open] > summary::after {
 
 [data-theme="light"] .coach-review-picker {
     border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Sprint 1: video-first Review cockpit ============================
+ *
+ * `is-review-mode` is set on #coach-view by setCoachTab() while the Review
+ * sub-tab is active. Overrides are scoped to that class so Roster / Notes /
+ * Playlists keep their existing density. Below the laptop breakpoint the
+ * grid collapses back to a single column.
+ */
+#coach-view.is-review-mode .coach-page-head {
+    /* Shrink the page intro so the video gets ~250px of vertical real estate back. */
+    margin-bottom: 0.4rem;
+}
+#coach-view.is-review-mode .coach-page-head h2 {
+    font-size: 1.1rem;
+    margin: 0;
+}
+#coach-view.is-review-mode .coach-page-head .admin-section-kicker {
+    font-size: 0.65rem;
+}
+#coach-view.is-review-mode .coach-page-head .admin-section-sub {
+    /* Visible to AT but visually hidden in Review mode (the subnav makes the
+     * surface obvious). Restored at narrow widths so mobile keeps context. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+#coach-view.is-review-mode .coach-review-shell {
+    padding: 0.65rem 0.85rem;
+}
+
+#coach-view.is-review-mode .coach-review-picker {
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.6rem;
+}
+
+/* Review mode is wider than the rest of the coach workspace so the video
+ * can actually breathe on a 1440+ monitor. We need to lift two caps:
+ *   1. #app-container (the outer page shell) caps everything at 1600px and
+ *      pads 3rem on each side — relax both for review mode.
+ *   2. .coach-page-head, .coach-subnav, .coach-tab-panel default to 1180px
+ *      to match the rest of the workspace — widen them.
+ * The cockpit then scales with the viewport up to ~2200px, after which it
+ * holds (form rows look weird sprawling across a 28" monitor).
+ * The body:has(...) selector confines the relaxation to Review mode only;
+ * Roster / Notes / Playlists / Admin / public Season keep their original
+ * 1600px cap and 3rem padding. */
+@media (min-width: 1024px) {
+    body:has(#coach-view.is-review-mode) #app-container {
+        max-width: min(100% - 1.5rem, 2200px);
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+    }
+
+    #coach-view.is-review-mode .coach-page-head,
+    #coach-view.is-review-mode .coach-subnav,
+    #coach-view.is-review-mode .coach-tab-panel {
+        max-width: 100%;
+    }
+}
+
+@media (min-width: 1024px) {
+    #coach-view.is-review-mode .coach-review-grid {
+        /* Video column is the dominant flex; inspector is fixed at 340px so it
+         * stays usable when the viewport narrows toward 1024px. align-items:
+         * start so the side panel doesn't stretch and fight the inspector's
+         * own scroll — its max-height is driven by JS instead (see
+         * _syncCoachReviewSideHeight in js/coaching.js) so it always matches
+         * the video wrapper's actual rendered height. */
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 0.85rem;
+        align-items: start;
+    }
+
+    #coach-view.is-review-mode .coach-review-side {
+        /* max-height is set inline by _syncCoachReviewSideHeight() and updated
+         * via the existing ResizeObserver on .coach-review-wrapper (Sprint 1).
+         * Fallback for the brief moment before JS runs: cap to a reasonable
+         * 16:9-ish height so the panel never towers above the video. */
+        max-height: calc((100vw - 380px) * 9 / 16);
+        overflow: auto;
+        /* Themed scrollbar — never expose native chrome inside styled UI. */
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    }
+
+    /* Sprint 2 polish: collapse nested scrollers inside the inspector while
+     * the outer .coach-review-side already scrolls independently. Two
+     * scrollbars stacked (panel + player checklist) is distracting during
+     * video review — the player chips just grow vertically and ride along
+     * with the outer scroll. The chips themselves are tightened so a 15-25
+     * player roster doesn't dominate the inspector. */
+    #coach-view.is-review-mode #coach-review-players.coach-check-list {
+        min-height: 0;
+        max-height: none;
+        overflow: visible;
+        padding: 0.4rem;
+    }
+    #coach-view.is-review-mode #coach-review-players .coach-check-option {
+        min-height: 32px;
+        padding: 0.3rem 0.55rem;
+        font-size: 0.85rem;
+    }
+
+    /* Tighten the inspector layout so the form doesn't dominate vertically.
+     * Headers (`Telestrator`, `Save note at current time`, `Notes for this
+     * match`) are visually redundant — the controls below them are obvious —
+     * so squeeze them out in Review mode. AT users still get them via
+     * .coach-review-side > h4's intrinsic semantics; they're hidden visually
+     * only. */
+    #coach-view.is-review-mode .coach-review-side {
+        gap: 0.5rem;
+    }
+    #coach-view.is-review-mode .coach-review-side > h4 {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    /* Tighter form spacing + shorter body textarea so the form fits without
+     * forcing the side panel to scroll on a normal-height monitor. Sprint 4
+     * will collapse body/visibility/tags into an "advanced" section, which
+     * removes most of this height entirely. */
+    #coach-view.is-review-mode .coach-mini-form {
+        gap: 0.4rem;
+    }
+    #coach-view.is-review-mode .coach-mini-form textarea {
+        min-height: 56px;
+    }
+
+    #coach-view.is-review-mode .coach-review-side::-webkit-scrollbar {
+        width: 6px;
+    }
+    #coach-view.is-review-mode .coach-review-side::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    #coach-view.is-review-mode .coach-review-side::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.18);
+        border-radius: 3px;
+    }
+}
+
+[data-theme="light"] #coach-view.is-review-mode .coach-review-side {
+    scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+[data-theme="light"] #coach-view.is-review-mode .coach-review-side::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
 }
 
 /* Match-page deep link to /coach?tab=review (coach/admin only) */
