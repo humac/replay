@@ -7028,6 +7028,23 @@ body.coach-focus-drawer-open > .coach-review-side {
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
     overflow: auto;
     animation: coachFocusDrawerSlide 180ms ease-out;
+    /* Themed scrollbar — never expose native chrome inside styled UI.
+     * The Sprint 1 themed-scrollbar rules are scoped under
+     * #coach-view.is-review-mode .coach-review-side, but we re-parented
+     * the side panel to <body> in openCoachFocusInspector — so those
+     * rules no longer match here. Re-declare them in this scope. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar {
+    width: 6px;
+}
+body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-track {
+    background: transparent;
+}
+body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
 }
 
 /* Backdrop dim so the drawer reads as a modal layer. The element is
@@ -7057,9 +7074,13 @@ body.coach-focus-drawer-open > .coach-review-side {
 }
 
 [data-theme="light"] body.coach-focus-drawer-open > .coach-review-side {
+    scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
     background: var(--bg-panel, #ffffff);
     border-color: rgba(0, 0, 0, 0.12);
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+[data-theme="light"] body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
 }
 
 /* Match-page deep link to /coach?tab=review (coach/admin only) */

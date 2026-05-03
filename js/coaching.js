@@ -42,6 +42,11 @@ export const coachingMixin = {
     _coachFormationDraft: null,
     _coachFormationMode: 'quick', // 'quick' | 'linked'
 
+    // Sprint 5: id of the timeline-rail chip currently flagged as the
+    // active note (highlighted blue, aria-pressed=true). Cleared on
+    // match/slot change and tab teardown.
+    _coachActiveNoteId: null,
+
     // Sprint 6: Wide / Focus mode. Session-local — never persisted; resets
     // on tab leave or page reload. The keydown listener is bound only when
     // focus mode is on, so an Escape press elsewhere in the app is unaffected.
@@ -694,9 +699,15 @@ export const coachingMixin = {
         const container = document.getElementById('coach-review-notes');
         if (!container) return;
         if (!matchId) {
+            container.setAttribute('aria-label', 'Notes timeline (no match selected)');
             container.innerHTML = '<div class="coach-timeline-empty">Select a match to see its notes.</div>';
             return;
         }
+        // Sprint 5: keep the rail's aria-label in sync with the active
+        // match so screen readers announce which match's notes the user
+        // is navigating, instead of the static "Notes for this match".
+        const matchName = this.matchLabel(matchId);
+        container.setAttribute('aria-label', `Notes for ${matchName}`);
         const allNotes = this._coachBundle?.notes || [];
         const notes = allNotes
             .filter((n) => n.match_id === matchId)
@@ -838,7 +849,11 @@ export const coachingMixin = {
             event.preventDefault();
             this.exitCoachFocusMode();
         };
-        window.addEventListener('keydown', this._coachFocusEscapeHandler);
+        // Capture phase so the handler runs before any descendant Escape
+        // listener (e.g. the browser's default <details> toggle), matching
+        // the comment above. Stored phase mirrored on removal in
+        // exitCoachFocusMode for symmetry.
+        window.addEventListener('keydown', this._coachFocusEscapeHandler, true);
         // The wrapper just changed size — re-sync canvas + inspector height.
         const video = document.getElementById(this._coachVideoId);
         if (video) {
@@ -877,7 +892,7 @@ export const coachingMixin = {
             toggle.classList.remove('is-active');
         }
         if (this._coachFocusEscapeHandler) {
-            window.removeEventListener('keydown', this._coachFocusEscapeHandler);
+            window.removeEventListener('keydown', this._coachFocusEscapeHandler, true);
             this._coachFocusEscapeHandler = null;
         }
         // Re-sync canvas + inspector height for the restored layout.
