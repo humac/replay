@@ -589,6 +589,21 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coach Section Alignment Pass ✅ COMPLETE (2026-05-03)
+
+**Goal:** make Roster / Notes / Playlists feel as compact and scannable as the new Coach Review cockpit, without redesigning Review again or touching backend schemas, My Feedback, or public match playback.
+
+- **CSS-only density pass** scoped to `#coach-view:not(.is-review-mode)`: tighter `.options-card` padding (`0.95rem 1.1rem` desktop), heading sizes brought down to `1.05rem`, `.coach-row` padding reduced to `0.6rem 0`, list `gap` removed in favour of row borders, form rows compacted, primary CTAs / row actions snapped to a `30 px` minimum on `pointer:fine` desktop and a `44 px` minimum on `pointer:coarse`. Review's existing tighter shell rules win because they're on `.is-review-mode` (no double-override).
+- **Mobile fallback** — at `pointer:coarse` / ≤ 899 px the row flips to vertical stacking so `coach-row-actions` get full-width touch targets while desktop keeps the horizontal `name | actions` layout.
+- **Dominant action elevation** — `js/coaching.js` adds `mini-action-btn-primary` to "Open in Review" (Notes) and "Preview" (Playlists) so the eye lands on the play action first. Reuses the existing modifier (already used by My Feedback) — no new design tier.
+- **Playlists row metadata** now shows `assigned-players` count when present, alongside the existing `note-count · visibility · pre/post-roll`.
+- **Coach-scoped layout vars** at `#coach-view`: `--coach-shell-gap`, `--coach-card-padding`, `--coach-row-padding-y`, `--coach-compact-control-height`, `--coach-row-gap`. Future Coach work can tune density in one place.
+- **Empty state** — `.session-empty` inside Coach gets a dashed-border "card" treatment that reads as part of the list rather than as raw text.
+- **Validation**: `node --check script.js js/coaching.js js/api.js` clean; `pytest tests/` 265 passed; manual regression at 1440 / 1024 / 390 confirmed Roster add/delete/link, Notes Open-in-Review deep link, Playlist Preview focused-modal, and all Edit modals still work; Review tab unchanged.
+- **Screenshots**: `docs/screenshots/coach-alignment-after/` — 12 PNGs (4 tabs × 3 widths).
+
+---
+
 ## Coach Review UX Cockpit — Sprint 0 (audit) ✅ COMPLETE (2026-05-02)
 
 **Goal:** establish a measured before-state for [`docs/coach-review-ui-ux-implementation-plan.md`](docs/coach-review-ui-ux-implementation-plan.md). Audit only — no source code changed (PR #56).
