@@ -93,6 +93,13 @@ services:
     expose:
       - "8888"        # LL-HLS (internal only)
       - "9997"        # control API (internal only)
+    env_file:
+      - .env.local
+    environment:
+      # MediaMTX expands ${MTX_LIVE_AUTH_SECRET} in mediamtx.yml at startup
+      # and embeds it as the password half of HTTP Basic Auth in
+      # authHTTPAddress, since MediaMTX 1.18 dropped authHTTPHeaders.
+      MTX_LIVE_AUTH_SECRET: ${LIVE_AUTH_SECRET}
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
     restart: unless-stopped

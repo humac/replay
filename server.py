@@ -6,11 +6,13 @@ Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 80
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import math
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid
@@ -1165,7 +1167,21 @@ async def live_auth_webhook(body: LiveAuthRequest, request: Request):
     _live_auth_attempts[ip] = attempts
 
     if LIVE_AUTH_SECRET:
-        if request.headers.get("x-internal-secret") != LIVE_AUTH_SECRET:
+        # MediaMTX 1.18 dropped support for authHTTPHeaders, so we accept
+        # the shared secret either as the X-Internal-Secret header (for
+        # callers that can set headers) or as the password half of HTTP
+        # Basic Auth in the URL (which is what MediaMTX uses now —
+        # authHTTPAddress: http://_:<secret>@replay:8090/api/live/auth).
+        provided = request.headers.get("x-internal-secret") or ""
+        if not provided:
+            auth_header = request.headers.get("authorization") or ""
+            if auth_header.lower().startswith("basic "):
+                try:
+                    decoded = base64.b64decode(auth_header.split(None, 1)[1]).decode("utf-8", "replace")
+                    _, _, provided = decoded.partition(":")
+                except Exception:
+                    provided = ""
+        if not secrets.compare_digest(provided, LIVE_AUTH_SECRET):
             raise HTTPException(401, "Unauthorized")
     elif LIVE_AUTH_ALLOW_INSECURE:
         if not hasattr(live_auth_webhook, "_warned"):

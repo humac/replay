@@ -56,7 +56,8 @@ pytest tests/ -v --cov --cov-report=term-missing
 
 
 - Live auth hardening: `/api/live/auth` now fails closed (503) when `LIVE_AUTH_SECRET` is unset unless `LIVE_AUTH_ALLOW_INSECURE=1` is explicitly set for dev-only use.
-- Live auth webhook tests should set `server.LIVE_AUTH_SECRET` and send `X-Internal-Secret` so stream-key validation is exercised behind the MediaMTX shared-secret gate.
+- Live auth secret transport: MediaMTX 1.18 dropped `authHTTPHeaders`. The shared secret now travels as the password half of HTTP Basic Auth in `authHTTPAddress` (e.g. `http://_:${MTX_LIVE_AUTH_SECRET}@replay:8090/api/live/auth`). The handler accepts both `Authorization: Basic …` (current) and `X-Internal-Secret:` (legacy) — keep both paths working when touching the handler.
+- Live auth webhook tests should set `server.LIVE_AUTH_SECRET` and send the secret as either `X-Internal-Secret` or HTTP Basic Auth so stream-key validation is exercised behind the MediaMTX shared-secret gate.
 - `pytest.ini` pins pytest-asyncio fixture loop scope to `function` and narrowly filters dependency-owned Python 3.14 asyncio deprecations so local test runs stay warning-clean.
 - Auth token cap is configurable with `MAX_ACTIVE_TOKENS` (default 1000).
 - CI gates coverage at 60% via `pytest-cov` (`.coveragerc` excludes `tests/`); current baseline is ~64%. Newer tests live in `tests/test_coaching.py` (coach roles, roster links, feedback visibility, playlist item privacy, drawing JSON validation, review tracking), `tests/test_db.py`, `tests/test_models.py`, `tests/test_server.py` (covers `ResizableSemaphore` directly), plus expanded coverage in `tests/test_admin.py`, `tests/test_matches.py`, and `tests/test_media.py`.
