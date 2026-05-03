@@ -589,6 +589,19 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Site-wide Outer Shell Unification + Coach Tab Inner Caps ✅ COMPLETE (2026-05-03)
+
+**Goal:** make every view (public season, public match, coach all 4 tabs, my feedback, admin) share one outer page-shell width, so navigating between them never jumps the page edges.
+
+- **Global page-shell width** (`styles.css` `#app-container` ~L179) — promoted the Review-mode `min(100% - 1.5rem, 2200px)` policy to the universal default. Padding dropped from `3rem` to `1.25rem` so content actually reaches the new edges. The previous Review-only override (`body:has(#coach-view.is-review-mode)` block ~L6628) is dropped — it became a no-op once global matched it.
+- **Coach inner caps** lifted from `1180px` to `1440px` on `.coach-page-head`, `.coach-grid`, `.coach-subnav`, `.coach-tab-panel` so the non-Review tabs visually fill the wider shell while keeping form rows at a comfortable measure.
+- **Admin shell** keeps its dedicated `1320px` inner cap (`#admin-view`) — admin is a control panel, not a content surface, and the dense tile grid + sidebar shouldn't spread across a 28" monitor.
+- **Mobile padding** unchanged — `@media (max-width: 768px)` still sets `1.5rem`, `(max-width: 480px)` still sets `1.1rem`. The new `1.25rem` global only fires above the existing breakpoints.
+- **Validation**: `node --check` clean, `pytest tests/` 265 passed; live verified at 1920 / 1440 / 1024 / 390 px across season / public match / coach (all 4 tabs) / my feedback / admin — no body overflow at any width, edges align tab-to-tab and view-to-view.
+- **Screenshots**: `docs/screenshots/site-width-after/` — 7 surfaces × 4 widths = 28 PNGs.
+
+---
+
 ## Coach Section Alignment Pass ✅ COMPLETE (2026-05-03)
 
 **Goal:** make Roster / Notes / Playlists feel as compact and scannable as the new Coach Review cockpit, without redesigning Review again or touching backend schemas, My Feedback, or public match playback.
@@ -620,7 +633,7 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 **Goal:** turn `/coach?tab=review` into a video-first cockpit (Sprint 1) and replace the form-row picker with a compact match/slot/time/save-note bar (Sprint 2). PR #57.
 
 - **`is-review-mode` class** (`js/coaching.js setCoachTab`): toggled on `#coach-view` when the Review sub-tab is active. All overrides scoped to that class — Roster / Notes / Playlists keep their existing density.
-- **Video-first grid** (`styles.css`): `.coach-review-grid` becomes `minmax(0, 1fr) 340px` above 1024 px (single column below). `#app-container`'s 1600 px width cap and 3 rem padding relaxed to `min(100% - 1.5rem, 2200px)` / 1.25 rem **only in Review mode**, so a 1920 px monitor uses the full width. Other surfaces unchanged.
+- **Video-first grid** (`styles.css`): `.coach-review-grid` becomes `minmax(0, 1fr) 340px` above 1024 px (single column below). `#app-container`'s 1600 px width cap and 3 rem padding relaxed to `min(100% - 1.5rem, 2200px)` / 1.25 rem **only in Review mode**, so a 1920 px monitor uses the full width. Other surfaces unchanged. *(Superseded 2026-05-03 by the site-wide shell unification — that policy is now the global default and the Review-only override has been removed.)*
 - **Inspector height matched to video player** (`js/coaching.js _syncCoachReviewSideHeight`): right-side inspector's `max-height` is JS-synced to the video wrapper's actual rendered height. Wired to window resize, ResizeObserver on `.coach-review-wrapper`, and Review-tab activation via `requestAnimationFrame`. Single themed scrollbar inside the inspector slot — no more nested scrollbars.
 - **ResizeObserver on `.coach-review-wrapper`** (`js/coaching.js setupCoachCanvas`): keeps the drawing canvas aligned even when the inspector resizes the wrapper without a window resize event (the gap flagged in the Sprint 0 audit).
 - **Compact picker bar** (`index.html`, `styles.css`): `.coach-review-picker` refactored from a `.form-row` block (118 px) into a horizontal toolbar (47 px) with `role="toolbar"`: Match | Slot | Time | Save Note. New `#coach-review-time` readout updates from `timeupdate` / `seeked` / `loadedmetadata`, formatted MM:SS or H:MM:SS with `tabular-nums`. New `#coach-review-save-top` calls the existing `app.saveReviewNote()`. Below 720 px the bar wraps cleanly.
