@@ -444,19 +444,53 @@ async def test_coach_private_note_never_leaks_to_viewer(client, auth_headers):
         "coach_private_note": "INTERNAL: Player A is being asked to do too much.",
     }, headers=auth_headers)
     assert note_resp.status_code == 200
+    note_id = note_resp.json()["note"]["id"]
     # Coach round-trip still includes the private note.
     assert "INTERNAL" in note_resp.json()["note"]["coach_private_note"]
 
-    # Viewer's My Feedback sees the team-visible note but the private
-    # field is scrubbed.
+    # Build a team-visible playlist that includes the same note. The
+    # playlist hydration path embeds full note objects under
+    # `playlists[].items[]` — that path must also scrub the private
+    # field, otherwise the privacy invariant is violated through a
+    # second route. (See PR #73 review — this exact leak was found
+    # before the fix landed.)
+    playlist_resp = await client.post("/api/coach/playlists", json={
+        "title": "Build-up rotations",
+        "description": "Team-visible playlist for review.",
+        "visibility": "team",
+        "note_ids": [note_id],
+    }, headers=auth_headers)
+    assert playlist_resp.status_code == 200, playlist_resp.text
+
+    # Viewer's My Feedback sees the team-visible note + the playlist,
+    # but the private field is scrubbed in BOTH places.
     feedback = await client.get("/api/my-feedback", headers=viewer_headers)
     assert feedback.status_code == 200
     payload = feedback.json()
+
+    # 1) `notes[]` path
     visible_titles = [n["title"] for n in payload["notes"]]
     assert "Build-up off the keeper" in visible_titles
-    leaked = [n for n in payload["notes"] if n["coach_private_note"]]
-    assert leaked == [], f"coach_private_note leaked to viewer: {leaked}"
+    leaked_notes = [n for n in payload["notes"] if n["coach_private_note"]]
+    assert leaked_notes == [], f"coach_private_note leaked via notes[]: {leaked_notes}"
+
+    # 2) `playlists[].items[]` path — the previously-missed leak path.
+    visible_playlists = [p for p in payload["playlists"] if p["title"] == "Build-up rotations"]
+    assert visible_playlists, "team-visible playlist missing from My Feedback"
+    leaked_items = [
+        item for p in visible_playlists for item in p.get("items", [])
+        if item.get("coach_private_note")
+    ]
+    assert leaked_items == [], (
+        "coach_private_note leaked via playlists[].items[]: "
+        f"{[(i.get('title'), i.get('coach_private_note')) for i in leaked_items]}"
+    )
+
     # `player_summary` IS visible to the viewer (it's the player-facing
-    # text, by design).
+    # text, by design) — same holds in both surfaces.
     summarized = next(n for n in payload["notes"] if n["title"] == "Build-up off the keeper")
     assert summarized["player_summary"].startswith("Drop deeper")
+    item_summary = visible_playlists[0]["items"][0].get("player_summary", "")
+    assert item_summary.startswith("Drop deeper"), (
+        f"player_summary should still be visible inside playlist items, got: {item_summary!r}"
+    )

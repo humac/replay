@@ -1732,7 +1732,16 @@ async def my_feedback(request: Request):
         players = [p for p in _db.list_players(include_inactive=True) if p["id"] in linked]
     all_notes = _db.list_coaching_notes()
     notes = _filter_notes_for_user(all_notes, user)
-    playlists = _playlists_with_items(_filter_playlists_for_user(_db.list_coaching_playlists(), user), all_notes)
+    # Phase 1 privacy invariant: `coach_private_note` must never reach a
+    # viewer. The top-level `notes[]` is already scrubbed by
+    # `_filter_notes_for_user`, but `_playlists_with_items` embeds full
+    # note objects under `playlists[].items[]` — pass a scrubbed source
+    # for that hydration too. Coach/admin call sites get the raw list
+    # (no scrub needed). See PR #73 review + the playlist-leak test in
+    # tests/test_coaching.py.
+    is_privileged = _auth.has_role(user, "admin", "coach")
+    items_source = all_notes if is_privileged else [_strip_private_fields(n) for n in all_notes]
+    playlists = _playlists_with_items(_filter_playlists_for_user(_db.list_coaching_playlists(), user), items_source)
     reviews = _db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else []
     return {"players": players, "notes": notes, "playlists": playlists, "reviews": reviews}
 
