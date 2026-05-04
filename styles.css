@@ -2117,7 +2117,7 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 .mini-action-btn-primary {
     background: rgba(23, 113, 201, 0.18);
     border-color: rgba(23, 113, 201, 0.42);
-    color: var(--text);
+    color: var(--text-main);
 }
 
 .mini-action-btn-primary:hover {
@@ -5635,7 +5635,7 @@ details.diag-row-details[open] > summary::after {
 
 .coach-row strong {
     display: block;
-    color: var(--text);
+    color: var(--text-main);
     font-family: var(--font-heading);
     font-size: 1rem;
     letter-spacing: 0;
@@ -5665,7 +5665,7 @@ details.diag-row-details[open] > summary::after {
     margin: 0.4rem 0.35rem 0 0;
     border: 1px solid rgba(23, 113, 201, 0.35);
     background: rgba(23, 113, 201, 0.10);
-    color: var(--text);
+    color: var(--text-main);
     border-radius: 999px;
     padding: 0.24rem 0.55rem;
     font-size: 0.75rem;
@@ -5715,7 +5715,7 @@ details.diag-row-details[open] > summary::after {
     gap: 0.55rem;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.035);
-    color: var(--text);
+    color: var(--text-main);
     border-radius: 6px;
     padding: 0.48rem 0.6rem;
     text-align: left;
@@ -5795,7 +5795,7 @@ details.diag-row-details[open] > summary::after {
     width: 100%;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(0, 0, 0, 0.24);
-    color: var(--text);
+    color: var(--text-main);
     border-radius: 6px;
     padding: 0.55rem 0.65rem;
     font: inherit;
@@ -5848,7 +5848,7 @@ details.diag-row-details[open] > summary::after {
 
 [data-theme="light"] .coach-telestrator input[type="text"] {
     background: #fff;
-    color: var(--text);
+    color: var(--text-main);
     border-color: rgba(0, 0, 0, 0.14);
 }
 
@@ -6249,7 +6249,7 @@ details.diag-row-details[open] > summary::after {
     transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 .coach-review-tone-btn:hover {
-    color: var(--text);
+    color: var(--text-main);
     background: rgba(255, 255, 255, 0.05);
 }
 .coach-review-tone-btn:focus-visible {
@@ -6259,7 +6259,7 @@ details.diag-row-details[open] > summary::after {
 .coach-review-tone-btn.is-active {
     background: rgba(23, 113, 201, 0.18);
     border-color: rgba(23, 113, 201, 0.45);
-    color: var(--text);
+    color: var(--text-main);
 }
 [data-theme="light"] .coach-review-tone-btn:hover {
     background: rgba(0, 0, 0, 0.04);
@@ -6293,8 +6293,11 @@ details.diag-row-details[open] > summary::after {
 
 /* Inline `(visible to player/family)` hint inside a structured-field
  * label (Phase 1 — distinguishes the player-facing summary from the
- * coach-private fields). Mirrors `.form-label-hint` already used by
- * the roster Quick Add panel. */
+ * coach-private fields). The Review composer renders the hint as
+ * `<small>` inside the label `<span>` (this rule); the Notes-tab
+ * Edit modal uses `<span class="form-label-hint">` instead. Two
+ * different markups, same visual treatment — both render as a
+ * muted, lower-weight, non-uppercase tail. */
 .coach-review-field-label > span small {
     text-transform: none;
     letter-spacing: 0;
@@ -6388,7 +6391,7 @@ details.diag-row-details[open] > summary::after {
     text-align: left;
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.04);
-    color: var(--text);
+    color: var(--text-main);
     border-radius: 6px;
     padding: 0.45rem 0.55rem;
     cursor: pointer;
@@ -6457,7 +6460,7 @@ details.diag-row-details[open] > summary::after {
 
 .coach-subnav-btn:hover {
     background: rgba(255, 255, 255, 0.04);
-    color: var(--text);
+    color: var(--text-main);
 }
 
 .coach-subnav-btn:focus-visible {
@@ -6469,7 +6472,7 @@ details.diag-row-details[open] > summary::after {
 .coach-subnav-btn[aria-selected="true"] {
     background: rgba(23, 113, 201, 0.18);
     border-color: rgba(23, 113, 201, 0.42);
-    color: var(--text);
+    color: var(--text-main);
 }
 
 [data-theme="light"] .coach-subnav {
@@ -7344,7 +7347,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     border-radius: 999px;
     background: rgba(23, 113, 201, 0.14);
     border: 1px solid rgba(23, 113, 201, 0.32);
-    color: var(--text);
+    color: var(--text-main);
     font-size: 0.78rem;
     font-weight: 600;
 }
@@ -7371,7 +7374,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     display: block;
     font-family: var(--font-heading);
     font-size: 1.05rem;
-    color: var(--text);
+    color: var(--text-main);
 }
 
 .feedback-player-meta span {
@@ -7416,7 +7419,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 
 .feedback-rail-info strong {
     display: block;
-    color: var(--text);
+    color: var(--text-main);
     font-family: var(--font-heading);
     font-size: 0.95rem;
 }
@@ -7468,7 +7471,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 [data-theme="light"] .coach-check-option {
     background: rgba(255, 255, 255, 0.72);
     border-color: rgba(0, 0, 0, 0.08);
-    color: var(--text);
+    color: var(--text-main);
 }
 
 [data-theme="light"] .coach-check-option:hover,
@@ -7486,7 +7489,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 [data-theme="light"] .coach-mini-form textarea,
 [data-theme="light"] .coach-mini-form select {
     background: #fff;
-    color: var(--text);
+    color: var(--text-main);
     border-color: rgba(0, 0, 0, 0.14);
 }
 
@@ -7879,7 +7882,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 8px;
-    color: var(--text);
+    color: var(--text-main);
     font: inherit;
     font-size: 0.9rem;
 }
@@ -7929,12 +7932,12 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 #coach-tab-roster .roster-filter-btn:hover {
-    color: var(--text);
+    color: var(--text-main);
 }
 #coach-tab-roster .roster-filter-btn.is-active {
     background: rgba(255, 255, 255, 0.10);
     border-color: rgba(255, 255, 255, 0.18);
-    color: var(--text);
+    color: var(--text-main);
 }
 #coach-tab-roster .roster-filter-btn:focus-visible {
     outline: 2px solid var(--accent);
@@ -8058,7 +8061,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     font-weight: 700;
     text-transform: none;
     letter-spacing: 0;
-    color: var(--text);
+    color: var(--text-main);
 }
 
 #coach-tab-roster .roster-jersey-badge {
@@ -8107,7 +8110,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     border: 1px solid rgba(23, 113, 201, 0.35);
     background: rgba(23, 113, 201, 0.12);
     border-radius: 999px;
-    color: var(--text);
+    color: var(--text-main);
     font: inherit;
     font-size: 0.72rem;
     cursor: pointer;
@@ -8129,7 +8132,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     font-size: 0.65rem;
 }
 #coach-tab-roster .roster-link-user {
-    color: var(--text);
+    color: var(--text-main);
 }
 #coach-tab-roster .roster-link-x {
     margin-left: 0.15rem;
@@ -8182,7 +8185,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     height: 32px;
     padding: 0;
     font-size: 0.95rem;
-    color: var(--text);
+    color: var(--text-main);
 }
 .mini-action-btn.mini-action-btn-icon svg {
     display: block;
@@ -8270,7 +8273,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 6px;
-    color: var(--text);
+    color: var(--text-main);
     font: inherit;
     font-size: 0.85rem;
 }
@@ -8388,7 +8391,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background-color: rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 6px;
-    color: var(--text);
+    color: var(--text-main);
     font: inherit;
     font-size: 0.85rem;
     text-transform: none;
@@ -8406,7 +8409,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background-color: rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 6px;
-    color: var(--text);
+    color: var(--text-main);
     font: inherit;
     font-size: 0.85rem;
 }
@@ -8441,7 +8444,7 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
-    color: var(--text);
+    color: var(--text-main);
     font-size: 0.85rem;
     cursor: pointer;
 }

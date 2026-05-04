@@ -1441,6 +1441,18 @@ export const coachingMixin = {
         const tag = (target.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
         if (target.isContentEditable) return true;
+        // PR 1b: don't intercept while focus is inside the tone radiogroup
+        // (Coach Review composer or the Notes-tab Edit modal). The video-
+        // seek arrow shortcuts would otherwise scrub the video when a
+        // keyboard user tabs into the chip group and presses arrow keys.
+        // Full WAI-ARIA roving-tabindex / arrow-key cycling is a future
+        // accessibility item; this guard just stops the conflict.
+        if (target.closest && (
+            target.closest('#coach-review-tone') ||
+            target.closest('.coach-review-tone') ||
+            target.closest('[role="radiogroup"]') ||
+            target.closest('[role="radio"]')
+        )) return true;
         // Don't fight other modifier-driven shortcuts (Cmd+S, Ctrl+R, …).
         if (event.metaKey || event.ctrlKey || event.altKey) return true;
         return false;
@@ -1570,9 +1582,16 @@ export const coachingMixin = {
         // `what_to_do_next`, `player_summary`, `coach_private_note`)
         // collapse behind the existing <details class="coach-review-
         // advanced"> disclosure so the default state stays compact.
-        // All existing element IDs are preserved; the only payload-
-        // shape change is OPT-IN — `saveReviewNote()` only sends the
-        // new fields when the coach actually fills them in.
+        // All existing element IDs are preserved. The payload shape
+        // gains six fields (`note_type` + the five structured fields)
+        // — `saveReviewNote()` sends them on EVERY save, using empty
+        // strings when the coach left them blank, so a coach who
+        // clears a previously-set field gets the empty string
+        // persisted instead of the old value round-tripping silently.
+        // The backend `CreateCoachingNoteRequest` already treats every
+        // new field as optional with a safe default (`note_type` →
+        // `'correction'`, all strings → `''`), so legacy clients that
+        // don't send them keep working unchanged.
         const container = document.getElementById('coach-review-form');
         if (!container) return;
         const players = this._coachBundle?.players || [];
@@ -1631,6 +1650,15 @@ export const coachingMixin = {
                 </div>
             </details>
         `;
+        // Seed the tone group's dataset.value so it matches the visually
+        // active default chip BEFORE the coach clicks anything. The
+        // `saveReviewNote()` fallback handles `undefined` defensively
+        // (`?.dataset.value || DEFAULT_NOTE_TYPE`), but seeding here
+        // keeps the dataset structurally consistent with the Notes-tab
+        // modal path (which seeds in openCoachNoteModal()) and avoids
+        // landmines for any future reader that drops the fallback.
+        const toneEl = document.getElementById('coach-review-tone');
+        if (toneEl) toneEl.dataset.value = DEFAULT_NOTE_TYPE;
         // Stamp the current timestamp onto the new Save button immediately.
         const v = document.getElementById(this._coachVideoId);
         if (v) this._renderCoachReviewTime(v);
