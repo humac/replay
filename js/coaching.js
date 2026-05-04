@@ -14,6 +14,19 @@ const VISIBILITY_OPTIONS = [
     ['player', 'Player/family'], ['unlisted', 'Unlisted link'],
 ];
 
+// Phase 1 structured-note tone (PR 1b). Mirrors the backend
+// `_VALID_NOTE_TYPES` set in models.py — keep in sync. The default
+// `correction` matches the column default in `coaching_notes` so
+// existing UIs that don't send `note_type` keep behaving the same.
+const NOTE_TYPES = [
+    ['positive',        'Positive',        '+'],
+    ['correction',      'Correction',      '↺'],
+    ['question',        'Question',        '?'],
+    ['team_concept',    'Team',            '⌬'],
+    ['individual_goal', 'Goal',            '★'],
+];
+const DEFAULT_NOTE_TYPE = 'correction';
+
 const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'review'];
 const VALID_FEEDBACK_TABS = ['playlists', 'notes'];
 
@@ -726,6 +739,38 @@ export const coachingMixin = {
         body.querySelector('[data-field="body"]').value = note?.body || '';
         body.querySelector('[data-field="tags"]').value = (note?.tags || []).join(',');
 
+        // Phase 1 structured-note fields (PR 1b). The Notes-tab modal
+        // mirrors the Review composer so editing parity is preserved —
+        // a note saved via Coach Review can be re-opened here without
+        // losing its structured shape.
+        const initialNoteType = note?.note_type || DEFAULT_NOTE_TYPE;
+        const toneBox = body.querySelector('[data-field="note_type"]');
+        toneBox.dataset.value = initialNoteType;
+        toneBox.innerHTML = NOTE_TYPES.map(([v, l, glyph]) => `
+            <button type="button" class="coach-review-tone-btn${v === initialNoteType ? ' is-active' : ''}" role="radio" aria-checked="${v === initialNoteType}" data-note-type="${v}" title="${this.esc(l)}">
+                <span class="coach-review-tone-glyph" aria-hidden="true">${glyph}</span>
+                <span class="coach-review-tone-label">${this.esc(l)}</span>
+            </button>
+        `).join('');
+        // Wire the tone chips inside the modal — scoped to the cloned
+        // body so it doesn't fight the Review composer's group state.
+        toneBox.querySelectorAll('.coach-review-tone-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const v = btn.dataset.noteType;
+                toneBox.dataset.value = v;
+                toneBox.querySelectorAll('.coach-review-tone-btn').forEach((b) => {
+                    const active = b === btn;
+                    b.classList.toggle('is-active', active);
+                    b.setAttribute('aria-checked', active ? 'true' : 'false');
+                });
+            });
+        });
+        body.querySelector('[data-field="player_summary"]').value = note?.player_summary || '';
+        body.querySelector('[data-field="what_happened"]').value = note?.what_happened || '';
+        body.querySelector('[data-field="why_it_matters"]').value = note?.why_it_matters || '';
+        body.querySelector('[data-field="what_to_do_next"]').value = note?.what_to_do_next || '';
+        body.querySelector('[data-field="coach_private_note"]').value = note?.coach_private_note || '';
+
         const playersBox = body.querySelector('[data-field="players"]');
         const players = this._coachBundle?.players || [];
         this.renderCoachCheckList(playersBox, players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet');
@@ -761,6 +806,13 @@ export const coachingMixin = {
                     player_ids: Array.from(root.querySelector('[data-field="players"]').querySelectorAll('.coach-check-option.is-selected')).map((b) => b.dataset.value),
                     tags: (root.querySelector('[data-field="tags"]').value || '').split(',').map((s) => s.trim()).filter(Boolean),
                     drawing: note?.drawing || {},
+                    // Phase 1 structured-note fields.
+                    note_type: root.querySelector('[data-field="note_type"]').dataset.value || DEFAULT_NOTE_TYPE,
+                    player_summary: root.querySelector('[data-field="player_summary"]').value.trim(),
+                    what_happened: root.querySelector('[data-field="what_happened"]').value.trim(),
+                    why_it_matters: root.querySelector('[data-field="why_it_matters"]').value.trim(),
+                    what_to_do_next: root.querySelector('[data-field="what_to_do_next"]').value.trim(),
+                    coach_private_note: root.querySelector('[data-field="coach_private_note"]').value.trim(),
                 });
             },
         });
@@ -1389,6 +1441,18 @@ export const coachingMixin = {
         const tag = (target.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
         if (target.isContentEditable) return true;
+        // PR 1b: don't intercept while focus is inside the tone radiogroup
+        // (Coach Review composer or the Notes-tab Edit modal). The video-
+        // seek arrow shortcuts would otherwise scrub the video when a
+        // keyboard user tabs into the chip group and presses arrow keys.
+        // Full WAI-ARIA roving-tabindex / arrow-key cycling is a future
+        // accessibility item; this guard just stops the conflict.
+        if (target.closest && (
+            target.closest('#coach-review-tone') ||
+            target.closest('.coach-review-tone') ||
+            target.closest('[role="radiogroup"]') ||
+            target.closest('[role="radio"]')
+        )) return true;
         // Don't fight other modifier-driven shortcuts (Cmd+S, Ctrl+R, …).
         if (event.metaKey || event.ctrlKey || event.altKey) return true;
         return false;
@@ -1509,13 +1573,25 @@ export const coachingMixin = {
     renderCoachReviewForm() {
         // Sprint 4: fast compact composer. Default state shows the four
         // fields a coach actually fills in every time — title, players,
-        // category, and a Save-at-MM:SS primary button. Visibility, tags,
-        // and the long-form body collapse behind a <details> disclosure
-        // ("More details") so they're available without dominating the
-        // inspector vertically. All existing element IDs are preserved so
-        // saveReviewNote() and the existing payload/handler chain need no
-        // changes; the backend payload (CreateCoachingNoteRequest) is
-        // byte-for-byte identical to before.
+        // category, and a Save-at-MM:SS primary button. PR 1b adds the
+        // tone chip group (positive / correction / question / team /
+        // goal — Phase 1 of the coaching analysis roadmap) right above
+        // the Save button so the coach picks the tone with one tap.
+        // Visibility, tags, the long-form body, and the new structured
+        // coaching-point fields (`what_happened`, `why_it_matters`,
+        // `what_to_do_next`, `player_summary`, `coach_private_note`)
+        // collapse behind the existing <details class="coach-review-
+        // advanced"> disclosure so the default state stays compact.
+        // All existing element IDs are preserved. The payload shape
+        // gains six fields (`note_type` + the five structured fields)
+        // — `saveReviewNote()` sends them on EVERY save, using empty
+        // strings when the coach left them blank, so a coach who
+        // clears a previously-set field gets the empty string
+        // persisted instead of the old value round-tripping silently.
+        // The backend `CreateCoachingNoteRequest` already treats every
+        // new field as optional with a safe default (`note_type` →
+        // `'correction'`, all strings → `''`), so legacy clients that
+        // don't send them keep working unchanged.
         const container = document.getElementById('coach-review-form');
         if (!container) return;
         const players = this._coachBundle?.players || [];
@@ -1525,6 +1601,14 @@ export const coachingMixin = {
             <select id="coach-review-category" aria-label="Category">
                 ${NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
             </select>
+            <div id="coach-review-tone" class="coach-review-tone" role="radiogroup" aria-label="Note tone">
+                ${NOTE_TYPES.map(([v, l, glyph]) => `
+                    <button type="button" class="coach-review-tone-btn${v === DEFAULT_NOTE_TYPE ? ' is-active' : ''}" role="radio" aria-checked="${v === DEFAULT_NOTE_TYPE}" data-note-type="${v}" title="${this.esc(l)}" onclick="app.setCoachReviewNoteType('${v}')">
+                        <span class="coach-review-tone-glyph" aria-hidden="true">${glyph}</span>
+                        <span class="coach-review-tone-label">${this.esc(l)}</span>
+                    </button>
+                `).join('')}
+            </div>
             <button type="button" id="coach-review-save-form" class="btn-primary" onclick="app.saveReviewNote()">Save at --:--</button>
             <details class="coach-review-advanced">
                 <summary>More details</summary>
@@ -1536,8 +1620,28 @@ export const coachingMixin = {
                         </select>
                     </label>
                     <label class="coach-review-field-label">
-                        <span>Notes</span>
-                        <textarea id="coach-review-body" rows="3" maxlength="4000" placeholder="What should players notice?"></textarea>
+                        <span>Player summary <small>(visible to player/family)</small></span>
+                        <textarea id="coach-review-player-summary" rows="2" maxlength="2000" placeholder="Short, age-appropriate version they'll read."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>What happened</span>
+                        <textarea id="coach-review-what-happened" rows="2" maxlength="2000" placeholder="The observation."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Why it matters</span>
+                        <textarea id="coach-review-why-it-matters" rows="2" maxlength="2000" placeholder="The coaching context."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>What to do next</span>
+                        <textarea id="coach-review-what-to-do-next" rows="2" maxlength="2000" placeholder="The actionable next step."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Coach context (private)</span>
+                        <textarea id="coach-review-coach-private-note" rows="2" maxlength="4000" placeholder="Internal — never sent to players or families."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Long notes</span>
+                        <textarea id="coach-review-body" rows="3" maxlength="4000" placeholder="Anything that doesn't fit the structured fields above."></textarea>
                     </label>
                     <label class="coach-review-field-label">
                         <span>Tags</span>
@@ -1546,9 +1650,34 @@ export const coachingMixin = {
                 </div>
             </details>
         `;
+        // Seed the tone group's dataset.value so it matches the visually
+        // active default chip BEFORE the coach clicks anything. The
+        // `saveReviewNote()` fallback handles `undefined` defensively
+        // (`?.dataset.value || DEFAULT_NOTE_TYPE`), but seeding here
+        // keeps the dataset structurally consistent with the Notes-tab
+        // modal path (which seeds in openCoachNoteModal()) and avoids
+        // landmines for any future reader that drops the fallback.
+        const toneEl = document.getElementById('coach-review-tone');
+        if (toneEl) toneEl.dataset.value = DEFAULT_NOTE_TYPE;
         // Stamp the current timestamp onto the new Save button immediately.
         const v = document.getElementById(this._coachVideoId);
         if (v) this._renderCoachReviewTime(v);
+    },
+
+    /** Click handler for the tone-chip group. Toggles `is-active` /
+     *  `aria-checked` so the chip layer behaves like a real radio
+     *  group, and stashes the value on the container's dataset so
+     *  `saveReviewNote()` can read it without a redundant DOM scan. */
+    setCoachReviewNoteType(value) {
+        const group = document.getElementById('coach-review-tone');
+        if (!group) return;
+        if (!NOTE_TYPES.some(([v]) => v === value)) return;
+        group.dataset.value = value;
+        group.querySelectorAll('.coach-review-tone-btn').forEach((btn) => {
+            const active = btn.dataset.noteType === value;
+            btn.classList.toggle('is-active', active);
+            btn.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
     },
 
     async openNoteInReview(noteId) {
@@ -1568,6 +1697,11 @@ export const coachingMixin = {
         const video = document.getElementById(this._coachVideoId);
         const title = document.getElementById('coach-review-title')?.value.trim();
         if (!title) { this.showError('Add a title for the coaching note.'); return; }
+        // Tone chip group — the active button stores its value on the
+        // container's dataset (set by setCoachReviewNoteType). Falls
+        // back to the default (`correction`) so a coach who never
+        // touched the chips keeps the legacy implied behaviour.
+        const noteType = document.getElementById('coach-review-tone')?.dataset.value || DEFAULT_NOTE_TYPE;
         const payload = {
             match_id: review.matchId,
             slot: review.slot || 'full',
@@ -1579,16 +1713,38 @@ export const coachingMixin = {
             player_ids: Array.from(document.querySelectorAll('#coach-review-players .coach-check-option.is-selected')).map((b) => b.dataset.value),
             tags: (document.getElementById('coach-review-tags')?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
             drawing: this._coachDrawing || {},
+            // Phase 1 structured-note fields (PR 1a backend / PR 1b UI).
+            // All optional with safe defaults at the backend; we send
+            // them every time so a coach who clears them gets the
+            // empty string persisted (rather than the previous value
+            // round-tripping unchanged).
+            note_type: noteType,
+            what_happened: document.getElementById('coach-review-what-happened')?.value.trim() || '',
+            why_it_matters: document.getElementById('coach-review-why-it-matters')?.value.trim() || '',
+            what_to_do_next: document.getElementById('coach-review-what-to-do-next')?.value.trim() || '',
+            player_summary: document.getElementById('coach-review-player-summary')?.value.trim() || '',
+            coach_private_note: document.getElementById('coach-review-coach-private-note')?.value.trim() || '',
         };
         try {
             await this.createCoachNote(payload);
             this.showSuccess('Coaching note saved.');
             // Sprint 4: only clear fields the coach is unlikely to repeat
-            // verbatim. Category, visibility, and selected players stay
-            // sticky so a coach reviewing one player can save several notes
-            // in a row without re-tagging. Title, body, and tags are cleared
-            // because they describe the specific moment.
-            ['coach-review-title', 'coach-review-body', 'coach-review-tags'].forEach((id) => {
+            // verbatim. Category, visibility, tone, and selected players
+            // stay sticky so a coach reviewing one player can save
+            // several notes in a row without re-tagging. Title, body,
+            // tags, AND the per-moment structured fields are cleared
+            // because each describes the specific moment.
+            const PER_MOMENT_FIELDS = [
+                'coach-review-title',
+                'coach-review-body',
+                'coach-review-tags',
+                'coach-review-what-happened',
+                'coach-review-why-it-matters',
+                'coach-review-what-to-do-next',
+                'coach-review-player-summary',
+                'coach-review-coach-private-note',
+            ];
+            PER_MOMENT_FIELDS.forEach((id) => {
                 const el = document.getElementById(id); if (el) el.value = '';
             });
             this.clearCoachDrawing();
