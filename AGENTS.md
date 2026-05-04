@@ -17,7 +17,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 ## Key Files
 
 - `server.py`: API routes, SPA serving, async lock wrappers, entrypoint
-- `db.py`: SQLite connection pool, schema migrations, match CRUD helpers, persisted admin `activity_events` feed helpers, and coaching workspace persistence (`players`, player-user links, notes, playlists, reviews)
+- `db.py`: SQLite connection pool, schema migrations, match CRUD helpers, persisted admin `activity_events` feed helpers, and coaching workspace persistence (`players`, player-user links, notes, playlists, reviews). `coaching_notes` carries Phase 1 structured fields (`note_type` / `what_happened` / `why_it_matters` / `what_to_do_next` / `player_summary` / `coach_private_note`) added in `_migrate_v9`; `_row_to_note` defensively reads them via an `_opt(key, default)` helper so older snapshots without the new columns still hydrate.
 - `auth.py`: multi-user authentication, token management, password hashing (scrypt), role-based access, login rate limiting, origin validation
 - `settings.py`: app settings persistence, rendering helpers, `TUNING_KNOBS` schema (typed validation + range clamps for performance/upload/encoder knobs), env-fallback-on-first-load, `settings_audit` write helper, typed read helpers (`get_int`/`get_float`/`get_bool`/`get_str`/`get_hls_variant_presets`)
 - `uploads.py`: upload session lifecycle (create, chunk, complete, cleanup)

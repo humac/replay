@@ -1437,11 +1437,22 @@ def _filter_notes_for_user(notes: list[dict], user: dict) -> list[dict]:
     for note in notes:
         visibility = note.get("visibility", "private")
         if visibility in {"team", "unlisted"}:
-            visible.append(note)
+            visible.append(_strip_private_fields(note))
             continue
         if visibility == "player" and linked_players.intersection(note.get("player_ids", [])):
-            visible.append(note)
+            visible.append(_strip_private_fields(note))
     return visible
+
+
+def _strip_private_fields(note: dict) -> dict:
+    """Phase 1: never send `coach_private_note` to a viewer. Returns a
+    shallow copy so the original list / cache stays intact for
+    coach/admin call sites that operate on the same in-memory data."""
+    if "coach_private_note" not in note:
+        return note
+    safe = dict(note)
+    safe["coach_private_note"] = ""
+    return safe
 
 
 def _filter_playlists_for_user(playlists: list[dict], user: dict) -> list[dict]:
