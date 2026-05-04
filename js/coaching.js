@@ -1034,6 +1034,17 @@ export const coachingMixin = {
         // Sprint 5: drop active timeline-chip selection so it doesn't carry
         // over into a different match's notes on next entry.
         this._coachActiveNoteId = null;
+        // Phase 2: drop the active-template tracker so a coach who applied
+        // a template, navigated away, and comes back doesn't trip the
+        // overwrite-protection logic on a fresh, visually-empty composer.
+        // Without this reset, _refreshCoachTemplateButtons() would render
+        // the Clear button enabled (because canClear = !!selected ||
+        // !!active), and the next applyCoachTemplate() would compare the
+        // freshly-seeded defaults (category='shape', tone='correction')
+        // against the stale previous template's values, treating those
+        // defaults as "manually edited" and prompting "Replace your edits?"
+        // when nothing was actually edited.
+        this._coachReviewActiveTemplateId = null;
         // Sprint 6: defense-in-depth — if focus mode somehow survived a
         // different code path (e.g. external API call to tearDownCoachReview),
         // make sure the listener + body class are cleaned up.
@@ -1069,6 +1080,10 @@ export const coachingMixin = {
         const slot = document.getElementById('coach-review-slot')?.value || 'full';
         // Sprint 5: clear any selected timeline chip when switching matches.
         this._coachActiveNoteId = null;
+        // Phase 2: a template applied for the previous match no longer
+        // describes the new match's moment. Reset the tracker AND the
+        // selector + buttons so the composer starts fresh.
+        this._resetCoachReviewTemplateState();
         if (!matchId) { this.tearDownCoachReview(); this.renderCoachReviewNotes(null); return; }
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -1079,6 +1094,9 @@ export const coachingMixin = {
         // Sprint 5: clear active chip when slot changes (the active note may
         // belong to a different slot of the same match).
         this._coachActiveNoteId = null;
+        // Phase 2: same reasoning as match-change — different slot = new
+        // moment, so the previously-applied template is no longer relevant.
+        this._resetCoachReviewTemplateState();
         if (!matchId) return;
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -1824,6 +1842,20 @@ export const coachingMixin = {
      *  would be a surprise. To erase fields, the coach can switch the
      *  selector to "None — start from scratch" and re-pick a template. */
     clearCoachTemplate() {
+        this._resetCoachReviewTemplateState();
+    },
+
+    /** Phase 2 — internal helper used by clearCoachTemplate(),
+     *  handleCoachReviewMatchChange(), and handleCoachReviewSlotChange()
+     *  to keep the visible UI and the JS tracker in lockstep. Resets
+     *  the selector to "None — start from scratch", forgets the active
+     *  template id, and drives Apply / Clear back to disabled. Like
+     *  clearCoachTemplate, this never erases populated form fields —
+     *  only the template state is reset. Safe to call when the
+     *  composer is not currently mounted (the document.getElementById
+     *  call returns null and the only side-effect is the JS field
+     *  reset, which is what we want). */
+    _resetCoachReviewTemplateState() {
         const select = document.getElementById('coach-review-template');
         if (select) select.value = '';
         this._coachReviewActiveTemplateId = null;
