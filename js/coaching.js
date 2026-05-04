@@ -27,6 +27,17 @@ const NOTE_TYPES = [
 ];
 const DEFAULT_NOTE_TYPE = 'correction';
 
+// PR 1c: My Feedback uses longer, more player-friendly labels for the
+// tone (the Coach Review composer's chip labels above are clipped for
+// the dense inspector). Same key set as `_VALID_NOTE_TYPES`.
+const FEEDBACK_NOTE_TYPE_LABELS = {
+    positive:        'Positive',
+    correction:      'Correction',
+    question:        'Question',
+    team_concept:    'Team concept',
+    individual_goal: 'Individual goal',
+};
+
 const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'review'];
 const VALID_FEEDBACK_TABS = ['playlists', 'notes'];
 
@@ -2601,6 +2612,79 @@ export const coachingMixin = {
         el.innerHTML = `<span class="feedback-linked-label">Linked players:</span>` + players.map((p) => `<span class="feedback-linked-pill">${this.esc(this.playerLabel(p))}</span>`).join('');
     },
 
+    /** PR 1c — viewer-facing "summary" for a coaching note. The player-
+     *  facing text is `player_summary` when present (the short, age-
+     *  appropriate version the coach wrote in the composer), with a
+     *  fallback to `body` for legacy notes that pre-date Phase 1. The
+     *  long-form `body` is also surfaced when both are non-empty so the
+     *  coach can write a polished one-line summary without losing their
+     *  longer note. */
+    _feedbackNoteSummary(note) {
+        const summary = (note?.player_summary || '').trim();
+        const body = (note?.body || '').trim();
+        if (summary && body && summary !== body) return { primary: summary, secondary: body };
+        if (summary) return { primary: summary, secondary: '' };
+        return { primary: body, secondary: '' };
+    },
+
+    /** PR 1c — tone pill HTML for My Feedback. Coach-facing chip labels
+     *  are short ("Team", "Goal"); player-facing labels are written out
+     *  for clarity ("Team concept", "Individual goal"). The `data-tone`
+     *  attribute drives the pill's accent colour. Returns `''` when the
+     *  note has no `note_type` (defensive — every note post-v9 has one
+     *  but a legacy export might not). */
+    _feedbackTonePillHtml(noteType) {
+        const label = FEEDBACK_NOTE_TYPE_LABELS[noteType];
+        if (!label) return '';
+        return `<span class="feedback-tone-pill" data-tone="${this.esc(noteType)}">${this.esc(label)}</span>`;
+    },
+
+    /** PR 1c — paint the focused-note modal body. Same composition
+     *  as the notes-list row, scaled up: tone pill, primary summary,
+     *  structured what/why/next stack, and a collapsed "Coach context"
+     *  disclosure for the long-form `body` when both are present. */
+    _renderFeedbackBody(target, note) {
+        if (!target) return;
+        const { primary, secondary } = this._feedbackNoteSummary(note);
+        const parts = [];
+        const tone = this._feedbackTonePillHtml(note?.note_type);
+        if (tone) parts.push(`<div class="feedback-player-tone">${tone}</div>`);
+        if (primary) parts.push(`<p class="feedback-note-summary feedback-player-summary">${this.esc(primary)}</p>`);
+        const structured = this._feedbackStructuredHtml(note);
+        if (structured) parts.push(structured);
+        if (secondary) parts.push(`<details class="feedback-note-more"><summary>Coach context</summary><p>${this.esc(secondary)}</p></details>`);
+        target.innerHTML = parts.join('');
+    },
+
+    /** PR 1c — structured what / why / next stack. Renders only the
+     *  fields that are non-empty so a simple note (with only
+     *  `player_summary`) still feels lightweight. `coach_private_note`
+     *  is NEVER rendered here; the server scrubs it for viewers
+     *  (`_strip_private_fields`) but we also do not template it client-
+     *  side as defense-in-depth. */
+    _feedbackStructuredHtml(note) {
+        const items = [
+            ['What happened',     note?.what_happened],
+            ['Why it matters',    note?.why_it_matters],
+            ['What to do next',   note?.what_to_do_next],
+        ].filter(([, v]) => (v || '').trim());
+        if (!items.length) return '';
+        return `
+            <dl class="feedback-structured">
+                ${items.map(([label, value]) => `
+                    <div class="feedback-structured-item">
+                        <dt>${this.esc(label)}</dt>
+                        <dd>${this.esc(value.trim())}</dd>
+                    </div>
+                `).join('')}
+            </dl>`;
+    },
+
+    /** Render the Playlists tab as a responsive grid of self-contained
+     *  cards. Each card shows the playlist's title, clip count,
+     *  description, and a Play session / Mark reviewed action row.
+     *  Click "Play session" → `openFeedbackPlaylist()` opens the
+     *  focused modal (same player used by the rest of the app). */
     renderFeedbackPlaylists(data) {
         const container = document.getElementById('feedback-playlists-list');
         if (!container) return;
@@ -2610,21 +2694,29 @@ export const coachingMixin = {
             container.innerHTML = '<div class="session-empty">No review playlists have been shared with you yet.</div>';
             return;
         }
-        container.innerHTML = playlists.map((p) => `
-            <article class="coach-row">
-                <div>
-                    <strong>${this.esc(p.title)}</strong>
-                    <span>${p.note_ids?.length || 0} clip${p.note_ids?.length === 1 ? '' : 's'} · ${reviewed.has(Number(p.id)) ? 'Reviewed' : 'New'}</span>
-                    ${p.description ? `<p>${this.esc(p.description)}</p>` : ''}
+        container.innerHTML = playlists.map((p) => {
+            const isReviewed = reviewed.has(Number(p.id));
+            const clipCount = p.note_ids?.length || 0;
+            return `
+            <article class="feedback-card feedback-playlist-card">
+                <span class="feedback-card-kicker">Review Session</span>
+                <h3 class="feedback-card-title">${this.esc(p.title)}</h3>
+                <div class="feedback-card-meta">${clipCount} clip${clipCount === 1 ? '' : 's'} · ${isReviewed ? 'Reviewed' : 'New'}</div>
+                ${p.description ? `<p class="feedback-card-description">${this.esc(p.description)}</p>` : ''}
+                <div class="feedback-card-actions">
+                    <button type="button" class="btn-primary" onclick="app.openFeedbackPlaylist(${p.id})">▶ Play session</button>
+                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
                 </div>
-                <div class="coach-row-actions">
-                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openFeedbackPlaylist(${p.id})">Play</button>
-                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">Mark reviewed</button>
-                </div>
-            </article>
-        `).join('');
+            </article>`;
+        }).join('');
     },
 
+    /** Render the Notes tab as a responsive grid of self-contained
+     *  cards. Each card shows tone pill, title, match/timestamp meta,
+     *  player_summary (or body fallback), the structured what / why /
+     *  next stack, optional Coach context disclosure, and a Watch /
+     *  Mark reviewed action row. Click "Watch" → `openFeedbackNote()`
+     *  opens the focused modal with telestration. */
     renderFeedbackNotes(data) {
         const container = document.getElementById('feedback-notes-list');
         if (!container) return;
@@ -2634,19 +2726,31 @@ export const coachingMixin = {
             container.innerHTML = '<div class="session-empty">No coaching notes have been shared with you yet.</div>';
             return;
         }
-        container.innerHTML = notes.map((n) => `
-            <article class="coach-row">
-                <div>
-                    <strong>${this.esc(n.title)}</strong>
-                    <span>${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${reviewed.has(Number(n.id)) ? 'Reviewed' : 'New'}</span>
-                    ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
+        // Cards are scannable previews — tone + title + meta + a
+        // line of summary + actions. The full structured What /
+        // Why / Next stack and the Coach context disclosure live
+        // inside the focused Watch modal, where the player has the
+        // video + drawing context to anchor them.
+        container.innerHTML = notes.map((n) => {
+            const isReviewed = reviewed.has(Number(n.id));
+            const tonePill = this._feedbackTonePillHtml(n.note_type);
+            const { primary } = this._feedbackNoteSummary(n);
+            const meta = `${this.esc(this.matchLabel(n.match_id))} · ${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${isReviewed ? 'Reviewed' : 'New'}`;
+            return `
+            <article class="feedback-card feedback-note-card">
+                <div class="feedback-card-head">
+                    ${tonePill}
+                    ${isReviewed ? '<span class="feedback-card-status">Reviewed ✓</span>' : ''}
                 </div>
-                <div class="coach-row-actions">
-                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openFeedbackNote(${n.id})">Watch</button>
-                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">Reviewed</button>
+                <h3 class="feedback-card-title">${this.esc(n.title)}</h3>
+                <div class="feedback-card-meta">${meta}</div>
+                ${primary ? `<p class="feedback-card-summary">${this.esc(primary)}</p>` : ''}
+                <div class="feedback-card-actions">
+                    <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">▶ Watch</button>
+                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
                 </div>
-            </article>
-        `).join('');
+            </article>`;
+        }).join('');
     },
 
     openFeedbackNote(noteId) {
@@ -2696,7 +2800,12 @@ export const coachingMixin = {
             if (mode === 'note') {
                 body.querySelector('[data-field="title"]').textContent = note.title || 'Coaching note';
                 body.querySelector('[data-field="subtitle"]').textContent = `${this.matchLabel(note.match_id)} · ${this.formatClock(note.timestamp_seconds)} · ${this.slotLabel(note.slot)}`;
-                body.querySelector('[data-field="body"]').textContent = note.body || '';
+                // PR 1c: player_summary first, then structured stack,
+                // then body as collapsible "Coach context" if both
+                // exist. Switch from textContent to innerHTML so the
+                // helper-rendered HTML lands intact (each helper
+                // already passes user data through `this.esc()`).
+                this._renderFeedbackBody(body.querySelector('[data-field="body"]'), note);
                 this._loadFeedbackVideoForNote(note);
             } else if (mode === 'playlist') {
                 body.querySelector('[data-field="title"]').textContent = playlist.title || 'Review playlist';
@@ -2876,11 +2985,24 @@ export const coachingMixin = {
         if (!session) { rail.hidden = true; rail.innerHTML = ''; return; }
         rail.hidden = false;
         const item = session.items[session.index];
+        // PR 1c: surface the per-item tone pill + the player-facing
+        // summary INSIDE the playlist player too, so a player watching
+        // a session sees the same context they'd see if they opened
+        // the standalone note. coach_private_note is never rendered
+        // (server already scrubs it; we never template it client-side).
+        const tone = this._feedbackTonePillHtml(item.note_type);
+        const { primary } = this._feedbackNoteSummary(item);
         rail.innerHTML = `
             <div class="feedback-rail-info">
                 <span>Review Session</span>
                 <strong>${this.esc(session.playlist.title)}</strong>
                 <small>${session.index + 1} of ${session.items.length} · ${this.esc(item.title)} · ${this.esc(item.category || 'note')}</small>
+                ${tone || primary ? `
+                    <div class="feedback-rail-item-detail">
+                        ${tone}
+                        ${primary ? `<span class="feedback-rail-item-summary">${this.esc(primary)}</span>` : ''}
+                    </div>
+                ` : ''}
             </div>
             <div class="feedback-rail-controls">
                 <button type="button" class="mini-action-btn" onclick="app.previousCoachingPlaylistItem()">Prev</button>

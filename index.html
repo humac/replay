@@ -733,7 +733,10 @@
                     <canvas data-field="canvas" id="feedback-drawing-canvas" class="coach-drawing-canvas"></canvas>
                 </div>
                 <div class="feedback-player-rail" data-field="rail" hidden></div>
-                <p class="feedback-player-body" data-field="body"></p>
+                <!-- PR 1c: changed from <p> to <div> so the focused-note
+                     body can host structured field block markup (<dl>) +
+                     a collapsible "Coach context" disclosure. -->
+                <div class="feedback-player-body" data-field="body"></div>
             </div>
         </template>
 
@@ -752,16 +755,16 @@
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="notes" onclick="app.setFeedbackTab('notes')">Notes</button>
             </nav>
 
+            <!-- Single-pane card grid: each note/playlist is a self-contained
+                 card. Click "Watch" / "Play session" to open the focused modal
+                 (`feedback-player-template`). Responsive grid: 4 cols @ 1920,
+                 3 @ 1440, 2 @ 1024, 1 @ <= 720. -->
             <div id="feedback-tab-playlists" class="coach-tab-panel feedback-tab-panel">
-                <div class="options-card">
-                    <div id="feedback-playlists-list" class="coach-list"></div>
-                </div>
+                <div id="feedback-playlists-list" class="feedback-card-grid" aria-label="Playlist sessions"></div>
             </div>
 
             <div id="feedback-tab-notes" class="coach-tab-panel feedback-tab-panel" hidden>
-                <div class="options-card">
-                    <div id="feedback-notes-list" class="coach-list"></div>
-                </div>
+                <div id="feedback-notes-list" class="feedback-card-grid" aria-label="Coaching notes"></div>
             </div>
         </section>
 

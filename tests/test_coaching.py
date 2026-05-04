@@ -494,3 +494,54 @@ async def test_coach_private_note_never_leaks_to_viewer(client, auth_headers):
     assert item_summary.startswith("Drop deeper"), (
         f"player_summary should still be visible inside playlist items, got: {item_summary!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_legacy_body_visible_when_player_summary_blank(client, auth_headers):
+    """PR 1c: a team-visible note with no `player_summary` but a non-
+    empty `body` must still reach the viewer. The UI's
+    `_feedbackNoteSummary` helper falls back to `body` when
+    `player_summary` is empty — verify the API surface still ships
+    `body` so that fallback works end-to-end. This guards against any
+    future filter that accidentally strips `body` along with private
+    fields."""
+    await client.post("/api/users", json={
+        "username": "legacy_viewer",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    viewer_headers = await _login(client, "legacy_viewer")
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel",
+        "away_team": "Highbridge Town",
+        "date": "2026-04-19",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    legacy_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 12.0,
+        "title": "Recovery angle",
+        # Legacy shape: only `body`, no Phase 1 fields. Backend
+        # defaults `note_type='correction'` and the structured strings
+        # to ''.
+        "body": "Take a sharper recovery angle so you cut the runner off.",
+        "category": "defending",
+        "visibility": "team",
+    }, headers=auth_headers)
+    assert legacy_resp.status_code == 200, legacy_resp.text
+
+    feedback = await client.get("/api/my-feedback", headers=viewer_headers)
+    assert feedback.status_code == 200
+    payload = feedback.json()
+    note = next((n for n in payload["notes"] if n["title"] == "Recovery angle"), None)
+    assert note is not None, "team-visible legacy note should reach the viewer"
+    assert note["body"].startswith("Take a sharper"), "legacy body must round-trip to viewer"
+    # Legacy notes have an empty player_summary and the safe default
+    # note_type — the UI fallback handles both.
+    assert note["player_summary"] == ""
+    assert note["note_type"] == "correction"
+    # Privacy invariant still holds (no leak via the legacy path).
+    assert note["coach_private_note"] == ""
