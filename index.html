@@ -292,10 +292,12 @@
                         </div>
                         <div class="roster-head-actions">
                             <button type="button" class="btn-head roster-link-btn" onclick="app.openCoachLinkModal()" title="Link a family or player account to a roster player">
-                                <span aria-hidden="true">⚭</span> Link Account
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14l-2 2a4 4 0 01-5.7-5.7l3-3a4 4 0 015.7 0"/><path d="M15 10l2-2a4 4 0 015.7 5.7l-3 3a4 4 0 01-5.7 0"/></svg>
+                                Link Account
                             </button>
                             <button type="button" class="btn-head roster-add-btn" onclick="app.focusCoachQuickAdd()" title="Jump to the Quick Add Player panel">
-                                <span aria-hidden="true">+</span> Add Player
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                                Add Player
                             </button>
                         </div>
                     </header>
@@ -305,7 +307,9 @@
                     <div class="roster-controls">
                         <label class="roster-search">
                             <span class="visually-hidden">Search roster by name or jersey</span>
-                            <span class="roster-search-icon" aria-hidden="true">⌕</span>
+                            <span class="roster-search-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19a8 8 0 100-16 8 8 0 000 16z"/><path d="M21 21l-4.35-4.35"/></svg>
+                            </span>
                             <input type="search" id="coach-roster-search" placeholder="Search by name or jersey…" autocomplete="off" oninput="app.handleCoachRosterSearch(this.value)">
                         </label>
                         <div class="roster-filters" role="tablist" aria-label="Filter roster by status">

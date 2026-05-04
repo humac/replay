@@ -7778,13 +7778,17 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 }
 #coach-tab-roster .roster-search input {
     width: 100%;
-    padding: 0.55rem 0.85rem 0.55rem 2.1rem;
+    padding: 0.6rem 0.85rem 0.6rem 2.4rem;
     background: rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 8px;
     color: var(--text);
     font: inherit;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
+}
+#coach-tab-roster .roster-search input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.7;
 }
 #coach-tab-roster .roster-search input:focus-visible {
     outline: 2px solid var(--accent);
@@ -7793,12 +7797,18 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 }
 #coach-tab-roster .roster-search-icon {
     position: absolute;
-    left: 0.7rem;
+    left: 0.8rem;
     top: 50%;
     transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
     color: var(--text-muted);
-    font-size: 0.95rem;
     pointer-events: none;
+}
+#coach-tab-roster .roster-search-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
 }
 #coach-tab-roster .roster-filters {
     display: inline-flex;
@@ -7926,23 +7936,47 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     padding: 0.7rem 0.9rem;
     vertical-align: middle;
 }
-#coach-tab-roster .roster-col-num { width: 64px; }
+#coach-tab-roster .roster-col-num { width: 72px; }
 #coach-tab-roster .roster-col-status { width: 110px; }
-#coach-tab-roster .roster-col-actions { width: 130px; text-align: right; }
+#coach-tab-roster .roster-col-actions { width: 150px; }
+/* The actions cell keeps `display: table-cell` (so the row's
+ * vertical-align: middle still applies and tall rows stay aligned)
+ * but its inner `.roster-actions-row` wrapper is a flexbox that
+ * lays out the three 32 px icon buttons in a single line, flush
+ * right. The previous approach used `text-align: right` + inline-
+ * flex children, which wrapped the third button onto a second row
+ * in some viewports. */
+#coach-tab-roster .roster-actions-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
+}
+/* The `#` header glyph itself reads tiny at the small uppercase
+ * header size. Promote it to a normal-case symbol that matches the
+ * jersey-badge weight so the column heading is visible at a glance. */
+#coach-tab-roster .roster-table thead .roster-col-num {
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text);
+}
 
 #coach-tab-roster .roster-jersey-badge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 32px;
-    height: 28px;
-    padding: 0 0.5rem;
+    min-width: 38px;
+    height: 34px;
+    padding: 0 0.55rem;
     border-radius: 999px;
     background: rgba(23, 113, 201, 0.16);
     border: 1px solid rgba(23, 113, 201, 0.45);
     color: var(--accent, #298bed);
     font-family: var(--font-heading);
-    font-size: 0.78rem;
+    font-size: 0.95rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
 }
@@ -8047,15 +8081,20 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     padding: 0;
-    margin-left: 0.2rem;
     font-size: 0.95rem;
-    color: var(--text-muted);
+    color: var(--text);
+}
+.mini-action-btn.mini-action-btn-icon svg {
+    display: block;
+    width: 16px;
+    height: 16px;
 }
 .mini-action-btn.mini-action-btn-icon:hover {
-    color: var(--text);
+    color: var(--accent);
+    border-color: var(--accent);
 }
 .mini-action-btn.mini-action-btn-icon[disabled] {
     opacity: 0.4;
