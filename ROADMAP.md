@@ -589,6 +589,22 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coaching Analysis — PR 1b: Coach Review composer + Notes modal surface structured fields ✅ COMPLETE (2026-05-04)
+
+Phase 1 UI layer on top of [PR 1a](docs/coaching-analysis-feature-roadmap.md). Coach Review's note composer now exposes the structured fields the backend already accepts; the Notes-tab edit modal mirrors them so editing parity is preserved. **No backend changes** — every payload field PR 1b sends is already validated by `CreateCoachingNoteRequest` (PR 1a).
+
+- **Tone chip group above Save** (`#coach-review-tone`) — five compact `radiogroup` chips: Positive (`+`) · Correction (`↺`) · Question (`?`) · Team (`⌬`) · Goal (`★`). Mirrors the backend `_VALID_NOTE_TYPES` set; default is `correction` (matches the column default). `setCoachReviewNoteType()` toggles `is-active` + `aria-checked` and stashes the value on the container's dataset so `saveReviewNote()` can read it without a redundant DOM scan.
+- **Structured fields inside the existing `<details class="coach-review-advanced">` disclosure** — Player summary (visible-to-player hint), What happened, Why it matters, What to do next, Coach context (private), Long notes, Tags. The default state is unchanged (title → players → category → tone → Save) so the composer stays compact for the common case.
+- **`saveReviewNote()`** now sends `note_type` + the 5 structured fields on every save (empty strings when blank). Sticky-on-success: tone chip + category + visibility + selected players persist between saves; per-moment fields (title, body, tags, all 5 structured fields) clear so the composer is ready for the next note.
+- **Notes-tab `Edit` modal** (`<template id="coach-note-form-template">` + `openCoachNoteModal()`) extended with the same tone group + structured fields. A note saved via Coach Review can be re-opened in the Notes modal with full round-trip parity.
+- **Styling** (`styles.css`) — new `.coach-review-tone` + `.coach-review-tone-btn` + `.coach-review-tone-glyph` block (themed for both dark + light, `pointer:coarse` bumps to 44 px tap targets). New `<small>` hint inside `.coach-review-field-label > span` for the "(visible to player/family)" tag.
+- **Validation**: `node --check js/coaching.js script.js` clean; `pytest tests/` 271 passed (no test changes — PR 1a's backend tests already cover create + update + privacy round-trip, and the new UI fields go through that same path).
+- **Live verified** as `coach1` at 1440 px: tone chip click flips `aria-checked`; saved note returns `note_type=positive` + all 5 structured fields persisted; Notes-tab Edit modal pre-fills the saved note's tone + fields correctly.
+
+Next: PR 1c — My Feedback rendering shows `player_summary` first (falling back to `body`), groups notes by tone, and never displays `coach_private_note` to viewers (already enforced server-side by PR 1a + the playlist-items follow-up).
+
+---
+
 ## Coaching Analysis — PR 1a: Structured-note backend (Phase 1) ✅ COMPLETE (2026-05-03)
 
 First slice of the [coaching-analysis-feature-roadmap.md](docs/coaching-analysis-feature-roadmap.md) Phase 1. **Backend only** — UI + My Feedback rendering ship in PR 1b / PR 1c.

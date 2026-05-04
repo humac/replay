@@ -6207,6 +6207,103 @@ details.diag-row-details[open] > summary::after {
     border-top-color: rgba(0, 0, 0, 0.05);
 }
 
+/* PR 1b: tone chip group above the Save button. Compact `radiogroup`
+ * — one chip per `_VALID_NOTE_TYPES` value, default `correction`
+ * highlighted. `pointer:fine` desktop runs them in a single row;
+ * `pointer:coarse` / narrow viewports wrap. The `coach-review-tone-
+ * modal` variant inherits everything but lives inside the Notes-tab
+ * modal where the labels can be slightly wider. */
+.coach-review-tone {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0.25rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    margin-top: 0.1rem;
+}
+[data-theme="light"] .coach-review-tone {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+.coach-review-tone-btn {
+    flex: 1 1 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    min-height: 30px;
+    padding: 0.32rem 0.55rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.72rem;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.coach-review-tone-btn:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+}
+.coach-review-tone-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+.coach-review-tone-btn.is-active {
+    background: rgba(23, 113, 201, 0.18);
+    border-color: rgba(23, 113, 201, 0.45);
+    color: var(--text);
+}
+[data-theme="light"] .coach-review-tone-btn:hover {
+    background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .coach-review-tone-btn.is-active {
+    background: rgba(23, 113, 201, 0.14);
+    border-color: rgba(23, 113, 201, 0.4);
+}
+.coach-review-tone-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: rgba(23, 113, 201, 0.22);
+    color: var(--accent, #298bed);
+    font-size: 0.78rem;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+.coach-review-tone-btn.is-active .coach-review-tone-glyph {
+    background: rgba(23, 113, 201, 0.42);
+    color: #fff;
+}
+@media (pointer: coarse), (max-width: 899px) {
+    .coach-review-tone-btn {
+        min-height: 44px;
+    }
+}
+
+/* Inline `(visible to player/family)` hint inside a structured-field
+ * label (Phase 1 — distinguishes the player-facing summary from the
+ * coach-private fields). Mirrors `.form-label-hint` already used by
+ * the roster Quick Add panel. */
+.coach-review-field-label > span small {
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: var(--text-muted);
+    opacity: 0.75;
+    margin-left: 0.25rem;
+}
+
 .coach-tool-row {
     display: flex;
     align-items: center;

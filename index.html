@@ -645,8 +645,34 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Note</label>
-                    <textarea data-field="body" rows="4" maxlength="4000" placeholder="What should players notice?"></textarea>
+                    <label>Tone</label>
+                    <div data-field="note_type" class="coach-review-tone coach-review-tone-modal" role="radiogroup" aria-label="Note tone"></div>
+                </div>
+                <div class="form-group">
+                    <label>Player summary <span class="form-label-hint">(visible to player/family)</span></label>
+                    <textarea data-field="player_summary" rows="2" maxlength="2000" placeholder="Short, age-appropriate version they'll read."></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>What happened</label>
+                        <textarea data-field="what_happened" rows="2" maxlength="2000" placeholder="The observation."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Why it matters</label>
+                        <textarea data-field="why_it_matters" rows="2" maxlength="2000" placeholder="The coaching context."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>What to do next</label>
+                        <textarea data-field="what_to_do_next" rows="2" maxlength="2000" placeholder="The actionable next step."></textarea>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Long notes</label>
+                    <textarea data-field="body" rows="3" maxlength="4000" placeholder="Anything that doesn't fit the structured fields above."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Coach context (private)</label>
+                    <textarea data-field="coach_private_note" rows="2" maxlength="4000" placeholder="Internal — never sent to players or families."></textarea>
                 </div>
             </div>
         </template>
