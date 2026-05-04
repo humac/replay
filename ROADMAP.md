@@ -589,6 +589,21 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coach > Roster redesign ✅ COMPLETE (2026-05-03)
+
+**Goal:** turn the Roster sub-tab into a dashboard-style cockpit (header + KPI tiles + search/filter + roster table + sticky Quick Add panel) inspired by the spec screenshot, while preserving the existing backend payload shapes.
+
+- **Header** with kicker (`TEAM MANAGEMENT`), title, sub, and `Link Account` / `Add Player` buttons. Add Player jumps focus to the Quick Add panel; Link Account opens a cloned `<template id="coach-link-modal-template">` modal mounted via `app.formModal()`.
+- **KPI grid** of four tiles computed from the existing `_coachBundle`: Active Players, Linked Accounts (+N this week if `link.created_at` is present), Without Family Link, Avg. Notes / Player. Any KPI that can't be calculated falls back to `—` instead of crashing.
+- **Search + filter rail** — `_coachRosterSearch` + `_coachRosterFilter` state in `js/coaching.js`; filtering happens via a fresh array and never mutates `_coachBundle`. Search matches name, jersey, notes, and any linked username / display name. Filter chips use `role="tab"` + `aria-selected` + `aria-pressed` patterns.
+- **Roster table** with columns `# / Player / Linked Accounts / Status / Actions`. Jersey shown as a small accent-tinted pill in the `#` column; Status as an active-green / muted-gray pill. Linked accounts render as removable accent chips that call the existing `handleCoachUnlink()`. Action column has compact icon buttons for Link / Edit (UI-only placeholder, disabled) / Delete.
+- **Right-side Quick Add Player panel** — sticky on desktop, stacks below the table on tablet / mobile. Fields: Display Name, Jersey Number, Position (UI-only — value is stashed in the existing `notes` field, no backend migration), Link Family / Self Account (uses an existing user select). The new `+ Add to Roster` CTA flows through the same `handleCoachAddPlayer()` payload shape (`display_name`, `jersey_number`, `active`, `notes`).
+- **No backend changes.** `CreatePlayerRequest` payload shape unchanged. The "position" field is handled UI-side and persisted via the existing `notes` column so the same payload contract holds.
+- **Validation**: `node --check script.js js/coaching.js js/api.js` clean; `pytest tests/` 269 passed; live verified at 1920 / 1440 / 1024 / 768 / 390 px — search filters correctly, filter chips toggle, Link Account modal opens with all 3 selects populated, no horizontal overflow.
+- **Screenshots**: `docs/screenshots/roster-redesign-after/` — roster at 5 widths plus modal / search / filter states.
+
+---
+
 ## Every-view Fills the Universal Page Shell ✅ COMPLETE (2026-05-03)
 
 **Goal:** the previous unification (below) widened `#app-container` to 2200 px but each view still capped its inner content (Coach 1440, Feedback 980, Admin 1320), leaving large dead bands on either side at 1920 px on every surface except Coach Review. This pass removes those inner caps so each view actually fills the shell.

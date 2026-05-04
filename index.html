@@ -283,54 +283,118 @@
 
             <!-- Roster sub-tab -->
             <div id="coach-tab-roster" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-roster">
-                <div class="coach-grid">
-                    <div class="options-card">
-                        <div class="admin-card-head">
-                            <h3>Roster &amp; Family Links</h3>
-                            <span class="admin-card-kicker">Players</span>
+                <section class="roster-shell">
+                    <header class="roster-head">
+                        <div class="roster-head-text">
+                            <span class="roster-kicker">Team Management</span>
+                            <h3 class="roster-title">Roster &amp; Family Links</h3>
+                            <p class="roster-sub">Manage players on the team, jersey numbers, and the family or player accounts that can see private feedback.</p>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Player Name</label>
-                                <input type="text" id="coach-player-name" maxlength="120" placeholder="Display name">
-                            </div>
-                            <div class="form-group">
-                                <label>Jersey #</label>
-                                <input type="text" id="coach-player-number" maxlength="20" placeholder="optional">
-                            </div>
+                        <div class="roster-head-actions">
+                            <button type="button" class="btn-head roster-link-btn" onclick="app.openCoachLinkModal()" title="Link a family or player account to a roster player">
+                                <span aria-hidden="true">⚭</span> Link Account
+                            </button>
+                            <button type="button" class="btn-head roster-add-btn" onclick="app.focusCoachQuickAdd()" title="Jump to the Quick Add Player panel">
+                                <span aria-hidden="true">+</span> Add Player
+                            </button>
                         </div>
-                        <button type="button" class="btn-primary" id="coach-add-player-btn" onclick="app.handleCoachAddPlayer()">Add Player</button>
-                        <div id="coach-roster-list" class="coach-list mt-4"></div>
+                    </header>
+
+                    <div class="roster-kpi-grid" id="coach-roster-kpis" aria-label="Roster summary"></div>
+
+                    <div class="roster-controls">
+                        <label class="roster-search">
+                            <span class="visually-hidden">Search roster by name or jersey</span>
+                            <span class="roster-search-icon" aria-hidden="true">⌕</span>
+                            <input type="search" id="coach-roster-search" placeholder="Search by name or jersey…" autocomplete="off" oninput="app.handleCoachRosterSearch(this.value)">
+                        </label>
+                        <div class="roster-filters" role="tablist" aria-label="Filter roster by status">
+                            <button type="button" class="roster-filter-btn is-active" role="tab" aria-selected="true" data-roster-filter="all" onclick="app.setCoachRosterFilter('all')">All</button>
+                            <button type="button" class="roster-filter-btn" role="tab" aria-selected="false" data-roster-filter="active" onclick="app.setCoachRosterFilter('active')">Active</button>
+                            <button type="button" class="roster-filter-btn" role="tab" aria-selected="false" data-roster-filter="inactive" onclick="app.setCoachRosterFilter('inactive')">Inactive</button>
+                        </div>
                     </div>
 
-                    <div class="options-card">
-                        <div class="admin-card-head">
-                            <h3>Player/Family Account Link</h3>
-                            <span class="admin-card-kicker">Access</span>
+                    <div class="roster-grid">
+                        <div class="roster-table-wrap">
+                            <table class="roster-table" id="coach-roster-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col" class="roster-col-num">#</th>
+                                        <th scope="col" class="roster-col-player">Player</th>
+                                        <th scope="col" class="roster-col-links">Linked Accounts</th>
+                                        <th scope="col" class="roster-col-status">Status</th>
+                                        <th scope="col" class="roster-col-actions">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="coach-roster-list"></tbody>
+                            </table>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Player</label>
-                                <select id="coach-link-player"></select>
+
+                        <aside class="roster-quick-add" aria-labelledby="coach-quick-add-title">
+                            <h4 class="roster-quick-add-title" id="coach-quick-add-title">Quick Add Player</h4>
+                            <div class="roster-quick-add-body">
+                                <label class="roster-field">
+                                    <span class="roster-field-label">Display Name</span>
+                                    <input type="text" id="coach-player-name" maxlength="120" placeholder="e.g. Jordan Reyes">
+                                </label>
+                                <label class="roster-field">
+                                    <span class="roster-field-label">Jersey Number</span>
+                                    <input type="text" id="coach-player-number" maxlength="20" placeholder="optional">
+                                </label>
+                                <label class="roster-field">
+                                    <span class="roster-field-label">Position <span class="roster-field-hint">(optional, local-only)</span></span>
+                                    <select id="coach-player-position" aria-describedby="coach-player-position-hint">
+                                        <option value="">—</option>
+                                        <option value="Forward">Forward</option>
+                                        <option value="Midfielder">Midfielder</option>
+                                        <option value="Defender">Defender</option>
+                                        <option value="Goalkeeper">Goalkeeper</option>
+                                    </select>
+                                </label>
+                                <label class="roster-field">
+                                    <span class="roster-field-label">Link Family / Self Account</span>
+                                    <select id="coach-link-user-quickadd">
+                                        <option value="">— none —</option>
+                                    </select>
+                                </label>
+                                <button type="button" class="btn-primary roster-quick-add-submit" id="coach-add-player-btn" onclick="app.handleCoachAddPlayer()">+ Add to Roster</button>
+                                <p class="roster-quick-add-tip" id="coach-player-position-hint">
+                                    <strong>Tip</strong> — Roster players are separate from login users. Linking a family account lets a parent see private assignments for their player.
+                                </p>
                             </div>
-                            <div class="form-group">
-                                <label>User Account</label>
-                                <select id="coach-link-user"></select>
-                            </div>
-                            <div class="form-group">
-                                <label>Relationship</label>
-                                <select id="coach-link-relationship">
-                                    <option value="family">Family</option>
-                                    <option value="parent">Parent</option>
-                                    <option value="guardian">Guardian</option>
-                                    <option value="self">Self</option>
-                                </select>
-                            </div>
+                        </aside>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Roster Link-Account modal (cloned by openCoachLinkModal()) -->
+            <template id="coach-link-modal-template">
+                <div class="coach-link-modal">
+                    <span class="admin-card-kicker">Link Account</span>
+                    <h3>Link a family or player account</h3>
+                    <p class="admin-card-sub">Linked users see private notes and playlists assigned to the player in <em>My Feedback</em>.</p>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="coach-link-player">Player</label>
+                            <select id="coach-link-player"></select>
                         </div>
-                        <button type="button" class="btn-secondary" onclick="app.handleCoachLinkAccount()">Link Account</button>
+                        <div class="form-group">
+                            <label for="coach-link-user">User Account</label>
+                            <select id="coach-link-user"></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="coach-link-relationship">Relationship</label>
+                            <select id="coach-link-relationship">
+                                <option value="family">Family</option>
+                                <option value="parent">Parent</option>
+                                <option value="guardian">Guardian</option>
+                                <option value="self">Self</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
-            </div>
+            </template>
 
             <!-- Notes sub-tab -->
             <div id="coach-tab-notes" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-notes" hidden>
