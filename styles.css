@@ -5800,6 +5800,37 @@ details.diag-row-details[open] > summary::after {
     padding: 0.55rem 0.65rem;
     font: inherit;
     font-size: 0.85rem;
+    /* Issue #78 — make the focus transition snappy enough to feel
+     * responsive without being distracting. Only paint properties
+     * are animated (`border-color`, `box-shadow`, `background-color`)
+     * — none of them affect layout, so there is no layout shift on
+     * focus. `background-color` (not the `background` shorthand) so
+     * a focused `<select>` keeps its `background-image` chevron. */
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+/* Issue #78 — dedicated themed focus ring for Coach Review + Notes
+ * Edit modal textareas / inputs / selects. The global :focus-visible
+ * rule already paints a 2 px accent outline at 2 px offset; here we
+ * additionally swap the border to the accent and add an inset glow
+ * so the focused control reads as the same component family as the
+ * picker selects above the video (which use the same pattern). The
+ * outline still wins as the primary AT cue; the border-color +
+ * box-shadow + background-color are visual polish that ties the
+ * form together without changing box dimensions (no padding /
+ * border-width changes → no layout shift). Both dark + light
+ * themes covered.
+ *
+ * Note — `background-color` (not the `background` shorthand) so
+ * we don't reset `background-image` on focused `<select>`s, which
+ * would erase the SVG chevron. Same pattern the file's other
+ * select-focus rules use (`.coach-link-modal select`,
+ * `.coach-review-picker select:focus-visible`, etc.). */
+.coach-mini-form input:focus-visible,
+.coach-mini-form textarea:focus-visible,
+.coach-mini-form select:focus-visible {
+    border-color: var(--accent, #298bed);
+    background-color: rgba(0, 0, 0, 0.32);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
 }
 
 .coach-mini-form select {
@@ -5811,6 +5842,49 @@ details.diag-row-details[open] > summary::after {
     background-repeat: no-repeat;
     background-position: right 0.85rem center;
     background-size: 12px 8px;
+}
+
+/* Issue #80 / #78 — light-mode overrides for `.coach-mini-form`
+ * controls used by both the Coach Review composer and the Notes-tab
+ * Edit modal. The dark defaults above use a pale border on a near-
+ * black background; in light mode that translates to invisible-on-
+ * invisible. Use white inputs with a darker border, the same dark
+ * chevron arrow for selects, and a higher-contrast focus state.
+ * Issue #80 specifically called out unreadable select controls in the
+ * Coach note modal — this rule fixes both selects and the textarea /
+ * input siblings in one go.
+ *
+ * Note — `background-color` (not `background` shorthand) so the
+ * select keeps its `background-image` chevron when the rule wins
+ * the cascade. `border-color: 0.14` matches the rest of the light-
+ * theme form selects (`.coach-review-picker select`,
+ * `.form-group select`, `.library-filter-bar select`). This block
+ * also subsumes the older `[data-theme="light"] .coach-mini-form
+ * input/textarea/select` rule that was sitting later in the file
+ * — we removed that duplicate so the cascade is single-sourced. */
+[data-theme="light"] .coach-mini-form input,
+[data-theme="light"] .coach-mini-form textarea,
+[data-theme="light"] .coach-mini-form select {
+    background-color: #ffffff;
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--text-main);
+}
+[data-theme="light"] .coach-mini-form input:hover,
+[data-theme="light"] .coach-mini-form textarea:hover,
+[data-theme="light"] .coach-mini-form select:hover {
+    border-color: rgba(0, 0, 0, 0.32);
+}
+[data-theme="light"] .coach-mini-form input:focus-visible,
+[data-theme="light"] .coach-mini-form textarea:focus-visible,
+[data-theme="light"] .coach-mini-form select:focus-visible {
+    background-color: #ffffff;
+    border-color: var(--accent, #1565c0);
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.22);
+}
+[data-theme="light"] .coach-mini-form select {
+    /* Re-encode the chevron with a darker stroke so it reads on the
+     * white background. */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
 }
 
 .coach-panel-grid,
@@ -6136,14 +6210,23 @@ details.diag-row-details[open] > summary::after {
     flex: 0 0 auto;
 }
 .coach-review-template select {
-    /* Match the picker selects above the video so themes and focus
-     * rings stay consistent. Never expose native chrome — see
+    /* Issue #85 — visual alignment with neighbouring `.coach-mini-form`
+     * controls (Title, Players, Category, Tone chips, More-details
+     * textareas) which the template selector sits next to inside
+     * `#coach-review-form`. We adopt the same dark-mode background
+     * (`rgba(0, 0, 0, 0.24)`) and border alpha (`rgba(255, 255, 255,
+     * 0.12)`) those siblings use, plus the same mixed-case body font.
+     * Template option text like "Scanning before receiving" is
+     * deliberately NOT uppercased — sentence-case keeps the labels
+     * legible (the Coach Review picker selects above the video can use
+     * `text-transform: uppercase` because they label single words like
+     * "Full" or "1st Half"). Never expose native chrome — see
      * `.agent-skills/css-responsive-accessibility.md`. */
     flex: 1 1 12rem;
     min-width: 10rem;
     padding: 0.45rem 2.2rem 0.45rem 0.7rem;
-    background: rgba(0, 0, 0, 0.38);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 8px;
     color: var(--text-main);
     font-size: 0.85rem;
@@ -6155,15 +6238,28 @@ details.diag-row-details[open] > summary::after {
     background-position: right 0.7rem center;
     background-size: 10px 6px;
     cursor: pointer;
-    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    /* Animate `background-color` (not the `background` shorthand) so
+     * the SVG chevron's `background-image` is not implicitly reset
+     * to `none` on transition. */
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 .coach-review-template select:hover {
-    border-color: rgba(255, 255, 255, 0.18);
+    /* Slightly more opaque border on hover — keeps the rest state
+     * subtle while making the affordance discoverable. The
+     * `.coach-mini-form` siblings have no dedicated dark-mode hover
+     * rule (their hover state is the global :focus-visible outline
+     * triggered when keyboard-focused); this rule adds a mouse-only
+     * hover signal for the template selector. */
+    border-color: rgba(255, 255, 255, 0.22);
 }
 .coach-review-template select:focus-visible {
+    /* Match the focus pattern of `.coach-mini-form input/textarea/
+     * select:focus-visible` so the whole composer reads as one
+     * component family. `background-color` (not `background`
+     * shorthand) so the SVG chevron survives focus. */
     outline: none;
     border-color: var(--accent, #298bed);
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: rgba(0, 0, 0, 0.32);
     box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
 }
 .coach-review-template .mini-action-btn {
@@ -6177,15 +6273,19 @@ details.diag-row-details[open] > summary::after {
     cursor: not-allowed;
 }
 
-/* Light-mode overrides — Issue #80 calls out that select controls in
- * the Coach note modal must remain readable in light theme. The arrow
- * icon is re-encoded with a darker stroke; the field gets a white
- * background and a darker border so it reads cleanly on the light
- * card. Mirrors the existing `[data-theme="light"] .coach-review-
- * picker select` pattern. */
+/* Issue #86 — light-mode override aligned to the surrounding
+ * `[data-theme="light"] .coach-mini-form select` pattern (the
+ * template selector lives inside `.coach-mini-form` so it should
+ * read as one component family with its siblings). White background,
+ * `border-color: rgba(0, 0, 0, 0.14)` to match the mini-form
+ * siblings + the picker selects + every other light-theme form
+ * select in the file (`.form-group select`, `.library-filter-bar
+ * select`). Dark chevron stroke for legibility on white.
+ * `background-color` (not the `background` shorthand) so the
+ * `background-image` chevron survives the cascade. */
 [data-theme="light"] .coach-review-template select {
     background-color: #ffffff;
-    border-color: rgba(0, 0, 0, 0.18);
+    border-color: rgba(0, 0, 0, 0.14);
     color: var(--text-main);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
 }
@@ -7996,13 +8096,15 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     border-color: rgba(0, 0, 0, 0.22);
 }
 
-[data-theme="light"] .coach-mini-form input,
-[data-theme="light"] .coach-mini-form textarea,
-[data-theme="light"] .coach-mini-form select {
-    background: #fff;
-    color: var(--text-main);
-    border-color: rgba(0, 0, 0, 0.14);
-}
+/* `[data-theme="light"] .coach-mini-form input/textarea/select` was
+ * defined here historically; PR #87 consolidated it with the new
+ * #80/#78 light-mode override block defined earlier in this file
+ * (alongside the dark-mode `.coach-mini-form` rules and the focused
+ * state). The earlier block uses the same `background-color: #fff`
+ * + `border-color: rgba(0, 0, 0, 0.14)` values and adds the missing
+ * :hover and :focus-visible variants. Removed from this section so
+ * the cascade is single-sourced and future readers don't trip on
+ * the duplicate. */
 
 [data-theme="light"] .coach-width-control input::-webkit-slider-runnable-track {
     background: rgba(0, 0, 0, 0.12);
