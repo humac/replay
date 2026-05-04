@@ -2845,15 +2845,88 @@ export const coachingMixin = {
         this.destroyHlsPlayer();
         this.loadPlaybackSource(video, hlsUrl, mp4Url, token);
 
+        // PR 1c follow-up: bind the canvas listeners + ResizeObserver
+        // BEFORE the video paints so the canvas bitmap dimensions
+        // catch up to the wrapper as soon as the layout settles.
+        this.setupCoachCanvas();
+
+        // PR 1c follow-up: cache the saved drawing payload on the
+        // modal session so we can re-show the telestration when the
+        // player scrubs back to (or before) the timestamp. We use a
+        // dedicated `noteDrawing` slot rather than `_coachDrawing`
+        // because `_coachDrawing` gets nulled on Play; the cached
+        // copy is the source of truth for the entire modal lifetime.
+        if (this._feedbackPlayer) this._feedbackPlayer.noteDrawing = note.drawing || {};
+        this._renderFeedbackTelestration();
+        const targetTime = Math.max(0, Number(note.timestamp_seconds || 0));
+
         const onLoaded = () => {
             video.removeEventListener('loadedmetadata', onLoaded);
-            video.currentTime = Math.max(0, Number(note.timestamp_seconds || 0));
-            this.setupCoachCanvas();
-            this.renderCoachDrawing(note.drawing || {});
-            video.play().catch(() => {});
+            video.currentTime = targetTime;
+            this._renderFeedbackTelestration();
+            // PR 1c follow-up: do NOT autoplay. The drawing is a
+            // freeze-frame coaching overlay — let the player study
+            // the telestration first. They press Play when ready.
         };
         video.addEventListener('loadedmetadata', onLoaded);
+
+        // Repaint when the first frame paints (some HLS sources reach
+        // loadedmetadata with a 0×0 wrapper rect).
+        const onPainted = () => {
+            video.removeEventListener('loadeddata', onPainted);
+            this._renderFeedbackTelestration();
+        };
+        video.addEventListener('loadeddata', onPainted);
+
+        // PR 1c follow-up: drive telestration visibility from the
+        // player state. A persistent `play` / `pause` / `seeked`
+        // listener trio so the drawing reappears whenever the player
+        // scrubs back to (or pauses at) the freeze timestamp, and
+        // disappears whenever the player presses Play. Listeners are
+        // removed by `cleanup()` in `openFeedbackPlayer` (the canvas
+        // teardown destroys the closure references).
+        const onPlay = () => this._clearFeedbackTelestration();
+        const onPause = () => this._renderFeedbackTelestration();
+        const onSeeked = () => {
+            // Show the drawing when the playhead is at or before the
+            // saved timestamp; hide it otherwise. We check `paused`
+            // too so a seek that happens while playing doesn't flash
+            // the drawing into view mid-play.
+            if (video.paused && video.currentTime <= targetTime + 0.05) {
+                this._renderFeedbackTelestration();
+            } else {
+                this._clearFeedbackTelestration();
+            }
+        };
+        video.addEventListener('play', onPlay);
+        video.addEventListener('pause', onPause);
+        video.addEventListener('seeked', onSeeked);
+
         this._startFeedbackHeartbeat(note.match_id, note.slot, video);
+    },
+
+    /** PR 1c follow-up: paint the telestration cached on the current
+     *  modal session. Safe to call any number of times — `render
+     *  CoachDrawing` is idempotent. */
+    _renderFeedbackTelestration() {
+        const drawing = this._feedbackPlayer?.noteDrawing
+            || this._coachPlaylistSession?.items[this._coachPlaylistSession.index]?.drawing
+            || null;
+        if (!drawing) return;
+        this.renderCoachDrawing(drawing);
+    },
+
+    /** PR 1c follow-up: hide the telestration without destroying the
+     *  cached drawing payload — so the modal can re-show it later if
+     *  the player scrubs back. Mirrors `clearCoachDrawing` for the
+     *  visible state but does NOT clear the cache. */
+    _clearFeedbackTelestration() {
+        // Equivalent to `clearCoachDrawing()` for the visible state
+        // but the cache (`_feedbackPlayer.noteDrawing`) survives.
+        this._coachDrawing = null;
+        this._coachSelectedObjectIndex = null;
+        this.deactivateCoachCanvas();
+        this.paintCoachCanvas();
     },
 
     _startFeedbackHeartbeat(matchId, slot, videoEl) {
@@ -2916,8 +2989,21 @@ export const coachingMixin = {
         }
         const item = session.items[index];
         session.index = index;
-        session.frozeCurrentItem = false;
+        // PR 1c follow-up: each playlist item now opens paused at the
+        // timestamp with the saved drawing visible — same UX as the
+        // standalone note. The previous flow auto-played pre-roll →
+        // freeze → post-roll, which made the telestration feel
+        // fleeting. Pre-roll is intentionally skipped: the freeze
+        // IS the moment; pressing Play reveals the post-roll context.
+        // `frozeCurrentItem` starts true because we're already at the
+        // freeze position; the monitor only needs to advance to the
+        // next item once the post-roll window completes.
+        session.frozeCurrentItem = true;
         session.opening = true;
+        // Cache the per-item drawing on the modal session so seek-
+        // back / pause re-shows it (matches the standalone-note path).
+        if (this._feedbackPlayer) this._feedbackPlayer.noteDrawing = item.drawing || {};
+        this._coachDrawing = null;
         this.renderPlaylistSessionRail();
         const video = document.getElementById('feedback-player-video');
         if (!video) { session.opening = false; return; }
@@ -2926,16 +3012,43 @@ export const coachingMixin = {
         const token = this._playRequestToken;
         this.destroyHlsPlayer();
         this.loadPlaybackSource(video, hlsUrl, mp4Url, token);
+
+        this.setupCoachCanvas();
+        this._renderFeedbackTelestration();
+        const targetTime = Math.max(0, Number(item.timestamp_seconds || 0));
+
         const onLoaded = () => {
             video.removeEventListener('loadedmetadata', onLoaded);
-            const start = Math.max(0, Number(item.timestamp_seconds || 0) - Number(session.playlist.pre_roll_seconds ?? 5));
-            video.currentTime = start;
-            video.play().catch(() => {});
+            video.currentTime = targetTime;
+            this._renderFeedbackTelestration();
             session.opening = false;
             this.startPlaylistMonitor();
             this._startFeedbackHeartbeat(item.match_id, item.slot, video);
         };
         video.addEventListener('loadedmetadata', onLoaded);
+
+        const onPainted = () => {
+            video.removeEventListener('loadeddata', onPainted);
+            this._renderFeedbackTelestration();
+        };
+        video.addEventListener('loadeddata', onPainted);
+
+        // PR 1c follow-up: same persistent play/pause/seeked trio as
+        // the standalone note — drawing reappears whenever the
+        // player scrubs back to (or pauses at) the freeze timestamp,
+        // and disappears whenever they press Play.
+        const onPlay = () => this._clearFeedbackTelestration();
+        const onPause = () => this._renderFeedbackTelestration();
+        const onSeeked = () => {
+            if (video.paused && video.currentTime <= targetTime + 0.05) {
+                this._renderFeedbackTelestration();
+            } else {
+                this._clearFeedbackTelestration();
+            }
+        };
+        video.addEventListener('play', onPlay);
+        video.addEventListener('pause', onPause);
+        video.addEventListener('seeked', onSeeked);
     },
 
     startPlaylistMonitor() {
@@ -2947,18 +3060,13 @@ export const coachingMixin = {
             const item = session.items[session.index];
             const timestamp = Number(item.timestamp_seconds || 0);
             const end = timestamp + Number(session.playlist.post_roll_seconds ?? 8);
-            if (!session.frozeCurrentItem && video.currentTime >= timestamp) {
-                session.frozeCurrentItem = true;
-                video.pause();
-                video.currentTime = timestamp;
-                this.renderCoachDrawing(item.drawing || {});
-                this.renderPlaylistSessionRail();
-                this._coachPlaylistFreezeTimer = window.setTimeout(() => {
-                    if (this._coachPlaylistSession !== session || session.paused) return;
-                    video.play().catch(() => {});
-                }, 1500);
-                return;
-            }
+            // PR 1c follow-up: the playlist item now opens paused AT
+            // the freeze timestamp with the saved drawing visible. The
+            // pre-roll-then-freeze loop was removed (`frozeCurrentItem`
+            // is set to true in `openCoachingPlaylistItem` so the
+            // freeze branch never runs). The monitor's only remaining
+            // job is to advance to the next item when the player has
+            // pressed Play and watched through the post-roll window.
             if (video.currentTime >= end || video.ended) {
                 this.openCoachingPlaylistItem(session.index + 1);
             }

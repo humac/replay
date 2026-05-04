@@ -589,6 +589,29 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coaching Analysis — PR 1c follow-up: focused player opens paused at the freeze ✅ COMPLETE (2026-05-04)
+
+Playback-behavior follow-up to PR 1c (#79). Pure UX change inside the focused feedback player modal — no rendering changes, no payload changes, no new endpoints.
+
+Standalone-note path (`_loadFeedbackVideoForNote` in `js/coaching.js`)
+- The note opens **paused** at the freeze timestamp with the saved drawing visible over the video frame, instead of auto-playing past it. The drawing is a freeze-frame coaching overlay; the player should study it before pressing Play.
+- Canvas listeners are bound BEFORE the video paints (was after `loadedmetadata`), so the canvas bitmap dimensions catch up to the wrapper as soon as the layout settles. Fixes a regression where a real video + saved drawing combination still rendered a blank canvas because `setupCoachCanvas`'s ResizeObserver attached after the resize event had already fired.
+- Drawing visibility now follows the playhead via a persistent `play` / `pause` / `seeked` listener trio: the drawing reappears whenever the player scrubs back to (or pauses at) the freeze timestamp and disappears whenever they press Play. The cached drawing payload lives on `_feedbackPlayer.noteDrawing` for the entire modal lifetime; `_coachDrawing` (which gets nulled on Play to hide the canvas) is no longer the source of truth.
+
+Playlist path (`openCoachingPlaylistItem` + `startPlaylistMonitor`)
+- Each playlist item also opens **paused** at the freeze timestamp with telestration visible — same UX as the standalone note. The previous `pre-roll → freeze → post-roll` auto-play loop made the telestration feel fleeting; pre-roll is now intentionally skipped (the freeze IS the moment; pressing Play reveals the post-roll context).
+- `frozeCurrentItem` starts true because we're already at the freeze position; `startPlaylistMonitor`'s only remaining job is to advance to the next item once the post-roll window completes.
+
+New helpers (`js/coaching.js`)
+- `_renderFeedbackTelestration()` — paint the cached drawing on the current modal session. Idempotent; safe to call any number of times.
+- `_clearFeedbackTelestration()` — hide the canvas without destroying the cached payload, so the modal can re-show it on scrub-back.
+
+Privacy + role gating unchanged. Backend untouched. `coach_private_note` is still server-scrubbed and never templated client-side.
+
+Validation: `node --check js/coaching.js script.js` clean; `pytest tests/test_coaching.py` 10/10 passed; `pytest tests/` 272/272 passed; live verified at 1440 px as `family1` — modal opens with v1 freehand stroke painted on the canvas overlay above the paused video at timestamp 0:05; pressing Play clears the drawing and starts playback; scrubbing back restores it.
+
+---
+
 ## Coaching Analysis — PR 1c: My Feedback renders structured fields ✅ COMPLETE (2026-05-04)
 
 Final Phase 1 slice on top of [PR 1a / #75](https://github.com/humac/replay/pull/75) (backend) and [PR 1b / #76](https://github.com/humac/replay/pull/76) (Coach surface). Player/family-facing rendering layer for the structured note fields. **No backend changes; no new endpoints; no new payload fields.**
