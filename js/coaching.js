@@ -442,7 +442,14 @@ export const coachingMixin = {
             const statusPill = p.active
                 ? '<span class="roster-status-pill is-active"><span class="roster-status-dot" aria-hidden="true"></span>Active</span>'
                 : '<span class="roster-status-pill is-inactive"><span class="roster-status-dot" aria-hidden="true"></span>Inactive</span>';
-            const playerIdJs = JSON.stringify(String(p.id));
+            // Player IDs are UUIDs (strings). `JSON.stringify` produces a
+            // value wrapped in double-quotes (e.g. `"abc-123"`), which
+            // — interpolated into a double-quoted `onclick=""` HTML
+            // attribute — terminates the attribute prematurely and
+            // breaks the click handler. HTML-escape the inner double
+            // quotes so the attribute value stays intact; the browser
+            // un-escapes them before parsing the JS.
+            const playerIdJs = JSON.stringify(String(p.id)).replace(/"/g, '&quot;');
             return `
             <tr class="roster-row">
                 <td class="roster-cell roster-col-num">${jerseyBadge}</td>
@@ -453,18 +460,60 @@ export const coachingMixin = {
                 <td class="roster-cell roster-col-links">${linkChips}</td>
                 <td class="roster-cell roster-col-status">${statusPill}</td>
                 <td class="roster-cell roster-col-actions">
-                    <button type="button" class="mini-action-btn mini-action-btn-icon" title="Link a family or player account" aria-label="Link account" onclick="app.openCoachLinkModal(${playerIdJs})">
-                        <span aria-hidden="true">⚭</span>
-                    </button>
-                    <button type="button" class="mini-action-btn mini-action-btn-icon" title="Edit player (coming soon)" aria-label="Edit player" disabled>
-                        <span aria-hidden="true">✎</span>
-                    </button>
-                    <button type="button" class="mini-action-btn mini-action-btn-icon is-danger" title="Delete player" aria-label="Delete player" onclick="app.handleCoachDeletePlayer(${playerIdJs})">
-                        <span aria-hidden="true">⌫</span>
-                    </button>
+                    <div class="roster-actions-row">
+                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Link a family or player account" aria-label="Link account" onclick="app.openCoachLinkModal(${playerIdJs})">
+                            ${this._rosterIcon('link')}
+                        </button>
+                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Edit player (coming soon)" aria-label="Edit player" disabled>
+                            ${this._rosterIcon('edit')}
+                        </button>
+                        <button type="button" class="mini-action-btn mini-action-btn-icon is-danger" title="Delete player" aria-label="Delete player" onclick="app.handleCoachDeletePlayer(${playerIdJs})">
+                            ${this._rosterIcon('trash')}
+                        </button>
+                    </div>
                 </td>
             </tr>`;
         }).join('');
+    },
+
+    /** Inline-SVG icon set for the Roster table action buttons.
+     *  Same `stroke="currentColor"` pattern as the Sprint 3 telestrator
+     *  toolbar, so the icon inherits the button's text colour and the
+     *  dark / light theme handle hover/focus states automatically. */
+    _rosterIcon(name) {
+        const SVG = (paths) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths.map((d) => `<path d="${d}"/>`).join('')}</svg>`;
+        if (name === 'link') {
+            // Two interlocked chain links.
+            return SVG([
+                'M9 14l-2 2a4 4 0 01-5.7-5.7l3-3a4 4 0 015.7 0',
+                'M15 10l2-2a4 4 0 015.7 5.7l-3 3a4 4 0 01-5.7 0',
+            ]);
+        }
+        if (name === 'edit') {
+            // Pencil over a square — classic edit glyph.
+            return SVG([
+                'M4 20h4l10-10-4-4L4 16v4z',
+                'M14 6l4 4',
+            ]);
+        }
+        if (name === 'trash') {
+            // Trash can with lid + handle + two vertical bars.
+            return SVG([
+                'M3 6h18',
+                'M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2',
+                'M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14',
+                'M10 11v6',
+                'M14 11v6',
+            ]);
+        }
+        if (name === 'search') {
+            // Magnifying glass.
+            return SVG([
+                'M11 19a8 8 0 100-16 8 8 0 000 16z',
+                'M21 21l-4.35-4.35',
+            ]);
+        }
+        return '';
     },
 
     async handleCoachAddPlayer() {
