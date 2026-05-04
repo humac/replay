@@ -7651,3 +7651,581 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.02);
 }
 
+/* ============================================================
+ * Coach > Roster redesign — dashboard-style roster cockpit
+ *
+ * Header (kicker + title + sub + Link Account / Add Player)
+ * → KPI tile grid (4 tiles)
+ * → Search + status-filter chip rail
+ * → Two-column body: roster table | right-side Quick Add panel
+ *
+ * All scoped to #coach-tab-roster so the Notes / Playlists /
+ * Review tabs are untouched.
+ *
+ * Theming reuses existing tokens — accent fill for active pills,
+ * green for active status, muted gray for inactive. No new fonts,
+ * no new build step, no framework.
+ * ============================================================ */
+#coach-tab-roster .roster-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* Header --------------------------------------------------- */
+#coach-tab-roster .roster-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+}
+#coach-tab-roster .roster-head-text {
+    flex: 1 1 360px;
+    min-width: 0;
+}
+#coach-tab-roster .roster-kicker {
+    display: block;
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent, #298bed);
+    margin-bottom: 0.2rem;
+}
+#coach-tab-roster .roster-title {
+    font-family: var(--font-heading);
+    font-size: 1.45rem;
+    margin: 0 0 0.25rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+#coach-tab-roster .roster-sub {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    max-width: 60ch;
+}
+#coach-tab-roster .roster-head-actions {
+    display: flex;
+    gap: 0.55rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+#coach-tab-roster .roster-link-btn,
+#coach-tab-roster .roster-add-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 36px;
+    padding: 0.5rem 0.95rem;
+    line-height: 1;
+}
+
+/* KPI grid ------------------------------------------------- */
+#coach-tab-roster .roster-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+}
+#coach-tab-roster .roster-kpi {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.95rem 1.1rem;
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+}
+#coach-tab-roster .roster-kpi-label {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+#coach-tab-roster .roster-kpi-value {
+    font-family: var(--font-heading);
+    font-size: 1.85rem;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+#coach-tab-roster .roster-kpi-delta {
+    font-size: 0.72rem;
+    color: var(--accent, #298bed);
+    letter-spacing: 0.04em;
+}
+[data-theme="light"] #coach-tab-roster .roster-kpi {
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Search + filter chips ----------------------------------- */
+#coach-tab-roster .roster-controls {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+#coach-tab-roster .roster-search {
+    position: relative;
+    flex: 1 1 320px;
+    min-width: 0;
+}
+#coach-tab-roster .roster-search input {
+    width: 100%;
+    padding: 0.55rem 0.85rem 0.55rem 2.1rem;
+    background: rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+}
+#coach-tab-roster .roster-search input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+}
+#coach-tab-roster .roster-search-icon {
+    position: absolute;
+    left: 0.7rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    pointer-events: none;
+}
+#coach-tab-roster .roster-filters {
+    display: inline-flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+}
+#coach-tab-roster .roster-filter-btn {
+    padding: 0.42rem 0.85rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+#coach-tab-roster .roster-filter-btn:hover {
+    color: var(--text);
+}
+#coach-tab-roster .roster-filter-btn.is-active {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: var(--text);
+}
+#coach-tab-roster .roster-filter-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+[data-theme="light"] #coach-tab-roster .roster-search input {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] #coach-tab-roster .roster-filters {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] #coach-tab-roster .roster-filter-btn.is-active {
+    background: rgba(0, 0, 0, 0.06);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+/* Two-column body — table + Quick Add panel --------------- */
+#coach-tab-roster .roster-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 1rem;
+    align-items: start;
+}
+@media (max-width: 1023px) {
+    #coach-tab-roster .roster-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* Roster table -------------------------------------------- */
+#coach-tab-roster .roster-table-wrap {
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    overflow: hidden;
+    /* Allow horizontal scroll on narrow viewports without clipping the
+     * card's rounded corners. */
+    overflow-x: auto;
+    /* Themed scrollbar — matches the rest of the Coach surfaces. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+[data-theme="light"] #coach-tab-roster .roster-table-wrap {
+    border-color: rgba(0, 0, 0, 0.08);
+}
+#coach-tab-roster .roster-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+#coach-tab-roster .roster-table thead th {
+    text-align: left;
+    padding: 0.7rem 0.9rem;
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+[data-theme="light"] #coach-tab-roster .roster-table thead th {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+    background: rgba(0, 0, 0, 0.02);
+}
+#coach-tab-roster .roster-row + .roster-row .roster-cell {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+[data-theme="light"] #coach-tab-roster .roster-row + .roster-row .roster-cell {
+    border-top-color: rgba(0, 0, 0, 0.06);
+}
+#coach-tab-roster .roster-cell {
+    padding: 0.7rem 0.9rem;
+    vertical-align: middle;
+}
+#coach-tab-roster .roster-col-num { width: 64px; }
+#coach-tab-roster .roster-col-status { width: 110px; }
+#coach-tab-roster .roster-col-actions { width: 130px; text-align: right; }
+
+#coach-tab-roster .roster-jersey-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 28px;
+    padding: 0 0.5rem;
+    border-radius: 999px;
+    background: rgba(23, 113, 201, 0.16);
+    border: 1px solid rgba(23, 113, 201, 0.45);
+    color: var(--accent, #298bed);
+    font-family: var(--font-heading);
+    font-size: 0.78rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+#coach-tab-roster .roster-jersey-badge.is-muted {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.10);
+    color: var(--text-muted);
+}
+#coach-tab-roster .roster-player-name {
+    display: block;
+    font-family: var(--font-heading);
+    font-size: 0.92rem;
+    color: var(--text-main);
+}
+#coach-tab-roster .roster-player-sub {
+    display: block;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 0.15rem;
+}
+
+/* Linked-account chips ------------------------------------ */
+#coach-tab-roster .roster-link-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    margin: 0.15rem 0.3rem 0.15rem 0;
+    padding: 0.22rem 0.45rem 0.22rem 0.6rem;
+    border: 1px solid rgba(23, 113, 201, 0.35);
+    background: rgba(23, 113, 201, 0.12);
+    border-radius: 999px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+#coach-tab-roster .roster-link-chip:hover {
+    background: rgba(23, 113, 201, 0.22);
+    border-color: var(--accent, #298bed);
+}
+#coach-tab-roster .roster-link-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+#coach-tab-roster .roster-link-rel {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+    color: var(--accent, #298bed);
+    font-size: 0.65rem;
+}
+#coach-tab-roster .roster-link-user {
+    color: var(--text);
+}
+#coach-tab-roster .roster-link-x {
+    margin-left: 0.15rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1;
+}
+#coach-tab-roster .roster-no-links {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+/* Status pill --------------------------------------------- */
+#coach-tab-roster .roster-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+#coach-tab-roster .roster-status-pill.is-active {
+    background: rgba(34, 197, 94, 0.14);
+    border: 1px solid rgba(34, 197, 94, 0.40);
+    color: #4ade80;
+}
+#coach-tab-roster .roster-status-pill.is-inactive {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text-muted);
+}
+#coach-tab-roster .roster-status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+/* Action icon buttons ------------------------------------- */
+#coach-tab-roster .roster-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin-left: 0.2rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+#coach-tab-roster .roster-icon-btn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+#coach-tab-roster .roster-icon-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+#coach-tab-roster .roster-icon-btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+#coach-tab-roster .roster-icon-btn[disabled]:hover {
+    border-color: rgba(255, 255, 255, 0.10);
+    color: var(--text-muted);
+}
+#coach-tab-roster .roster-icon-btn-danger:hover {
+    border-color: rgba(239, 68, 68, 0.50);
+    color: #f87171;
+}
+[data-theme="light"] #coach-tab-roster .roster-icon-btn {
+    border-color: rgba(0, 0, 0, 0.10);
+    background: rgba(0, 0, 0, 0.02);
+}
+
+/* Empty state row ----------------------------------------- */
+#coach-tab-roster .roster-empty-row td {
+    padding: 1.5rem;
+    text-align: center;
+    border-top: 0;
+}
+
+/* Right-side Quick Add Player panel ----------------------- */
+#coach-tab-roster .roster-quick-add {
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 0.95rem 1.05rem;
+    /* Stick to the top of the viewport on tall screens so the form is
+     * always reachable while scrolling a long roster. The 6rem offset
+     * clears the sticky main nav. */
+    position: sticky;
+    top: 6rem;
+    align-self: start;
+}
+[data-theme="light"] #coach-tab-roster .roster-quick-add {
+    border-color: rgba(0, 0, 0, 0.08);
+}
+#coach-tab-roster .roster-quick-add-title {
+    margin: 0 0 0.7rem;
+    font-family: var(--font-heading);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+#coach-tab-roster .roster-quick-add-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+#coach-tab-roster .roster-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+#coach-tab-roster .roster-field-label {
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+#coach-tab-roster .roster-field-hint {
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+#coach-tab-roster .roster-field input,
+#coach-tab-roster .roster-field select {
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    background: rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+}
+#coach-tab-roster .roster-field input:focus-visible,
+#coach-tab-roster .roster-field select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+}
+[data-theme="light"] #coach-tab-roster .roster-field input,
+[data-theme="light"] #coach-tab-roster .roster-field select {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+#coach-tab-roster .roster-quick-add-submit {
+    margin-top: 0.4rem;
+    width: 100%;
+    min-height: 38px;
+}
+#coach-tab-roster .roster-quick-add-tip {
+    margin: 0.6rem 0 0;
+    padding: 0.55rem 0.7rem;
+    background: rgba(23, 113, 201, 0.06);
+    border: 1px solid rgba(23, 113, 201, 0.18);
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    line-height: 1.45;
+}
+#coach-tab-roster .roster-quick-add-tip strong {
+    color: var(--accent, #298bed);
+    font-family: var(--font-heading);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-right: 0.35rem;
+}
+
+/* Touch / mobile — disable sticky panel and ensure tap targets ≥44 px */
+@media (pointer: coarse), (max-width: 899px) {
+    #coach-tab-roster .roster-quick-add {
+        position: static;
+    }
+    #coach-tab-roster .roster-icon-btn {
+        width: 44px;
+        height: 44px;
+    }
+    #coach-tab-roster .roster-link-chip,
+    #coach-tab-roster .roster-filter-btn {
+        min-height: 36px;
+    }
+    #coach-tab-roster .roster-quick-add-submit {
+        min-height: 44px;
+    }
+}
+
+/* Visually hidden helper (for screen-reader-only labels) */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Link Account modal body --------------------------------- */
+.coach-link-modal .form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+}
+.coach-link-modal .form-group label {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.coach-link-modal select {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    background: rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+}
+[data-theme="light"] .coach-link-modal select {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+

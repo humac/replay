@@ -47,6 +47,11 @@ export const coachingMixin = {
     // match/slot change and tab teardown.
     _coachActiveNoteId: null,
 
+    // Roster redesign — search query + status filter live here so the
+    // table can re-render without mutating `_coachBundle`.
+    _coachRosterSearch: '',
+    _coachRosterFilter: 'all', // 'all' | 'active' | 'inactive'
+
     // Sprint 6: Wide / Focus mode. Session-local — never persisted; resets
     // on tab leave or page reload. The keydown listener is bound only when
     // focus mode is on, so an Escape press elsewhere in the app is unaffected.
@@ -206,17 +211,33 @@ export const coachingMixin = {
     },
 
     renderCoachLinkSelectors() {
+        // Roster redesign: the standalone Player/User/Relationship form is
+        // gone — those selects now live inside the cloned link-modal body
+        // (populated by openCoachLinkModal()) and inside the Quick Add
+        // panel's optional "Link Family / Self Account" select. We only
+        // need to populate the Quick Add user select here; the modal's
+        // selects are filled when the modal opens.
+        const bundle = this._coachBundle || { players: [], users: [] };
+        const userEl = document.getElementById('coach-link-user-quickadd');
+        if (userEl) {
+            const opts = bundle.users.map((u) => (
+                `<option value="${this.esc(u.id)}">${this.esc(u.display_name || u.username)} (@${this.esc(u.username)})</option>`
+            )).join('');
+            userEl.innerHTML = `<option value="">— none —</option>${opts}`;
+        }
+    },
+
+    _coachLinkSelectorOptionsHtml() {
+        // Reused by the link modal so both the standalone modal and any
+        // future inline link UI build their selects from the same data.
         const bundle = this._coachBundle || { players: [], users: [] };
         const playerOptions = bundle.players.map((p) => (
             `<option value="${this.esc(p.id)}">${this.esc(this.playerLabel(p))}</option>`
-        )).join('');
-        const linkPlayerEl = document.getElementById('coach-link-player');
-        if (linkPlayerEl) linkPlayerEl.innerHTML = playerOptions || '<option value="">No players yet</option>';
+        )).join('') || '<option value="">No players yet</option>';
         const userOptions = bundle.users.map((u) => (
             `<option value="${this.esc(u.id)}">${this.esc(u.display_name || u.username)} (@${this.esc(u.username)})</option>`
-        )).join('');
-        const userEl = document.getElementById('coach-link-user');
-        if (userEl) userEl.innerHTML = userOptions || '<option value="">Create a user first</option>';
+        )).join('') || '<option value="">Create a user first</option>';
+        return { playerOptions, userOptions };
     },
 
     coachCheckListHtml(items, emptyLabel = 'Nothing available') {
@@ -268,38 +289,217 @@ export const coachingMixin = {
 
     // ===== Roster sub-tab =====
 
+    /** Compute the KPI numbers shown in the four header tiles. All
+     *  derived from `_coachBundle` so no extra fetch is needed. Any
+     *  metric that can't be calculated falls back to '0' / '—'. */
+    _coachRosterKpis() {
+        const players = this._coachBundle?.players || [];
+        const notes = this._coachBundle?.notes || [];
+        const activePlayers = players.filter((p) => p.active);
+        const totalLinks = players.reduce((sum, p) => sum + (p.links?.length || 0), 0);
+        const linkedThisWeek = (() => {
+            const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+            let n = 0;
+            for (const p of players) for (const l of (p.links || [])) {
+                const t = l.created_at ? Date.parse(l.created_at) : NaN;
+                if (Number.isFinite(t) && t >= cutoff) n++;
+            }
+            return n;
+        })();
+        const withoutLink = activePlayers.filter((p) => !(p.links?.length)).length;
+        const notesPerPlayer = (() => {
+            if (!activePlayers.length) return null;
+            // Tally how many notes mention each active player. A note can
+            // reference multiple players via player_ids; team-level notes
+            // (no player_ids) are not attributed to anyone.
+            let total = 0;
+            const activeIds = new Set(activePlayers.map((p) => String(p.id)));
+            for (const n of notes) {
+                for (const pid of (n.player_ids || [])) {
+                    if (activeIds.has(String(pid))) total++;
+                }
+            }
+            return total / activePlayers.length;
+        })();
+        return {
+            activePlayers: activePlayers.length,
+            linkedAccounts: totalLinks,
+            linkedAccountsDelta: linkedThisWeek,
+            withoutLink,
+            notesPerPlayer,
+        };
+    },
+
+    _renderCoachRosterKpis() {
+        const target = document.getElementById('coach-roster-kpis');
+        if (!target) return;
+        const k = this._coachRosterKpis();
+        const fmtAvg = (v) => (v == null) ? '—' : (Math.round(v * 10) / 10).toFixed(1);
+        target.innerHTML = `
+            <div class="roster-kpi">
+                <span class="roster-kpi-label">Active Players</span>
+                <strong class="roster-kpi-value">${k.activePlayers}</strong>
+            </div>
+            <div class="roster-kpi">
+                <span class="roster-kpi-label">Linked Accounts</span>
+                <strong class="roster-kpi-value">${k.linkedAccounts}</strong>
+                ${k.linkedAccountsDelta ? `<span class="roster-kpi-delta">+${k.linkedAccountsDelta} this week</span>` : ''}
+            </div>
+            <div class="roster-kpi">
+                <span class="roster-kpi-label">Without Family Link</span>
+                <strong class="roster-kpi-value">${k.withoutLink}</strong>
+            </div>
+            <div class="roster-kpi">
+                <span class="roster-kpi-label">Avg. Notes / Player</span>
+                <strong class="roster-kpi-value">${fmtAvg(k.notesPerPlayer)}</strong>
+            </div>
+        `;
+    },
+
+    /** Apply the search query + status filter to the roster, returning
+     *  a fresh array. Never mutates `_coachBundle`. */
+    _filteredCoachPlayers() {
+        const players = this._coachBundle?.players || [];
+        const q = (this._coachRosterSearch || '').trim().toLowerCase();
+        const filter = this._coachRosterFilter || 'all';
+        return players.filter((p) => {
+            if (filter === 'active' && !p.active) return false;
+            if (filter === 'inactive' && p.active) return false;
+            if (!q) return true;
+            // Match name, jersey number, notes (used as freeform position
+            // / role hint), and any linked username / display name.
+            const haystack = [
+                p.display_name || '',
+                p.jersey_number || '',
+                p.notes || '',
+                ...(p.links || []).flatMap((l) => [l.username || '', l.display_name || '']),
+            ].join(' ').toLowerCase();
+            return haystack.includes(q);
+        });
+    },
+
+    handleCoachRosterSearch(value) {
+        this._coachRosterSearch = value || '';
+        this.renderCoachRoster();
+    },
+
+    setCoachRosterFilter(name) {
+        this._coachRosterFilter = name;
+        document.querySelectorAll('.roster-filter-btn').forEach((btn) => {
+            const active = btn.dataset.rosterFilter === name;
+            btn.classList.toggle('is-active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        this.renderCoachRoster();
+    },
+
+    focusCoachQuickAdd() {
+        const input = document.getElementById('coach-player-name');
+        if (input) { input.focus(); input.select?.(); }
+    },
+
     renderCoachRoster() {
+        // KPIs always reflect the full bundle (not the filtered view).
+        this._renderCoachRosterKpis();
+
         const container = document.getElementById('coach-roster-list');
         if (!container) return;
         const players = this._coachBundle?.players || [];
+        const filtered = this._filteredCoachPlayers();
+
+        // Empty states — distinguish "no players at all" from "filter
+        // matched nothing" so the user knows whether to clear search.
         if (!players.length) {
-            container.innerHTML = '<div class="session-empty">No roster players yet.</div>';
+            container.innerHTML = `
+                <tr class="roster-empty-row"><td colspan="5">
+                    <div class="session-empty">No roster players yet. Use <strong>Quick Add Player</strong> to add the first one.</div>
+                </td></tr>`;
             return;
         }
-        container.innerHTML = players.map((p) => `
-            <article class="coach-row">
-                <div>
-                    <strong>${this.esc(this.playerLabel(p))}</strong>
-                    <span>${p.active ? 'Active' : 'Inactive'} · ${p.links?.length || 0} linked account${p.links?.length === 1 ? '' : 's'}</span>
-                    ${(p.links || []).map((l) => `
-                        <button type="button" class="coach-link-pill" onclick="app.handleCoachUnlink(${l.id})">
-                            ${this.esc(l.relationship)} · @${this.esc(l.username)} ×
-                        </button>
-                    `).join('')}
-                </div>
-                <button type="button" class="mini-action-btn" onclick="app.handleCoachDeletePlayer('${this.esc(p.id)}')">Delete</button>
-            </article>
-        `).join('');
+        if (!filtered.length) {
+            container.innerHTML = `
+                <tr class="roster-empty-row"><td colspan="5">
+                    <div class="session-empty">No players match your search or filter. <button type="button" class="mini-action-btn" onclick="app.handleCoachRosterSearch(''); document.getElementById('coach-roster-search').value=''; app.setCoachRosterFilter('all');">Clear filters</button></div>
+                </td></tr>`;
+            return;
+        }
+
+        container.innerHTML = filtered.map((p) => {
+            const links = p.links || [];
+            const linkChips = links.length
+                ? links.map((l) => `
+                    <button type="button" class="roster-link-chip" title="Unlink @${this.esc(l.username)} (${this.esc(l.relationship)})" onclick="app.handleCoachUnlink(${l.id})">
+                        <span class="roster-link-rel">${this.esc(l.relationship)}</span>
+                        <span class="roster-link-user">@${this.esc(l.username)}</span>
+                        <span class="roster-link-x" aria-hidden="true">×</span>
+                    </button>
+                `).join('')
+                : '<span class="roster-no-links">No links</span>';
+            const subtitle = (p.notes && p.notes.trim()) ? this.esc(p.notes.trim()) : '';
+            const jerseyBadge = p.jersey_number
+                ? `<span class="roster-jersey-badge">${this.esc(p.jersey_number)}</span>`
+                : '<span class="roster-jersey-badge is-muted">—</span>';
+            const statusPill = p.active
+                ? '<span class="roster-status-pill is-active"><span class="roster-status-dot" aria-hidden="true"></span>Active</span>'
+                : '<span class="roster-status-pill is-inactive"><span class="roster-status-dot" aria-hidden="true"></span>Inactive</span>';
+            const playerIdJs = JSON.stringify(String(p.id));
+            return `
+            <tr class="roster-row">
+                <td class="roster-cell roster-col-num">${jerseyBadge}</td>
+                <td class="roster-cell roster-col-player">
+                    <strong class="roster-player-name">${this.esc(p.display_name)}</strong>
+                    ${subtitle ? `<span class="roster-player-sub">${subtitle}</span>` : ''}
+                </td>
+                <td class="roster-cell roster-col-links">${linkChips}</td>
+                <td class="roster-cell roster-col-status">${statusPill}</td>
+                <td class="roster-cell roster-col-actions">
+                    <button type="button" class="roster-icon-btn" title="Link a family or player account" aria-label="Link account" onclick="app.openCoachLinkModal(${playerIdJs})">
+                        <span aria-hidden="true">⚭</span>
+                    </button>
+                    <button type="button" class="roster-icon-btn" title="Edit player (coming soon)" aria-label="Edit player" disabled>
+                        <span aria-hidden="true">✎</span>
+                    </button>
+                    <button type="button" class="roster-icon-btn roster-icon-btn-danger" title="Delete player" aria-label="Delete player" onclick="app.handleCoachDeletePlayer(${playerIdJs})">
+                        <span aria-hidden="true">⌫</span>
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
     },
 
     async handleCoachAddPlayer() {
         const display_name = document.getElementById('coach-player-name')?.value.trim();
         const jersey_number = document.getElementById('coach-player-number')?.value.trim() || '';
+        // Position is UI-only for now (no backend column). If a coach picks
+        // one we stash it in the local `notes` field so the "Player" cell's
+        // subtitle can surface it. If the backend grows a real `position`
+        // column later we'll switch to that without changing the UI.
+        const positionEl = document.getElementById('coach-player-position');
+        const position = positionEl?.value || '';
+        const linkUserEl = document.getElementById('coach-link-user-quickadd');
+        const linkUserId = linkUserEl?.value || '';
+
         if (!display_name) { this.showError('Player name is required.'); return; }
         try {
-            await this.createCoachPlayer({ display_name, jersey_number, active: true });
+            const created = await this.createCoachPlayer({
+                display_name,
+                jersey_number,
+                active: true,
+                notes: position || '',
+            });
+            // Optional: link the chosen user account to the new player.
+            if (linkUserId && created?.id) {
+                try {
+                    await this.linkCoachPlayer({ player_id: created.id, user_id: linkUserId, relationship: 'family' });
+                } catch (err) {
+                    this.showError(`Player added but link failed: ${err.message}`);
+                }
+            }
+            // Reset the quick-add fields.
             document.getElementById('coach-player-name').value = '';
             document.getElementById('coach-player-number').value = '';
+            if (positionEl) positionEl.value = '';
+            if (linkUserEl) linkUserEl.value = '';
             this.showSuccess('Player added.');
             await this.renderCoachWorkspace();
         } catch (err) { this.showError(err.message); }
@@ -321,16 +521,47 @@ export const coachingMixin = {
         } catch (err) { this.showError(err.message); }
     },
 
-    async handleCoachLinkAccount() {
-        const player_id = document.getElementById('coach-link-player')?.value;
-        const user_id = document.getElementById('coach-link-user')?.value;
-        const relationship = document.getElementById('coach-link-relationship')?.value || 'family';
-        if (!player_id || !user_id) { this.showError('Pick a player and a user account.'); return; }
+    /** Open the standalone Link Account modal. If `prefillPlayerId` is
+     *  given (e.g. from the row icon button), the player select starts
+     *  on that player. */
+    async openCoachLinkModal(prefillPlayerId = null) {
+        const tpl = document.getElementById('coach-link-modal-template');
+        if (!tpl) { this.showError('Link Account form template missing.'); return; }
+        const body = tpl.content.firstElementChild.cloneNode(true);
+        const opts = this._coachLinkSelectorOptionsHtml();
+        body.querySelector('#coach-link-player').innerHTML = opts.playerOptions;
+        body.querySelector('#coach-link-user').innerHTML = opts.userOptions;
+        if (prefillPlayerId) {
+            const sel = body.querySelector('#coach-link-player');
+            if (sel) sel.value = String(prefillPlayerId);
+        }
+        const result = await this.formModal({
+            title: 'Link Account',
+            body,
+            confirmLabel: 'Link',
+            onSubmit: (close) => {
+                const player_id = body.querySelector('#coach-link-player').value;
+                const user_id = body.querySelector('#coach-link-user').value;
+                const relationship = body.querySelector('#coach-link-relationship').value || 'family';
+                if (!player_id || !user_id) {
+                    this.showError('Pick a player and a user account.');
+                    return;
+                }
+                close({ player_id, user_id, relationship });
+            },
+        });
+        if (!result) return;
         try {
-            await this.linkCoachPlayer({ player_id, user_id, relationship });
+            await this.linkCoachPlayer(result);
             this.showSuccess('Account linked.');
             await this.renderCoachWorkspace();
         } catch (err) { this.showError(err.message); }
+    },
+
+    /** Kept for back-compat with any external caller / inline binding —
+     *  if a legacy form somewhere posts here, route through the modal. */
+    async handleCoachLinkAccount() {
+        return this.openCoachLinkModal();
     },
 
     async handleCoachUnlink(linkId) {
