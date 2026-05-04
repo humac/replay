@@ -7875,6 +7875,23 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 [data-theme="light"] #coach-tab-roster .roster-table-wrap {
     border-color: rgba(0, 0, 0, 0.08);
 }
+/* WebKit (Chrome / Safari / Edge) ignore `scrollbar-width` and
+ * `scrollbar-color` — paint the scrollbar explicitly so we never
+ * fall back to native chrome on the dominant browsers. Same
+ * pattern as `.coach-timeline-rail`, `.coach-review-side`, etc. */
+#coach-tab-roster .roster-table-wrap::-webkit-scrollbar {
+    height: 6px;
+}
+#coach-tab-roster .roster-table-wrap::-webkit-scrollbar-track {
+    background: transparent;
+}
+#coach-tab-roster .roster-table-wrap::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+}
+[data-theme="light"] #coach-tab-roster .roster-table-wrap::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+}
 #coach-tab-roster .roster-table {
     width: 100%;
     border-collapse: collapse;
@@ -8021,46 +8038,36 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background: currentColor;
 }
 
-/* Action icon buttons ------------------------------------- */
-#coach-tab-roster .roster-icon-btn {
+/* Action icon buttons --------------------------------------
+ * Per CLAUDE.md the row-level action tier is `.mini-action-btn`.
+ * `.mini-action-btn-icon` is a *modifier* (not a new tier) that
+ * compacts the existing button into a 30 × 30 square for icon-only
+ * use, plus a `.is-danger` modifier that paints the hover red. */
+.mini-action-btn.mini-action-btn-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 30px;
     height: 30px;
+    padding: 0;
     margin-left: 0.2rem;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--text-muted);
-    cursor: pointer;
     font-size: 0.95rem;
-    line-height: 1;
-    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    color: var(--text-muted);
 }
-#coach-tab-roster .roster-icon-btn:hover {
-    border-color: var(--accent);
+.mini-action-btn.mini-action-btn-icon:hover {
     color: var(--text);
 }
-#coach-tab-roster .roster-icon-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-}
-#coach-tab-roster .roster-icon-btn[disabled] {
+.mini-action-btn.mini-action-btn-icon[disabled] {
     opacity: 0.4;
     cursor: not-allowed;
 }
-#coach-tab-roster .roster-icon-btn[disabled]:hover {
-    border-color: rgba(255, 255, 255, 0.10);
+.mini-action-btn.mini-action-btn-icon[disabled]:hover {
+    border-color: rgba(255, 255, 255, 0.1);
     color: var(--text-muted);
 }
-#coach-tab-roster .roster-icon-btn-danger:hover {
+.mini-action-btn.mini-action-btn-icon.is-danger:hover {
     border-color: rgba(239, 68, 68, 0.50);
     color: #f87171;
-}
-[data-theme="light"] #coach-tab-roster .roster-icon-btn {
-    border-color: rgba(0, 0, 0, 0.10);
-    background: rgba(0, 0, 0, 0.02);
 }
 
 /* Empty state row ----------------------------------------- */
@@ -8131,15 +8138,33 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     font: inherit;
     font-size: 0.85rem;
 }
+/* Suppress native OS dropdown chrome and paint a custom chevron —
+ * `.roster-field` lives outside `.form-group`, so it doesn't inherit
+ * the existing `.form-group select` chevron treatment. Same pattern
+ * as the `.form-group select` rule (~L3882). */
+#coach-tab-roster .roster-field select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 2.1rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23888890' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 10px 7px;
+    cursor: pointer;
+}
 #coach-tab-roster .roster-field input:focus-visible,
 #coach-tab-roster .roster-field select:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
     border-color: var(--accent);
 }
+#coach-tab-roster .roster-field select:focus-visible {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23298bed' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
 [data-theme="light"] #coach-tab-roster .roster-field input,
 [data-theme="light"] #coach-tab-roster .roster-field select {
-    background: rgba(0, 0, 0, 0.04);
+    background-color: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.12);
 }
 #coach-tab-roster .roster-quick-add-submit {
@@ -8172,13 +8197,17 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     #coach-tab-roster .roster-quick-add {
         position: static;
     }
-    #coach-tab-roster .roster-icon-btn {
+    #coach-tab-roster .mini-action-btn-icon {
         width: 44px;
         height: 44px;
     }
+    /* Sprint 8 (PR #60) established 44 px as the floor on
+     * `(pointer: coarse)`. Both elements are interactive (chip
+     * unlinks an account, filter tabs change the visible roster)
+     * so they must reach the same threshold the icon buttons do. */
     #coach-tab-roster .roster-link-chip,
     #coach-tab-roster .roster-filter-btn {
-        min-height: 36px;
+        min-height: 44px;
     }
     #coach-tab-roster .roster-quick-add-submit {
         min-height: 44px;
@@ -8214,18 +8243,23 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     text-transform: uppercase;
     color: var(--text-muted);
 }
+/* Preserve the inherited `.form-group select` chevron — the modal
+ * lives inside `.form-group`, so we only override colour / padding,
+ * NOT `background` (shorthand would wipe the SVG chevron). */
 .coach-link-modal select {
     width: 100%;
-    padding: 0.55rem 0.7rem;
-    background: rgba(0, 0, 0, 0.24);
+    padding: 0.55rem 2.1rem 0.55rem 0.7rem;
+    background-color: rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 6px;
     color: var(--text);
     font: inherit;
     font-size: 0.85rem;
+    text-transform: none;
+    letter-spacing: 0;
 }
 [data-theme="light"] .coach-link-modal select {
-    background: rgba(0, 0, 0, 0.04);
+    background-color: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.12);
 }
 

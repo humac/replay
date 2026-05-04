@@ -281,6 +281,13 @@ def validate_drawing_payload(value: dict[str, Any] | None) -> dict[str, Any]:
 
 
 class CreatePlayerRequest(BaseModel):
+    # `notes` is currently overloaded by the Coach > Roster Quick Add UI
+    # to also carry the player's Position (e.g. "Forward", "Midfielder")
+    # — there is no dedicated `position` column yet. Existing data is
+    # safe (the column was never writable from any prior UI), but if a
+    # real free-text "notes" field is added later, ship a small
+    # migration to extract Position into its own column first.
+    # See ROADMAP "Coach > Roster redesign" + AGENTS.md for context.
     display_name: str = Field(..., min_length=1, max_length=120)
     jersey_number: str = Field("", max_length=20)
     active: bool = True

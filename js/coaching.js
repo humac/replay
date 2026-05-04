@@ -453,13 +453,13 @@ export const coachingMixin = {
                 <td class="roster-cell roster-col-links">${linkChips}</td>
                 <td class="roster-cell roster-col-status">${statusPill}</td>
                 <td class="roster-cell roster-col-actions">
-                    <button type="button" class="roster-icon-btn" title="Link a family or player account" aria-label="Link account" onclick="app.openCoachLinkModal(${playerIdJs})">
+                    <button type="button" class="mini-action-btn mini-action-btn-icon" title="Link a family or player account" aria-label="Link account" onclick="app.openCoachLinkModal(${playerIdJs})">
                         <span aria-hidden="true">⚭</span>
                     </button>
-                    <button type="button" class="roster-icon-btn" title="Edit player (coming soon)" aria-label="Edit player" disabled>
+                    <button type="button" class="mini-action-btn mini-action-btn-icon" title="Edit player (coming soon)" aria-label="Edit player" disabled>
                         <span aria-hidden="true">✎</span>
                     </button>
-                    <button type="button" class="roster-icon-btn roster-icon-btn-danger" title="Delete player" aria-label="Delete player" onclick="app.handleCoachDeletePlayer(${playerIdJs})">
+                    <button type="button" class="mini-action-btn mini-action-btn-icon is-danger" title="Delete player" aria-label="Delete player" onclick="app.handleCoachDeletePlayer(${playerIdJs})">
                         <span aria-hidden="true">⌫</span>
                     </button>
                 </td>
