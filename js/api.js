@@ -398,6 +398,16 @@ export const apiMixin = {
         return resp.json();
     },
 
+    async updateCoachPlayer(playerId, data) {
+        const resp = await this.authFetch(`/api/coach/players/${playerId}`, {
+            method: 'PATCH',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update player');
+        return resp.json();
+    },
+
     async linkCoachPlayer(data) {
         const resp = await this.authFetch('/api/coach/player-links', {
             method: 'POST',

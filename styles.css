@@ -8301,4 +8301,61 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background-color: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.12);
 }
+/* Text inputs inside the Edit modal — same colour/border as the
+ * select so the form reads as a single block. */
+.coach-link-modal input[type="text"] {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    background-color: rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+}
+.coach-link-modal input[type="text"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+}
+[data-theme="light"] .coach-link-modal input[type="text"] {
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+/* Inline "(optional)" hint inside a form label — keeps the small-
+ * caps tone of the label but resets case + weight so the hint
+ * reads as secondary. */
+.form-label-hint {
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: var(--text-muted);
+    opacity: 0.75;
+    margin-left: 0.25rem;
+}
+/* "Active on roster" toggle row inside the Edit modal — a plain
+ * checkbox + label that visually groups under the form-row block. */
+.coach-edit-active {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
+    padding: 0.5rem 0.7rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.coach-edit-active input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent, #298bed);
+    cursor: pointer;
+}
+[data-theme="light"] .coach-edit-active {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
 

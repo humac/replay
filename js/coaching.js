@@ -464,7 +464,7 @@ export const coachingMixin = {
                         <button type="button" class="mini-action-btn mini-action-btn-icon" title="Link a family or player account" aria-label="Link account" onclick="app.openCoachLinkModal(${playerIdJs})">
                             ${this._rosterIcon('link')}
                         </button>
-                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Edit player (coming soon)" aria-label="Edit player" disabled>
+                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Edit player" aria-label="Edit player" onclick="app.openCoachPlayerEditModal(${playerIdJs})">
                             ${this._rosterIcon('edit')}
                         </button>
                         <button type="button" class="mini-action-btn mini-action-btn-icon is-danger" title="Delete player" aria-label="Delete player" onclick="app.handleCoachDeletePlayer(${playerIdJs})">
@@ -611,6 +611,66 @@ export const coachingMixin = {
      *  if a legacy form somewhere posts here, route through the modal. */
     async handleCoachLinkAccount() {
         return this.openCoachLinkModal();
+    },
+
+    /** Open the Edit Player modal for the given roster player. Posts to
+     *  the existing `PATCH /api/coach/players/{id}` endpoint via
+     *  `updateCoachPlayer()`. The "Position" select is UI-only and is
+     *  persisted via the existing `notes` column (same pattern as the
+     *  Quick Add panel — see CreatePlayerRequest comment in models.py). */
+    async openCoachPlayerEditModal(playerId) {
+        const player = (this._coachBundle?.players || []).find((p) => String(p.id) === String(playerId));
+        if (!player) { this.showError('Player not found.'); return; }
+        const tpl = document.getElementById('coach-player-edit-template');
+        if (!tpl) { this.showError('Edit Player form template missing.'); return; }
+        const body = tpl.content.firstElementChild.cloneNode(true);
+
+        body.querySelector('[data-field="display_name"]').value = player.display_name || '';
+        body.querySelector('[data-field="jersey_number"]').value = player.jersey_number || '';
+        body.querySelector('[data-field="active"]').checked = !!player.active;
+
+        // Position is stored in the `notes` column today. If the value
+        // matches one of the known position options, pre-select it;
+        // otherwise leave the select blank so we don't accidentally
+        // truncate a free-text note when the coach saves.
+        const positionSel = body.querySelector('[data-field="position"]');
+        const knownPositions = Array.from(positionSel.options).map((o) => o.value).filter(Boolean);
+        const currentNotes = (player.notes || '').trim();
+        if (knownPositions.includes(currentNotes)) {
+            positionSel.value = currentNotes;
+            positionSel.dataset.original = currentNotes;
+        } else {
+            positionSel.value = '';
+            // Stash whatever was in `notes` so we can preserve it on save.
+            positionSel.dataset.preservedNotes = currentNotes;
+            positionSel.dataset.original = '';
+        }
+
+        const result = await this.formModal({
+            title: 'Edit Player',
+            body,
+            confirmLabel: 'Save changes',
+            onSubmit: (close) => {
+                const display_name = body.querySelector('[data-field="display_name"]').value.trim();
+                const jersey_number = body.querySelector('[data-field="jersey_number"]').value.trim();
+                const active = body.querySelector('[data-field="active"]').checked;
+                const newPosition = positionSel.value;
+                if (!display_name) { this.showError('Display name is required.'); return; }
+                // If the original `notes` was a known position, the
+                // select-driven value is the source of truth. If it
+                // was free-text we left untouched, only overwrite when
+                // the coach picked a real position; otherwise preserve
+                // the original free-text notes.
+                const notes = newPosition || (positionSel.dataset.preservedNotes ?? '');
+                close({ display_name, jersey_number, active, notes });
+            },
+        });
+        if (!result) return;
+        try {
+            await this.updateCoachPlayer(player.id, result);
+            this.showSuccess('Player updated.');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
     },
 
     async handleCoachUnlink(linkId) {
