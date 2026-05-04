@@ -160,10 +160,6 @@ _VALID_NOTE_CATEGORIES = {
 }
 _VALID_COACHING_VISIBILITY = {"private", "team", "player", "unlisted"}
 _VALID_SLOTS = {"full", "first_half", "second_half"}
-# Phase 1 structured-note tone (see docs/coaching-analysis-feature-roadmap.md).
-# `correction` is the legacy implied default — every existing pre-v9 note
-# round-trips as a correction unless explicitly re-tagged.
-_VALID_NOTE_TYPES = {"positive", "correction", "question", "team_concept", "individual_goal"}
 _VALID_DRAWING_TYPES = {"freehand", "arrow", "circle", "zone", "label", "spotlight", "dim", "formation"}
 _VALID_DRAWING_POINT_KEYS = {"x", "y", "x1", "y1", "x2", "y2", "w", "h", "opacity"}
 
@@ -342,16 +338,6 @@ class CreateCoachingNoteRequest(BaseModel):
     player_ids: list[str] = Field(default_factory=list, max_length=50)
     tags: list[str] = Field(default_factory=list, max_length=25)
     drawing: dict[str, Any] = Field(default_factory=dict)
-    # Phase 1 structured-note fields. All optional with safe defaults so
-    # existing clients (older Coach Review save flow, scripts, tests)
-    # keep working with no payload changes. UI-side, the new fields are
-    # exposed via templates (Phase 2) and the note composer.
-    note_type: str = Field("correction")
-    what_happened: str = Field("", max_length=2000)
-    why_it_matters: str = Field("", max_length=2000)
-    what_to_do_next: str = Field("", max_length=2000)
-    player_summary: str = Field("", max_length=2000)
-    coach_private_note: str = Field("", max_length=4000)
 
     @field_validator("slot")
     @classmethod
@@ -376,16 +362,7 @@ class CreateCoachingNoteRequest(BaseModel):
             raise ValueError(f"visibility must be one of: {', '.join(sorted(_VALID_COACHING_VISIBILITY))}")
         return v
 
-    @field_validator("note_type")
-    @classmethod
-    def validate_note_type(cls, v: str) -> str:
-        v = v.strip().lower()
-        if v not in _VALID_NOTE_TYPES:
-            raise ValueError(f"note_type must be one of: {', '.join(sorted(_VALID_NOTE_TYPES))}")
-        return v
-
-    @field_validator("title", "body", "what_happened", "why_it_matters",
-                     "what_to_do_next", "player_summary", "coach_private_note")
+    @field_validator("title", "body")
     @classmethod
     def strip_text(cls, v: str) -> str:
         return v.strip()
@@ -422,13 +399,6 @@ class UpdateCoachingNoteRequest(BaseModel):
     player_ids: Optional[list[str]] = Field(None, max_length=50)
     tags: Optional[list[str]] = Field(None, max_length=25)
     drawing: Optional[dict[str, Any]] = None
-    # Phase 1 structured-note fields — all optional partial-update.
-    note_type: Optional[str] = None
-    what_happened: Optional[str] = Field(None, max_length=2000)
-    why_it_matters: Optional[str] = Field(None, max_length=2000)
-    what_to_do_next: Optional[str] = Field(None, max_length=2000)
-    player_summary: Optional[str] = Field(None, max_length=2000)
-    coach_private_note: Optional[str] = Field(None, max_length=4000)
 
     @field_validator("category")
     @classmethod
@@ -444,15 +414,7 @@ class UpdateCoachingNoteRequest(BaseModel):
             return v
         return CreateCoachingNoteRequest.validate_visibility(v)
 
-    @field_validator("note_type")
-    @classmethod
-    def validate_note_type(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        return CreateCoachingNoteRequest.validate_note_type(v)
-
-    @field_validator("title", "body", "what_happened", "why_it_matters",
-                     "what_to_do_next", "player_summary", "coach_private_note")
+    @field_validator("title", "body")
     @classmethod
     def strip_text(cls, v: str | None) -> str | None:
         return v.strip() if v is not None else v
