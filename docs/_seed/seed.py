@@ -381,7 +381,13 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
     m2 = matches[("Riverside FC", "Highbridge Town",  "2025-09-28")]
     m3 = matches[("Riverside FC", "Pinehurst Rangers","2025-11-02")]
 
-    # (match_id, slot, ts, title, body, category, visibility, drawing, linked_player_jerseys, tags)
+    # (match_id, slot, ts, title, body, category, visibility, drawing,
+    #  linked_player_jerseys, tags, note_type, player_summary,
+    #  what_happened, why_it_matters, what_to_do_next, coach_private_note)
+    #
+    # Phase 1 structured fields are optional — empty strings render the
+    # legacy `body`-only path, populated values render the full
+    # tone-pill + summary + structured <dl> stack in My Feedback.
     spec = [
         (m1, "first_half",  312.5,
          "Pressing trigger on goal-kick",
@@ -389,7 +395,13 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
          "the wide forward takes — body shape forces the keeper to go long.",
          "pressing", "team",
          _drawing_arrow_zone(),
-         [], ["pressing", "shape"]),
+         [], ["pressing", "shape"],
+         "team_concept",
+         "When their keeper plants the ball, step up together — angle the press so the keeper has to go long.",
+         "Their goal kick at 5:12. Our front three drifted apart, the keeper had a free short pass to the centre-back, and we lost ten yards of pressure.",
+         "If we time the trigger together we force long balls into our centre-backs' headers — that's a 70% recovery rate for us.",
+         "Watch your wide partner's first step. When they go, you go. Body shape closes the inside lane, not the keeper directly.",
+         "Coach note: drilled this on Tuesday with the front three only — second unit still drifting late."),
 
         (m1, "second_half", 1820.0,
          "Back-four shape during Northgate spell",
@@ -397,7 +409,13 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
          "to make a five when Northgate worked the wide channel.",
          "shape", "team",
          _drawing_back_four_formation(roster),
-         ["3", "4", "5", "2", "6"], ["shape", "defending"]),
+         ["3", "4", "5", "2", "6"], ["shape", "defending"],
+         "positive",
+         "Best ten-minute defensive spell of the half — line stayed compact and the #6 dropped to make a five in the wide channel.",
+         "",
+         "",
+         "",
+         ""),
 
         (m2, "full",         642.0,
          "First-touch under pressure",
@@ -405,7 +423,13 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
          "Compare this clip with the turnover at 14:30.",
          "build_up", "team",
          _drawing_circle_label(),
-         [], ["technique"]),
+         [], ["technique"],
+         "individual_goal",
+         "Receive across your body — open hips, take the touch into space, and you're facing forward already.",
+         "Ball came from the keeper. You took it facing your own goal, had to turn under pressure, and lost it.",
+         "One extra touch backwards is one extra second for their press to set. Open the body once and you skip that whole sequence.",
+         "On reception: plant the back foot, point the front foot toward the opponent's goal, take the touch with your far foot.",
+         ""),
 
         (m2, "full",        1430.0,
          "Player #7 — defensive recovery",
@@ -413,7 +437,13 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
          "lane, don't chase the ball.",
          "defending", "player",
          _drawing_freehand_arrow(),
-         ["7"], ["recovery", "1v1"]),
+         ["7"], ["recovery", "1v1"],
+         "positive",
+         "Beautiful recovery run — you cut across the passing lane instead of chasing the ball. That's the model.",
+         "",
+         "",
+         "",
+         ""),
 
         (m3, "first_half",   215.0,
          "Player #10 — early run",
@@ -421,7 +451,13 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
          "be attacking before the centre-back closes.",
          "transition", "player",
          _drawing_spotlight_dim(),
-         ["10"], ["transition"]),
+         ["10"], ["transition"],
+         "correction",
+         "Break earlier on the keeper's release — attack the gap before the centre-back can close it.",
+         "Keeper rolled it out at 3:35. You started moving 1.5 seconds late and the gap had already shut.",
+         "If you read the trigger off the keeper's body shape (not the ball), you get a 5–8 yard head start on the centre-back. That's the difference between a chance and a recycle.",
+         "Two cues: (1) keeper's plant foot turns sideways → release is coming, (2) centre-back's eyes go to the ball → blind side opens. Move on cue 1, finish on cue 2.",
+         "Coach note: pulled #10 at 18' for a debrief on this; he saw it. Repeat in next session's possession game."),
 
         (m3, "second_half", 1100.0,
          "Internal: substitution rationale",
@@ -429,21 +465,33 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
          "punishing the player.",
          "other", "private",
          {"version": 2, "objects": []},
-         [], []),
+         [], [],
+         "correction",
+         "",
+         "",
+         "",
+         "",
+         "Sub at 65' was for energy in the press, NOT punishment. Make sure the player hears that on Tuesday — last time we left it ambiguous and his confidence dropped for a week."),
     ]
 
     note_ids: list[int] = []
     with _db.connect() as conn:
-        for match_id, slot, ts, title, body, category, visibility, drawing, jerseys, tags in spec:
+        for (match_id, slot, ts, title, body, category, visibility, drawing,
+             jerseys, tags, note_type, player_summary, what_happened,
+             why_it_matters, what_to_do_next, coach_private_note) in spec:
             cur = conn.execute(
                 """
                 INSERT INTO coaching_notes (
                     match_id, slot, timestamp_seconds, title, body, category, visibility,
-                    drawing_json, created_by, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    drawing_json, created_by, created_at, updated_at,
+                    note_type, player_summary, what_happened, why_it_matters,
+                    what_to_do_next, coach_private_note
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (match_id, slot, ts, title, body, category, visibility,
-                 json.dumps(drawing), "coach1", now, now),
+                 json.dumps(drawing), "coach1", now, now,
+                 note_type, player_summary, what_happened, why_it_matters,
+                 what_to_do_next, coach_private_note),
             )
             note_id = cur.lastrowid
             note_ids.append(note_id)

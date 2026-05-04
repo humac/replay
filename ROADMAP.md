@@ -589,6 +589,31 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coaching Analysis — PR 1c: My Feedback renders structured fields ✅ COMPLETE (2026-05-04)
+
+Final Phase 1 slice on top of [PR 1a / #75](https://github.com/humac/replay/pull/75) (backend) and [PR 1b / #76](https://github.com/humac/replay/pull/76) (Coach surface). Player/family-facing rendering layer for the structured note fields. **No backend changes; no new endpoints; no new payload fields.**
+
+- **Notes card grid** (`renderFeedbackNotes` in `js/coaching.js`) renders each note as a self-contained card in a responsive grid (4 cols ≥1920 / 3 ≥1440 / 2 ≥1024 / 1 ≤720). Each card carries the accent-tinted **tone pill** (Positive / Correction / Question / Team concept / Individual goal), title, match · timestamp · slot meta, a 2-line clamped `player_summary` (falling back to `body` for legacy pre-Phase-1 notes), and a `▶ Watch` / `Mark reviewed` action row. Cards are designed for scanning — the full structured stack lives in the Watch modal.
+- **Playlists card grid** (`renderFeedbackPlaylists`) mirrors the same shape: "REVIEW SESSION" kicker, title, clip count, description, and a `▶ Play session` / `Mark reviewed` action row.
+- **Focused Watch modal** (single-note mode) writes the full composition into `[data-field="body"]` via `_renderFeedbackBody`: tone pill + `player_summary` (or `body` fallback) + structured `<dl>` of What happened / Why it matters / What to do next + a collapsed `<details>` "Coach context" disclosure for the long-form `body` when distinct from `player_summary`. The template's `<p data-field="body">` was promoted to a `<div>` (`index.html`) so the `<dl>` + `<details>` markup stays valid.
+- **Playlist player rail** (`renderPlaylistSessionRail`) surfaces the per-item tone pill + `player_summary` under "Review Session" so a player watching a session sees the same context they'd see on the standalone note.
+- **`coach_private_note` is never rendered.** The server already strips it (`_filter_notes_for_user` + `_strip_private_fields` + the `items_source` scrub for playlist items), but the client renderers also do not template it anywhere — defense-in-depth.
+- **New helpers in `js/coaching.js`** (private, prefixed with `_`):
+  - `_feedbackNoteSummary(note)` → `{ primary, secondary }` (`player_summary` first, `body` fallback, both shown when distinct)
+  - `_feedbackTonePillHtml(noteType)` → accent-tinted pill markup
+  - `_feedbackStructuredHtml(note)` → `<dl>` with only the non-empty fields
+  - `_renderFeedbackBody(target, note)` → modal-body composition shared by note + playlist surfaces
+- **`FEEDBACK_NOTE_TYPE_LABELS`** — player-friendly tone labels (longer than the dense Coach Review chip labels: "Team concept" instead of "Team", "Individual goal" instead of "Goal"). Mirrors the backend `_VALID_NOTE_TYPES` set — keep in sync.
+- **Visibility ladder preserved**: `private` → coach/admin only; `team` → any signed-in viewer; `player` → only users linked via `player_user_links`; playlist-item access still flows through visible playlists only.
+- **Tests** (`tests/test_coaching.py`):
+  - `test_legacy_body_visible_when_player_summary_blank` — a team-visible note with only `body` (no Phase 1 fields) reaches the viewer with `body` populated, `player_summary=""`, and `note_type='correction'` (defaults). Guards the UI's body-fallback path against any future filter that strips `body` alongside private fields.
+- **Styling** (`styles.css`) — new `.feedback-tone-pill` block (5 tones × dark + light = 10 themed accents), `.feedback-structured` `<dl>` for the modal body, `.feedback-card-grid` + `.feedback-card-*` rules for the responsive list cards, 44 px tap targets at `pointer:coarse`.
+- **Validation**: `node --check js/coaching.js script.js js/api.js` clean; `pytest tests/test_coaching.py` 10/10 passed; `pytest tests/` 272 passed (was 271, +1 new).
+
+Phase 1 of `docs/coaching-analysis-feature-roadmap.md` is now complete: backend (PR 1a / #75) → Coach UI (PR 1b / #76) → player UI (this PR). Playback-behavior follow-ups (paused freeze-frame, telestration scrub-back, pre-roll skip) ship in a separate PR — they touch playback semantics, not rendering.
+
+---
+
 ## Coaching Analysis — PR 1b: Coach Review composer + Notes modal surface structured fields ✅ COMPLETE (2026-05-04)
 
 Phase 1 UI layer on top of [PR 1a](docs/coaching-analysis-feature-roadmap.md). Coach Review's note composer now exposes the structured fields the backend already accepts; the Notes-tab edit modal mirrors them so editing parity is preserved. **No backend changes** — every payload field PR 1b sends is already validated by `CreateCoachingNoteRequest` (PR 1a).

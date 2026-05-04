@@ -7409,6 +7409,15 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
 }
+/* The `hidden` HTML attribute on `[data-field="rail"]` is set by JS
+ * for single-note mode (no playlist session). CSS `display: flex`
+ * above wins over the UA `hidden`-stylesheet, which left the empty
+ * rail rendering as a ~26 px bar between the video and the body
+ * text. Re-assert `display: none` for the hidden state so the
+ * single-note modal collapses it cleanly. */
+.feedback-player-rail[hidden] {
+    display: none;
+}
 
 .feedback-rail-info span,
 .feedback-rail-info small {
@@ -7440,6 +7449,408 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 [data-theme="light"] .feedback-player-rail {
     background: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* ============================================================
+ * PR 1c — My Feedback structured-note rendering
+ *
+ * Shows player_summary first (with body as fallback), a small
+ * accent-tinted tone pill, and an optional what / why / next stack
+ * for notes that have the structured fields filled in. coach_
+ * private_note is never rendered here (server scrubs it; we also
+ * never template it).
+ * ============================================================ */
+
+/* Tone pill — accent-tinted by default; the four other note types
+ * keep the same visual weight but pick up a slightly different
+ * accent so a player can scan a feedback list and know at a glance
+ * whether a note is a positive call-out vs a correction. */
+.feedback-tone-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* Use min-height + symmetric padding instead of a hard 22 px so
+     * the box grows around the rendered cap-height. With `height:
+     * 22px` + `align-items: center`, the all-caps glyphs sat slightly
+     * low inside the pill because most heading fonts have a larger
+     * descender region than ascender region — the visual centre of
+     * an all-caps run sits ABOVE the box's geometric centre. Switching
+     * to padding-driven sizing lets the pill fit the glyphs and
+     * removes the visible drop. */
+    min-height: 22px;
+    padding: 0.18rem 0.55rem 0.14rem;
+    border-radius: 999px;
+    border: 1px solid rgba(23, 113, 201, 0.40);
+    background: rgba(23, 113, 201, 0.14);
+    color: var(--accent, #298bed);
+    font-family: var(--font-heading);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    line-height: 1;
+    /* Keep the pill optically centred when it sits inline next to
+     * plain-case body text (e.g. inside `.feedback-rail-info` and
+     * `.feedback-note-head`). Without this the pill hangs off the
+     * surrounding text baseline. */
+    vertical-align: middle;
+    flex: 0 0 auto;
+}
+.feedback-tone-pill[data-tone="positive"] {
+    border-color: rgba(34, 197, 94, 0.45);
+    background: rgba(34, 197, 94, 0.16);
+    color: #4ade80;
+}
+.feedback-tone-pill[data-tone="question"] {
+    border-color: rgba(245, 158, 11, 0.45);
+    background: rgba(245, 158, 11, 0.16);
+    color: #fbbf24;
+}
+.feedback-tone-pill[data-tone="team_concept"] {
+    border-color: rgba(168, 85, 247, 0.45);
+    background: rgba(168, 85, 247, 0.16);
+    color: #c084fc;
+}
+.feedback-tone-pill[data-tone="individual_goal"] {
+    border-color: rgba(236, 72, 153, 0.45);
+    background: rgba(236, 72, 153, 0.16);
+    color: #f472b6;
+}
+[data-theme="light"] .feedback-tone-pill {
+    background: rgba(23, 113, 201, 0.10);
+}
+[data-theme="light"] .feedback-tone-pill[data-tone="positive"] {
+    background: rgba(22, 163, 74, 0.14);
+    color: #166534;
+    border-color: rgba(22, 163, 74, 0.35);
+}
+[data-theme="light"] .feedback-tone-pill[data-tone="question"] {
+    background: rgba(217, 119, 6, 0.14);
+    color: #92400e;
+    border-color: rgba(217, 119, 6, 0.35);
+}
+[data-theme="light"] .feedback-tone-pill[data-tone="team_concept"] {
+    background: rgba(126, 34, 206, 0.12);
+    color: #6b21a8;
+    border-color: rgba(126, 34, 206, 0.35);
+}
+[data-theme="light"] .feedback-tone-pill[data-tone="individual_goal"] {
+    background: rgba(190, 24, 93, 0.12);
+    color: #9d174d;
+    border-color: rgba(190, 24, 93, 0.35);
+}
+
+/* Notes-list row — single-column layout because the body now
+ * carries up to four pieces (tone + meta + summary + structured
+ * stack + collapsible Coach context) and the existing two-column
+ * `.coach-row` would crowd the right action column. */
+.feedback-note-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.7rem 0.9rem;
+    align-items: start;
+}
+.feedback-note-row .coach-row-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    align-items: flex-end;
+}
+.feedback-note-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 0;
+}
+.feedback-note-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+.feedback-note-meta {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+.feedback-note-summary {
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.92rem;
+    line-height: 1.5;
+}
+
+/* Structured "What happened / Why it matters / What to do next"
+ * stack. Renders as a definition list so AT users get the field
+ * label/value relationship for free. */
+.feedback-structured {
+    margin: 0.2rem 0 0;
+    display: grid;
+    gap: 0.45rem;
+}
+.feedback-structured-item {
+    display: grid;
+    gap: 0.1rem;
+    padding: 0.5rem 0.7rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+}
+.feedback-structured-item dt {
+    font-family: var(--font-heading);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 0;
+}
+.feedback-structured-item dd {
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+[data-theme="light"] .feedback-structured-item {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Collapsed "Coach context" disclosure — same pattern as Coach
+ * Review's "More details", just borrowed for the player surface so
+ * a curious player can see the long-form `body` alongside the
+ * polished `player_summary`. */
+.feedback-note-more {
+    margin-top: 0.2rem;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+}
+.feedback-note-more > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.4rem 0.65rem;
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.feedback-note-more > summary::-webkit-details-marker { display: none; }
+.feedback-note-more > summary::marker { display: none; }
+.feedback-note-more > summary::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+.feedback-note-more[open] > summary::before { transform: rotate(45deg); }
+.feedback-note-more > p {
+    margin: 0;
+    padding: 0 0.7rem 0.55rem;
+    color: var(--text-muted);
+    font-size: 0.84rem;
+    line-height: 1.5;
+}
+[data-theme="light"] .feedback-note-more {
+    background: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Focused-modal body — hosts the same composition as a notes-list
+ * row, just at the modal's wider measure. */
+.feedback-player-tone {
+    margin-bottom: 0.4rem;
+}
+.feedback-player-summary {
+    color: var(--text-main);
+    font-size: 0.96rem;
+    line-height: 1.5;
+}
+
+/* Per-item tone + summary inside the playlist player rail */
+.feedback-rail-item-detail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.3rem;
+}
+.feedback-rail-item-summary {
+    color: var(--text-main);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+/* Mobile / touch — two-row stacking so the tone pill + summary
+ * stay readable and the actions are full-width. */
+@media (max-width: 720px) {
+    .feedback-note-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .feedback-note-row .coach-row-actions {
+        flex-direction: row;
+        align-items: stretch;
+        justify-content: flex-start;
+    }
+    .feedback-note-row .coach-row-actions .mini-action-btn {
+        flex: 1 1 auto;
+    }
+}
+@media (pointer: coarse), (max-width: 899px) {
+    .feedback-note-row .coach-row-actions .mini-action-btn {
+        min-height: 44px;
+    }
+    .feedback-tone-pill,
+    .feedback-note-more > summary {
+        min-height: 28px;
+    }
+}
+
+/* ============================================================
+ * My Feedback — single-pane card grid
+ *
+ * Each note / playlist renders as a self-contained card in a
+ * responsive grid. The card holds everything a player needs to
+ * decide whether to watch (tone, summary, structured what / why /
+ * next stack). Click "Watch" / "Play session" to open the focused
+ * modal (mounted from `feedback-player-template`). No inline
+ * video and no separate selection state — the page is one
+ * scannable surface.
+ *
+ * Breakpoints:
+ *   1920 px → 4 cols   (auto-fill at 440 px min)
+ *   1440 px → 3 cols
+ *   1024 px → 2 cols
+ *   ≤  720 px → 1 col
+ * ============================================================ */
+
+/* Cards are scannable previews — tone + title + meta + clamped
+ * summary + actions. Because every card emits the same shape
+ * now, CSS Grid auto-fill no longer creates ugly height gaps,
+ * and we get a true grid (cards in a row stay aligned). The
+ * full structured stack lives in the Watch modal. */
+.feedback-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 1rem;
+    align-items: stretch;
+}
+
+@media (max-width: 720px) {
+    .feedback-card-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.feedback-card {
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    min-width: 0;
+    /* Push the actions to the bottom edge of the tallest card
+     * in the row so all "Watch" buttons line up horizontally. */
+    height: 100%;
+}
+[data-theme="light"] .feedback-card {
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+.feedback-card-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    justify-content: space-between;
+}
+
+.feedback-card-status {
+    font-family: var(--font-heading);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+
+.feedback-card-kicker {
+    font-family: var(--font-heading);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent, #298bed);
+}
+
+.feedback-card-title {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 1.1rem;
+    line-height: 1.3;
+    color: var(--text-main);
+    overflow-wrap: anywhere;
+}
+
+.feedback-card-meta {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+.feedback-card-description {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    line-height: 1.5;
+    /* Keep playlist descriptions to ~3 lines so cards stay roughly
+     * the same height in the grid. Falls back gracefully when the
+     * `-webkit-line-clamp` extensions are unsupported. */
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+/* One-line preview summary on the card. Clamped to two lines so
+ * a verbose `player_summary` doesn't blow the card height out. */
+.feedback-card-summary {
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.feedback-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    /* `margin-top: auto` inside a flex column pushes this row to
+     * the card's bottom edge — combined with `align-items: stretch`
+     * on the grid, every card's Watch button lines up with its
+     * row neighbours. */
+    margin-top: auto;
+}
+
+.feedback-card-actions .btn-primary {
+    padding: 0.55rem 1rem;
+    font-size: 0.85rem;
+}
+
+@media (pointer: coarse), (max-width: 899px) {
+    .feedback-card-actions .btn-primary,
+    .feedback-card-actions .mini-action-btn {
+        min-height: 44px;
+    }
 }
 
 .admin-card-sub {
