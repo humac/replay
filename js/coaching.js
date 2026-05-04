@@ -2,6 +2,8 @@
 // player-facing /feedback view with a focused feedback-player modal. The in-match side panel
 // is intentionally absent — Coach > Review is the single authoring surface.
 
+import { COACH_TEMPLATES, COACH_TEMPLATE_GROUPS, findCoachTemplate } from './coaching-templates.js';
+
 const NOTE_CATEGORIES = [
     ['shape', 'Shape'], ['pressing', 'Pressing'], ['transition', 'Transition'],
     ['set_piece', 'Set piece'], ['build_up', 'Build-up'], ['finishing', 'Finishing'],
@@ -70,6 +72,13 @@ export const coachingMixin = {
     // active note (highlighted blue, aria-pressed=true). Cleared on
     // match/slot change and tab teardown.
     _coachActiveNoteId: null,
+
+    // Phase 2: id of the coaching template most recently applied to the
+    // composer. Used by `applyCoachTemplate()` so a coach who picks a
+    // different template can swap fields without an extra confirm prompt
+    // (since the existing values came from a template, not from the
+    // coach typing). Cleared on save (per-moment) and on Clear template.
+    _coachReviewActiveTemplateId: null,
 
     // Roster redesign — search query + status filter live here so the
     // table can re-render without mutating `_coachBundle`.
@@ -1025,6 +1034,17 @@ export const coachingMixin = {
         // Sprint 5: drop active timeline-chip selection so it doesn't carry
         // over into a different match's notes on next entry.
         this._coachActiveNoteId = null;
+        // Phase 2: drop the active-template tracker so a coach who applied
+        // a template, navigated away, and comes back doesn't trip the
+        // overwrite-protection logic on a fresh, visually-empty composer.
+        // Without this reset, _refreshCoachTemplateButtons() would render
+        // the Clear button enabled (because canClear = !!selected ||
+        // !!active), and the next applyCoachTemplate() would compare the
+        // freshly-seeded defaults (category='shape', tone='correction')
+        // against the stale previous template's values, treating those
+        // defaults as "manually edited" and prompting "Replace your edits?"
+        // when nothing was actually edited.
+        this._coachReviewActiveTemplateId = null;
         // Sprint 6: defense-in-depth — if focus mode somehow survived a
         // different code path (e.g. external API call to tearDownCoachReview),
         // make sure the listener + body class are cleaned up.
@@ -1060,6 +1080,10 @@ export const coachingMixin = {
         const slot = document.getElementById('coach-review-slot')?.value || 'full';
         // Sprint 5: clear any selected timeline chip when switching matches.
         this._coachActiveNoteId = null;
+        // Phase 2: a template applied for the previous match no longer
+        // describes the new match's moment. Reset the tracker AND the
+        // selector + buttons so the composer starts fresh.
+        this._resetCoachReviewTemplateState();
         if (!matchId) { this.tearDownCoachReview(); this.renderCoachReviewNotes(null); return; }
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -1070,6 +1094,9 @@ export const coachingMixin = {
         // Sprint 5: clear active chip when slot changes (the active note may
         // belong to a different slot of the same match).
         this._coachActiveNoteId = null;
+        // Phase 2: same reasoning as match-change — different slot = new
+        // moment, so the previously-applied template is no longer relevant.
+        this._resetCoachReviewTemplateState();
         if (!matchId) return;
         this.loadCoachReviewVideo(matchId, slot, 0, null);
     },
@@ -1606,7 +1633,27 @@ export const coachingMixin = {
         const container = document.getElementById('coach-review-form');
         if (!container) return;
         const players = this._coachBundle?.players || [];
+        // Phase 2: template selector. Static registry is grouped by
+        // soccer area (Build-up, Defending, …) so the <optgroup> labels
+        // double as a coach-friendly index. Picking a template only
+        // arms it; the coach must press "Apply" to actually populate
+        // fields. That preserves Option A overwrite-protection: a coach
+        // who has typed something in a target field gets a confirm
+        // prompt before the apply replaces their text.
+        const templateOptionsHtml = COACH_TEMPLATE_GROUPS.map((group) => {
+            const items = COACH_TEMPLATES.filter((t) => t.group === group);
+            return `<optgroup label="${this.esc(group)}">${items.map((t) => `<option value="${this.esc(t.id)}">${this.esc(t.label)}</option>`).join('')}</optgroup>`;
+        }).join('');
         container.innerHTML = `
+            <div class="coach-review-template" role="group" aria-label="Coaching templates">
+                <label class="coach-review-template-label" for="coach-review-template">Template</label>
+                <select id="coach-review-template" aria-label="Coaching template">
+                    <option value="">None — start from scratch</option>
+                    ${templateOptionsHtml}
+                </select>
+                <button type="button" id="coach-review-template-apply" class="mini-action-btn" onclick="app.applyCoachTemplate()" disabled aria-disabled="true">Apply</button>
+                <button type="button" id="coach-review-template-clear" class="mini-action-btn" onclick="app.clearCoachTemplate()" disabled aria-disabled="true" title="Clear the selected template (does not erase fields)">Clear</button>
+            </div>
             <input type="text" id="coach-review-title" maxlength="160" placeholder="Title (e.g. Back line spacing)" aria-label="Note title">
             <div id="coach-review-players" class="coach-check-list compact" role="listbox" aria-label="Linked players">${this.coachCheckListHtml(players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet')}</div>
             <select id="coach-review-category" aria-label="Category">
@@ -1670,6 +1717,16 @@ export const coachingMixin = {
         // landmines for any future reader that drops the fallback.
         const toneEl = document.getElementById('coach-review-tone');
         if (toneEl) toneEl.dataset.value = DEFAULT_NOTE_TYPE;
+        // Phase 2: enable the Apply button only when a template is
+        // selected. Listening on `change` here (vs. inline onchange in
+        // the markup) keeps the selector markup simple — and the
+        // listener is recreated every time `renderCoachReviewForm()`
+        // re-runs because we replace `container.innerHTML`.
+        const tplSelect = document.getElementById('coach-review-template');
+        if (tplSelect) {
+            tplSelect.addEventListener('change', () => this._refreshCoachTemplateButtons());
+        }
+        this._refreshCoachTemplateButtons();
         // Stamp the current timestamp onto the new Save button immediately.
         const v = document.getElementById(this._coachVideoId);
         if (v) this._renderCoachReviewTime(v);
@@ -1689,6 +1746,173 @@ export const coachingMixin = {
             btn.classList.toggle('is-active', active);
             btn.setAttribute('aria-checked', active ? 'true' : 'false');
         });
+    },
+
+    // ===== Phase 2 — coaching templates =====
+
+    /** Sync the Apply / Clear button enabled-state with the selector.
+     *  Apply is enabled when a non-empty template id is selected.
+     *  Clear is enabled when there is something to clear (selector has
+     *  a value, OR a template was applied previously and is still
+     *  tracked in `_coachReviewActiveTemplateId`). */
+    _refreshCoachTemplateButtons() {
+        const select = document.getElementById('coach-review-template');
+        const apply = document.getElementById('coach-review-template-apply');
+        const clear = document.getElementById('coach-review-template-clear');
+        const selected = select?.value || '';
+        const active = this._coachReviewActiveTemplateId || '';
+        if (apply) {
+            const canApply = !!selected;
+            apply.disabled = !canApply;
+            apply.setAttribute('aria-disabled', canApply ? 'false' : 'true');
+        }
+        if (clear) {
+            const canClear = !!selected || !!active;
+            clear.disabled = !canClear;
+            clear.setAttribute('aria-disabled', canClear ? 'false' : 'true');
+        }
+    },
+
+    /** Phase 2 — apply the currently-selected template to the
+     *  composer. Per the spec's Option A: only fill empty fields.
+     *  When at least one **text** field has content the coach typed
+     *  themselves (i.e. content that does NOT match the previously-
+     *  applied template's value for that field), ask for confirmation
+     *  before overwriting. Drawing payload, timestamp, players,
+     *  visibility, and `coach_private_note` are never touched.
+     *
+     *  Why text fields only: the category and tone start with a
+     *  default option selected by the browser; treating those defaults
+     *  as "edited" would prompt on a never-touched composer. We only
+     *  count category/tone as edited when their value differs from BOTH
+     *  the literal default AND the previous template (if any).
+     *
+     *  `requestedId` (optional) lets the caller force a specific
+     *  template id; otherwise the currently-selected option wins. */
+    async applyCoachTemplate(requestedId = null) {
+        const select = document.getElementById('coach-review-template');
+        const id = requestedId || select?.value || '';
+        const tpl = findCoachTemplate(id);
+        if (!tpl) return;
+
+        const currentValues = this._readCoachReviewTemplateFields();
+        const previousTplId = this._coachReviewActiveTemplateId;
+        const previousTpl = findCoachTemplate(previousTplId);
+
+        // Decide which fields would be overwritten. A field counts as
+        // "manually edited" only if BOTH:
+        //   1. it has content the coach can see (non-empty)
+        //   2. that content was not what the previous template wrote
+        // For category/tone we additionally require the value to differ
+        // from the default — so a never-touched composer never prompts.
+        const manuallyEdited = [];
+        for (const [field, current] of Object.entries(currentValues)) {
+            if (!current) continue;
+            // Category and tone defaults: 'shape' is the first option
+            // in NOTE_CATEGORIES; 'correction' is DEFAULT_NOTE_TYPE.
+            // Treat those as untouched on a fresh composer.
+            if (!previousTpl) {
+                if (field === 'category' && current === 'shape') continue;
+                if (field === 'note_type' && current === DEFAULT_NOTE_TYPE) continue;
+            }
+            let prev = previousTpl ? (previousTpl[field] ?? '') : '';
+            if (field === 'tags' && Array.isArray(prev)) prev = prev.join(', ');
+            if (current === prev) continue;
+            manuallyEdited.push(field);
+        }
+
+        if (manuallyEdited.length) {
+            const confirmed = await this.confirmAction({
+                title: 'Replace your edits?',
+                message: `The template "${tpl.label}" will overwrite ${manuallyEdited.length} field${manuallyEdited.length === 1 ? '' : 's'} you have already edited. Continue?`,
+                confirmLabel: 'Replace',
+                cancelLabel: 'Keep my edits',
+                danger: false,
+            });
+            if (!confirmed) return;
+        }
+
+        this._writeCoachReviewTemplateFields(tpl);
+        this._coachReviewActiveTemplateId = tpl.id;
+        this._refreshCoachTemplateButtons();
+    },
+
+    /** Phase 2 — clear the template selector and forget the active
+     *  template. Does NOT erase fields the coach has populated; that
+     *  would be a surprise. To erase fields, the coach can switch the
+     *  selector to "None — start from scratch" and re-pick a template. */
+    clearCoachTemplate() {
+        this._resetCoachReviewTemplateState();
+    },
+
+    /** Phase 2 — internal helper used by clearCoachTemplate(),
+     *  handleCoachReviewMatchChange(), and handleCoachReviewSlotChange()
+     *  to keep the visible UI and the JS tracker in lockstep. Resets
+     *  the selector to "None — start from scratch", forgets the active
+     *  template id, and drives Apply / Clear back to disabled. Like
+     *  clearCoachTemplate, this never erases populated form fields —
+     *  only the template state is reset. Safe to call when the
+     *  composer is not currently mounted (the document.getElementById
+     *  call returns null and the only side-effect is the JS field
+     *  reset, which is what we want). */
+    _resetCoachReviewTemplateState() {
+        const select = document.getElementById('coach-review-template');
+        if (select) select.value = '';
+        this._coachReviewActiveTemplateId = null;
+        this._refreshCoachTemplateButtons();
+    },
+
+    /** Read the current value of every field the templates can write,
+     *  so `applyCoachTemplate()` can detect manual edits. Returns the
+     *  raw values (default-vs-edited logic lives in the caller, which
+     *  has full context about whether a previous template was applied). */
+    _readCoachReviewTemplateFields() {
+        const titleEl = document.getElementById('coach-review-title');
+        const categoryEl = document.getElementById('coach-review-category');
+        const toneEl = document.getElementById('coach-review-tone');
+        const playerSummaryEl = document.getElementById('coach-review-player-summary');
+        const whatHappenedEl = document.getElementById('coach-review-what-happened');
+        const whyMattersEl = document.getElementById('coach-review-why-it-matters');
+        const whatToDoNextEl = document.getElementById('coach-review-what-to-do-next');
+        const tagsEl = document.getElementById('coach-review-tags');
+        return {
+            title:           (titleEl?.value || '').trim(),
+            category:        (categoryEl?.value || ''),
+            note_type:       (toneEl?.dataset.value || ''),
+            player_summary:  (playerSummaryEl?.value || '').trim(),
+            what_happened:   (whatHappenedEl?.value || '').trim(),
+            why_it_matters:  (whyMattersEl?.value || '').trim(),
+            what_to_do_next: (whatToDoNextEl?.value || '').trim(),
+            tags:            (tagsEl?.value || '').trim(),
+        };
+    },
+
+    /** Write a template's fields into the composer. Re-uses the
+     *  existing `setCoachReviewNoteType()` so the tone chip group's
+     *  dataset + aria stays consistent with manual selection. */
+    _writeCoachReviewTemplateFields(tpl) {
+        const set = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.value = value || '';
+        };
+        set('coach-review-title', tpl.title);
+        set('coach-review-player-summary', tpl.player_summary);
+        set('coach-review-what-happened', tpl.what_happened);
+        set('coach-review-why-it-matters', tpl.why_it_matters);
+        set('coach-review-what-to-do-next', tpl.what_to_do_next);
+        set('coach-review-tags', (tpl.tags || []).join(', '));
+        // Category is a <select>; only set if the option exists.
+        const categoryEl = document.getElementById('coach-review-category');
+        if (categoryEl && tpl.category && Array.from(categoryEl.options).some((o) => o.value === tpl.category)) {
+            categoryEl.value = tpl.category;
+        }
+        // Note type drives the tone chip group via its existing helper.
+        if (tpl.note_type) this.setCoachReviewNoteType(tpl.note_type);
+        // Open the More-details disclosure so the coach can see the
+        // structured fields the template just populated. If the coach
+        // closes it manually that choice persists across re-applies.
+        const advanced = document.querySelector('.coach-review-advanced');
+        if (advanced && !advanced.open) advanced.open = true;
     },
 
     async openNoteInReview(noteId) {
@@ -1758,6 +1982,14 @@ export const coachingMixin = {
             PER_MOMENT_FIELDS.forEach((id) => {
                 const el = document.getElementById(id); if (el) el.value = '';
             });
+            // Phase 2: reset the template selector so a fresh save starts
+            // from "None — start from scratch". The active-template
+            // tracker is cleared too so the next apply does not think
+            // the just-cleared fields are "template-written".
+            const tplSelect = document.getElementById('coach-review-template');
+            if (tplSelect) tplSelect.value = '';
+            this._coachReviewActiveTemplateId = null;
+            this._refreshCoachTemplateButtons?.();
             this.clearCoachDrawing();
             this._coachBundle = await this.loadCoachBundle();
             await this.renderCoachReviewNotes(review.matchId);
