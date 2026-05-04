@@ -589,6 +589,22 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coaching Analysis — PR 1a: Structured-note backend (Phase 1) ✅ COMPLETE (2026-05-03)
+
+First slice of the [coaching-analysis-feature-roadmap.md](docs/coaching-analysis-feature-roadmap.md) Phase 1. **Backend only** — UI + My Feedback rendering ship in PR 1b / PR 1c.
+
+- **Schema migration `_migrate_v9`** (`db.py`) adds six optional columns to `coaching_notes`: `note_type` (enum: `positive` / `correction` / `question` / `team_concept` / `individual_goal`, default `correction`), `what_happened`, `why_it_matters`, `what_to_do_next`, `player_summary`, `coach_private_note`. Each ships with a safe default so every existing pre-v9 note round-trips unchanged. Adds `idx_coaching_notes_note_type`. Defensive `_row_to_note` reads via `_opt(key, default)` so older snapshots / mocks without the new keys still hydrate without `KeyError`.
+- **Pydantic validation** (`models.py`) — `CreateCoachingNoteRequest` and `UpdateCoachingNoteRequest` extended with all six fields. New `_VALID_NOTE_TYPES` set; `validate_note_type` field validator raises 422 for unknown values. `strip_text` validator extended to cover the four new long-text fields.
+- **Privacy invariant** (`server.py`): `_filter_notes_for_user` now passes every viewer-visible note through a new `_strip_private_fields()` helper that scrubs `coach_private_note` to an empty string. Coach / admin call sites are unchanged (the helper is only invoked on the viewer branch).
+- **Tests** (`tests/test_coaching.py`):
+  - `test_structured_note_round_trip` — legacy payload (no Phase 1 fields) lands with safe defaults; full structured payload round-trips through create + PATCH; invalid `note_type` returns 422.
+  - `test_coach_private_note_never_leaks_to_viewer` — a team-visible note with a `coach_private_note` reaches a viewer's `/api/my-feedback`, but the field comes back empty. `player_summary` IS visible (by design).
+- **Validation**: `python3 -m py_compile` clean across all backend modules; `pytest tests/` 271 passed (was 269 pre-PR).
+
+Next: PR 1b (Coach UI for note tone + structured fields, hidden behind the existing "More details" disclosure) and PR 1c (My Feedback rendering shows `player_summary` first, falling back to `body`).
+
+---
+
 ## Coach > Roster redesign ✅ COMPLETE (2026-05-03)
 
 **Goal:** turn the Roster sub-tab into a dashboard-style cockpit (header + KPI tiles + search/filter + roster table + sticky Quick Add panel) inspired by the spec screenshot, while preserving the existing backend payload shapes.
