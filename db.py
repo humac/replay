@@ -364,39 +364,9 @@ def _migrate_v8(conn: sqlite3.Connection):
     )
 
 
-def _migrate_v9(conn: sqlite3.Connection):
-    """Add structured coaching-note fields (Phase 1 of the coaching analysis
-    roadmap). Each new column is optional and ships with a safe default so
-    existing notes round-trip unchanged.
-
-    - `note_type` — tone of the note (correction / positive / question /
-      team_concept / individual_goal). Default 'correction' preserves the
-      legacy implied behaviour.
-    - `what_happened` / `why_it_matters` / `what_to_do_next` — coaching-
-      point structure that templates (Phase 2) will pre-fill.
-    - `player_summary` — short, age-appropriate text shown to players in
-      My Feedback. Falls back to `body` when blank.
-    - `coach_private_note` — internal coach-only note, never sent to
-      viewers (filtered out by `_filter_notes_for_user` in server.py)."""
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(coaching_notes)").fetchall()}
-    if "note_type" not in cols:
-        conn.execute("ALTER TABLE coaching_notes ADD COLUMN note_type TEXT NOT NULL DEFAULT 'correction'")
-    if "what_happened" not in cols:
-        conn.execute("ALTER TABLE coaching_notes ADD COLUMN what_happened TEXT NOT NULL DEFAULT ''")
-    if "why_it_matters" not in cols:
-        conn.execute("ALTER TABLE coaching_notes ADD COLUMN why_it_matters TEXT NOT NULL DEFAULT ''")
-    if "what_to_do_next" not in cols:
-        conn.execute("ALTER TABLE coaching_notes ADD COLUMN what_to_do_next TEXT NOT NULL DEFAULT ''")
-    if "player_summary" not in cols:
-        conn.execute("ALTER TABLE coaching_notes ADD COLUMN player_summary TEXT NOT NULL DEFAULT ''")
-    if "coach_private_note" not in cols:
-        conn.execute("ALTER TABLE coaching_notes ADD COLUMN coach_private_note TEXT NOT NULL DEFAULT ''")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_notes_note_type ON coaching_notes(note_type)")
-
-
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
-    _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
+    _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8,
 ]
 
 
@@ -869,13 +839,6 @@ def _row_to_note(row: sqlite3.Row, player_ids: list[str] | None = None, tags: li
         drawing = json.loads(row["drawing_json"] or "{}")
     except Exception:
         drawing = {}
-    # Defensively `_row_get` the v9 columns so existing call sites that
-    # mock a sqlite3.Row without those keys (or older snapshots that
-    # haven't migrated yet) still get a sane default instead of a
-    # KeyError. sqlite3.Row supports `keys()`; mappings support `in`.
-    keys = set(row.keys()) if hasattr(row, "keys") else set()
-    def _opt(key: str, default: str = "") -> str:
-        return row[key] if key in keys else default
     return {
         "id": row["id"],
         "match_id": row["match_id"],
@@ -891,14 +854,6 @@ def _row_to_note(row: sqlite3.Row, player_ids: list[str] | None = None, tags: li
         "updated_at": row["updated_at"],
         "player_ids": player_ids or [],
         "tags": tags or [],
-        # Phase 1 structured fields (see _migrate_v9). Present on every
-        # note after migration; default to empty / "correction".
-        "note_type": _opt("note_type", "correction") or "correction",
-        "what_happened": _opt("what_happened", ""),
-        "why_it_matters": _opt("why_it_matters", ""),
-        "what_to_do_next": _opt("what_to_do_next", ""),
-        "player_summary": _opt("player_summary", ""),
-        "coach_private_note": _opt("coach_private_note", ""),
     }
 
 
@@ -949,22 +904,14 @@ def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
             """
             INSERT INTO coaching_notes (
                 match_id, slot, timestamp_seconds, title, body, category, visibility,
-                drawing_json, created_by, created_at, updated_at,
-                note_type, what_happened, why_it_matters, what_to_do_next,
-                player_summary, coach_private_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                drawing_json, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["match_id"], data["slot"], data["timestamp_seconds"],
                 data["title"], data.get("body", ""), data.get("category", "other"),
                 data.get("visibility", "private"), json.dumps(data.get("drawing") or {}),
                 actor, now, now,
-                data.get("note_type", "correction"),
-                data.get("what_happened", ""),
-                data.get("why_it_matters", ""),
-                data.get("what_to_do_next", ""),
-                data.get("player_summary", ""),
-                data.get("coach_private_note", ""),
             ),
         )
         note_id = cur.lastrowid
@@ -974,14 +921,7 @@ def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
 
 
 def update_coaching_note(note_id: int, data: dict) -> dict | None:
-    scalar_allowed = {
-        "timestamp_seconds", "title", "body", "category", "visibility",
-        # Phase 1 structured-note fields — partial update. Only the keys
-        # the request actually sends are written; the rest round-trip
-        # untouched.
-        "note_type", "what_happened", "why_it_matters", "what_to_do_next",
-        "player_summary", "coach_private_note",
-    }
+    scalar_allowed = {"timestamp_seconds", "title", "body", "category", "visibility"}
     updates = {k: v for k, v in data.items() if k in scalar_allowed and v is not None}
     if "drawing" in data and data["drawing"] is not None:
         updates["drawing_json"] = json.dumps(data["drawing"])
