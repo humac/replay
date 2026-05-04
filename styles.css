@@ -6112,6 +6112,106 @@ details.diag-row-details[open] > summary::after {
 }
 
 /* ============================================================
+ * Phase 2 — coaching templates
+ *
+ * Compact selector row at the top of the composer: a coach picks a
+ * starter template (grouped by soccer area) and presses Apply to
+ * fill the structured fields. The row sits in a single line on
+ * desktop and wraps on narrow viewports. Themed selects + buttons
+ * follow the same dark/light pattern as the rest of the composer.
+ * ============================================================ */
+.coach-review-template {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.1rem;
+}
+.coach-review-template-label {
+    font-family: var(--font-heading);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+.coach-review-template select {
+    /* Match the picker selects above the video so themes and focus
+     * rings stay consistent. Never expose native chrome — see
+     * `.agent-skills/css-responsive-accessibility.md`. */
+    flex: 1 1 12rem;
+    min-width: 10rem;
+    padding: 0.45rem 2.2rem 0.45rem 0.7rem;
+    background: rgba(0, 0, 0, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 0.85rem;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23888890' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 10px 6px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.coach-review-template select:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+}
+.coach-review-template select:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    background-color: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
+}
+.coach-review-template .mini-action-btn {
+    flex: 0 0 auto;
+}
+.coach-review-template .mini-action-btn[aria-disabled="true"] {
+    /* Match the visual weight of the surrounding controls when no
+     * template is selected — the button is reachable by keyboard but
+     * communicates "not actionable yet" without becoming invisible. */
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Light-mode overrides — Issue #80 calls out that select controls in
+ * the Coach note modal must remain readable in light theme. The arrow
+ * icon is re-encoded with a darker stroke; the field gets a white
+ * background and a darker border so it reads cleanly on the light
+ * card. Mirrors the existing `[data-theme="light"] .coach-review-
+ * picker select` pattern. */
+[data-theme="light"] .coach-review-template select {
+    background-color: #ffffff;
+    border-color: rgba(0, 0, 0, 0.18);
+    color: var(--text-main);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+[data-theme="light"] .coach-review-template select:hover {
+    border-color: rgba(0, 0, 0, 0.32);
+}
+[data-theme="light"] .coach-review-template select:focus-visible {
+    background-color: #ffffff;
+    border-color: var(--accent, #1565c0);
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.22);
+}
+
+@media (pointer: coarse), (max-width: 899px) {
+    /* On touch / narrow widths bump the buttons to a 44 px tap target
+     * and let the selector own a full row above them. */
+    .coach-review-template select {
+        flex: 1 1 100%;
+        min-height: 44px;
+    }
+    .coach-review-template .mini-action-btn {
+        min-height: 44px;
+        flex: 1 1 auto;
+    }
+}
+
+/* ============================================================
  * Sprint 4: fast note composer with collapsed advanced details
  *
  * The default composer shows title → players → category → Save-at-MM:SS.

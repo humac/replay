@@ -589,6 +589,32 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 
 ---
 
+## Coaching Analysis Phase 2 — Coach Review templates ✅ COMPLETE (2026-05-04)
+
+Reduce coach typing and make structured coaching notes more consistent. Adds a static template registry and a template selector inside the Coach Review note composer. **No backend changes; no new endpoints; no schema migrations.**
+
+- **`js/coaching-templates.js`** — new module exporting `COACH_TEMPLATES` (14 templates), `COACH_TEMPLATE_GROUPS` (7 ordered groups), and `findCoachTemplate(id)`. Each template prefills `title`, `category`, `note_type`, `player_summary`, `what_happened`, `why_it_matters`, `what_to_do_next`, and `tags`. Templates **never** populate `coach_private_note` — that field stays empty unless the coach types into it.
+- **Templates shipped** (grouped by soccer area):
+  - **Build-up**: Scanning before receiving · Body shape when receiving · First touch direction · Passing decision · Movement after pass
+  - **Shape**: Width and depth
+  - **Defending**: Defensive recovery · Pressing trigger · Delay/contain in 1v1 defending · Tracking runner
+  - **Goalkeeper**: Goalkeeper distribution
+  - **Set piece**: Set-piece marking
+  - **Transition**: Transition reaction
+  - **Finishing**: Finishing choice
+- **Coach Review composer** (`renderCoachReviewForm` in `js/coaching.js`) — new "Template" row above the title input with a `<select>` (grouped by `<optgroup>`), an "Apply" button, and a "Clear" button. Apply is disabled until a template is selected; Clear resets the selector + active-template tracking without erasing field content.
+- **Overwrite-protection (Option A from the spec)** — `applyCoachTemplate(id)` only prompts when the coach has TYPED content the previous template (if any) did not write. Default `<select>` values (category=`shape`, tone=`correction`) on a fresh composer are treated as untouched, so the first apply onto an empty composer never asks. Switching templates after applying one is silent (the existing values came from a template, not the coach). Switching templates after a manual edit shows the existing `confirmAction` modal with "Replace" / "Keep my edits" buttons.
+- **Save flow unchanged** — `saveReviewNote()` still sends the same Phase 1 payload shape; the per-moment field-clearing block now also resets the template selector + the active-template tracker so the next moment starts from "None — start from scratch."
+- **Privacy** — Templates write nothing to `coach_private_note`. The visibility ladder, role gating, drawing payload, timestamp, player selection, and tone-chip behavior are unchanged. Saving a note opens the focused-modal playback path the same way it did before; My Feedback rendering is untouched.
+- **Accessibility** — Selector has `aria-label`; Apply / Clear buttons toggle `aria-disabled`. The Sprint 7 keyboard-shortcut guard (`_coachShortcutShouldSkip`) already skips `<select>` elements, so ArrowLeft / ArrowRight inside the template dropdown does NOT scrub the video. New CSS includes both dark and light overrides plus `(pointer: coarse)` 44 px tap targets for touch.
+- **Light-mode contrast (Issue #80 guardrail)** — The new selector adopts the same light-mode pattern as `[data-theme="light"] .coach-review-picker select`: white background, dark border, dark chevron. Verified text-on-bg contrast ≥ 4.5:1 in light theme.
+- **Validation**: `node --check js/coaching.js script.js js/api.js js/player.js js/coaching-templates.js` clean; `pytest tests/test_coaching.py` 10/10 passed; `pytest tests/` 272/272 passed (no new tests — Phase 2 is UI-only and the backend API is unchanged).
+- **Live verified** as `coach1` at 1440 + 390 px (dark + light): selector lists 14 templates in 7 groups; Apply on empty composer fills 8 fields without a confirm dialog; manual edit → switch template → Apply shows the confirm dialog and the cancel button preserves the edit; Clear resets selector + active-template state without erasing fields; ArrowLeft inside the selector does not scrub the video.
+
+Phase 2 explicitly does not implement Phase 3 (thumbnails), clips, player profiles, goals, analytics, AI, or computer vision. It also does not extend the Notes-tab Edit modal — Coach Review is the single template authoring surface for this PR. A future phase may move templates from the static frontend registry to a DB-backed customisable set.
+
+---
+
 ## Coaching Analysis — PR 1c follow-up: focused player opens paused at the freeze ✅ COMPLETE (2026-05-04)
 
 Playback-behavior follow-up to PR 1c (#79). Pure UX change inside the focused feedback player modal — no rendering changes, no payload changes, no new endpoints.
