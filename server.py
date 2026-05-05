@@ -2154,6 +2154,321 @@ async def my_feedback(request: Request):
     }
 
 
+# ---------------------------------------------------------------------------
+# Phase 5a — Player development profile aggregation
+#
+# Two endpoints share one builder so the aggregation rules (theme counts,
+# recent items, review status, focus-area derivation) stay single-sourced
+# and the privacy ladder cannot drift between coach and viewer surfaces:
+#
+#   GET /api/coach/players/{player_id}/development          (coach/admin)
+#   GET /api/my-feedback/players/{player_id}/development    (linked viewer)
+#
+# Privacy invariants:
+#   - The coach surface uses the raw note list (so `coach_private_note`
+#     stays visible to coach/admin, matching `_filter_notes_for_user`'s
+#     short-circuit for privileged users).
+#   - The viewer surface filters notes/clips/playlists through the same
+#     helpers `/api/my-feedback` uses, so anything excluded there is also
+#     excluded here (private notes, unrelated player-specific notes, and
+#     `coach_private_note` text via `_strip_private_fields`).
+#   - The viewer endpoint additionally requires the player to be linked
+#     to the signed-in user's account; otherwise it returns 404 — same
+#     code as "unknown player" so an unrelated viewer cannot probe
+#     whether a given roster id exists.
+#   - Reviews are scoped to the signed-in user on the viewer surface;
+#     the coach surface returns the player's full assigned-review set
+#     (filtered to items linked to that player).
+#
+# No new tables. No schema changes. No payload changes to the existing
+# /api/my-feedback or /api/coach/* endpoints. Phase 5b will add the UI.
+# Phase 6 will introduce explicit player_goals; until then the
+# "current_focus_areas" list is derived from recent corrections /
+# individual_goal notes and clearly labelled as derived in the response
+# shape (`source: "derived_from_recent_notes"`).
+# ---------------------------------------------------------------------------
+
+
+_RECENT_LIMIT = 5
+_TOP_LIMIT = 5
+_NOTE_TYPES = ("positive", "correction", "question", "team_concept", "individual_goal")
+
+
+def _notes_for_player(notes: list[dict], player_id: str) -> list[dict]:
+    return [n for n in notes if player_id in (n.get("player_ids") or [])]
+
+
+def _clips_for_player(clips: list[dict], player_id: str) -> list[dict]:
+    return [c for c in clips if player_id in (c.get("player_ids") or [])]
+
+
+def _playlists_for_player(playlists: list[dict], player_id: str, player_note_ids: set[int]) -> list[dict]:
+    """A playlist is "for" the player when either it is explicitly
+    associated with that player (via `coaching_playlist_players`, exposed
+    as `player_ids`) OR when at least one of its ordered items is a note
+    the player is tagged on. Playlists already inherit visibility from
+    the caller-side filter."""
+    out: list[dict] = []
+    for playlist in playlists:
+        if player_id in (playlist.get("player_ids") or []):
+            out.append(playlist)
+            continue
+        if any(note_id in player_note_ids for note_id in (playlist.get("note_ids") or [])):
+            out.append(playlist)
+    return out
+
+
+def _top_counter(values: list[str], limit: int = _TOP_LIMIT) -> list[dict]:
+    """Return the most common values as a list of {value, count} dicts.
+    Stable for ties (insertion order)."""
+    counts: dict[str, int] = {}
+    for v in values:
+        if not v:
+            continue
+        counts[v] = counts.get(v, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [{"value": k, "count": c} for k, c in ordered[:limit]]
+
+
+def _theme_counts(notes: list[dict]) -> dict:
+    """Phase 1 / Phase 5a aggregation. `note_type` is a closed enum
+    (see `_VALID_NOTE_TYPES` in models.py) so we report counts for each
+    bucket explicitly rather than just whatever shows up — that way a
+    coach can see "0 positives" instead of the field silently missing."""
+    by_type: dict[str, int] = {t: 0 for t in _NOTE_TYPES}
+    for note in notes:
+        t = note.get("note_type") or "correction"
+        by_type[t] = by_type.get(t, 0) + 1
+    pos = by_type.get("positive", 0)
+    cor = by_type.get("correction", 0)
+    ratio: float | None
+    if cor > 0:
+        ratio = round(pos / cor, 2)
+    elif pos > 0:
+        ratio = None  # all positive, no correction baseline — leave undefined
+    else:
+        ratio = None
+    return {
+        "by_note_type": by_type,
+        "positive_count": pos,
+        "correction_count": cor,
+        "question_count": by_type.get("question", 0),
+        "team_concept_count": by_type.get("team_concept", 0),
+        "individual_goal_count": by_type.get("individual_goal", 0),
+        "positive_to_correction_ratio": ratio,
+        "top_categories": _top_counter([n.get("category") or "" for n in notes]),
+        "top_tags": _top_counter([t for n in notes for t in (n.get("tags") or [])]),
+    }
+
+
+def _sort_recent(items: list[dict], key: str = "updated_at") -> list[dict]:
+    """Sort newest-first by ISO timestamp string. Falls back to
+    `created_at` then to id-stable ordering so ties stay deterministic."""
+    return sorted(
+        items,
+        key=lambda item: (item.get(key) or item.get("created_at") or "", item.get("id") or 0),
+        reverse=True,
+    )
+
+
+def _summarize_review_status(
+    *,
+    notes: list[dict],
+    playlists: list[dict],
+    reviews: list[dict],
+) -> dict:
+    """Aggregate review/reflection state across the items already
+    filtered for the caller's role. Clip review tracking is not
+    implemented yet (`coaching_reviews` only carries note_id /
+    playlist_id) so we report that explicitly so the UI doesn't display
+    a misleading 0/N for clips."""
+    note_ids = {n["id"] for n in notes}
+    playlist_ids = {p["id"] for p in playlists}
+    note_reviews = [r for r in reviews if r.get("note_id") in note_ids]
+    playlist_reviews = [r for r in reviews if r.get("playlist_id") in playlist_ids]
+    reflections = [r for r in (note_reviews + playlist_reviews) if (r.get("reflection") or "").strip()]
+    all_reviews_sorted = _sort_recent(note_reviews + playlist_reviews, key="reviewed_at")
+    latest_reviewed_at = all_reviews_sorted[0]["reviewed_at"] if all_reviews_sorted else None
+    return {
+        "notes": {
+            "assigned_count": len(note_ids),
+            "reviewed_count": len({r["note_id"] for r in note_reviews if r.get("note_id")}),
+        },
+        "playlists": {
+            "assigned_count": len(playlist_ids),
+            "reviewed_count": len({r["playlist_id"] for r in playlist_reviews if r.get("playlist_id")}),
+        },
+        "clips": {
+            "assigned_count": 0,  # filled in by caller
+            "review_supported": False,
+        },
+        "latest_reviewed_at": latest_reviewed_at,
+        "reflection_count": len(reflections),
+        "latest_reflection": (
+            {
+                "note_id": reflections[0].get("note_id") if reflections else None,
+                "playlist_id": reflections[0].get("playlist_id") if reflections else None,
+                "reflection": reflections[0]["reflection"],
+                "reviewed_at": reflections[0]["reviewed_at"],
+            }
+            if reflections
+            else None
+        ),
+    }
+
+
+def _derive_focus_areas(notes: list[dict]) -> list[dict]:
+    """Phase 6 will add real `player_goals`. Until then we surface
+    "what to do next" cues from recent correction / individual_goal
+    notes and label them as derived so any future client UI doesn't
+    treat them as formal goals."""
+    candidates = [
+        n for n in notes
+        if n.get("note_type") in {"correction", "individual_goal"}
+        and (n.get("what_to_do_next") or "").strip()
+    ]
+    recent = _sort_recent(candidates)[:_RECENT_LIMIT]
+    return [
+        {
+            "note_id": n["id"],
+            "note_type": n.get("note_type"),
+            "category": n.get("category"),
+            "what_to_do_next": n.get("what_to_do_next") or "",
+            "match_id": n.get("match_id"),
+            "slot": n.get("slot"),
+            "updated_at": n.get("updated_at"),
+            "source": "derived_from_recent_notes",
+        }
+        for n in recent
+    ]
+
+
+def _build_player_development_profile(
+    *,
+    player: dict,
+    user: dict,
+    viewer_scoped: bool,
+) -> dict:
+    """Single source of truth for both endpoints. When `viewer_scoped`
+    is True, all source lists are filtered through the same helpers
+    that gate `/api/my-feedback`; otherwise the raw lists are used so a
+    coach/admin sees the full data set including private notes."""
+    all_notes = _db.list_coaching_notes()
+    all_clips = _db.list_coaching_clips()
+    all_playlists = _db.list_coaching_playlists()
+    if viewer_scoped:
+        notes_source = _filter_notes_for_user(all_notes, user)
+        clips_source = _filter_clips_for_user(all_clips, user)
+        playlists_source = _filter_playlists_for_user(all_playlists, user)
+    else:
+        notes_source = all_notes
+        clips_source = all_clips
+        playlists_source = all_playlists
+
+    pid = player["id"]
+    notes = _notes_for_player(notes_source, pid)
+    clips = _clips_for_player(clips_source, pid)
+    note_ids = {n["id"] for n in notes}
+    playlists = _playlists_for_player(playlists_source, pid, note_ids)
+
+    # Reviews on the viewer surface are scoped to the signed-in user so
+    # other linked-account reviews never leak. On the coach surface we
+    # report the full assigned-review set across all users so the coach
+    # can see who has engaged with what.
+    if viewer_scoped:
+        reviews = _db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else []
+    else:
+        reviews = _db.list_coaching_reviews()
+
+    review_summary = _summarize_review_status(notes=notes, playlists=playlists, reviews=reviews)
+    review_summary["clips"]["assigned_count"] = len(clips)
+
+    notes_recent = _sort_recent(notes)
+    clips_recent = _sort_recent(clips)
+    playlists_recent = _sort_recent(playlists)
+
+    recent_positives = [n for n in notes_recent if n.get("note_type") == "positive"][:_RECENT_LIMIT]
+    recent_corrections = [n for n in notes_recent if n.get("note_type") == "correction"][:_RECENT_LIMIT]
+
+    profile = {
+        "player": {
+            "id": player["id"],
+            "display_name": player.get("display_name") or "",
+            "jersey_number": player.get("jersey_number") or "",
+            "active": bool(player.get("active", True)),
+            "notes_field": player.get("notes") or "",
+            "links_count": len(player.get("links") or []),
+        },
+        "counts": {
+            "notes": len(notes),
+            "clips": len(clips),
+            "playlists": len(playlists),
+        },
+        "themes": _theme_counts(notes),
+        "review_status": review_summary,
+        "recent_notes": notes_recent[:_RECENT_LIMIT],
+        "recent_positives": recent_positives,
+        "recent_corrections": recent_corrections,
+        "recent_clips": clips_recent[:_RECENT_LIMIT],
+        "recent_playlists": [
+            {
+                "id": p["id"], "title": p.get("title") or "",
+                "visibility": p.get("visibility"), "item_count": len(p.get("note_ids") or []),
+                "updated_at": p.get("updated_at"),
+            }
+            for p in playlists_recent[:_RECENT_LIMIT]
+        ],
+        "current_focus_areas": _derive_focus_areas(notes),
+        "viewer_scoped": viewer_scoped,
+    }
+
+    if not viewer_scoped:
+        # Coach surface: lightweight linked-account summary so the coach
+        # can see how the player connects to family/player accounts
+        # without re-fetching the roster. Values come from the same
+        # `links` list `/api/coach/players` already returns to coach/admin.
+        profile["linked_accounts"] = [
+            {
+                "user_id": link.get("user_id"),
+                "username": link.get("username"),
+                "display_name": link.get("display_name") or "",
+                "relationship": link.get("relationship"),
+            }
+            for link in (player.get("links") or [])
+        ]
+
+    return profile
+
+
+@app.get("/api/coach/players/{player_id}/development")
+async def coach_player_development(player_id: str, request: Request):
+    user = _require_coach(request)
+    player = _db.get_player(player_id)
+    if not player:
+        raise HTTPException(404, "Player not found")
+    return {"profile": _build_player_development_profile(player=player, user=user, viewer_scoped=False)}
+
+
+@app.get("/api/my-feedback/players/{player_id}/development")
+async def my_feedback_player_development(player_id: str, request: Request):
+    user = _auth.require_auth(request)
+    # Coach/admin viewing their own /my-feedback profile would see the
+    # raw set; defer to the dedicated coach endpoint instead so the two
+    # surfaces don't quietly diverge in payload shape. Here we always
+    # gate on "is this player linked to the requesting user" — using the
+    # same 404 we'd return for an unknown player so an unrelated viewer
+    # cannot probe whether a roster id exists.
+    if not user.get("user_id"):
+        raise HTTPException(404, "Player not found")
+    linked_player_ids = set(_db.linked_player_ids_for_user(user["user_id"]))
+    if player_id not in linked_player_ids:
+        raise HTTPException(404, "Player not found")
+    player = _db.get_player(player_id)
+    if not player:
+        raise HTTPException(404, "Player not found")
+    return {"profile": _build_player_development_profile(player=player, user=user, viewer_scoped=True)}
+
+
 @app.post("/api/my-feedback/review")
 async def mark_my_feedback_review(request: Request, body: MarkCoachingReviewRequest):
     user = _auth.require_auth(request)
