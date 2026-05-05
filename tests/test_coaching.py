@@ -945,3 +945,168 @@ async def test_thumbnail_path_convention(data_dir):
     from media import coach_note_thumbnail_path
     p = coach_note_thumbnail_path(data_dir / "videos", "match-abc", 42)
     assert p == data_dir / "videos" / "match-abc" / "coach_thumbs" / "42.jpg"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a — code-review fix-up regressions
+#
+# These three tests pin down the two blockers the PR #88 review caught:
+#   1. `Cache-Control` must NOT be `public` (per-viewer access-controlled
+#      response — a shared cache must not replay it across users), and
+#      should carry an `ETag: "{mtime}"` so coaches see a freshly
+#      regenerated thumbnail on the next refresh.
+#   2. Every site that resolves a coach-note thumbnail path must run it
+#      through `_thumb_path_within_videos_dir` so a corrupted DB row whose
+#      `match_id` contains `..` cannot escape `VIDEOS_DIR`. We simulate
+#      the corrupted-row case by `UPDATE`-ing the note row's `match_id`
+#      directly via the DB connection (Pydantic only validates on the
+#      create path, so a future bug elsewhere could still let an escaping
+#      value land in the DB — defense-in-depth means the serving / spawn
+#      / regenerate / delete paths must each refuse to touch it).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_response_is_not_public_cacheable(client, auth_headers, data_dir, monkeypatch):
+    """Per-user access-controlled responses must NEVER set
+    `Cache-Control: public` — a shared CDN / proxy could otherwise
+    replay the JPEG to a different viewer. We mirror `serve_thumbnail`'s
+    `no-cache, must-revalidate` + `ETag: "{mtime}"` policy."""
+    await _install_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Cache Test FC", "date": "2026-05-14",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 12.0,
+        "title": "Cache header check", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+
+    resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 200
+    cache_control = resp.headers.get("cache-control", "")
+    assert "public" not in cache_control.lower(), (
+        f"Cache-Control must NOT be public on a per-viewer access-controlled "
+        f"response (got {cache_control!r})"
+    )
+    # Positive assertion: must revalidate every request so a coach sees
+    # a freshly-regenerated thumbnail on next refresh.
+    assert "no-cache" in cache_control.lower() or "private" in cache_control.lower(), (
+        f"Cache-Control must include either no-cache or private (got {cache_control!r})"
+    )
+    # ETag drives conditional revalidation — `serve_thumbnail` uses the
+    # mtime of the file. The exact value depends on the stub's write
+    # time; just confirm the header exists and is quoted.
+    etag = resp.headers.get("etag", "")
+    assert etag.startswith('"') and etag.endswith('"') and len(etag) > 2, (
+        f"ETag header must be present and quoted (got {etag!r})"
+    )
+    # X-Content-Type-Options must remain — same defense-in-depth as
+    # match-logo / match-thumbnail responses.
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_get_refuses_path_escape(client, auth_headers, data_dir, monkeypatch):
+    """If a corrupted DB row's `match_id` would resolve outside
+    `VIDEOS_DIR`, the GET endpoint must return the same 404 it uses for
+    unknown / unauthorized / missing-file cases — never serve a file
+    from outside the videos tree."""
+    import db as _db
+    await _install_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Containment FC", "date": "2026-05-15",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 7.0,
+        "title": "Containment GET", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+
+    # Sanity: with the legitimate match_id it works.
+    ok = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert ok.status_code == 200
+
+    # Now mutate the row's match_id to inject a `..` traversal payload.
+    # In production this should never happen because `match_id` comes
+    # from a validated POST, but defense-in-depth means the serving
+    # path must still refuse to escape.
+    conn = _db.connect()
+    try:
+        conn.execute(
+            "UPDATE coaching_notes SET match_id=? WHERE id=?",
+            ("../escape", note_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    escape = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert escape.status_code == 404, (
+        "GET must refuse to serve a thumbnail whose computed path escapes VIDEOS_DIR"
+    )
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_regenerate_refuses_path_escape(client, auth_headers, data_dir, monkeypatch):
+    """The regenerate endpoint must short-circuit (no ffmpeg call, no
+    write) when the destination path would escape `VIDEOS_DIR`. The
+    response shape matches the no-source-MP4 case so callers handle it
+    identically."""
+    import db as _db
+    # Track ffmpeg invocations so we can assert the spawn never happened
+    # for the escaping path.
+    calls = await _install_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Regen Containment FC", "date": "2026-05-16",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 9.0,
+        "title": "Containment regen", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+    calls.clear()  # ignore the create-time spawn; we care about regenerate.
+
+    # Mutate match_id to a traversal payload.
+    conn = _db.connect()
+    try:
+        conn.execute(
+            "UPDATE coaching_notes SET match_id=? WHERE id=?",
+            ("../escape", note_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = await client.post(
+        f"/api/coach/notes/{note_id}/thumbnail/regenerate", headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "generated": False}
+    # ffmpeg stub must not have been invoked for the escaping path.
+    assert calls == [], (
+        f"Regenerate must short-circuit before invoking the generator on an escaping path "
+        f"(got generator calls: {calls!r})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_thumb_path_within_videos_dir_helper(monkeypatch, tmp_path):
+    """Unit-test the helper directly so the contract is locked in
+    independently of the endpoint wiring."""
+    import server as _server
+    monkeypatch.setattr(_server, "VIDEOS_DIR", tmp_path)
+    inside = tmp_path / "match-abc" / "coach_thumbs" / "1.jpg"
+    outside = tmp_path.parent / "elsewhere" / "1.jpg"
+    traversal = tmp_path / "match-abc" / ".." / ".." / "elsewhere" / "1.jpg"
+
+    assert _server._thumb_path_within_videos_dir(inside) is True
+    assert _server._thumb_path_within_videos_dir(outside) is False
+    # `..`-laden path should resolve outside `tmp_path` and be rejected.
+    assert _server._thumb_path_within_videos_dir(traversal) is False

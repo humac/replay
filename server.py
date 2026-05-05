@@ -1669,10 +1669,14 @@ async def coach_delete_note(note_id: int, request: Request):
         metadata={"note_id": note_id},
     )
     # Phase 3a: clean up the per-note thumbnail too. Best-effort — a
-    # missing file is fine; an OS error is logged but not raised.
+    # missing file is fine; an OS error is logged but not raised. The
+    # `_thumb_path_within_videos_dir` containment check matches the
+    # defense-in-depth pattern used by `serve_logo` / `serve_thumbnail`
+    # so a corrupted DB row that escapes its match folder cannot trick
+    # this handler into unlinking a file outside `VIDEOS_DIR`.
     try:
         thumb = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id) if note else None
-        if thumb is not None:
+        if thumb is not None and _thumb_path_within_videos_dir(thumb):
             thumb.unlink(missing_ok=True)
     except OSError as exc:
         _log.setup("replay").warning(
@@ -1698,9 +1702,43 @@ async def coach_delete_note(note_id: int, request: Request):
 # thumbnail; signed-in viewers can see thumbnails for notes that
 # `_filter_notes_for_user` already grants them access to (team-visible,
 # unlisted, or player-tagged notes for a linked player). Private
-# coach-only notes never leak. The check reuses the same helper as
-# `/api/my-feedback/review` so visibility logic stays single-sourced.
+# coach-only notes never leak. The check reuses the same helper that
+# powers `/api/my-feedback` so visibility logic stays single-sourced.
+#
+# Namespace exception: most `/api/coach/*` routes require `admin|coach`.
+# `GET /api/coach/notes/{id}/thumbnail` is the one read-only,
+# visibility-checked exception that is reachable by any signed-in user
+# whose visibility check passes (see CLAUDE.md / AGENTS.md). The
+# regenerate endpoint stays coach/admin-only.
+#
+# Defense-in-depth: every site that reads / writes / unlinks one of
+# these JPEGs runs the path through `_thumb_path_within_videos_dir` so
+# a corrupted DB row whose `match_id` contains `..` cannot escape
+# `VIDEOS_DIR`. Same pattern as `serve_logo` / `serve_thumbnail`
+# (commit `e11992d` — "m6 — Path containment on thumbnail/logo
+# endpoints").
 # ---------------------------------------------------------------------------
+
+def _thumb_path_within_videos_dir(thumb: Path) -> bool:
+    """Defense-in-depth path-containment check.
+
+    Returns True only when the thumbnail path resolves under
+    `VIDEOS_DIR.resolve()`. If the resolution itself raises (the
+    parent directory doesn't exist yet, a symlink cycle, etc.), we
+    treat that as "outside" and return False. Callers MUST handle
+    `False` by short-circuiting safely (404 / no-write / no-unlink),
+    not by raising — the GET handler in particular returns the same
+    404 it uses for "unknown note" / "no permission" / "no file" so
+    a probing viewer cannot tell the four cases apart.
+
+    Mirrors the `if VIDEOS_DIR.resolve() not in path.resolve().parents`
+    check used by `serve_logo` and `serve_thumbnail`.
+    """
+    try:
+        return VIDEOS_DIR.resolve() in thumb.resolve().parents
+    except OSError:
+        return False
+
 
 async def _spawn_coach_note_thumbnail(note: dict) -> None:
     """Best-effort generator — never raises. Caller (note create / update /
@@ -1715,6 +1753,14 @@ async def _spawn_coach_note_thumbnail(note: dict) -> None:
     timestamp_s = float(note.get("timestamp_seconds") or 0)
     src = _slot_mp4_path(match_id, slot)
     dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id)
+    # Defense-in-depth: refuse to write outside the videos tree even if
+    # the DB row's `match_id` somehow resolves to an escaping path.
+    if not _thumb_path_within_videos_dir(dest):
+        _log.setup("replay").warning(
+            "Coach-note thumbnail spawn skipped for note %s: dest path escapes VIDEOS_DIR (%s)",
+            note_id, dest,
+        )
+        return
     try:
         await _media.generate_thumbnail_at_timestamp(src, dest, timestamp_s=timestamp_s)
     except Exception as exc:                                # noqa: BLE001
@@ -1748,10 +1794,9 @@ async def coach_get_note_thumbnail(note_id: int, request: Request):
     - Any signed-in user can call this; visibility is enforced per-note
       via `_can_view_coach_note`.
     - Returns 404 when the note does not exist OR when the user cannot
-      see it OR when the thumbnail file is missing. We deliberately
-      return the same 404 in the "no permission" and "no file" cases so
-      a viewer cannot probe the existence of private notes via the
-      thumbnail endpoint.
+      see it OR when the thumbnail file is missing OR when the
+      computed path would escape `VIDEOS_DIR`. The same 404 covers all
+      four cases so a probing viewer cannot distinguish them.
     """
     user = _auth.require_auth(request)
     note = _db.get_coaching_note(note_id)
@@ -1760,18 +1805,29 @@ async def coach_get_note_thumbnail(note_id: int, request: Request):
     if not _can_view_coach_note(user, note):
         raise HTTPException(404, "Thumbnail not found")
     thumb = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
+    # Defense-in-depth: refuse to serve a path that escapes VIDEOS_DIR.
+    # Same response shape as the missing-file branch so a viewer can't
+    # use a probing match_id to distinguish containment-fail from
+    # not-generated-yet.
+    if not _thumb_path_within_videos_dir(thumb):
+        raise HTTPException(404, "Thumbnail not found")
     if not thumb.is_file():
         raise HTTPException(404, "Thumbnail not generated yet")
+    # Match `serve_thumbnail`'s caching policy exactly: revalidate every
+    # request via mtime ETag so a coach who calls /thumbnail/regenerate
+    # sees the new JPEG immediately on the next browser refresh, while
+    # cached copies are still served cheaply when the file is unchanged.
+    # Crucially this is NOT `Cache-Control: public` — the response is
+    # access-controlled per-viewer (private notes are coach-only,
+    # player-tagged notes only reach linked family) so a shared cache
+    # must NOT be allowed to replay it across users.
+    mtime = int(thumb.stat().st_mtime)
     return FileResponse(
         str(thumb),
         media_type="image/jpeg",
         headers={
-            # Same caching policy as match-level `thumb.jpg` — the file
-            # name is stable until the coach regenerates, and we don't
-            # currently version-bust by mtime. A short max-age is enough
-            # to absorb a thumbnail rail re-render without making
-            # regeneration take effect on the next refresh hard.
-            "Cache-Control": "public, max-age=300, must-revalidate",
+            "Cache-Control": "no-cache, must-revalidate",
+            "ETag": f'"{mtime}"',
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -1796,6 +1852,15 @@ async def coach_regenerate_note_thumbnail(note_id: int, request: Request):
         raise HTTPException(404, "Note not found")
     src = _slot_mp4_path(note["match_id"], note.get("slot") or "full")
     dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
+    # Defense-in-depth: never write outside VIDEOS_DIR. Returns the
+    # same `generated: false` shape as a successful-but-no-source run
+    # so callers handle the result identically.
+    if not _thumb_path_within_videos_dir(dest):
+        _log.setup("replay").warning(
+            "Coach-note thumbnail regenerate skipped for note %s: dest path escapes VIDEOS_DIR (%s)",
+            note_id, dest,
+        )
+        return {"ok": True, "generated": False}
     try:
         ok = await _media.generate_thumbnail_at_timestamp(
             src, dest, timestamp_s=float(note.get("timestamp_seconds") or 0)
