@@ -882,25 +882,27 @@ export const coachingMixin = {
         const initialNoteType = note?.note_type || DEFAULT_NOTE_TYPE;
         const toneBox = body.querySelector('[data-field="note_type"]');
         toneBox.dataset.value = initialNoteType;
+        // Phase 4d (issue #77): the Notes-tab tone chips need the same
+        // WAI-ARIA keyboard behavior as the Coach Review composer. The
+        // markup intentionally matches the composer's chip set so the
+        // shared `_setupToneRadiogroup` helper can drive it.
         toneBox.innerHTML = NOTE_TYPES.map(([v, l, glyph]) => `
-            <button type="button" class="coach-review-tone-btn${v === initialNoteType ? ' is-active' : ''}" role="radio" aria-checked="${v === initialNoteType}" data-note-type="${v}" title="${this.esc(l)}">
+            <button type="button" class="coach-review-tone-btn${v === initialNoteType ? ' is-active' : ''}" role="radio" aria-checked="${v === initialNoteType}" tabindex="${v === initialNoteType ? '0' : '-1'}" data-note-type="${v}" title="${this.esc(l)}">
                 <span class="coach-review-tone-glyph" aria-hidden="true">${glyph}</span>
                 <span class="coach-review-tone-label">${this.esc(l)}</span>
             </button>
         `).join('');
-        // Wire the tone chips inside the modal — scoped to the cloned
-        // body so it doesn't fight the Review composer's group state.
-        toneBox.querySelectorAll('.coach-review-tone-btn').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const v = btn.dataset.noteType;
-                toneBox.dataset.value = v;
-                toneBox.querySelectorAll('.coach-review-tone-btn').forEach((b) => {
-                    const active = b === btn;
-                    b.classList.toggle('is-active', active);
-                    b.setAttribute('aria-checked', active ? 'true' : 'false');
-                });
-            });
+        // Wire click + keyboard. Click delegation is added here so the
+        // modal's chip clicks update the group state without the
+        // composer's inline `onclick="app.setCoachReviewNoteType(...)"`
+        // attribute (which would target the WRONG group — the composer's
+        // — if the modal is open at the same time).
+        toneBox.addEventListener('click', (event) => {
+            const btn = event.target.closest('.coach-review-tone-btn');
+            if (!btn || !toneBox.contains(btn)) return;
+            this._syncToneRadiogroup(toneBox, btn.dataset.noteType);
         });
+        this._setupToneRadiogroup(toneBox);
         body.querySelector('[data-field="player_summary"]').value = note?.player_summary || '';
         body.querySelector('[data-field="what_happened"]').value = note?.what_happened || '';
         body.querySelector('[data-field="why_it_matters"]').value = note?.why_it_matters || '';
@@ -954,8 +956,28 @@ export const coachingMixin = {
         });
         if (!result) return;
         try {
-            if (note) await this.updateCoachNote(note.id, result);
-            else await this.createCoachNote(result);
+            if (note) {
+                // Phase 4d (incidental fix needed for #77 manual QA):
+                // `UpdateCoachingNoteRequest` is `extra="forbid"` and
+                // does NOT accept `match_id` or `slot` (rebinding a
+                // saved note to a different match/slot would silently
+                // invalidate timestamps and drawings, so the backend
+                // rejects them outright). The composer modal renders
+                // those selects on edit anyway so the coach can see
+                // the note's anchor; we just strip them before PATCH
+                // so the request matches the server's allow-list. Same
+                // pattern as the clip composer's PATCH path
+                // (openCoachClipModal). Without this strip, EVERY note
+                // edit (incl. the keyboard-driven note_type changes
+                // this PR enables) returns 422 and the coach's edits
+                // silently disappear.
+                const patchBody = { ...result };
+                delete patchBody.match_id;
+                delete patchBody.slot;
+                await this.updateCoachNote(note.id, patchBody);
+            } else {
+                await this.createCoachNote(result);
+            }
             this.showSuccess(note ? 'Note updated.' : 'Note saved.');
             await this.renderCoachWorkspace();
         } catch (err) { this.showError(err.message); }
@@ -2201,7 +2223,7 @@ export const coachingMixin = {
             </select>
             <div id="coach-review-tone" class="coach-review-tone" role="radiogroup" aria-label="Note tone">
                 ${NOTE_TYPES.map(([v, l, glyph]) => `
-                    <button type="button" class="coach-review-tone-btn${v === DEFAULT_NOTE_TYPE ? ' is-active' : ''}" role="radio" aria-checked="${v === DEFAULT_NOTE_TYPE}" data-note-type="${v}" title="${this.esc(l)}" onclick="app.setCoachReviewNoteType('${v}')">
+                    <button type="button" class="coach-review-tone-btn${v === DEFAULT_NOTE_TYPE ? ' is-active' : ''}" role="radio" aria-checked="${v === DEFAULT_NOTE_TYPE}" tabindex="${v === DEFAULT_NOTE_TYPE ? '0' : '-1'}" data-note-type="${v}" title="${this.esc(l)}" onclick="app.setCoachReviewNoteType('${v}')">
                         <span class="coach-review-tone-glyph" aria-hidden="true">${glyph}</span>
                         <span class="coach-review-tone-label">${this.esc(l)}</span>
                     </button>
@@ -2256,7 +2278,18 @@ export const coachingMixin = {
         // modal path (which seeds in openCoachNoteModal()) and avoids
         // landmines for any future reader that drops the fallback.
         const toneEl = document.getElementById('coach-review-tone');
-        if (toneEl) toneEl.dataset.value = DEFAULT_NOTE_TYPE;
+        if (toneEl) {
+            toneEl.dataset.value = DEFAULT_NOTE_TYPE;
+            // Phase 4d (issue #77): wire WAI-ARIA-style keyboard
+            // navigation. `_setupToneRadiogroup` is idempotent per-group
+            // — a second `renderCoachReviewForm` call on the same DOM
+            // re-applies the roving tabindex but doesn't double-bind
+            // the keydown listener. Click selection still flows through
+            // the inline `onclick="app.setCoachReviewNoteType(...)"`
+            // attrs in the rendered markup; the keyboard path here
+            // simply funnels through the same `_syncToneRadiogroup`.
+            this._setupToneRadiogroup(toneEl);
+        }
         // Phase 2: enable the Apply button only when a template is
         // selected. Listening on `change` here (vs. inline onchange in
         // the markup) keeps the selector markup simple — and the
@@ -2275,16 +2308,142 @@ export const coachingMixin = {
     /** Click handler for the tone-chip group. Toggles `is-active` /
      *  `aria-checked` so the chip layer behaves like a real radio
      *  group, and stashes the value on the container's dataset so
-     *  `saveReviewNote()` can read it without a redundant DOM scan. */
+     *  `saveReviewNote()` can read it without a redundant DOM scan.
+     *  Mouse / touch / inline `onclick` handlers all flow through
+     *  here. The keyboard path also calls this — see
+     *  `_setupToneRadiogroup` below. */
     setCoachReviewNoteType(value) {
         const group = document.getElementById('coach-review-tone');
         if (!group) return;
+        this._syncToneRadiogroup(group, value);
+    },
+
+    // ===== Phase 4d (issue #77) — tone radiogroup keyboard a11y =====
+    //
+    // Two surfaces render a tone radiogroup with the same markup:
+    //   1. Coach Review composer (`#coach-review-tone`)
+    //   2. Notes-tab Edit modal (`[data-field="note_type"]` inside
+    //      the cloned `coach-note-form-template`)
+    //
+    // The helpers below implement WAI-ARIA-style keyboard behavior
+    // ONCE for both:
+    //   - roving `tabindex` (only the active chip is in the tab order)
+    //   - ArrowRight / ArrowDown → next; ArrowLeft / ArrowUp → previous
+    //   - Home → first; End → last
+    //   - Space / Enter → select the focused chip
+    //   - selection changes flip `is-active`, `aria-checked`,
+    //     `tabindex`, and the group's `dataset.value`
+    //   - keyboard cycling inside the group does NOT scrub the
+    //     Coach Review video (preserved via `_coachShortcutShouldSkip`)
+    //
+    // Mouse / touch / existing inline `onclick="app.setCoachReviewNoteType(...)"`
+    // wiring is unchanged — both paths converge on
+    // `_syncToneRadiogroup(group, value)`.
+
+    /** Apply the roving-tabindex / aria-checked / is-active state for
+     *  the requested value across all chips in the group. Does NOT
+     *  move focus — callers that want to focus the new active chip
+     *  pass `{ focusActive: true }`. Validates `value` against the
+     *  static `NOTE_TYPES` whitelist; unknown values are ignored
+     *  (keeps the dataset consistent with the backend enum). */
+    _syncToneRadiogroup(group, value, { focusActive = false } = {}) {
+        if (!group) return;
         if (!NOTE_TYPES.some(([v]) => v === value)) return;
         group.dataset.value = value;
+        let activeBtn = null;
         group.querySelectorAll('.coach-review-tone-btn').forEach((btn) => {
             const active = btn.dataset.noteType === value;
             btn.classList.toggle('is-active', active);
             btn.setAttribute('aria-checked', active ? 'true' : 'false');
+            // Roving tabindex: only the active chip stays in the tab
+            // order. A keyboard user who Tabs into the group lands on
+            // the current selection; arrow keys move WITHIN the group
+            // without leaving it.
+            btn.setAttribute('tabindex', active ? '0' : '-1');
+            if (active) activeBtn = btn;
+        });
+        if (focusActive && activeBtn) {
+            try { activeBtn.focus(); } catch { /* ignore */ }
+        }
+    },
+
+    /** Wire keyboard handling on a tone radiogroup container. Idempotent
+     *  per-group via a `data-tone-wired` marker so repeated calls
+     *  (e.g. `renderCoachReviewForm` re-runs after an input change) do
+     *  not stack listeners. Pass `onChange(value)` to be notified when
+     *  the user picks a new tone — the helper itself only updates the
+     *  DOM state via `_syncToneRadiogroup`; the caller decides what to
+     *  do with the value (Coach Review composer ignores it; the
+     *  Notes-tab modal stores it and reads on submit, but the dataset
+     *  is the authoritative source).
+     *
+     *  Click handling already works via the inline `onclick=` attrs
+     *  (Coach Review) or the per-button click listener (modal). The
+     *  helper only ADDS keyboard handling — does not interfere with
+     *  the existing click path. */
+    _setupToneRadiogroup(group, onChange = null) {
+        if (!group) return;
+        // Idempotency guard: a second call against the same group is a
+        // no-op except for re-applying the roving tabindex (caller may
+        // have re-rendered chips inside).
+        const initialValue = group.dataset.value
+            || group.querySelector('.coach-review-tone-btn.is-active')?.dataset.noteType
+            || DEFAULT_NOTE_TYPE;
+        this._syncToneRadiogroup(group, initialValue);
+        if (group.dataset.toneWired === '1') return;
+        group.dataset.toneWired = '1';
+
+        const select = (newValue, focusActive = true) => {
+            this._syncToneRadiogroup(group, newValue, { focusActive });
+            if (typeof onChange === 'function') onChange(newValue);
+        };
+
+        group.addEventListener('keydown', (event) => {
+            const target = event.target;
+            if (!target || !target.classList?.contains('coach-review-tone-btn')) return;
+            const buttons = Array.from(group.querySelectorAll('.coach-review-tone-btn'))
+                .filter((b) => !b.disabled && b.offsetParent !== null);
+            if (!buttons.length) return;
+            const currentIdx = buttons.indexOf(target);
+            let nextIdx = currentIdx;
+            switch (event.key) {
+                case 'ArrowRight':
+                case 'ArrowDown':
+                    nextIdx = (currentIdx + 1) % buttons.length;
+                    break;
+                case 'ArrowLeft':
+                case 'ArrowUp':
+                    nextIdx = (currentIdx - 1 + buttons.length) % buttons.length;
+                    break;
+                case 'Home':
+                    nextIdx = 0;
+                    break;
+                case 'End':
+                    nextIdx = buttons.length - 1;
+                    break;
+                case ' ':
+                case 'Enter':
+                    // Space / Enter on a chip selects it. Most of the
+                    // time the chip is already active (Tab landed on it
+                    // via roving tabindex), so this is a no-op — but a
+                    // user who Arrow-moved without selecting still
+                    // benefits from explicit confirm.
+                    event.preventDefault();
+                    select(target.dataset.noteType, true);
+                    return;
+                default:
+                    return;
+            }
+            event.preventDefault();
+            // `_coachShortcutShouldSkip` already prevents the Coach
+            // Review keydown handler from firing while focus is inside
+            // the group (the `closest('[role="radiogroup"]')` test
+            // handles both surfaces). Stop propagation here as a
+            // belt-and-braces guard so any future keydown handler at a
+            // higher scope also doesn't see these arrow events.
+            event.stopPropagation();
+            const next = buttons[nextIdx];
+            select(next.dataset.noteType, true);
         });
     },
 
