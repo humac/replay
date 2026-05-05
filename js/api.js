@@ -509,13 +509,29 @@ export const apiMixin = {
     // (already wired in Phase 4a's `loadMyFeedback`), so there is NO
     // viewer-only clip GET helper here — that endpoint is coach/admin
     // only by design.
+    //
+    // **Phase 4c (PR #96 review fix-up — issue #97)**: all five
+    // helpers now return a normalized shape, consistent with each
+    // other AND with the rest of `js/api.js`:
+    //   - listCoachClips()    -> Array<clip>      (the `clips` array)
+    //   - getCoachClip(id)    -> clip             (single clip object)
+    //   - createCoachClip()   -> clip             (the new clip)
+    //   - updateCoachClip()   -> clip             (the updated clip)
+    //   - deleteCoachClip()   -> { ok: true }     (envelope — no clip body)
+    //
+    // Backend response shape is unchanged (`{ ok: true, clip: {...} }`
+    // / `{ ok: true, clips: [...] }`); the helpers just unwrap the
+    // payload field so callers don't have to remember
+    // `result.clip.title` vs `result.title`. Existing call sites in
+    // `js/coaching.js` discard the return value (just `await`), so
+    // unwrapping is safe.
 
     async listCoachClips(matchId = null) {
         const suffix = matchId ? `?match_id=${encodeURIComponent(matchId)}` : '';
         const resp = await this.authFetch(`/api/coach/clips${suffix}`, {
             headers: this.getAuthHeaders(),
         });
-        if (!resp.ok) throw new Error('Failed to load coaching clips');
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load coaching clips');
         return (await resp.json()).clips || [];
     },
 
@@ -524,7 +540,7 @@ export const apiMixin = {
             headers: this.getAuthHeaders(),
         });
         if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load clip');
-        return (await resp.json()).clip;
+        return (await resp.json()).clip || null;
     },
 
     async createCoachClip(data) {
@@ -534,7 +550,7 @@ export const apiMixin = {
             body: JSON.stringify(data),
         });
         if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save coaching clip');
-        return resp.json();
+        return (await resp.json()).clip || null;
     },
 
     async updateCoachClip(clipId, data) {
@@ -544,7 +560,7 @@ export const apiMixin = {
             body: JSON.stringify(data),
         });
         if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update coaching clip');
-        return resp.json();
+        return (await resp.json()).clip || null;
     },
 
     async deleteCoachClip(clipId) {
@@ -552,7 +568,7 @@ export const apiMixin = {
             method: 'DELETE',
             headers: this.getAuthHeaders(),
         });
-        if (!resp.ok) throw new Error('Failed to delete coaching clip');
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete coaching clip');
         return resp.json();
     },
 
