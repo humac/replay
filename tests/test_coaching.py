@@ -816,8 +816,8 @@ async def test_thumbnail_for_playlist_private_item_blocked_via_standalone_endpoi
     rule, see `test_visible_playlist_grants_access_to_private_items`),
     the standalone `GET /api/coach/notes/{id}/thumbnail` does NOT
     surface the private note's thumbnail. This matches the existing
-    `/api/my-feedback/notes` behaviour, which only exposes private
-    items via `playlists[].items[]`, not as standalone notes.
+    `/api/my-feedback` behaviour, which only exposes private items
+    via `playlists[].items[]`, not as standalone notes.
 
     A future Phase 3b may add a `?playlist_id=X` query parameter that
     accepts the playlist-context boundary; this PR scopes that out
@@ -873,6 +873,12 @@ async def test_thumbnail_create_does_not_break_when_generator_raises(client, aut
     }, headers=auth_headers)
     assert note_resp.status_code == 200, note_resp.text
     note_id = note_resp.json()["note"]["id"]
+
+    # Drain the spawned `_spawn_coach_note_thumbnail` task explicitly
+    # so we're not relying on the follow-up GET to incidentally yield
+    # the loop. Once the helper has run, the RuntimeError will have
+    # been caught and no file written.
+    await _drain_background_tasks()
 
     # The thumbnail endpoint returns 404 because the spawn helper
     # caught the RuntimeError (so no file was written).
