@@ -1,55 +1,48 @@
 # Phase 3b — Coach-note thumbnail screenshots
 
-This directory holds the visual-regression screenshots for the
-Phase 3b UI integration. They are captured **manually** from a running
-instance because the automated test path uses stubbed JPEGs (1×1 pixel)
-that aren't useful for visual review.
+Captured against the `replay-dev` Claude Preview environment on commit
+`e9c0448` (Phase 3b branch) with a 2-minute SMPTE-test-pattern source MP4.
+The color-bar imagery in the tiles is from that test source — in
+production the tiles show real frames extracted by ffmpeg at each
+note's timestamp.
 
-## How to capture
+## Inventory
 
-1. Boot the app locally (Docker compose or `python server.py`) with a
-   seeded dataset that contains:
-   - At least one full match with a finished `full.mp4` so the source
-     video exists.
-   - At least one two-half match (`first_half.mp4` + `second_half.mp4`).
-   - At least 5 coaching notes spread across 2–3 matches so the
-     timeline rail and Notes list are interesting.
-   - At least 1 review playlist with 3+ notes so the playlist row's
-     stacked thumbnail strip and `+N` overflow chip both appear.
-   - At least 1 viewer linked to a player who is tagged on a
-     `visibility="player"` note.
-   - At least 1 `visibility="private"` note that the viewer can NOT see
-     (so the "missing-thumbnail placeholder" screenshot has a real
-     example to capture).
-2. From a coach account, open `/coach?tab=notes`, `/coach?tab=playlists`,
-   `/coach?tab=review&match=<id>`. Capture each surface in dark mode
-   and again in light mode (Settings → toggle theme).
-3. From a viewer account linked to a player, open `/feedback?tab=notes`
-   and `/feedback?tab=playlists`. Capture desktop (≥ 1280 px) and
-   mobile (390 px DevTools emulation).
-4. Save as PNG into this directory using the filenames listed below.
-
-## Files expected
-
-| Filename | What it should show |
+| File | What it shows |
 |---|---|
-| `coach-notes-list-dark.png` | Coach Notes tab with thumbnail tiles + ↻ Regenerate action visible |
-| `coach-notes-list-light.png` | Same surface in light mode |
-| `coach-review-rail.png` | Coach Review with the timeline chip rail showing thumbnails on chips |
-| `coach-playlists-list.png` | Coach Playlists tab with stacked thumbnail strips + `+N` overflow chip |
-| `feedback-notes-desktop.png` | My Feedback Notes cards with thumbnail tiles, desktop |
-| `feedback-notes-mobile.png` | Same surface at 390 px (thumbnail stacks on top) |
-| `feedback-playlists-desktop.png` | My Feedback Playlists with cover thumbnails |
-| `feedback-playlist-session-rail.png` | Focused playlist player modal with active-item thumbnail in the rail |
-| `placeholder-state.png` | A surface where a note has no thumbnail (placeholder visible) — coach view of a note created before its match's video uploaded |
+| `coach-notes-list-dark.png` | Coach Notes tab in dark mode — every row has a 120×68 thumbnail tile with timestamp chip + ↻ Regenerate action button |
+| `coach-notes-list-light.png` | Same surface in light mode — placeholder + tile + chip all themed correctly |
+| `coach-review-rail.png` | Coach Review cockpit at full height — video + telestrator + timeline chip rail with thumbnails |
+| `coach-review-rail-zoom.png` | Tight zoom on the timeline rail showing thumbnail + timestamp + player indicator + category dot + truncated title for each chip |
+| `coach-playlists-list.png` | Coach Playlists tab full-page — three playlists with mixed thumbnail-strip + placeholder states |
+| `coach-playlists-zoom.png` | Tight zoom on the playlist rows — "Match recap" shows a stacked 3-tile strip; "Player #7 development" shows a single-tile strip; "First-half tactical lessons" shows the placeholder strip (notes pre-date the seeded video) |
+| `feedback-notes-desktop.png` | My Feedback Notes (viewer perspective) — 220px-thumbnail-left + body-right grid, mixing real tiles and a placeholder card |
+| `feedback-notes-mobile.png` | Same surface at 390×844 — thumbnail stacks on top per the 720px breakpoint |
+| `feedback-playlists-desktop.png` | My Feedback Playlists (viewer perspective) — "Match recap" shows the cover thumbnail, "First-half tactical lessons" shows the placeholder |
+| `feedback-playlist-session-rail.png` | Focused playlist player modal mid-session — active-item thumbnail in the rail |
+| `feedback-playlist-session-rail-zoom.png` | Tight zoom on the rail showing the rail-variant tile (80×45) + session metadata + tone pill + player_summary |
+| `placeholder-state.png` | Coach Notes list with a "Demo: thumbnail placeholder" note at top — proves a note created against a match WITHOUT a source video shows the film-strip glyph cleanly next to notes that DO have thumbnails |
 
-## Why these aren't auto-generated
+## How these were captured
 
-The test suite uses a stubbed `_media.generate_thumbnail_at_timestamp`
-that writes a 4-byte `\xff\xd8\xff\xd9` JPEG so file-existence checks
-pass — that's enough to verify the auth/visibility model but produces
-a pure black tile that's useless for reviewing layout.
+- The Phase 3b worktree was hot-reloaded into the `replay-dev` Claude Preview
+  on port 8090 (`/tmp/replay-sprint1-data`) by detaching `HEAD` to the
+  `claude/coaching-thumbnails-phase-3b` commit; uvicorn's `--reload` flag
+  picked up the swap automatically.
+- A 2-minute test-pattern MP4 was generated via `ffmpeg lavfi` and uploaded
+  to one of the existing matches via the chunked-upload API.
+- Six coaching notes (5 visible + 1 private with a coach-only note) were
+  seeded at varied timestamps via `POST /api/coach/notes`. The Phase 3a
+  background generator ran automatically and produced one JPEG per note.
+- A review playlist of 5 notes was created.
+- A viewer account (`phase3b_viewer`) was created and linked as parent of
+  player Alex Park (#7), so the player-only note "Alex – improve first
+  touch direction" surfaces in My Feedback for that account.
+- Screenshots were captured with Playwright in headless Chromium at
+  1440×900 desktop and 390×844 mobile.
 
-A meaningful "before/after" capture pass requires a real ffmpeg
-extracting actual video frames, which means a real seeded dataset that
-the CI environment doesn't provide.
+## Re-capturing on a real environment
+
+Once Phase 3b is deployed against real soccer footage, re-run a similar
+seeding pass and re-capture for the README — the layout/CSS contract is
+the same, only the tile imagery changes.
