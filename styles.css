@@ -9270,3 +9270,105 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
  * block. Existing `.feedback-rail-info` is the next sibling; rely on
  * the rail container's flex layout. */
 .feedback-rail-info { min-width: 0; }
+
+/* ==========================================================================
+ * Phase 4b — first-class coaching clips
+ *
+ * Clip-specific UI primitives. Most layout reuses existing surfaces
+ * (`coach-row`, `feedback-card`, the focused feedback player modal,
+ * the `coach-thumb` tile) so the new tab/cards inherit dark + light
+ * theming, mobile breakpoints, and a11y patterns without duplication.
+ * ========================================================================== */
+
+/* "Save Clip" picker-bar button. Sits next to "Save Note"; uses the
+ * secondary tier so the primary visual weight stays on note save. */
+.coach-review-picker-save-clip {
+    flex: 0 0 auto;
+}
+
+/* Duration display inside the clip composer. Goes red when the
+ * window invariant fails (end <= start) or the duration cap is
+ * exceeded, so a coach who's typing the wrong number sees the
+ * problem before clicking Save. */
+.coach-clip-duration {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    padding: 0 0.6rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: var(--text-main);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+}
+[data-theme="light"] .coach-clip-duration {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+.coach-clip-duration--invalid {
+    color: #f43f5e;
+    border-color: rgba(244, 63, 94, 0.45);
+    background: rgba(244, 63, 94, 0.08);
+}
+
+/* "From note #N" pill that appears on edit when a clip has a
+ * `source_note_id`. Visually similar to the visibility chips so the
+ * coach instantly recognises this clip carries a snapshot drawing
+ * from the linked note. */
+.coach-clip-source-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    color: var(--text-main);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+}
+[data-theme="light"] .coach-clip-source-pill {
+    background: rgba(56, 189, 248, 0.12);
+    border-color: rgba(56, 189, 248, 0.4);
+}
+.coach-clip-source-row {
+    margin-top: 0.5rem;
+}
+
+/* My Feedback clip card. Inherits the existing `feedback-card`
+ * + `feedback-card--with-thumb` grid (220 px thumb + body), but
+ * adds a light "Clip · {category}" pill so the player recognises
+ * this isn't a single-moment note. */
+.feedback-clip-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    color: var(--text-main);
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: capitalize;
+    letter-spacing: 0.02em;
+}
+[data-theme="light"] .feedback-clip-pill {
+    background: rgba(168, 85, 247, 0.12);
+    border-color: rgba(168, 85, 247, 0.45);
+}
+
+/* PR #96 review fix — small "fixed on edit" hint shown next to the
+ * Match + Slot selects in the clip composer modal when editing an
+ * existing clip. Backend's `UpdateCoachingClipRequest` is
+ * `extra="forbid"`; rebinding mid-life would silently swap the
+ * captured drawing snapshot anyway, so the controls are disabled and
+ * this hint surfaces the constraint. */
+.coach-clip-field-hint {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-style: italic;
+    line-height: 1.3;
+}
