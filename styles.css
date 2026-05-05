@@ -9357,3 +9357,18 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     background: rgba(168, 85, 247, 0.12);
     border-color: rgba(168, 85, 247, 0.45);
 }
+
+/* PR #96 review fix — small "fixed on edit" hint shown next to the
+ * Match + Slot selects in the clip composer modal when editing an
+ * existing clip. Backend's `UpdateCoachingClipRequest` is
+ * `extra="forbid"`; rebinding mid-life would silently swap the
+ * captured drawing snapshot anyway, so the controls are disabled and
+ * this hint surfaces the constraint. */
+.coach-clip-field-hint {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-style: italic;
+    line-height: 1.3;
+}

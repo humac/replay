@@ -1285,6 +1285,38 @@ export const coachingMixin = {
         const slotSel = body.querySelector('[data-field="slot"]');
         slotSel.value = clip?.slot || seed?.slot || 'full';
 
+        // PR #96 review fix: on EDIT, disable Match + Slot. The
+        // backend's `UpdateCoachingClipRequest` is `extra="forbid"` and
+        // the previous PATCH path silently stripped these fields,
+        // causing the coach's edits to disappear without explanation.
+        // Disabling the controls makes the constraint visible. Both
+        // the visual class and `aria-disabled` keep the controls in
+        // tab order with focus rings (`disabled` would also block them
+        // — that's the right behavior here, since changes are not
+        // accepted by the server). On CREATE the controls stay
+        // editable as before.
+        if (clip) {
+            matchSel.disabled = true;
+            slotSel.disabled = true;
+            // Append a tiny "fixed on edit" hint so the coach knows
+            // why these dropdowns are greyed out without having to
+            // experiment.
+            const matchHint = matchSel.parentElement;
+            const slotHint = slotSel.parentElement;
+            const fixedNote = document.createElement('span');
+            fixedNote.className = 'coach-clip-field-hint';
+            fixedNote.textContent = 'Fixed on edit — create a new clip to change.';
+            if (matchHint && !matchHint.querySelector('.coach-clip-field-hint')) {
+                matchHint.appendChild(fixedNote);
+            }
+            // The slot dropdown gets its own copy via cloneNode so
+            // both fields are equally explanatory; one node would only
+            // attach to the first parent.
+            if (slotHint && !slotHint.querySelector('.coach-clip-field-hint')) {
+                slotHint.appendChild(fixedNote.cloneNode(true));
+            }
+        }
+
         body.querySelector('[data-field="title"]').value = clip?.title || '';
         body.querySelector('[data-field="visibility"]').value = clip?.visibility || 'private';
         body.querySelector('[data-field="description"]').value = clip?.description || '';
@@ -3634,6 +3666,18 @@ export const coachingMixin = {
                     + `(${this._clipDurationLabel(clip)})`;
                 body.querySelector('[data-field="body"]').textContent = clip.description || '';
                 this._loadFeedbackVideoForClip(clip);
+                // PR #96 review fix: clips are not review-trackable
+                // (`coaching_reviews` has no `clip_id` column today),
+                // so hiding the "Mark reviewed" CTA in clip mode is
+                // honest. The Cancel button is relabeled to "Close" by
+                // the caller — that becomes the only modal action,
+                // which is the correct UX for a watch-only surface.
+                // Walk up to the modal card from the body to find the
+                // confirm button, since `body` is the cloned template
+                // and `.app-modal-confirm` lives on the modal shell.
+                const modalCard = body.closest('.app-modal-card');
+                const confirmBtn = modalCard?.querySelector('.app-modal-confirm');
+                if (confirmBtn) confirmBtn.hidden = true;
             }
         };
 
@@ -3668,7 +3712,17 @@ export const coachingMixin = {
     /** Phase 4b — load the clip's source match video, seek to
      *  `start_seconds`, and arm a `timeupdate` watcher that pauses at
      *  `end_seconds`. No MP4 export, no segment download — pure
-     *  seek-based playback against the existing match HLS. */
+     *  seek-based playback against the existing match HLS.
+     *
+     *  Replay-after-end (PR #96 review fix): once the playhead reaches
+     *  `end_seconds` we pause + snap to the boundary AND set a
+     *  `clipAtEnd` flag. The next `play` event on the video element
+     *  reads that flag and seeks back to `start_seconds`, so the
+     *  player gets a from-the-start replay instead of immediately
+     *  re-pausing on the next monitor tick. The flag is also reset on
+     *  any user-initiated seek that lands strictly before the end
+     *  boundary (so a manual scrub-back-and-play behaves the same as
+     *  a fresh playthrough). */
     async _loadFeedbackVideoForClip(clip) {
         const video = document.getElementById('feedback-player-video');
         if (!video) return;
@@ -3686,13 +3740,12 @@ export const coachingMixin = {
 
         const startTime = Math.max(0, Number(clip.start_seconds || 0));
         const endTime = Math.max(startTime + 0.5, Number(clip.end_seconds || 0));
-        // Track the clip in the modal session so the timeupdate
-        // watcher can read start/end without scope leaks. `_stopClipMonitor`
-        // tears the watcher down on cleanup.
-        if (this._feedbackPlayer) {
-            this._feedbackPlayer.clipStart = startTime;
-            this._feedbackPlayer.clipEnd = endTime;
-        }
+
+        // Tear down any prior clip monitor BEFORE wiring the new one.
+        // This also resets `clipAtEnd` for the new session — opening a
+        // fresh clip never inherits an end-of-clip state from the
+        // previous one.
+        this._stopClipMonitor();
 
         const onLoaded = () => {
             video.removeEventListener('loadedmetadata', onLoaded);
@@ -3703,48 +3756,107 @@ export const coachingMixin = {
         };
         video.addEventListener('loadedmetadata', onLoaded);
 
-        // The end-of-window watcher: 200 ms tick is enough — videos
-        // tick `timeupdate` ~4×/s natively; we use an interval too as
-        // belt-and-braces because some HLS sources throttle
-        // `timeupdate` during seeks.
-        this._stopClipMonitor();
+        // Mutable session state for this clip. `_clipMonitor` is the
+        // single source of truth — both the listeners and the fallback
+        // timer read from it via the `monitor` closure, and
+        // `_stopClipMonitor` clears every reference on cleanup so a
+        // closed modal can't leak event handlers or the interval.
+        const session = {
+            videoEl: video,
+            startTime,
+            endTime,
+            clipAtEnd: false,
+            // Listener references — needed so `_stopClipMonitor` can
+            // remove the SAME function objects we registered.
+            timeupdate: null,
+            play: null,
+            seeked: null,
+            intervalId: 0,
+        };
+
         const monitor = () => {
             if (!video.isConnected) { this._stopClipMonitor(); return; }
-            // If the player scrubbed past `end_seconds`, pause and
-            // snap back to the boundary so a quick re-press of Play
-            // re-runs the last frame instead of jumping to wherever
-            // they were. Tolerance of +0.05s avoids fighting natural
-            // tick variance.
+            // The session may have been replaced (or cleared) by a
+            // teardown that fired between intervals. Bail gracefully
+            // in that case so we never act on a torn-down clip.
+            if (this._clipMonitor !== session) return;
+            // If the playhead crosses `end_seconds`, pause + snap to
+            // the boundary and flag the at-end state. The flag is the
+            // signal the `play` listener uses to know it must rewind
+            // before allowing playback to continue (PR #96 review fix
+            // — without this, pressing Play would immediately re-fire
+            // this same condition and re-pause).
             if (video.currentTime >= endTime - 0.05 && !video.paused) {
                 video.pause();
                 video.currentTime = endTime;
+                session.clipAtEnd = true;
             }
         };
-        // Both: a `timeupdate` listener (high-resolution during play)
-        // and a low-frequency fallback timer (catches edge cases when
-        // the source throttles the event during seeks / buffer
-        // stalls).
-        const onTimeUpdate = monitor;
-        video.addEventListener('timeupdate', onTimeUpdate);
-        const intervalId = window.setInterval(monitor, 250);
-        this._clipMonitor = {
-            videoEl: video,
-            timeupdate: onTimeUpdate,
-            intervalId,
+
+        // On `play`: if we're at the end boundary (either via the
+        // pause-snap above, or the user manually scrubbed past), rewind
+        // to `start_seconds` so the next playback frame is from the
+        // beginning of the clip instead of from the locked end position.
+        // Avoids the recursive pause/play loop that the previous
+        // implementation had.
+        const onPlay = () => {
+            if (this._clipMonitor !== session) return;
+            // `clipAtEnd` covers the snap-paused case; the
+            // `currentTime >= endTime` half covers a user who
+            // manually scrubbed the timeline past `endTime` and then
+            // hit Play — same outcome either way: rewind to start.
+            if (session.clipAtEnd || video.currentTime >= endTime - 0.05) {
+                session.clipAtEnd = false;
+                video.currentTime = startTime;
+            }
         };
+
+        // On `seeked`: if the user manually scrubbed BACKWARD to a
+        // time strictly before `end_seconds`, clear the at-end flag so
+        // playback proceeds normally. Without this, a user who scrubs
+        // back from the boundary would still be in `clipAtEnd === true`
+        // state, and the next play event would yank them all the way
+        // back to `startTime` — surprising. Tolerance of 0.05s mirrors
+        // the boundary check above.
+        const onSeeked = () => {
+            if (this._clipMonitor !== session) return;
+            if (video.currentTime < endTime - 0.05) {
+                session.clipAtEnd = false;
+            }
+        };
+
+        session.timeupdate = monitor;
+        session.play = onPlay;
+        session.seeked = onSeeked;
+        video.addEventListener('timeupdate', session.timeupdate);
+        video.addEventListener('play', session.play);
+        video.addEventListener('seeked', session.seeked);
+        // Belt-and-braces fallback timer: some HLS sources throttle
+        // `timeupdate` during seeks / buffer stalls. 250 ms is fine —
+        // a clip's end boundary is enforced cooperatively, not
+        // sample-accurately.
+        session.intervalId = window.setInterval(monitor, 250);
+        this._clipMonitor = session;
 
         this._startFeedbackHeartbeat(clip.match_id, clip.slot, video);
     },
 
     /** Tear down the clip end-of-window watcher. Safe to call when
      *  the modal isn't in clip mode — short-circuits on missing
-     *  state. Called by `cleanup` inside `openFeedbackPlayer`. */
+     *  state. Called by `cleanup` inside `openFeedbackPlayer` and at
+     *  the top of `_loadFeedbackVideoForClip` so a fresh clip session
+     *  never inherits the previous one's listeners or `clipAtEnd`
+     *  flag. */
     _stopClipMonitor() {
         const m = this._clipMonitor;
         if (!m) return;
         try {
-            m.videoEl?.removeEventListener('timeupdate', m.timeupdate);
-            window.clearInterval(m.intervalId);
+            if (m.videoEl) {
+                if (m.timeupdate) m.videoEl.removeEventListener('timeupdate', m.timeupdate);
+                if (m.play) m.videoEl.removeEventListener('play', m.play);
+                if (m.seeked) m.videoEl.removeEventListener('seeked', m.seeked);
+            }
+            if (m.intervalId) window.clearInterval(m.intervalId);
         } catch { /* ignore */ }
         this._clipMonitor = null;
     },
