@@ -383,19 +383,27 @@ export const apiMixin = {
     // ===== COACHING =====
     async loadCoachBundle(matchId = null) {
         const suffix = matchId ? `?match_id=${encodeURIComponent(matchId)}` : '';
-        const [playersResp, notesResp, playlistsResp, users] = await Promise.all([
+        // Phase 4b: also fetch /api/coach/clips so the new Coach > Clips
+        // sub-tab + the Save-clip control in Coach Review can render
+        // without an extra network round-trip on every tab switch. The
+        // clips endpoint is the same role-gated surface as notes /
+        // playlists (PR #95), so this is one more parallel coach-only
+        // GET in the same `Promise.all`.
+        const [playersResp, notesResp, playlistsResp, clipsResp, users] = await Promise.all([
             this.authFetch('/api/coach/players', { headers: this.getAuthHeaders() }),
             this.authFetch(`/api/coach/notes${suffix}`, { headers: this.getAuthHeaders() }),
             this.authFetch('/api/coach/playlists', { headers: this.getAuthHeaders() }),
+            this.authFetch(`/api/coach/clips${suffix}`, { headers: this.getAuthHeaders() }),
             this.authFetch('/api/coach/users', { headers: this.getAuthHeaders() }),
         ]);
-        if (!playersResp.ok || !notesResp.ok || !playlistsResp.ok || !users.ok) {
+        if (!playersResp.ok || !notesResp.ok || !playlistsResp.ok || !clipsResp.ok || !users.ok) {
             throw new Error('Failed to load coaching workspace');
         }
         return {
             players: (await playersResp.json()).players || [],
             notes: (await notesResp.json()).notes || [],
             playlists: (await playlistsResp.json()).playlists || [],
+            clips: (await clipsResp.json()).clips || [],
             users: (await users.json()).users || [],
         };
     },
@@ -485,6 +493,66 @@ export const apiMixin = {
             body: JSON.stringify(data),
         });
         if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update playlist');
+        return resp.json();
+    },
+
+    // ===== Phase 4b — Coaching clip CRUD helpers =====
+    //
+    // Backend endpoints landed in PR #95 (Phase 4a). Helpers here are
+    // thin wrappers that mirror the note / playlist patterns: each
+    // request goes through `authFetch` so 401s drive the login modal,
+    // each error is surfaced via the response body's `detail` so the
+    // coach sees the Pydantic validation message (window invariants,
+    // duration cap, unknown match/player/source-note IDs, etc.).
+    //
+    // For My Feedback the viewer reads clips through `/api/my-feedback`
+    // (already wired in Phase 4a's `loadMyFeedback`), so there is NO
+    // viewer-only clip GET helper here — that endpoint is coach/admin
+    // only by design.
+
+    async listCoachClips(matchId = null) {
+        const suffix = matchId ? `?match_id=${encodeURIComponent(matchId)}` : '';
+        const resp = await this.authFetch(`/api/coach/clips${suffix}`, {
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error('Failed to load coaching clips');
+        return (await resp.json()).clips || [];
+    },
+
+    async getCoachClip(clipId) {
+        const resp = await this.authFetch(`/api/coach/clips/${Number(clipId)}`, {
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load clip');
+        return (await resp.json()).clip;
+    },
+
+    async createCoachClip(data) {
+        const resp = await this.authFetch('/api/coach/clips', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save coaching clip');
+        return resp.json();
+    },
+
+    async updateCoachClip(clipId, data) {
+        const resp = await this.authFetch(`/api/coach/clips/${Number(clipId)}`, {
+            method: 'PATCH',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update coaching clip');
+        return resp.json();
+    },
+
+    async deleteCoachClip(clipId) {
+        const resp = await this.authFetch(`/api/coach/clips/${Number(clipId)}`, {
+            method: 'DELETE',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error('Failed to delete coaching clip');
         return resp.json();
     },
 

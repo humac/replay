@@ -278,6 +278,7 @@
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-coach-tab="roster" onclick="app.setCoachTab('roster')">Roster</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="notes" onclick="app.setCoachTab('notes')">Notes</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="playlists" onclick="app.setCoachTab('playlists')">Playlists</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="clips" onclick="app.setCoachTab('clips')">Clips</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="review" onclick="app.setCoachTab('review')">Review</button>
             </nav>
 
@@ -465,6 +466,22 @@
                 </div>
             </div>
 
+            <!-- Clips sub-tab (Phase 4b — first-class coaching clips) -->
+            <div id="coach-tab-clips" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-clips" hidden>
+                <div class="options-card">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Coaching Clips</h3>
+                            <p class="admin-card-sub">Saved <code>[start, end]</code> moments coaches can share with players. Clips don't generate MP4s — they seek-play the source match. Create one from the <strong>Review</strong> tab's <em>Save clip</em> button or click <em>+ New clip</em> below.</p>
+                        </div>
+                        <div class="admin-panel-actions">
+                            <button type="button" class="btn-head" onclick="app.openCoachClipModal()">+ New clip</button>
+                        </div>
+                    </div>
+                    <div id="coach-clips-list" class="coach-list mt-4"></div>
+                </div>
+            </div>
+
             <!-- Review sub-tab -->
             <div id="coach-tab-review" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-review" hidden>
                 <div class="options-card coach-review-shell">
@@ -486,6 +503,17 @@
                             <span id="coach-review-time" class="coach-review-time-value" aria-label="Current video time">--:--</span>
                         </div>
                         <button type="button" id="coach-review-save-top" class="btn-primary coach-review-picker-save" onclick="app.saveReviewNote()">Save Note</button>
+                        <!-- Phase 4b: Save Clip — opens the clip composer
+                             with start/end pre-filled from the current
+                             video time (currentTime − pre-roll, currentTime
+                             + post-roll). Defaults match the playlist
+                             pre/post-roll convention (5s / 8s). -->
+                        <button type="button"
+                                id="coach-review-save-clip"
+                                class="btn-secondary coach-review-picker-save-clip"
+                                title="Save a clip of the current moment"
+                                aria-label="Save clip from current time"
+                                onclick="app.openClipComposerFromReview()">Save Clip</button>
                         <!-- Sprint 6: focus-mode toggle. Lives at the right of
                              the top bar so it stays one click away whether
                              the inspector is collapsed or visible. -->
@@ -721,6 +749,71 @@
             </div>
         </template>
 
+        <template id="coach-clip-form-template">
+            <div class="coach-mini-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Clip Title</label>
+                        <input type="text" data-field="title" maxlength="160" placeholder="e.g. Press triggers (early)">
+                    </div>
+                    <div class="form-group">
+                        <label>Visibility</label>
+                        <select data-field="visibility">
+                            <option value="private">Private</option>
+                            <option value="team">Team-visible</option>
+                            <option value="player">Player/family</option>
+                            <option value="unlisted">Unlisted link</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Match</label>
+                        <select data-field="match"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Slot</label>
+                        <select data-field="slot">
+                            <option value="full">Full</option>
+                            <option value="first_half">1st Half</option>
+                            <option value="second_half">2nd Half</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Start (seconds)</label>
+                        <input type="number" data-field="startSeconds" min="0" step="0.1" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>End (seconds)</label>
+                        <input type="number" data-field="endSeconds" min="0" step="0.1" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label>Duration</label>
+                        <span class="coach-clip-duration" data-field="durationDisplay">0:10</span>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category</label>
+                        <select data-field="category"></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Tagged Players</label>
+                    <div data-field="players" class="coach-check-list" role="listbox" aria-label="Tagged players"></div>
+                </div>
+                <div class="form-group">
+                    <label>Description (optional)</label>
+                    <textarea data-field="description" rows="3" maxlength="2000" placeholder="Player-friendly description, viewable to whoever can see this clip"></textarea>
+                </div>
+                <div class="form-group coach-clip-source-row" data-field="sourceRow" hidden>
+                    <span class="coach-clip-source-pill" data-field="sourceLabel"></span>
+                </div>
+            </div>
+        </template>
+
         <template id="feedback-player-template">
             <div class="feedback-player">
                 <div class="feedback-player-meta">
@@ -753,18 +846,26 @@
             <nav class="coach-subnav feedback-subnav" role="tablist" aria-label="Feedback sections">
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-feedback-tab="playlists" onclick="app.setFeedbackTab('playlists')">Playlists</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="notes" onclick="app.setFeedbackTab('notes')">Notes</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="clips" onclick="app.setFeedbackTab('clips')">Clips</button>
             </nav>
 
-            <!-- Single-pane card grid: each note/playlist is a self-contained
-                 card. Click "Watch" / "Play session" to open the focused modal
-                 (`feedback-player-template`). Responsive grid: 4 cols @ 1920,
-                 3 @ 1440, 2 @ 1024, 1 @ <= 720. -->
+            <!-- Single-pane card grid: each note/playlist/clip is a self-
+                 contained card. Click "Watch" / "Play session" to open the
+                 focused modal (`feedback-player-template`). Responsive
+                 grid: 4 cols @ 1920, 3 @ 1440, 2 @ 1024, 1 @ <= 720. -->
             <div id="feedback-tab-playlists" class="coach-tab-panel feedback-tab-panel">
                 <div id="feedback-playlists-list" class="feedback-card-grid" aria-label="Playlist sessions"></div>
             </div>
 
             <div id="feedback-tab-notes" class="coach-tab-panel feedback-tab-panel" hidden>
                 <div id="feedback-notes-list" class="feedback-card-grid" aria-label="Coaching notes"></div>
+            </div>
+
+            <!-- Phase 4b: clips visible to this viewer. Server-filtered
+                 via `/api/my-feedback`'s clips[]; private clips never
+                 reach this surface. -->
+            <div id="feedback-tab-clips" class="coach-tab-panel feedback-tab-panel" hidden>
+                <div id="feedback-clips-list" class="feedback-card-grid" aria-label="Coaching clips"></div>
             </div>
         </section>
 

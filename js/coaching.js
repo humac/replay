@@ -40,8 +40,19 @@ const FEEDBACK_NOTE_TYPE_LABELS = {
     individual_goal: 'Individual goal',
 };
 
-const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'review'];
-const VALID_FEEDBACK_TABS = ['playlists', 'notes'];
+const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'review'];
+const VALID_FEEDBACK_TABS = ['playlists', 'notes', 'clips'];
+
+// Phase 4b: pre/post-roll defaults for the Coach Review "Save Clip"
+// affordance. Match the existing playlist defaults so a coach who's
+// used to playlist sessions sees the same windowing behavior on
+// freshly-saved clips. Both can be overridden in the clip modal.
+const COACH_CLIP_DEFAULT_PRE_ROLL = 5;
+const COACH_CLIP_DEFAULT_POST_ROLL = 8;
+// Phase 4a backend MVP cap (enforced by `models._MAX_CLIP_DURATION_SECONDS`).
+// We mirror it client-side so the modal's Save button can short-circuit
+// before the request hits the server.
+const COACH_CLIP_MAX_DURATION_SECONDS = 120;
 
 export const coachingMixin = {
     _coachBundle: null,
@@ -62,6 +73,11 @@ export const coachingMixin = {
     _coachCanvasId: 'coach-drawing-canvas',
     _coachVideoId: 'coach-review-video',
     _feedbackPlayer: null,
+    // Phase 4b: end-of-window watcher for clip playback. Holds a
+    // reference to the timeupdate listener + the fallback interval
+    // so `cleanup()` in `openFeedbackPlayer` can detach them on close.
+    // Null when the focused player isn't in clip mode.
+    _clipMonitor: null,
     // Multi-player formation overlay (Phase 1) — see ROADMAP "Coaching Telestrator".
     // Draft holds the in-progress anchors while the coach is clicking; gets
     // committed to a single drawing object on Done.
@@ -202,6 +218,7 @@ export const coachingMixin = {
         if (name === 'roster') this.renderCoachRoster();
         if (name === 'notes') this.renderCoachNotes();
         if (name === 'playlists') this.renderCoachPlaylists();
+        if (name === 'clips') this.renderCoachClips();
         if (name === 'review') this.renderCoachReview();
         else this.tearDownCoachReview();
     },
@@ -237,6 +254,7 @@ export const coachingMixin = {
             this.renderCoachLinkSelectors();
             this.renderCoachNotes();
             this.renderCoachPlaylists();
+            this.renderCoachClips();
             this.renderCoachReviewPicker();
         } catch (err) {
             this.showError(err.message || 'Could not load coaching workspace.');
@@ -1118,6 +1136,286 @@ export const coachingMixin = {
         const playlist = (this._coachBundle?.playlists || []).find((p) => Number(p.id) === Number(playlistId));
         if (!playlist) return;
         this.openFeedbackPlayer({ mode: 'playlist', playlist, playerSource: 'coach' });
+    },
+
+    // ===== Clips sub-tab (Phase 4b — first-class coaching clips UI) =====
+    //
+    // Backend (PR #95 / Phase 4a):
+    //   - GET    /api/coach/clips
+    //   - GET    /api/coach/clips/{id}
+    //   - POST   /api/coach/clips
+    //   - PATCH  /api/coach/clips/{id}
+    //   - DELETE /api/coach/clips/{id}
+    //   - /api/my-feedback now includes clips[]
+    //
+    // The Coach > Clips tab renders the coach's full clip library.
+    // The Coach > Review tab gets a Save-clip button that opens the
+    // same composer modal pre-filled with [currentTime − pre-roll,
+    // currentTime + post-roll]. Visibility / category / players reuse
+    // the existing note-form selectors for vocabulary parity.
+    //
+    // Clips don't have their own thumbnail in Phase 4b. When a clip
+    // has `source_note_id`, we reuse that note's thumbnail (loaded
+    // through the existing visibility-checked
+    // `loadCoachNoteThumbnail`) as a visual preview — no new
+    // thumbnail backend, no auth weakening.
+
+    renderCoachClips() {
+        const container = document.getElementById('coach-clips-list');
+        if (!container) return;
+        const clips = this._coachBundle?.clips || [];
+        if (!clips.length) {
+            container.innerHTML = '<div class="session-empty">No clips yet. Create one from the <strong>Review</strong> tab via <em>Save clip</em>, or click <strong>+ New clip</strong> above.</div>';
+            return;
+        }
+        // Sort newest-first by updated_at so a coach who just edited
+        // a clip's window or player tags sees it bubble to the top.
+        const sorted = clips.slice().sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+        container.innerHTML = sorted.map((c) => {
+            const playerCount = c.player_ids?.length || 0;
+            const meta = [
+                this.matchLabel(c.match_id),
+                this.slotLabel(c.slot),
+                `${this.formatClock(c.start_seconds)}–${this.formatClock(c.end_seconds)}`,
+                `${this._clipDurationLabel(c)}`,
+                this.esc(c.category),
+                this.esc(c.visibility),
+            ];
+            if (playerCount) meta.push(`${playerCount} player${playerCount === 1 ? '' : 's'}`);
+            const sourceBadge = c.source_note_id
+                ? '<span class="coach-clip-source-pill" title="Created from a coaching note">From note</span>'
+                : '';
+            return `
+            <article class="coach-row coach-row-with-thumb">
+                ${this._coachClipThumbHtml(c)}
+                <div class="coach-row-body">
+                    <strong>${this.esc(c.title)}</strong>
+                    <span>${meta.map((s) => this.esc(s)).join(' · ')} ${sourceBadge}</span>
+                    ${c.description ? `<p>${this.esc(c.description)}</p>` : ''}
+                </div>
+                <div class="coach-row-actions">
+                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.previewCoachClip(${c.id})">Preview</button>
+                    <button type="button" class="mini-action-btn" onclick="app.openCoachClipModal(${c.id})">Edit</button>
+                    <button type="button" class="mini-action-btn" onclick="app.handleCoachDeleteClip(${c.id})">Delete</button>
+                </div>
+            </article>
+            `;
+        }).join('');
+        // Phase 3b: source-note thumbnails reuse the existing
+        // `mountCoachNoteThumbnailsIn` so the auth-bearing fetch +
+        // negative cache + placeholder behavior is identical.
+        this.mountCoachNoteThumbnailsIn(container);
+    },
+
+    /** Render a thumbnail tile for a clip. Phase 4b explicitly does
+     *  NOT generate clip-specific thumbnails (per the roadmap). When
+     *  a clip has a `source_note_id`, we render the source note's
+     *  thumbnail as a visual preview using the existing visibility-
+     *  checked endpoint. Otherwise the placeholder film-strip glyph
+     *  remains. */
+    _coachClipThumbHtml(clip) {
+        const noteId = Number(clip?.source_note_id);
+        if (!Number.isFinite(noteId) || noteId <= 0) {
+            // No source-note linkage — render a plain placeholder.
+            return `
+                <div class="coach-thumb coach-thumb--list" data-thumb data-thumb-state="placeholder" aria-hidden="true">
+                    <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
+                </div>
+            `;
+        }
+        // Reuse the source note's thumbnail. The
+        // `mountCoachNoteThumbnailsIn` helper picks this <img> up via
+        // its `data-coach-note-thumb` attribute.
+        return `
+            <div class="coach-thumb coach-thumb--list" data-thumb data-thumb-state="placeholder" aria-hidden="true">
+                <img class="coach-thumb-img" data-coach-note-thumb="${noteId}" alt="" loading="lazy" decoding="async">
+                <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
+            </div>
+        `;
+    },
+
+    /** Returns "1:23" style duration for a clip (clamped to ≥ 0). */
+    _clipDurationLabel(clip) {
+        const dur = Math.max(0, Number(clip?.end_seconds || 0) - Number(clip?.start_seconds || 0));
+        const total = Math.round(dur);
+        const mins = Math.floor(total / 60);
+        const secs = total % 60;
+        return `${mins}:${String(secs).padStart(2, '0')}`;
+    },
+
+    /** Open the clip composer pre-filled from the Coach Review video's
+     *  current time. If no video is loaded, surface a friendly error
+     *  and bail — the coach has to pick a match first. */
+    openClipComposerFromReview() {
+        const review = this._coachReview;
+        if (!review?.matchId) {
+            this.showError('Pick a match in the Review tab before saving a clip.');
+            return;
+        }
+        const video = document.getElementById(this._coachVideoId);
+        const t = Number(video?.currentTime || 0);
+        const start = Math.max(0, t - COACH_CLIP_DEFAULT_PRE_ROLL);
+        const end = Math.max(start + 1, t + COACH_CLIP_DEFAULT_POST_ROLL);
+        // Cap at the MVP duration ceiling so the pre-fill always
+        // produces a server-acceptable window.
+        const capped_end = Math.min(end, start + COACH_CLIP_MAX_DURATION_SECONDS);
+        this.openCoachClipModal(null, {
+            match_id: review.matchId,
+            slot: review.slot || 'full',
+            start_seconds: Number(start.toFixed(1)),
+            end_seconds: Number(capped_end.toFixed(1)),
+        });
+    },
+
+    /** Mount the clip composer modal. `clipId === null` is the create
+     *  flow; `seed` is an optional set of pre-filled fields used by
+     *  `openClipComposerFromReview`. */
+    async openCoachClipModal(clipId = null, seed = null) {
+        const clip = clipId ? (this._coachBundle?.clips || []).find((c) => Number(c.id) === Number(clipId)) : null;
+        const tpl = document.getElementById('coach-clip-form-template');
+        if (!tpl) { this.showError('Clip form template missing.'); return; }
+        const body = tpl.content.firstElementChild.cloneNode(true);
+
+        // Match select — same option set as the note composer modal.
+        const matchSel = body.querySelector('[data-field="match"]');
+        matchSel.innerHTML = this.matches.map((m) => `<option value="${this.esc(m.id)}">${this.esc(this.matchLabel(m.id))}</option>`).join('') || '<option value="">No matches yet</option>';
+        const initialMatchId = clip?.match_id || seed?.match_id || (this.matches[0]?.id || '');
+        matchSel.value = initialMatchId;
+
+        const slotSel = body.querySelector('[data-field="slot"]');
+        slotSel.value = clip?.slot || seed?.slot || 'full';
+
+        body.querySelector('[data-field="title"]').value = clip?.title || '';
+        body.querySelector('[data-field="visibility"]').value = clip?.visibility || 'private';
+        body.querySelector('[data-field="description"]').value = clip?.description || '';
+
+        // Category select — pull from NOTE_CATEGORIES so the vocabulary
+        // is identical to notes / playlists.
+        const categorySel = body.querySelector('[data-field="category"]');
+        categorySel.innerHTML = NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('');
+        categorySel.value = clip?.category || 'other';
+
+        // Window numeric inputs — formatted to one decimal so a coach
+        // can type 12.5 without the input rounding to whole seconds.
+        const startEl = body.querySelector('[data-field="startSeconds"]');
+        const endEl = body.querySelector('[data-field="endSeconds"]');
+        startEl.value = Number(clip?.start_seconds ?? seed?.start_seconds ?? 0).toFixed(1);
+        endEl.value = Number(clip?.end_seconds ?? seed?.end_seconds ?? 10).toFixed(1);
+
+        // Live duration label — recompute on every input edit so the
+        // coach sees instantly when the window violates the cap.
+        const durationEl = body.querySelector('[data-field="durationDisplay"]');
+        const refreshDuration = () => {
+            const start = Number(startEl.value || 0);
+            const end = Number(endEl.value || 0);
+            const dur = Math.max(0, end - start);
+            const mins = Math.floor(dur / 60);
+            const secs = Math.round(dur % 60);
+            durationEl.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+            durationEl.classList.toggle('coach-clip-duration--invalid',
+                dur <= 0 || dur > COACH_CLIP_MAX_DURATION_SECONDS);
+        };
+        startEl.addEventListener('input', refreshDuration);
+        endEl.addEventListener('input', refreshDuration);
+        refreshDuration();
+
+        // Player check-list — same primitive as notes / playlists.
+        const playersBox = body.querySelector('[data-field="players"]');
+        const players = this._coachBundle?.players || [];
+        this.renderCoachCheckList(playersBox, players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet');
+        const initialPlayerIds = clip?.player_ids || seed?.player_ids || [];
+        if (initialPlayerIds.length) {
+            const sel = new Set(initialPlayerIds.map(String));
+            playersBox.querySelectorAll('.coach-check-option').forEach((btn) => {
+                if (sel.has(btn.dataset.value)) {
+                    btn.classList.add('is-selected');
+                    btn.setAttribute('aria-pressed', 'true');
+                }
+            });
+        }
+
+        // Source-note pill — show on EDIT only when the clip was
+        // created from a note. `source_note_id` is intentionally NOT
+        // editable (rebinding would silently swap the saved drawing
+        // snapshot — see `db.update_coaching_clip`'s docstring).
+        if (clip?.source_note_id) {
+            const sourceRow = body.querySelector('[data-field="sourceRow"]');
+            const sourceLabel = body.querySelector('[data-field="sourceLabel"]');
+            sourceRow.hidden = false;
+            sourceLabel.textContent = `From note #${clip.source_note_id}`;
+        }
+
+        const result = await this.formModal({
+            title: clip ? 'Edit Coaching Clip' : 'New Coaching Clip',
+            kicker: 'Coaching',
+            body,
+            confirmLabel: clip ? 'Save changes' : 'Save clip',
+            onSubmit: (close) => {
+                const root = body;
+                const titleVal = root.querySelector('[data-field="title"]').value.trim();
+                if (!titleVal) { this.showError('Clip title is required.'); return; }
+                const matchVal = root.querySelector('[data-field="match"]').value;
+                if (!matchVal) { this.showError('Match is required.'); return; }
+                const start = Number(root.querySelector('[data-field="startSeconds"]').value || 0);
+                const end = Number(root.querySelector('[data-field="endSeconds"]').value || 0);
+                if (!(end > start)) { this.showError('End time must be greater than start time.'); return; }
+                if ((end - start) > COACH_CLIP_MAX_DURATION_SECONDS) {
+                    this.showError(`Clip duration must be ${COACH_CLIP_MAX_DURATION_SECONDS} seconds or less.`);
+                    return;
+                }
+                close({
+                    match_id: matchVal,
+                    slot: root.querySelector('[data-field="slot"]').value || 'full',
+                    start_seconds: start,
+                    end_seconds: end,
+                    title: titleVal,
+                    description: root.querySelector('[data-field="description"]').value.trim(),
+                    category: root.querySelector('[data-field="category"]').value || 'other',
+                    visibility: root.querySelector('[data-field="visibility"]').value || 'private',
+                    player_ids: Array.from(root.querySelector('[data-field="players"]').querySelectorAll('.coach-check-option.is-selected')).map((b) => b.dataset.value),
+                });
+            },
+        });
+        if (!result) return;
+        try {
+            if (clip) {
+                // PATCH only the fields a coach can actually edit on
+                // an existing clip. `match_id` and `slot` are NOT in
+                // the backend's `UpdateCoachingClipRequest` allowed
+                // set, so we filter them out client-side too — server
+                // would 422 on `extra="forbid"` otherwise.
+                const patchBody = { ...result };
+                delete patchBody.match_id;
+                delete patchBody.slot;
+                await this.updateCoachClip(clip.id, patchBody);
+            } else {
+                await this.createCoachClip(result);
+            }
+            this.showSuccess(clip ? 'Clip updated.' : 'Clip created.');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    async handleCoachDeleteClip(clipId) {
+        const ok = await this.confirmAction({
+            title: 'Delete clip', message: 'Delete this coaching clip?',
+            confirmLabel: 'Delete clip', danger: true,
+        });
+        if (!ok) return;
+        try {
+            await this.deleteCoachClip(clipId);
+            await this.renderCoachWorkspace();
+            this.showSuccess('Clip deleted.');
+        } catch (err) { this.showError(err.message); }
+    },
+
+    /** Coach-side preview opens the focused feedback player in clip
+     *  mode. Reuses the same modal + canvas + heartbeat as note /
+     *  playlist preview. */
+    previewCoachClip(clipId) {
+        const clip = (this._coachBundle?.clips || []).find((c) => Number(c.id) === Number(clipId));
+        if (!clip) return;
+        this.openFeedbackPlayer({ mode: 'clip', clip, playerSource: 'coach' });
     },
 
     // ===== Review sub-tab =====
@@ -2962,18 +3260,22 @@ export const coachingMixin = {
         const linkedStrip = document.getElementById('feedback-linked-strip');
         const playlistsList = document.getElementById('feedback-playlists-list');
         const notesList = document.getElementById('feedback-notes-list');
+        const clipsList = document.getElementById('feedback-clips-list');
         if (linkedStrip) linkedStrip.innerHTML = '';
         if (playlistsList) playlistsList.innerHTML = '<div class="session-empty">Loading…</div>';
         if (notesList) notesList.innerHTML = '<div class="session-empty">Loading…</div>';
+        if (clipsList) clipsList.innerHTML = '<div class="session-empty">Loading…</div>';
         try {
             const data = await this.loadMyFeedback();
             this._feedbackData = data;
             this.renderFeedbackLinkedStrip(data);
             this.renderFeedbackPlaylists(data);
             this.renderFeedbackNotes(data);
+            this.renderFeedbackClips(data);
         } catch (err) {
             if (playlistsList) playlistsList.innerHTML = '<div class="session-empty">Could not load feedback.</div>';
             if (notesList) notesList.innerHTML = '';
+            if (clipsList) clipsList.innerHTML = '';
             this.showError(err.message);
         }
     },
@@ -3217,9 +3519,60 @@ export const coachingMixin = {
         this.openFeedbackPlayer({ mode: 'playlist', playlist, playerSource: 'feedback' });
     },
 
+    /** Phase 4b — render the My Feedback Clips tab. Clips are
+     *  server-filtered by visibility before they ever reach the
+     *  client (`/api/my-feedback`'s `clips[]` already excludes
+     *  private clips and player-tagged clips for unrelated viewers).
+     *  No client-side authorization here — same model as Notes /
+     *  Playlists.
+     *
+     *  Card layout mirrors `renderFeedbackNotes`: thumbnail (from the
+     *  source note when available, otherwise placeholder) + title +
+     *  meta (match · slot · window · duration · category) + optional
+     *  description + Watch button. */
+    renderFeedbackClips(data) {
+        const container = document.getElementById('feedback-clips-list');
+        if (!container) return;
+        const clips = data?.clips || [];
+        if (!clips.length) {
+            container.innerHTML = '<div class="session-empty">No coaching clips have been shared with you yet.</div>';
+            return;
+        }
+        container.innerHTML = clips.map((c) => {
+            const meta = `${this.esc(this.matchLabel(c.match_id))} · ${this.esc(this.slotLabel(c.slot))} · `
+                + `${this.esc(this.formatClock(c.start_seconds))}–${this.esc(this.formatClock(c.end_seconds))} `
+                + `(${this.esc(this._clipDurationLabel(c))})`;
+            return `
+            <article class="feedback-card feedback-clip-card feedback-card--with-thumb">
+                ${this._coachClipThumbHtml(c)}
+                <div class="feedback-card-body">
+                    <div class="feedback-card-head">
+                        <span class="feedback-clip-pill">Clip · ${this.esc(c.category || 'other')}</span>
+                    </div>
+                    <h3 class="feedback-card-title">${this.esc(c.title)}</h3>
+                    <div class="feedback-card-meta">${meta}</div>
+                    ${c.description ? `<p class="feedback-card-summary">${this.esc(c.description)}</p>` : ''}
+                    <div class="feedback-card-actions">
+                        <button type="button" class="btn-primary" onclick="app.openFeedbackClip(${c.id})">▶ Watch clip</button>
+                    </div>
+                </div>
+            </article>`;
+        }).join('');
+        // Reuse the auth-bearing thumbnail mount — `_coachClipThumbHtml`
+        // emits `<img data-coach-note-thumb="...">` for clips that
+        // carry a `source_note_id`, so this mount picks them up too.
+        this.mountCoachNoteThumbnailsIn(container);
+    },
+
+    openFeedbackClip(clipId) {
+        const clip = (this._feedbackData?.clips || []).find((c) => Number(c.id) === Number(clipId));
+        if (!clip) return;
+        this.openFeedbackPlayer({ mode: 'clip', clip, playerSource: 'feedback' });
+    },
+
     // ===== Focused feedback / playlist player modal =====
 
-    async openFeedbackPlayer({ mode, note = null, playlist = null, playerSource = 'feedback' }) {
+    async openFeedbackPlayer({ mode, note = null, playlist = null, clip = null, playerSource = 'feedback' }) {
         const tpl = document.getElementById('feedback-player-template');
         if (!tpl) { this.showError('Feedback player template missing.'); return; }
         const body = tpl.content.firstElementChild.cloneNode(true);
@@ -3234,6 +3587,10 @@ export const coachingMixin = {
         const cleanup = () => {
             this._stopFeedbackHeartbeat();
             this.stopFeedbackPlaylistSession();
+            // Phase 4b: tear down the clip end-of-window watcher if a
+            // clip session was active. Idempotent — no-op when not in
+            // clip mode.
+            this._stopClipMonitor();
             this.destroyHlsPlayer();
             this.deactivateCoachCanvas();
             // Modal canvas was cloned fresh from the template and is removed
@@ -3248,7 +3605,7 @@ export const coachingMixin = {
         };
 
         const onMount = () => {
-            this._feedbackPlayer = { body, mode, note, playlist, playerSource };
+            this._feedbackPlayer = { body, mode, note, playlist, clip, playerSource };
             if (mode === 'note') {
                 body.querySelector('[data-field="title"]').textContent = note.title || 'Coaching note';
                 body.querySelector('[data-field="subtitle"]').textContent = `${this.matchLabel(note.match_id)} · ${this.formatClock(note.timestamp_seconds)} · ${this.slotLabel(note.slot)}`;
@@ -3264,11 +3621,24 @@ export const coachingMixin = {
                 body.querySelector('[data-field="subtitle"]').textContent = `${(playlist.note_ids || []).length} clips`;
                 body.querySelector('[data-field="body"]').textContent = playlist.description || '';
                 this.startCoachingPlaylistSession(playlist, { playerSource });
+            } else if (mode === 'clip') {
+                // Phase 4b: clip playback. Title + a subtitle that
+                // names the match, slot, and the [start–end] window
+                // so the player knows what they're about to watch.
+                // The body shows the clip's optional description (the
+                // player-friendly text the coach wrote).
+                body.querySelector('[data-field="title"]').textContent = clip.title || 'Coaching clip';
+                body.querySelector('[data-field="subtitle"]').textContent =
+                    `${this.matchLabel(clip.match_id)} · ${this.slotLabel(clip.slot)} · `
+                    + `${this.formatClock(clip.start_seconds)}–${this.formatClock(clip.end_seconds)} `
+                    + `(${this._clipDurationLabel(clip)})`;
+                body.querySelector('[data-field="body"]').textContent = clip.description || '';
+                this._loadFeedbackVideoForClip(clip);
             }
         };
 
         await this.formModal({
-            title: mode === 'playlist' ? 'Review Session' : 'Coaching Note',
+            title: mode === 'playlist' ? 'Review Session' : (mode === 'clip' ? 'Coaching Clip' : 'Coaching Note'),
             kicker: 'Feedback',
             body,
             confirmLabel: 'Mark reviewed',
@@ -3279,13 +3649,104 @@ export const coachingMixin = {
                 try {
                     if (mode === 'note' && note) await this.markFeedbackReviewed({ note_id: note.id });
                     else if (mode === 'playlist' && playlist) await this.markFeedbackReviewed({ playlist_id: playlist.id });
-                    this.showSuccess('Marked reviewed.');
-                    await this.renderMyFeedback();
+                    // Phase 4b: clips don't have a "mark reviewed"
+                    // backend yet (the `coaching_reviews` table only
+                    // accepts note_id / playlist_id). Close cleanly
+                    // without firing an API call — the coach/player
+                    // can still close normally.
+                    if (mode === 'note' || mode === 'playlist') {
+                        this.showSuccess('Marked reviewed.');
+                        await this.renderMyFeedback();
+                    }
                 } catch (err) { this.showError(err.message); }
                 close(true);
             },
         });
         cleanup();
+    },
+
+    /** Phase 4b — load the clip's source match video, seek to
+     *  `start_seconds`, and arm a `timeupdate` watcher that pauses at
+     *  `end_seconds`. No MP4 export, no segment download — pure
+     *  seek-based playback against the existing match HLS. */
+    async _loadFeedbackVideoForClip(clip) {
+        const video = document.getElementById('feedback-player-video');
+        if (!video) return;
+        const { hlsUrl, mp4Url } = this.getStreamUrls(clip.match_id, clip.slot);
+        this._playRequestToken = (this._playRequestToken || 0) + 1;
+        const token = this._playRequestToken;
+        this.destroyHlsPlayer();
+        this.loadPlaybackSource(video, hlsUrl, mp4Url, token);
+
+        // Set up the canvas listeners EVEN THOUGH we don't render a
+        // drawing for clips in Phase 4b — keeps the resize behavior
+        // consistent for both note + clip modes so the canvas
+        // bitmap matches the wrapper if the user resizes.
+        this.setupCoachCanvas();
+
+        const startTime = Math.max(0, Number(clip.start_seconds || 0));
+        const endTime = Math.max(startTime + 0.5, Number(clip.end_seconds || 0));
+        // Track the clip in the modal session so the timeupdate
+        // watcher can read start/end without scope leaks. `_stopClipMonitor`
+        // tears the watcher down on cleanup.
+        if (this._feedbackPlayer) {
+            this._feedbackPlayer.clipStart = startTime;
+            this._feedbackPlayer.clipEnd = endTime;
+        }
+
+        const onLoaded = () => {
+            video.removeEventListener('loadedmetadata', onLoaded);
+            // Seek to the clip's start. Playback does NOT autoplay —
+            // the player presses Play when ready (consistent with
+            // single-note feedback playback).
+            video.currentTime = startTime;
+        };
+        video.addEventListener('loadedmetadata', onLoaded);
+
+        // The end-of-window watcher: 200 ms tick is enough — videos
+        // tick `timeupdate` ~4×/s natively; we use an interval too as
+        // belt-and-braces because some HLS sources throttle
+        // `timeupdate` during seeks.
+        this._stopClipMonitor();
+        const monitor = () => {
+            if (!video.isConnected) { this._stopClipMonitor(); return; }
+            // If the player scrubbed past `end_seconds`, pause and
+            // snap back to the boundary so a quick re-press of Play
+            // re-runs the last frame instead of jumping to wherever
+            // they were. Tolerance of +0.05s avoids fighting natural
+            // tick variance.
+            if (video.currentTime >= endTime - 0.05 && !video.paused) {
+                video.pause();
+                video.currentTime = endTime;
+            }
+        };
+        // Both: a `timeupdate` listener (high-resolution during play)
+        // and a low-frequency fallback timer (catches edge cases when
+        // the source throttles the event during seeks / buffer
+        // stalls).
+        const onTimeUpdate = monitor;
+        video.addEventListener('timeupdate', onTimeUpdate);
+        const intervalId = window.setInterval(monitor, 250);
+        this._clipMonitor = {
+            videoEl: video,
+            timeupdate: onTimeUpdate,
+            intervalId,
+        };
+
+        this._startFeedbackHeartbeat(clip.match_id, clip.slot, video);
+    },
+
+    /** Tear down the clip end-of-window watcher. Safe to call when
+     *  the modal isn't in clip mode — short-circuits on missing
+     *  state. Called by `cleanup` inside `openFeedbackPlayer`. */
+    _stopClipMonitor() {
+        const m = this._clipMonitor;
+        if (!m) return;
+        try {
+            m.videoEl?.removeEventListener('timeupdate', m.timeupdate);
+            window.clearInterval(m.intervalId);
+        } catch { /* ignore */ }
+        this._clipMonitor = null;
     },
 
     async _loadFeedbackVideoForNote(note) {
