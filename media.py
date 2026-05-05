@@ -228,6 +228,15 @@ def find_slot_raw_path(originals_dir: Path, match_id: str, slot: str) -> Path | 
     return None
 
 
+def coach_note_thumbnail_path(videos_dir: Path, match_id: str, note_id: int) -> Path:
+    """Per-coaching-note thumbnail path. Lives on the SSD `videos_dir`
+    next to the match's HLS variants because every notes-list / playlist
+    render hits one. Phase 3a (per-note thumbnails for scanability) —
+    derived purely from match_id + note_id so we don't need a DB column;
+    the serving endpoint just checks `path.is_file()`."""
+    return videos_dir / match_id / "coach_thumbs" / f"{note_id}.jpg"
+
+
 # ---------------------------------------------------------------------------
 # Probing
 # ---------------------------------------------------------------------------
@@ -979,6 +988,57 @@ async def generate_thumbnail(
     ])
     if not ok:
         logger.warning("Thumbnail generation failed for %s: %s", src, err)
+        dest.unlink(missing_ok=True)
+    return ok
+
+
+async def generate_thumbnail_at_timestamp(
+    src: Path,
+    dest: Path,
+    *,
+    timestamp_s: float,
+) -> bool:
+    """Phase 3a — extract a single JPEG frame from *src* at an absolute
+    *timestamp_s* (seconds from start). Used by the coaching-note
+    thumbnail flow so the still matches the moment the coach saved.
+
+    Best-effort: returns True/False rather than raising, and tolerates
+    a missing source file or a timestamp past the video duration. The
+    caller (note create + regenerate endpoint) should NOT block on the
+    return value — a failed thumbnail must not block note save.
+
+    - Negative timestamps clamp to 0 (matches the
+      `Math.max(0, …)` guard the JS player uses elsewhere).
+    - Timestamps past `duration` are clamped to one second before the
+      end so ffmpeg still gets a frame instead of seeking off-screen.
+    - The output JPEG is scaled to a max width of 640 (same as the
+      match-level `generate_thumbnail` above) so file sizes stay
+      reasonable for fast list rendering.
+    """
+    if not src.is_file():
+        logger.warning("Coach-note thumbnail skipped: source %s missing", src)
+        return False
+
+    seek_s = max(0.0, float(timestamp_s or 0))
+    duration = await probe_duration(src)
+    if duration and duration > 0 and seek_s >= duration:
+        seek_s = max(0.0, duration - 1.0)
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    ok, err = await run_ffmpeg([
+        "ffmpeg", "-y",
+        "-ss", f"{seek_s:.2f}",
+        "-i", str(src),
+        "-frames:v", "1",
+        "-q:v", "3",
+        "-vf", "scale='min(640,iw)':-2",
+        str(dest),
+    ])
+    if not ok:
+        logger.warning(
+            "Coach-note thumbnail generation failed for %s @ %.2fs: %s",
+            src, seek_s, err,
+        )
         dest.unlink(missing_ok=True)
     return ok
 

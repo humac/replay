@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 
@@ -9,6 +11,16 @@ async def _login(client, username: str, password: str = "password123") -> dict:
     resp = await client.post("/api/login", json={"username": username, "password": password})
     assert resp.status_code == 200
     return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
+async def _drain_background_tasks() -> None:
+    """Phase 3a tests: yield control so tasks scheduled via
+    `_spawn_task(...)` (which uses `asyncio.create_task`) actually run
+    before the test inspects their side-effects. One `sleep(0)` is
+    enough for synchronous stubs; we do a short loop to cover any
+    chain that itself awaits."""
+    for _ in range(5):
+        await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -545,3 +557,556 @@ async def test_legacy_body_visible_when_player_summary_blank(client, auth_header
     assert note["note_type"] == "correction"
     # Privacy invariant still holds (no leak via the legacy path).
     assert note["coach_private_note"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a — per-coaching-note thumbnails
+#
+# Tests cover:
+#   - missing thumbnail (file not generated yet) -> 404, not 500
+#   - file-system path is `<videos>/<match>/coach_thumbs/<note>.jpg`
+#   - coach + admin can fetch any thumbnail
+#   - team-visible note thumbnail reachable by signed-in viewer
+#   - player-visible note thumbnail reachable only by linked family
+#   - private note thumbnail is NEVER reachable by viewers (returns 404)
+#   - playlist-visible private item thumbnail follows the same boundary
+#     rule that `/api/my-feedback` already enforces
+#   - coach regenerate endpoint respects the role gate
+#   - generation failure (no source video, ffmpeg missing) does NOT
+#     break note creation — POST /api/coach/notes still returns 200
+#
+# Strategy: the file-existence check is the only thing the serving
+# endpoint inspects, so each test that needs a "generated" thumbnail
+# just writes a small JPEG payload directly to the deterministic path
+# under the test's `data_dir`. Tests that exercise the create-time
+# generator stub `_media.generate_thumbnail_at_timestamp` to write the
+# same payload synchronously (no ffmpeg dependency) — see
+# `_install_thumbnail_stub` below. A separate test installs a stub
+# that ALWAYS RAISES so we can assert the create flow stays green
+# even when the generator throws.
+# ---------------------------------------------------------------------------
+
+
+def _coach_thumb_path(data_dir, match_id: str, note_id: int):
+    """Mirror of `_media.coach_note_thumbnail_path` but rooted at the
+    test fixture's `data_dir / videos`. Kept duplicated rather than
+    importing the helper so a regression in the path convention shows
+    up as a test failure here, not a silent move."""
+    return data_dir / "videos" / match_id / "coach_thumbs" / f"{note_id}.jpg"
+
+
+# A 1-byte JPEG is good enough for the file-exists check the serving
+# endpoint runs; the actual JPEG header is irrelevant because no test
+# decodes the bytes. Using a tiny constant keeps the test data dir
+# light. The real ffmpeg-produced JPEGs are ~5-30 KB.
+_FAKE_JPEG = b"\xff\xd8\xff\xd9"  # SOI + EOI markers
+
+
+def _write_fake_thumb(data_dir, match_id: str, note_id: int) -> "Path":
+    p = _coach_thumb_path(data_dir, match_id, note_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(_FAKE_JPEG)
+    return p
+
+
+async def _install_thumbnail_stub(monkeypatch, *, succeed: bool = True, raise_exc: bool = False):
+    """Replace `_media.generate_thumbnail_at_timestamp` so create/update
+    flows don't shell out to ffmpeg in the test suite. When `succeed`
+    is True, write the fake JPEG to the destination path so the
+    serving endpoint sees a real file. When `raise_exc` is True the
+    stub raises a RuntimeError to exercise the safety net in the
+    spawn helper. Returns the call log so tests can inspect args."""
+    import media as _media
+    calls: list[dict] = []
+
+    async def stub(src, dest, *, timestamp_s):
+        calls.append({"src": str(src), "dest": str(dest), "timestamp_s": timestamp_s})
+        if raise_exc:
+            raise RuntimeError("simulated ffmpeg crash")
+        if succeed:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(_FAKE_JPEG)
+        return succeed
+
+    monkeypatch.setattr(_media, "generate_thumbnail_at_timestamp", stub)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_404_when_file_missing(client, auth_headers):
+    """No file on disk -> 404, never a 500. Covers the path the spec
+    calls out: 'missing thumbnail should return 404 or a controlled
+    placeholder response, not a server error.'"""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel",
+        "away_team": "Falcons FC",
+        "date": "2026-05-05",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 12.0,
+        "title": "Pressing trigger",
+        "category": "pressing",
+        "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    # No stub + no real video means no file; the spawn helper's
+    # `if not src.is_file()` guard returns False without raising.
+    resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_404_for_unknown_note(client, auth_headers):
+    resp = await client.get("/api/coach/notes/9999999/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_requires_auth(client):
+    """Anonymous request fails — no signed-in user."""
+    resp = await client.get("/api/coach/notes/1/thumbnail")
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_admin_and_coach_can_access_team_note(client, auth_headers, data_dir, monkeypatch):
+    """Coach/admin path: both should always succeed once the file exists."""
+    await _install_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "coach1", "password": "password123", "role": "coach",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Riverside FC", "date": "2026-05-06",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 30.0,
+        "title": "Team shape", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+    assert _coach_thumb_path(data_dir, match_id, note_id).is_file(), \
+        "stub should have written the JPEG synchronously"
+
+    # Admin (using the default auth_headers fixture)
+    admin_resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert admin_resp.status_code == 200
+    assert admin_resp.headers["content-type"] == "image/jpeg"
+    assert admin_resp.content == _FAKE_JPEG
+
+    # Coach role
+    coach_headers = await _login(client, "coach1")
+    coach_resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=coach_headers)
+    assert coach_resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_team_visible_note_reachable_by_signed_in_viewer(client, auth_headers, data_dir, monkeypatch):
+    """A `visibility=team` note's thumbnail must be reachable by any
+    signed-in viewer (matches `/api/my-feedback` behaviour)."""
+    await _install_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "viewer1", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Northgate", "date": "2026-05-07",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 45.0,
+        "title": "Press in midfield", "category": "pressing", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+
+    viewer_headers = await _login(client, "viewer1")
+    resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=viewer_headers)
+    assert resp.status_code == 200
+    assert resp.content == _FAKE_JPEG
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_player_visible_only_to_linked_family(client, auth_headers, data_dir, monkeypatch):
+    """`visibility=player` thumbnail: linked family member can fetch it,
+    unlinked viewer cannot."""
+    await _install_thumbnail_stub(monkeypatch)
+    family_resp = await client.post("/api/users", json={
+        "username": "family1", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    linked_user_id = family_resp.json()["user"]["id"]
+    await client.post("/api/users", json={
+        "username": "stranger", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Alex Park", "jersey_number": "7",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": linked_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Highbridge", "date": "2026-05-08",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 60.0,
+        "title": "Player #7 — recovery", "category": "defending",
+        "visibility": "player", "player_ids": [player_id],
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+
+    family_headers = await _login(client, "family1")
+    family_resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=family_headers)
+    assert family_resp.status_code == 200, family_resp.text
+
+    stranger_headers = await _login(client, "stranger")
+    stranger_resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=stranger_headers)
+    assert stranger_resp.status_code == 404, \
+        "unlinked viewer must NOT be able to fetch player-visible thumbnail"
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_private_note_never_leaks_to_viewer(client, auth_headers, data_dir, monkeypatch):
+    """`visibility=private` thumbnail must be invisible to ANY non-coach
+    user, even if the JPEG file exists on disk. Returns 404 (same
+    response shape as 'note doesn't exist') so a viewer cannot probe
+    the existence of private notes."""
+    await _install_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "viewer2", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Pinehurst", "date": "2026-05-09",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 75.0,
+        "title": "Internal substitution rationale", "category": "other",
+        "visibility": "private",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+
+    # Confirm the file IS on disk (the stub wrote it for the coach
+    # save). The point of the test is that the file existing does
+    # NOT make the endpoint serve it to viewers.
+    assert _coach_thumb_path(data_dir, match_id, note_id).is_file()
+
+    # Coach can fetch it.
+    coach_resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert coach_resp.status_code == 200
+
+    # Viewer cannot — even though the file exists.
+    viewer_headers = await _login(client, "viewer2")
+    viewer_resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=viewer_headers)
+    assert viewer_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_for_playlist_private_item_blocked_via_standalone_endpoint(
+    client, auth_headers, data_dir, monkeypatch
+):
+    """Phase 3a deliberately keeps the standalone thumbnail endpoint
+    private-strict: even if a private note is reachable to a viewer
+    INSIDE a visible playlist's items (the playlist-grants-access
+    rule, see `test_visible_playlist_grants_access_to_private_items`),
+    the standalone `GET /api/coach/notes/{id}/thumbnail` does NOT
+    surface the private note's thumbnail. This matches the existing
+    `/api/my-feedback/notes` behaviour, which only exposes private
+    items via `playlists[].items[]`, not as standalone notes.
+
+    A future Phase 3b may add a `?playlist_id=X` query parameter that
+    accepts the playlist-context boundary; this PR scopes that out
+    explicitly so the surface area for Phase 3a stays small."""
+    await _install_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "teamview", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Marsh Lane", "date": "2026-05-10",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    private_note = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 90.0,
+        "title": "Internal coach note", "category": "other",
+        "visibility": "private",
+    }, headers=auth_headers)
+    private_note_id = private_note.json()["note"]["id"]
+    playlist_resp = await client.post("/api/coach/playlists", json={
+        "title": "Team review session", "visibility": "team",
+        "note_ids": [private_note_id],
+    }, headers=auth_headers)
+    assert playlist_resp.status_code == 200
+
+    # Confirm the playlist-grants-access rule still works for the
+    # note ITSELF inside `/api/my-feedback`.
+    viewer_headers = await _login(client, "teamview")
+    feedback = await client.get("/api/my-feedback", headers=viewer_headers)
+    items = feedback.json()["playlists"][0]["items"]
+    assert items[0]["id"] == private_note_id
+
+    # But the standalone thumbnail endpoint does NOT surface it.
+    resp = await client.get(f"/api/coach/notes/{private_note_id}/thumbnail", headers=viewer_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_create_does_not_break_when_generator_raises(client, auth_headers, monkeypatch):
+    """Acceptance criterion: 'Thumbnail generation failure does not
+    block note save.' We simulate a crashing ffmpeg by installing a
+    stub that raises. The POST /api/coach/notes call must still
+    return 200 with a fully-formed note row, and the subsequent
+    GET .../thumbnail must return 404 (file was never written)."""
+    await _install_thumbnail_stub(monkeypatch, succeed=False, raise_exc=True)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Bridgewater", "date": "2026-05-11",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 25.0,
+        "title": "ffmpeg crashes here", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert note_resp.status_code == 200, note_resp.text
+    note_id = note_resp.json()["note"]["id"]
+
+    # The thumbnail endpoint returns 404 because the spawn helper
+    # caught the RuntimeError (so no file was written).
+    resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_regenerate_requires_coach(client, auth_headers, monkeypatch):
+    """The manual regenerate endpoint is gated like the rest of
+    `/api/coach/*` — viewers and unauthenticated users get 403."""
+    await _install_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "viewerR", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Eastside", "date": "2026-05-12",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 33.0,
+        "title": "Roster note", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    # Coach/admin succeeds.
+    coach_resp = await client.post(f"/api/coach/notes/{note_id}/thumbnail/regenerate", headers=auth_headers)
+    assert coach_resp.status_code == 200
+    assert coach_resp.json() == {"ok": True, "generated": True}
+
+    # Viewer is blocked.
+    viewer_headers = await _login(client, "viewerR")
+    viewer_resp = await client.post(f"/api/coach/notes/{note_id}/thumbnail/regenerate", headers=viewer_headers)
+    assert viewer_resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_regenerate_handles_unknown_note(client, auth_headers):
+    resp = await client.post("/api/coach/notes/99999/thumbnail/regenerate", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_regenerate_returns_ok_false_when_source_missing(client, auth_headers, monkeypatch):
+    """When the source MP4 doesn't exist, regenerate should return
+    `{ok: True, generated: False}` so the caller knows the call ran
+    but produced nothing — distinct from an unknown-note 404."""
+    # Don't install the stub — the real `generate_thumbnail_at_timestamp`
+    # runs, sees that `src` doesn't exist, logs a warning, and
+    # returns False without raising.
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Coastal", "date": "2026-05-13",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5.0,
+        "title": "No source video", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    resp = await client.post(f"/api/coach/notes/{note_id}/thumbnail/regenerate", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "generated": False}
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_path_convention(data_dir):
+    """Lock the storage path the spec calls out — anything that
+    relocates `coach_thumbs` will trip this."""
+    from media import coach_note_thumbnail_path
+    p = coach_note_thumbnail_path(data_dir / "videos", "match-abc", 42)
+    assert p == data_dir / "videos" / "match-abc" / "coach_thumbs" / "42.jpg"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a — code-review fix-up regressions
+#
+# These three tests pin down the two blockers the PR #88 review caught:
+#   1. `Cache-Control` must NOT be `public` (per-viewer access-controlled
+#      response — a shared cache must not replay it across users), and
+#      should carry an `ETag: "{mtime}"` so coaches see a freshly
+#      regenerated thumbnail on the next refresh.
+#   2. Every site that resolves a coach-note thumbnail path must run it
+#      through `_thumb_path_within_videos_dir` so a corrupted DB row whose
+#      `match_id` contains `..` cannot escape `VIDEOS_DIR`. We simulate
+#      the corrupted-row case by `UPDATE`-ing the note row's `match_id`
+#      directly via the DB connection (Pydantic only validates on the
+#      create path, so a future bug elsewhere could still let an escaping
+#      value land in the DB — defense-in-depth means the serving / spawn
+#      / regenerate / delete paths must each refuse to touch it).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_response_is_not_public_cacheable(client, auth_headers, data_dir, monkeypatch):
+    """Per-user access-controlled responses must NEVER set
+    `Cache-Control: public` — a shared CDN / proxy could otherwise
+    replay the JPEG to a different viewer. We mirror `serve_thumbnail`'s
+    `no-cache, must-revalidate` + `ETag: "{mtime}"` policy."""
+    await _install_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Cache Test FC", "date": "2026-05-14",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 12.0,
+        "title": "Cache header check", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+
+    resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 200
+    cache_control = resp.headers.get("cache-control", "")
+    assert "public" not in cache_control.lower(), (
+        f"Cache-Control must NOT be public on a per-viewer access-controlled "
+        f"response (got {cache_control!r})"
+    )
+    # Positive assertion: must revalidate every request so a coach sees
+    # a freshly-regenerated thumbnail on next refresh.
+    assert "no-cache" in cache_control.lower() or "private" in cache_control.lower(), (
+        f"Cache-Control must include either no-cache or private (got {cache_control!r})"
+    )
+    # ETag drives conditional revalidation — `serve_thumbnail` uses the
+    # mtime of the file. The exact value depends on the stub's write
+    # time; just confirm the header exists and is quoted.
+    etag = resp.headers.get("etag", "")
+    assert etag.startswith('"') and etag.endswith('"') and len(etag) > 2, (
+        f"ETag header must be present and quoted (got {etag!r})"
+    )
+    # X-Content-Type-Options must remain — same defense-in-depth as
+    # match-logo / match-thumbnail responses.
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_get_refuses_path_escape(client, auth_headers, data_dir, monkeypatch):
+    """If a corrupted DB row's `match_id` would resolve outside
+    `VIDEOS_DIR`, the GET endpoint must return the same 404 it uses for
+    unknown / unauthorized / missing-file cases — never serve a file
+    from outside the videos tree."""
+    import db as _db
+    await _install_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Containment FC", "date": "2026-05-15",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 7.0,
+        "title": "Containment GET", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+
+    # Sanity: with the legitimate match_id it works.
+    ok = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert ok.status_code == 200
+
+    # Now mutate the row's match_id to inject a `..` traversal payload.
+    # In production this should never happen because `match_id` comes
+    # from a validated POST, but defense-in-depth means the serving
+    # path must still refuse to escape.
+    conn = _db.connect()
+    try:
+        conn.execute(
+            "UPDATE coaching_notes SET match_id=? WHERE id=?",
+            ("../escape", note_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    escape = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert escape.status_code == 404, (
+        "GET must refuse to serve a thumbnail whose computed path escapes VIDEOS_DIR"
+    )
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_regenerate_refuses_path_escape(client, auth_headers, data_dir, monkeypatch):
+    """The regenerate endpoint must short-circuit (no ffmpeg call, no
+    write) when the destination path would escape `VIDEOS_DIR`. The
+    response shape matches the no-source-MP4 case so callers handle it
+    identically."""
+    import db as _db
+    # Track ffmpeg invocations so we can assert the spawn never happened
+    # for the escaping path.
+    calls = await _install_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Regen Containment FC", "date": "2026-05-16",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 9.0,
+        "title": "Containment regen", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    await _drain_background_tasks()
+    calls.clear()  # ignore the create-time spawn; we care about regenerate.
+
+    # Mutate match_id to a traversal payload.
+    conn = _db.connect()
+    try:
+        conn.execute(
+            "UPDATE coaching_notes SET match_id=? WHERE id=?",
+            ("../escape", note_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = await client.post(
+        f"/api/coach/notes/{note_id}/thumbnail/regenerate", headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "generated": False}
+    # ffmpeg stub must not have been invoked for the escaping path.
+    assert calls == [], (
+        f"Regenerate must short-circuit before invoking the generator on an escaping path "
+        f"(got generator calls: {calls!r})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_thumb_path_within_videos_dir_helper(monkeypatch, tmp_path):
+    """Unit-test the helper directly so the contract is locked in
+    independently of the endpoint wiring."""
+    import server as _server
+    monkeypatch.setattr(_server, "VIDEOS_DIR", tmp_path)
+    inside = tmp_path / "match-abc" / "coach_thumbs" / "1.jpg"
+    outside = tmp_path.parent / "elsewhere" / "1.jpg"
+    traversal = tmp_path / "match-abc" / ".." / ".." / "elsewhere" / "1.jpg"
+
+    assert _server._thumb_path_within_videos_dir(inside) is True
+    assert _server._thumb_path_within_videos_dir(outside) is False
+    # `..`-laden path should resolve outside `tmp_path` and be rejected.
+    assert _server._thumb_path_within_videos_dir(traversal) is False
