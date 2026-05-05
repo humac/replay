@@ -2021,22 +2021,32 @@ async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
         if not _db.get_player(player_id):
             raise HTTPException(404, f"Player not found: {player_id}")
     payload = body.model_dump()
-    # `source_note_id` is a forward-compat reference. If the coach
-    # provides one, verify the note exists and (only when the request
-    # didn't already set them) default a small, NON-SENSITIVE subset
-    # of fields from it: match/slot/category/drawing. Title +
-    # description must come from the request body — we do NOT auto-
-    # copy any of the note's text fields, especially `body` /
-    # `coach_private_note` / `what_happened` / etc., to avoid a
-    # private-text leak through a more permissive clip visibility.
+    # `source_note_id` is an OPTIONAL forward-compat reference. When the
+    # coach provides one, this handler verifies the note exists and
+    # then — only when the request body didn't ship its own `drawing`
+    # — copies the source note's drawing snapshot onto the clip. That
+    # is the ONLY field defaulted from the source note in Phase 4a.
+    #
+    # Privacy invariant (locked in by `test_clip_source_note_does_not_leak_private_text`):
+    # `match_id`, `slot`, `start_seconds`, `end_seconds`, `title`,
+    # `description`, `category`, `visibility`, and `player_ids` come
+    # from the explicit clip request, never from the source note. We
+    # also do NOT auto-copy any of the note's text fields — `body`,
+    # `coach_private_note`, `what_happened`, `why_it_matters`,
+    # `what_to_do_next`, `player_summary`, source title — because a
+    # clip can carry a more permissive visibility than its source note,
+    # and silently re-publishing private text through a `team` /
+    # `unlisted` clip would be a privacy leak.
     if payload.get("source_note_id") is not None:
         source = _db.get_coaching_note(payload["source_note_id"])
         if not source:
             raise HTTPException(404, "Source note not found")
-        # Defense-in-depth: even if the request body's match_id /
-        # slot disagree with the source note's, we trust the request
-        # — the coach explicitly specified them. Do NOT silently
-        # rewrite to the source's match (would surprise the coach).
+        # We trust the request body for `match_id` / `slot` / `category`
+        # / window / title / etc. — the coach explicitly authored those.
+        # Do NOT silently rewrite to the source's match (would surprise
+        # the coach) and do NOT validate request fields against the
+        # source (a coach may legitimately re-anchor a clip to a
+        # different slot of the same match).
         if not payload.get("drawing"):
             payload["drawing"] = source.get("drawing") or {}
     clip = _db.create_coaching_clip(payload, actor=user["username"])

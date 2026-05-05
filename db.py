@@ -885,6 +885,13 @@ def delete_player(player_id: str) -> bool:
         conn.execute("DELETE FROM player_user_links WHERE player_id = ?", (player_id,))
         conn.execute("DELETE FROM coaching_note_players WHERE player_id = ?", (player_id,))
         conn.execute("DELETE FROM coaching_playlist_players WHERE player_id = ?", (player_id,))
+        # Phase 4a (PR #95 review follow-up): clips also link to players
+        # via `coaching_clip_players`. SQLite's `ON DELETE CASCADE`
+        # declared on that table requires `PRAGMA foreign_keys = ON`,
+        # which the rest of this codebase doesn't enable — clean up the
+        # join rows explicitly so deleting a player leaves no orphan
+        # clip-player references.
+        conn.execute("DELETE FROM coaching_clip_players WHERE player_id = ?", (player_id,))
         cur = conn.execute("DELETE FROM players WHERE id = ?", (player_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -1064,13 +1071,21 @@ def update_coaching_note(note_id: int, data: dict) -> dict | None:
     updates = {k: v for k, v in data.items() if k in scalar_allowed and v is not None}
     if "drawing" in data and data["drawing"] is not None:
         updates["drawing_json"] = json.dumps(data["drawing"])
+    # PR #95 review follow-up: a join-table-only PATCH (player_ids /
+    # tags only) is still a real edit and must bump `updated_at` so
+    # the row surfaces in `ORDER BY updated_at` lists. Compute that
+    # flag BEFORE we add `updated_at` to the dict.
+    join_changed = "player_ids" in data or "tags" in data
     updates["updated_at"] = _now_iso()
     with connect() as conn:
-        if len(updates) > 1:
+        # Run the UPDATE if the request changed anything beyond the
+        # auto-added `updated_at` (len > 1) OR if a join-table edit
+        # happened — both cases need `updated_at` to advance.
+        if len(updates) > 1 or join_changed:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [note_id]
             conn.execute(f"UPDATE coaching_notes SET {set_clause} WHERE id = ?", values)
-        if "player_ids" in data or "tags" in data:
+        if join_changed:
             existing = get_coaching_note(note_id) or {}
             _replace_note_children(
                 conn,
@@ -1400,13 +1415,21 @@ def update_coaching_clip(clip_id: int, data: dict) -> dict | None:
     updates = {k: v for k, v in data.items() if k in scalar_allowed and v is not None}
     if "drawing" in data and data["drawing"] is not None:
         updates["drawing_json"] = json.dumps(data["drawing"])
+    # PR #95 review follow-up: a join-table-only PATCH (player_ids only)
+    # is still a real edit and must bump `updated_at` so the row
+    # surfaces in `ORDER BY updated_at` lists. Compute that flag BEFORE
+    # we add `updated_at` to the dict.
+    join_changed = "player_ids" in data
     updates["updated_at"] = _now_iso()
     with connect() as conn:
-        if len(updates) > 1:
+        # Run the UPDATE if the request changed anything beyond the
+        # auto-added `updated_at` (len > 1) OR if a join-table edit
+        # happened — both cases need `updated_at` to advance.
+        if len(updates) > 1 or join_changed:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [clip_id]
             conn.execute(f"UPDATE coaching_clips SET {set_clause} WHERE id = ?", values)
-        if "player_ids" in data:
+        if join_changed:
             existing = get_coaching_clip(clip_id) or {}
             _replace_clip_children(
                 conn,

@@ -1595,3 +1595,183 @@ async def test_clip_admin_only_visibility_in_my_feedback_for_coach(client, auth_
     assert clip_id in {c["id"] for c in feedback["clips"]}, (
         "admin/coach should see private clips in their own /api/my-feedback view"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4a — PR #95 review follow-up regressions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clip_player_only_patch_bumps_updated_at(client, auth_headers, monkeypatch):
+    """A PATCH that changes ONLY `player_ids` (no scalar field, no
+    drawing) must still bump `updated_at` on the clip row, so the
+    clip surfaces correctly in `ORDER BY updated_at` lists.
+
+    Pre-fix: `update_coaching_clip`'s `len(updates) > 1` guard
+    skipped the UPDATE statement entirely when only `player_ids`
+    changed (the `updates` dict at that point only contained
+    `updated_at` itself, length 1). The join table was rewritten
+    but the row's timestamp stayed stale.
+
+    `_now_iso()` only resolves to seconds, so we monkeypatch a
+    deterministic counter so each call returns a distinct timestamp
+    without slowing the test with real-time sleeps.
+    """
+    import db as _db
+    counter = {"n": 0}
+    def fake_now():
+        counter["n"] += 1
+        return f"2026-06-10T00:00:{counter['n']:02d}Z"
+    monkeypatch.setattr(_db, "_now_iso", fake_now)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Updated FC", "date": "2026-06-10",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Roster Player", "jersey_number": "5",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+
+    create = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 10.0,
+        "title": "Existing", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip = create.json()["clip"]
+    initial_updated_at = clip["updated_at"]
+
+    patch = await client.patch(
+        f"/api/coach/clips/{clip['id']}",
+        json={"player_ids": [player_id]},
+        headers=auth_headers,
+    )
+    assert patch.status_code == 200, patch.text
+    after = patch.json()["clip"]
+    assert after["player_ids"] == [player_id], "player relationship should be updated"
+    assert after["updated_at"] != initial_updated_at, (
+        f"updated_at must advance on a player-only PATCH "
+        f"(was {initial_updated_at}, still {after['updated_at']})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_note_player_only_patch_bumps_updated_at(client, auth_headers, monkeypatch):
+    """Phase 1 parity fix: same `updated_at` bump applies to coaching
+    notes when only `player_ids` or `tags` changes. `_now_iso()` only
+    resolves to seconds, so we monkeypatch a deterministic counter."""
+    import db as _db
+    counter = {"n": 0}
+    def fake_now():
+        counter["n"] += 1
+        return f"2026-06-11T00:00:{counter['n']:02d}Z"
+    monkeypatch.setattr(_db, "_now_iso", fake_now)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Note Updated FC", "date": "2026-06-11",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Note Roster", "jersey_number": "8",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 12.0,
+        "title": "Note for player-only PATCH", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    note = note_resp.json()["note"]
+    initial_updated_at = note["updated_at"]
+
+    # player_ids-only change
+    patch_p = await client.patch(
+        f"/api/coach/notes/{note['id']}",
+        json={"player_ids": [player_id]},
+        headers=auth_headers,
+    )
+    assert patch_p.status_code == 200
+    after_p = patch_p.json()["note"]
+    assert after_p["player_ids"] == [player_id]
+    assert after_p["updated_at"] != initial_updated_at, (
+        "note updated_at must advance on player-only PATCH"
+    )
+
+    # tags-only change should ALSO bump updated_at
+    second_stamp = after_p["updated_at"]
+    patch_t = await client.patch(
+        f"/api/coach/notes/{note['id']}",
+        json={"tags": ["receiving"]},
+        headers=auth_headers,
+    )
+    assert patch_t.status_code == 200
+    after_t = patch_t.json()["note"]
+    assert after_t["tags"] == ["receiving"]
+    assert after_t["updated_at"] != second_stamp, (
+        "note updated_at must advance on tags-only PATCH"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_player_cleans_coaching_clip_players(client, auth_headers):
+    """When a roster player is deleted, the join rows in
+    `coaching_clip_players` must be removed too — otherwise we leave
+    orphan FK references that point at a non-existent player_id.
+
+    Pre-fix: `delete_player` only cleaned `coaching_note_players` and
+    `coaching_playlist_players`, missing the new (Phase 4a) clips
+    join table. SQLite's `ON DELETE CASCADE` on that table requires
+    `PRAGMA foreign_keys = ON`, which this codebase doesn't enable —
+    so the manual cleanup is the only safety net.
+    """
+    import db as _db
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Player Cleanup FC", "date": "2026-06-12",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "About-to-delete", "jersey_number": "99",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 8.0,
+        "title": "Tagged with deletable player", "category": "other",
+        "visibility": "player", "player_ids": [player_id],
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+
+    # Sanity: the join row exists at first.
+    conn = _db.connect()
+    rows = conn.execute(
+        "SELECT player_id FROM coaching_clip_players WHERE clip_id = ?", (clip_id,)
+    ).fetchall()
+    assert [r["player_id"] for r in rows] == [player_id], (
+        "test setup: clip should be joined to the player before deletion"
+    )
+
+    # Delete the player.
+    del_resp = await client.delete(
+        f"/api/coach/players/{player_id}", headers=auth_headers,
+    )
+    assert del_resp.status_code == 200, del_resp.text
+
+    # Join rows must be gone.
+    conn = _db.connect()
+    rows_after = conn.execute(
+        "SELECT player_id FROM coaching_clip_players WHERE clip_id = ?", (clip_id,)
+    ).fetchall()
+    assert rows_after == [], (
+        "deleting a player must remove all coaching_clip_players rows for that "
+        "player; orphan rows would point at a non-existent player_id"
+    )
+
+    # The clip itself remains (with empty player_ids hydrated).
+    clip_after = (await client.get(
+        f"/api/coach/clips/{clip_id}", headers=auth_headers,
+    )).json()["clip"]
+    assert clip_after["player_ids"] == [], (
+        "clip's player_ids should hydrate as empty after the only tagged player was deleted"
+    )
