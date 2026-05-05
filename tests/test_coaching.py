@@ -2122,3 +2122,188 @@ async def test_dev_profile_empty_player_returns_zero_counts(client, auth_headers
     assert profile["recent_playlists"] == []
     assert profile["current_focus_areas"] == []
     assert profile["themes"]["positive_to_correction_ratio"] is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — Targeted regression tests (PR #103 review follow-up)
+#
+# The original 8 tests cover happy-path aggregation + the privacy ladder.
+# These three pin behaviors that were verified at runtime during code
+# review but not directly asserted at the test layer:
+#
+#   1. corrections=0 -> positive_to_correction_ratio is None
+#   2. A playlist with NO explicit `player_ids` but containing an ordered
+#      note item tagged with the player IS included in the profile.
+#   3. A viewer-side playlist whose only player-related note item is
+#      `visibility: private` is excluded from the viewer profile (because
+#      the private note has been filtered out before the playlist
+#      association check runs, so the playlist no longer "matches" the
+#      player from the viewer's perspective).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_zero_corrections_yields_null_ratio(client, auth_headers):
+    """1 positive + 0 corrections -> ratio MUST be null (not 0, not Inf).
+    The empty-player test pins the all-zeros case; this one covers the
+    "all positive, no correction baseline" branch in `_theme_counts`."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Ratio FC", "away_team": "Null Town", "date": "2026-05-22",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Positive-only Player", "jersey_number": "7",
+    }, headers=auth_headers)
+    pid = player_resp.json()["player"]["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5.0,
+        "title": "Only positive", "category": "shape",
+        "visibility": "team", "player_ids": [pid], "note_type": "positive",
+    }, headers=auth_headers)
+    assert note_resp.status_code == 200, note_resp.text
+
+    resp = await client.get(
+        f"/api/coach/players/{pid}/development", headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    themes = resp.json()["profile"]["themes"]
+    assert themes["positive_count"] == 1
+    assert themes["correction_count"] == 0
+    # JSON-encoded as `null` — Python decodes it to None.
+    assert themes["positive_to_correction_ratio"] is None
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_playlist_included_via_ordered_note_items_only(client, auth_headers):
+    """A playlist with empty `player_ids` but containing an ordered note
+    item tagged with the player must surface in the profile. This is
+    the "playlist about a teaching theme that happens to involve the
+    player" path documented in the playlist association rule."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Pl FC", "away_team": "Items Only", "date": "2026-05-23",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Indirect Player", "jersey_number": "21",
+    }, headers=auth_headers)
+    pid = player_resp.json()["player"]["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 12.0,
+        "title": "Player-tagged note", "category": "shape",
+        "visibility": "team", "player_ids": [pid], "note_type": "correction",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    # Playlist explicitly has NO `player_ids` — only its ordered note
+    # items connect it to the player.
+    pl_resp = await client.post("/api/coach/playlists", json={
+        "title": "Theme playlist (no explicit player tag)",
+        "description": "", "visibility": "team",
+        "player_ids": [], "note_ids": [note_id],
+    }, headers=auth_headers)
+    assert pl_resp.status_code == 200, pl_resp.text
+
+    resp = await client.get(
+        f"/api/coach/players/{pid}/development", headers=auth_headers,
+    )
+    profile = resp.json()["profile"]
+    assert profile["counts"]["playlists"] == 1
+    titles = [p["title"] for p in profile["recent_playlists"]]
+    assert titles == ["Theme playlist (no explicit player tag)"]
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_excludes_playlist_with_only_private_player_item(client, auth_headers):
+    """If a playlist's ONLY player-tagged item is a private note, then
+    on the viewer surface the private note is filtered out before the
+    playlist association check runs — so from the viewer's perspective
+    the playlist has no matching item and must NOT surface in their
+    development profile.
+
+    The playlist itself is `team`-visible (so it's reachable as a
+    playlist), but it should not be classified as "for this player"
+    from the viewer's perspective because the only thing connecting
+    it to the player is invisible to them."""
+    viewer_resp = await client.post("/api/users", json={
+        "username": "playlist_private_only_viewer",
+        "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    linked_user_id = viewer_resp.json()["user"]["id"]
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Private-Item Player", "jersey_number": "33",
+    }, headers=auth_headers)
+    pid = player_resp.json()["player"]["id"]
+
+    await client.post("/api/coach/player-links", json={
+        "player_id": pid, "user_id": linked_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Hidden FC", "away_team": "Visible FC", "date": "2026-05-24",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    # The ONLY player-tagged note in the playlist is private.
+    private_note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 8.0,
+        "title": "Private player-tagged note", "category": "shape",
+        "visibility": "private", "player_ids": [pid], "note_type": "correction",
+    }, headers=auth_headers)
+    private_note_id = private_note_resp.json()["note"]["id"]
+
+    # Add a second item that's team-visible but tagged with a different
+    # player so the viewer can reach the playlist itself but cannot see
+    # any item that ties it back to THIS player.
+    other_player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Other Indirect", "jersey_number": "44",
+    }, headers=auth_headers)
+    other_pid = other_player_resp.json()["player"]["id"]
+    other_note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 18.0,
+        "title": "Team note for other player", "category": "transition",
+        "visibility": "team", "player_ids": [other_pid], "note_type": "correction",
+    }, headers=auth_headers)
+    other_note_id = other_note_resp.json()["note"]["id"]
+
+    # Team-visible playlist, no explicit `player_ids`, items = [private,
+    # team-other]. From the viewer's perspective, the only thing
+    # connecting this playlist to the focal player is the private item,
+    # which is filtered out.
+    pl_resp = await client.post("/api/coach/playlists", json={
+        "title": "Mixed-item playlist",
+        "description": "", "visibility": "team",
+        "player_ids": [], "note_ids": [private_note_id, other_note_id],
+    }, headers=auth_headers)
+    assert pl_resp.status_code == 200, pl_resp.text
+
+    linked_headers = await _login(client, "playlist_private_only_viewer")
+    resp = await client.get(
+        f"/api/my-feedback/players/{pid}/development", headers=linked_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    profile = resp.json()["profile"]
+
+    # Viewer surface: the private note is filtered out, so the playlist
+    # has no surviving player-tagged item — it must not be counted as
+    # "for this player".
+    assert profile["counts"]["playlists"] == 0, (
+        "Viewer profile should exclude a playlist whose only "
+        "connection to this player is a private (filtered-out) note. "
+        f"Got recent_playlists: {profile['recent_playlists']}"
+    )
+    assert profile["recent_playlists"] == []
+
+    # Sanity: the coach surface (which sees the private note) DOES
+    # include the playlist, confirming the only difference is the
+    # viewer-side visibility filter.
+    coach_resp = await client.get(
+        f"/api/coach/players/{pid}/development", headers=auth_headers,
+    )
+    coach_profile = coach_resp.json()["profile"]
+    assert coach_profile["counts"]["playlists"] == 1
+    assert [p["title"] for p in coach_profile["recent_playlists"]] == [
+        "Mixed-item playlist",
+    ]
