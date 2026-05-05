@@ -10,9 +10,13 @@ For broader installation and admin operations, see the [administrator guide](./a
 - [Getting started for coaches](#getting-started-for-coaches)
 - [The roster](#the-roster)
 - [Authoring coaching notes](#authoring-coaching-notes)
+- [Structured note fields](#structured-note-fields)
+- [Per-note thumbnails](#per-note-thumbnails)
 - [The telestrator](#the-telestrator)
 - [Multi-player formation overlay](#multi-player-formation-overlay)
 - [The Review tab](#the-review-tab)
+- [Coach Review templates](#coach-review-templates)
+- [Wide / Focus mode](#wide--focus-mode)
 - [Review playlists](#review-playlists)
 - [Sharing with players and families](#sharing-with-players-and-families)
 - [The player and family experience](#the-player-and-family-experience)
@@ -47,9 +51,23 @@ Once you have the role, sign in from the header and a **COACH** link appears nex
 
 The roster is independent of login accounts. A **roster player** records the athlete (display name, jersey number, active flag, internal notes). A **player ↔ user link** then connects one or more parent/guardian/family/player accounts to that roster entry. This separation supports common setups: two parents on one player, one account on two siblings, or an older player linked to their own account.
 
-![Roster tab with the inline Add Player and Player/Family Account Link forms](./screenshots/coach-roster-list.png)
+The Roster tab is laid out as a dashboard cockpit — KPI tiles at the top (active players, total players, linked accounts, unlinked active players), a filterable / searchable table in the middle, and a **Quick Add** panel on the side.
 
-Add players with the inline form on the left card. Use the right card to link an existing user account to a roster player and pick the relationship (`parent`, `guardian`, `family`, or `self`). Toggle Active to hide a player from the active filter without deleting the record.
+![Roster cockpit at 1440px — KPI tiles, table, Quick Add panel](./screenshots/roster-redesign-after/roster-1440.png)
+
+**Adding a player** — fill in display name, jersey number, and optional notes in the Quick Add panel and click **Add Player**.
+
+**Editing a player** — each row has an **Edit** action that opens a modal pre-filled with the current values. Change name, jersey number, active flag, or internal notes and click **Save**.
+
+![Edit Player modal](./screenshots/coach-player-edit/edit-player-modal.png)
+
+**Linking an account** — open the **Link account** action on a roster row, pick an existing user, and choose the relationship (`parent`, `guardian`, `family`, or `self`).
+
+![Link account modal](./screenshots/roster-redesign-after/roster-link-modal.png)
+
+**Filtering** — toggle the Active filter to hide retired roster entries, and use the search box to filter by name or jersey number.
+
+![Roster with the Inactive filter applied](./screenshots/roster-redesign-after/roster-filter-inactive.png)
 
 > **Tip:** Always create the roster *before* writing any individual-feedback notes. A note set to **Player/family** visibility is only seen by accounts that are linked to one of the note's selected players, so empty roster links mean no one will see the note.
 
@@ -74,14 +92,80 @@ Each note has:
 | **Time (seconds)** | The exact moment in the slot's timeline. |
 | **Title** | One-line summary shown in lists. |
 | **Category** | One of: shape, pressing, transition, set piece, build-up, finishing, defending, goalkeeper, effort, decision, other. |
+| **Tone (note type)** | One of: positive, correction, question, team concept, individual goal. Drives the colored pill players see in My Feedback. |
 | **Visibility** | Controls who sees it — see [the visibility table below](#sharing-with-players-and-families). |
 | **Linked players** | Tags one or more roster players. Required for **Player/family** notes. |
 | **Tags** | Free-form, comma-separated, for filtering and search. |
-| **Note** | Free-text body, up to 4000 chars. |
+| **Note** | Free-text body, up to 4000 chars (legacy; structured fields below are preferred). |
 
-Notes can also carry a **drawing overlay** painted with the telestrator — see the next section.
+Notes also carry **structured fields** ([next section](#structured-note-fields)) and a **drawing overlay** painted with the telestrator — see [The telestrator](#the-telestrator).
 
 > **Note:** The Notes tab form is for the metadata. To paint a drawing on the video, use the **Review** tab instead.
+
+---
+
+## Structured note fields
+
+Beyond the legacy single body field, every note has a set of **structured fields** designed to make feedback land more cleanly with players and families. They render as a definition list inside My Feedback — each field becomes a labeled section so a player skimming on a phone can find the part that matters to them.
+
+![Coach Review composer with the structured-field disclosure open](./screenshots/structured-notes-pr1b/composer-disclosure-open.png)
+
+| Field | Purpose | Visible to |
+|---|---|---|
+| **Player summary** | The player-facing one-liner. If set, it replaces the legacy body in My Feedback. | Whoever the visibility setting allows |
+| **What happened** | Plain description of the moment. | Same as above |
+| **Why it matters** | The coaching point — why the moment is worth a note. | Same as above |
+| **What to do next** | The actionable correction, drill, or behavior to repeat. | Same as above |
+| **Coach private note** | Coach-only commentary. **Never** visible to players or families. | Coaches and admins only |
+
+The composer in the Coach Review tab shows the structured fields under a disclosure block beneath the title and tone selector — open it to fill them in.
+
+![Notes-tab edit modal showing the same structured fields](./screenshots/structured-notes-pr1b/notes-edit-modal.png)
+
+The same fields are editable from the Notes tab → **Edit** modal so you don't need to revisit the Review tab to clean up wording.
+
+In My Feedback, a note with structured fields renders as a tone-pill header, the player summary as the body lead, and a clean `<dl>` list of *What happened / Why it matters / What to do next* below.
+
+![My Feedback note rendered with structured fields](./screenshots/structured-notes-pr1c/feedback-notes-1440.png)
+
+> **Privacy:** `Coach private note` is stripped server-side from every viewer-facing response. Even if you accidentally write a player's name into the private field, it never reaches the player or the family.
+
+---
+
+## Per-note thumbnails
+
+Every coaching note carries a thumbnail tile — a small frame grabbed from the match video at the note's timestamp. Thumbnails make it much faster to scan a long list of notes or a multi-clip playlist, because the imagery itself tells you which moment a note is about.
+
+![Coach Notes tab with per-note thumbnail tiles](./screenshots/phase-3b-thumbnails/coach-notes-list-dark.png)
+
+You'll see thumbnails everywhere a coaching note is rendered:
+
+| Surface | What the tile looks like |
+|---|---|
+| **Coach → Notes** list | 120×68 tile to the left of each row, with the timestamp chip and a coach-only ↻ Regenerate action. |
+| **Coach → Review** timeline rail | Compact chip with the thumbnail, timestamp, jersey indicator, category dot, and truncated title. |
+| **Coach → Playlists** list | A stacked 3-tile strip showing the first three notes' thumbnails, plus a `+N` overflow when the playlist holds more. |
+| **My Feedback → Notes** (viewer side) | 220 px thumbnail on the left of each card with the body on the right. Stacks vertically below 720 px. |
+| **My Feedback → Playlists** (viewer side) | The first item's thumbnail acts as the playlist cover. |
+| **Focused playlist player rail** | The active item's thumbnail tile appears beside the session metadata. |
+
+![Coach Review timeline rail — thumbnail chips at each note's timestamp](./screenshots/phase-3b-thumbnails/coach-review-rail-zoom.png)
+
+![My Feedback Notes — thumbnail-left layout on desktop](./screenshots/phase-3b-thumbnails/feedback-notes-desktop.png)
+
+### How thumbnails are produced
+
+Thumbnails are generated automatically in the background as soon as you save a new note, and re-generated whenever you change the note's match, slot, or timestamp. There is no extra step for the coach.
+
+If a note targets a match that has no uploaded video yet, the tile shows a film-strip placeholder glyph instead — the layout stays the same, so a row never collapses to a different size when video shows up later.
+
+![Placeholder state when a note has no underlying video yet](./screenshots/phase-3b-thumbnails/placeholder-state.png)
+
+### Forcing a refresh
+
+If a thumbnail looks wrong (the wrong moment was captured, or the source video was re-uploaded), use the coach-only **↻ Regenerate** button on the right of the row in the Notes list. The new frame replaces the old one within a few seconds.
+
+> **Note:** Thumbnails respect the same visibility rules as the notes themselves. A viewer who can't see a note also can't see its thumbnail — the request returns the same generic 404 as if the note didn't exist. Private coach notes never leak imagery into a player or family's view.
 
 ---
 
@@ -155,6 +239,59 @@ Workflow inside Review:
 
 The Notes tab form (used by **+ New note** there) is a faster path when you don't need to draw — same fields, no canvas. Anything authored in Review still appears in the Notes tab list.
 
+The Review composer breaks into three responsive areas: a left video + canvas column, a right toolbar, and a save-form footer. Layouts adapt down to 390 px (mobile) and up to 1920 px (wide desktop).
+
+![Coach Review at 1440 px desktop](./screenshots/sprint-1-after/coach-review-1440-desktop-fullpage.png)
+
+![Coach Review timeline rail rendered with thumbnail chips](./screenshots/sprint-5-after/timeline-rail-1440.png)
+
+### Keyboard shortcuts
+
+The Review tab supports a small set of shortcuts for fast authoring:
+
+![Keyboard shortcuts help dialog](./screenshots/sprint-7-after/shortcuts-help-1440.png)
+
+Press `?` to open the shortcuts cheat sheet at any time.
+
+---
+
+## Coach Review templates
+
+Coach Review ships with a library of starter templates so you don't have to retype the same structured-field skeleton for every "press trigger" or "build-up rotation" note. Pick a template from the **Template** selector at the top of the composer and click **Apply** — the title, tone, category, player summary, and the three structured fields are populated with a clear starting point. Click **Clear** to revert to a blank composer.
+
+![Coach Review composer with the template selector at the top (default state)](./screenshots/coach-review-templates/dark-default-1440.png)
+
+![Composer after a template has been applied](./screenshots/coach-review-templates/dark-applied-1440.png)
+
+The library covers common soccer areas — pressing, transition, build-up, finishing, set pieces, defending, shape, individual goals, and team concepts — grouped under `<optgroup>` headings inside the selector.
+
+| Behavior | What happens |
+|---|---|
+| **Apply on a fresh composer** | Fills all fields silently (defaults like category=`shape` count as untouched). |
+| **Apply when you've already typed** | Replay asks for confirmation before overwriting your text. |
+| **Clear** | Resets the composer to blank without affecting the active template tracker. |
+| **After saving a note** | The active-template tracker resets so the next moment starts from "None — start from scratch." |
+
+Templates **never** populate `Coach private note` — that field stays empty until the coach types into it.
+
+> **Tip:** Templates are a great onboarding tool for assistant coaches. They communicate "what good feedback looks like" by example — the player_summary phrasing, the level of detail in *what to do next*, and the choice of tone.
+
+---
+
+## Wide / Focus mode
+
+When you want maximum screen real estate for the video and canvas, click the **Focus** toggle in the Review tab. Page chrome, the inspector rail, and surrounding white space collapse, leaving only the video, the telestrator overlay, and a slim drawer of essential controls.
+
+![Coach Review in Focus mode](./screenshots/sprint-6-after/focus-on-1440.png)
+
+The drawer slides in from the right edge and contains the tool palette, color/width sliders, and the structured-field disclosure — the same controls as the regular layout, just packed tighter.
+
+![Focus-mode drawer expanded](./screenshots/sprint-6-after/focus-drawer-1440.png)
+
+Click the toggle again (or press `Esc`) to return to the standard layout.
+
+> **Tip:** Focus mode pairs well with a second monitor. Pop the Coach Review tab to a vertical 1080 × 1920 display in Focus mode, and you've got a full-bleed telestrator station while the rest of your work stays on the main screen.
+
 ---
 
 ## Review playlists
@@ -224,6 +361,14 @@ Inside the modal:
 When opened from the Notes tab, the same modal switches to single-clip mode (no playlist controller).
 
 ![Focused player — single coaching note](./screenshots/feedback-note-modal.png)
+
+The modal opens **paused at the freeze frame** — the moment the coach captured — so the saved drawing lines up exactly with what's underneath. Click play to resume from there.
+
+![Focused modal paused at the freeze frame with the drawing overlay](./screenshots/structured-notes-pr1c/focused-modal-paused-with-canvas.png)
+
+When the note has structured fields, the modal also stacks the player summary plus the *What happened / Why it matters / What to do next* trio below the video so the player has the full coaching context without leaving the modal.
+
+![Focused modal with the structured field stack below the video](./screenshots/structured-notes-pr1c/focused-modal-structured-stack.png)
 
 ---
 
