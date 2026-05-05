@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TIME_RE = re.compile(r"^\d{2}:\d{2}$")
@@ -527,6 +527,142 @@ class MarkCoachingReviewRequest(BaseModel):
     @classmethod
     def strip_reflection(cls, v: str) -> str:
         return v.strip()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4a — Coaching clips
+#
+# Clips reuse the SAME enums as notes (`_VALID_NOTE_CATEGORIES`,
+# `_VALID_COACHING_VISIBILITY`, `_VALID_SLOTS`) and the same drawing
+# validator, so the coach authoring vocabulary stays consistent across
+# notes / playlists / clips. The duration cap matches the roadmap's
+# MVP guidance (120 seconds). The clip authoring UI ships in a later
+# phase; this PR is backend-only.
+# ---------------------------------------------------------------------------
+
+# Roadmap MVP cap (Phase 4a). Generous enough for a full set-piece +
+# follow-up sequence, narrow enough that the eventual MP4 export job
+# stays bounded. Re-think this when clip export ships.
+_MAX_CLIP_DURATION_SECONDS = 120.0
+
+
+class CreateCoachingClipRequest(BaseModel):
+    match_id: str = Field(..., min_length=1, max_length=120)
+    slot: str = Field("full")
+    start_seconds: float = Field(..., ge=0)
+    end_seconds: float = Field(..., gt=0)
+    title: str = Field(..., min_length=1, max_length=160)
+    description: str = Field("", max_length=2000)
+    category: str = Field("other")
+    visibility: str = Field("private")
+    player_ids: list[str] = Field(default_factory=list, max_length=50)
+    source_note_id: Optional[int] = None
+    # Optional drawing snapshot. When the create endpoint is given a
+    # `source_note_id` and `drawing` is empty, the server defaults this
+    # field from the source note's drawing so the clip is self-
+    # contained. See `db.create_coaching_clip` + the create handler in
+    # `server.py`.
+    drawing: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("slot")
+    @classmethod
+    def validate_slot(cls, v: str) -> str:
+        if v not in _VALID_SLOTS:
+            raise ValueError("slot must be full, first_half, or second_half")
+        return v
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        return CreateCoachingNoteRequest.validate_category(v)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str) -> str:
+        return CreateCoachingNoteRequest.validate_visibility(v)
+
+    @field_validator("title", "description")
+    @classmethod
+    def strip_text(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("drawing")
+    @classmethod
+    def validate_drawing(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return validate_drawing_payload(v)
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        # `end_seconds > start_seconds` is the must-hold invariant.
+        # The other constraints (non-negative start, MVP duration cap)
+        # live here too so the error messages name the field a coach
+        # actually edits in the UI.
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        duration = self.end_seconds - self.start_seconds
+        if duration > _MAX_CLIP_DURATION_SECONDS:
+            raise ValueError(
+                f"clip duration must be {_MAX_CLIP_DURATION_SECONDS:.0f} seconds or less"
+            )
+        return self
+
+
+class UpdateCoachingClipRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_seconds: Optional[float] = Field(None, ge=0)
+    end_seconds: Optional[float] = Field(None, gt=0)
+    title: Optional[str] = Field(None, min_length=1, max_length=160)
+    description: Optional[str] = Field(None, max_length=2000)
+    category: Optional[str] = None
+    visibility: Optional[str] = None
+    player_ids: Optional[list[str]] = Field(None, max_length=50)
+    drawing: Optional[dict[str, Any]] = None
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.validate_category(v)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.validate_visibility(v)
+
+    @field_validator("title", "description")
+    @classmethod
+    def strip_text(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+    @field_validator("drawing")
+    @classmethod
+    def validate_drawing(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        if v is None:
+            return v
+        return validate_drawing_payload(v)
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        # We can only enforce the window invariants when the request
+        # provides BOTH endpoints, OR provides one endpoint and the
+        # caller has already merged the other in from the existing row.
+        # Validation against the existing row happens in the route
+        # handler (`server.py`) so it can short-circuit with 404 when
+        # the clip itself doesn't exist. Here we just guard the
+        # both-fields-supplied case.
+        if self.start_seconds is not None and self.end_seconds is not None:
+            if self.end_seconds <= self.start_seconds:
+                raise ValueError("end_seconds must be greater than start_seconds")
+            duration = self.end_seconds - self.start_seconds
+            if duration > _MAX_CLIP_DURATION_SECONDS:
+                raise ValueError(
+                    f"clip duration must be {_MAX_CLIP_DURATION_SECONDS:.0f} seconds or less"
+                )
+        return self
 
 
 class LiveAuthRequest(BaseModel):

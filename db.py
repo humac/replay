@@ -394,9 +394,88 @@ def _migrate_v9(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_notes_note_type ON coaching_notes(note_type)")
 
 
+def _migrate_v10(conn: sqlite3.Connection):
+    """Add `coaching_clips` + `coaching_clip_players` (Phase 4a).
+
+    Clips are first-class coaching objects: a coach selects a
+    `[start_seconds, end_seconds]` window of a match slot, optionally
+    seeded from an existing note (`source_note_id`), and saves it as a
+    reusable moment that can later be added to playlists, exported, or
+    referenced from My Feedback. Phase 4a adds the schema + backend
+    only; the Coach Review clip UI and MP4 export ship in later
+    phases.
+
+    Schema choices intentionally mirror `coaching_notes` so the same
+    visibility ladder + linked-player rules apply unchanged:
+      - `match_id` / `slot` are the source video coordinates
+      - `start_seconds` / `end_seconds` define the window (server-side
+        validators clamp end > start and cap duration)
+      - `category` / `visibility` come from the existing note enums
+      - `source_note_id` is a nullable forward-compat reference; if the
+        note is later deleted the clip stays valid (we set NULL via
+        `delete_coaching_note`'s cascade-by-hand rather than ON DELETE
+        SET NULL so SQLite's older versions behave consistently)
+      - `drawing_json` is a snapshot of the source note's drawing
+        captured at clip-create time. Storing a copy means the clip is
+        self-contained — the linked note can be edited or deleted
+        without losing the visual context the coach saw when authoring.
+
+    `coaching_clip_players` mirrors `coaching_note_players` exactly so
+    the same `linked_player_ids_for_user` filter logic applies."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_clips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            slot TEXT NOT NULL,
+            start_seconds REAL NOT NULL,
+            end_seconds REAL NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL DEFAULT 'other',
+            visibility TEXT NOT NULL DEFAULT 'private',
+            source_note_id INTEGER,
+            drawing_json TEXT NOT NULL DEFAULT '{}',
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(source_note_id) REFERENCES coaching_notes(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_clips_match "
+        "ON coaching_clips(match_id, slot, start_seconds)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_clips_visibility "
+        "ON coaching_clips(visibility)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_clips_source_note "
+        "ON coaching_clips(source_note_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_clip_players (
+            clip_id INTEGER NOT NULL,
+            player_id TEXT NOT NULL,
+            PRIMARY KEY(clip_id, player_id),
+            FOREIGN KEY(clip_id) REFERENCES coaching_clips(id) ON DELETE CASCADE,
+            FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_clip_players_player "
+        "ON coaching_clip_players(player_id)"
+    )
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
+    _migrate_v10,
 ]
 
 
@@ -806,6 +885,13 @@ def delete_player(player_id: str) -> bool:
         conn.execute("DELETE FROM player_user_links WHERE player_id = ?", (player_id,))
         conn.execute("DELETE FROM coaching_note_players WHERE player_id = ?", (player_id,))
         conn.execute("DELETE FROM coaching_playlist_players WHERE player_id = ?", (player_id,))
+        # Phase 4a (PR #95 review follow-up): clips also link to players
+        # via `coaching_clip_players`. SQLite's `ON DELETE CASCADE`
+        # declared on that table requires `PRAGMA foreign_keys = ON`,
+        # which the rest of this codebase doesn't enable — clean up the
+        # join rows explicitly so deleting a player leaves no orphan
+        # clip-player references.
+        conn.execute("DELETE FROM coaching_clip_players WHERE player_id = ?", (player_id,))
         cur = conn.execute("DELETE FROM players WHERE id = ?", (player_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -985,13 +1071,21 @@ def update_coaching_note(note_id: int, data: dict) -> dict | None:
     updates = {k: v for k, v in data.items() if k in scalar_allowed and v is not None}
     if "drawing" in data and data["drawing"] is not None:
         updates["drawing_json"] = json.dumps(data["drawing"])
+    # PR #95 review follow-up: a join-table-only PATCH (player_ids /
+    # tags only) is still a real edit and must bump `updated_at` so
+    # the row surfaces in `ORDER BY updated_at` lists. Compute that
+    # flag BEFORE we add `updated_at` to the dict.
+    join_changed = "player_ids" in data or "tags" in data
     updates["updated_at"] = _now_iso()
     with connect() as conn:
-        if len(updates) > 1:
+        # Run the UPDATE if the request changed anything beyond the
+        # auto-added `updated_at` (len > 1) OR if a join-table edit
+        # happened — both cases need `updated_at` to advance.
+        if len(updates) > 1 or join_changed:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             values = list(updates.values()) + [note_id]
             conn.execute(f"UPDATE coaching_notes SET {set_clause} WHERE id = ?", values)
-        if "player_ids" in data or "tags" in data:
+        if join_changed:
             existing = get_coaching_note(note_id) or {}
             _replace_note_children(
                 conn,
@@ -1009,6 +1103,17 @@ def delete_coaching_note(note_id: int) -> bool:
         conn.execute("DELETE FROM coaching_note_tags WHERE note_id = ?", (note_id,))
         conn.execute("DELETE FROM coaching_playlist_items WHERE note_id = ?", (note_id,))
         conn.execute("DELETE FROM coaching_reviews WHERE note_id = ?", (note_id,))
+        # Phase 4a: clips reference notes via `source_note_id`. The
+        # column has `ON DELETE SET NULL` declared, but SQLite needs
+        # `PRAGMA foreign_keys = ON` for that to fire and the rest of
+        # this codebase doesn't enable it (every other related table is
+        # cleaned up manually here). Keep that pattern: NULL out the FK
+        # explicitly so clips stay valid with their snapshot drawing
+        # intact.
+        conn.execute(
+            "UPDATE coaching_clips SET source_note_id = NULL WHERE source_note_id = ?",
+            (note_id,),
+        )
         cur = conn.execute("DELETE FROM coaching_notes WHERE id = ?", (note_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -1174,6 +1279,173 @@ def list_coaching_reviews(user_id: str | None = None) -> list[dict]:
         else:
             rows = conn.execute("SELECT * FROM coaching_reviews ORDER BY reviewed_at DESC").fetchall()
         return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Coaching clips (Phase 4a)
+#
+# Clips are first-class coaching objects — a saved [start, end] window
+# of a match slot, optionally seeded from a note. They use the SAME
+# visibility ladder as notes / playlists (private / team / player /
+# unlisted) and the SAME `linked_player_ids_for_user` join pattern, so
+# `_filter_clips_for_user` in server.py is a thin wrapper over the
+# existing logic.
+#
+# Source-note linkage: `source_note_id` is a nullable FK with
+# `ON DELETE SET NULL` — if the source note is deleted the clip stays
+# valid (the coach copied the relevant context into the clip's own
+# `title` / `description` / `drawing_json` fields at create time).
+# ---------------------------------------------------------------------------
+
+
+def _clip_player_data(conn: sqlite3.Connection, clip_ids: list[int]) -> dict[int, list[str]]:
+    """Mirror of `_note_child_data` but only returns the player join.
+    Clips don't carry tags, so the second member of that tuple is
+    intentionally absent here."""
+    if not clip_ids:
+        return {}
+    placeholders = ",".join("?" for _ in clip_ids)
+    players: dict[int, list[str]] = {clip_id: [] for clip_id in clip_ids}
+    for row in conn.execute(
+        f"SELECT clip_id, player_id FROM coaching_clip_players WHERE clip_id IN ({placeholders})",
+        clip_ids,
+    ).fetchall():
+        players.setdefault(row["clip_id"], []).append(row["player_id"])
+    return players
+
+
+def _row_to_clip(row: sqlite3.Row, player_ids: list[str] | None = None) -> dict:
+    try:
+        drawing = json.loads(row["drawing_json"] or "{}")
+    except Exception:
+        drawing = {}
+    return {
+        "id": row["id"],
+        "match_id": row["match_id"],
+        "slot": row["slot"],
+        "start_seconds": row["start_seconds"],
+        "end_seconds": row["end_seconds"],
+        "duration_seconds": float(row["end_seconds"]) - float(row["start_seconds"]),
+        "title": row["title"],
+        "description": row["description"] or "",
+        "category": row["category"],
+        "visibility": row["visibility"],
+        "source_note_id": row["source_note_id"],
+        "drawing": drawing,
+        "created_by": row["created_by"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "player_ids": player_ids or [],
+    }
+
+
+def list_coaching_clips(match_id: str | None = None) -> list[dict]:
+    with connect() as conn:
+        if match_id:
+            rows = conn.execute(
+                "SELECT * FROM coaching_clips WHERE match_id = ? "
+                "ORDER BY slot, start_seconds, id",
+                (match_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM coaching_clips ORDER BY updated_at DESC, id DESC"
+            ).fetchall()
+        ids = [row["id"] for row in rows]
+        players = _clip_player_data(conn, ids)
+        return [_row_to_clip(row, players.get(row["id"], [])) for row in rows]
+
+
+def get_coaching_clip(clip_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM coaching_clips WHERE id = ?", (clip_id,)).fetchone()
+        if not row:
+            return None
+        players = _clip_player_data(conn, [clip_id])
+        return _row_to_clip(row, players.get(clip_id, []))
+
+
+def _replace_clip_children(conn: sqlite3.Connection, clip_id: int, player_ids: list[str]) -> None:
+    conn.execute("DELETE FROM coaching_clip_players WHERE clip_id = ?", (clip_id,))
+    if player_ids:
+        conn.executemany(
+            "INSERT OR IGNORE INTO coaching_clip_players (clip_id, player_id) VALUES (?, ?)",
+            [(clip_id, player_id) for player_id in player_ids],
+        )
+
+
+def create_coaching_clip(data: dict, *, actor: str | None = None) -> dict:
+    now = _now_iso()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO coaching_clips (
+                match_id, slot, start_seconds, end_seconds, title, description,
+                category, visibility, source_note_id, drawing_json,
+                created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["match_id"], data["slot"],
+                float(data["start_seconds"]), float(data["end_seconds"]),
+                data["title"], data.get("description", ""),
+                data.get("category", "other"), data.get("visibility", "private"),
+                data.get("source_note_id"),
+                json.dumps(data.get("drawing") or {}),
+                actor, now, now,
+            ),
+        )
+        clip_id = cur.lastrowid
+        _replace_clip_children(conn, clip_id, data.get("player_ids") or [])
+        conn.commit()
+    return get_coaching_clip(clip_id) or {}
+
+
+def update_coaching_clip(clip_id: int, data: dict) -> dict | None:
+    """Partial-update. Mirrors `update_coaching_note` — only the keys the
+    request actually sends are written; the rest round-trip untouched.
+    `source_note_id` is intentionally NOT updatable (the clip's
+    drawing/title were captured from a specific note at create time;
+    rebinding to a different source mid-life would silently change the
+    visual context). If a coach wants to re-anchor, they delete + recreate."""
+    scalar_allowed = {
+        "start_seconds", "end_seconds", "title", "description",
+        "category", "visibility",
+    }
+    updates = {k: v for k, v in data.items() if k in scalar_allowed and v is not None}
+    if "drawing" in data and data["drawing"] is not None:
+        updates["drawing_json"] = json.dumps(data["drawing"])
+    # PR #95 review follow-up: a join-table-only PATCH (player_ids only)
+    # is still a real edit and must bump `updated_at` so the row
+    # surfaces in `ORDER BY updated_at` lists. Compute that flag BEFORE
+    # we add `updated_at` to the dict.
+    join_changed = "player_ids" in data
+    updates["updated_at"] = _now_iso()
+    with connect() as conn:
+        # Run the UPDATE if the request changed anything beyond the
+        # auto-added `updated_at` (len > 1) OR if a join-table edit
+        # happened — both cases need `updated_at` to advance.
+        if len(updates) > 1 or join_changed:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [clip_id]
+            conn.execute(f"UPDATE coaching_clips SET {set_clause} WHERE id = ?", values)
+        if join_changed:
+            existing = get_coaching_clip(clip_id) or {}
+            _replace_clip_children(
+                conn,
+                clip_id,
+                data.get("player_ids") if data.get("player_ids") is not None else existing.get("player_ids", []),
+            )
+        conn.commit()
+    return get_coaching_clip(clip_id)
+
+
+def delete_coaching_clip(clip_id: int) -> bool:
+    with connect() as conn:
+        conn.execute("DELETE FROM coaching_clip_players WHERE clip_id = ?", (clip_id,))
+        cur = conn.execute("DELETE FROM coaching_clips WHERE id = ?", (clip_id,))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------

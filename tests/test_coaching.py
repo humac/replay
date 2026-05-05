@@ -1116,3 +1116,662 @@ async def test_thumb_path_within_videos_dir_helper(monkeypatch, tmp_path):
     assert _server._thumb_path_within_videos_dir(outside) is False
     # `..`-laden path should resolve outside `tmp_path` and be rejected.
     assert _server._thumb_path_within_videos_dir(traversal) is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 4a — Coaching clips
+#
+# Backend-only PR: schema + Pydantic models + /api/coach/clips* endpoints
+# + clips embedded under /api/my-feedback. No UI, no MP4 export. Tests
+# below pin down the visibility ladder (mirrors notes/playlists), the
+# private-source-note privacy invariant (clips never auto-copy
+# coach-private text), the duration cap, and the source-note default
+# behavior.
+# ---------------------------------------------------------------------------
+
+
+async def _create_match_for_clips(client, headers, *, away="Test FC", date="2026-06-01") -> str:
+    resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": away, "date": date,
+    }, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_clip_coach_can_create_list_update_delete(client, auth_headers):
+    """Happy-path CRUD for the coach. Mirrors the note CRUD smoke test."""
+    match_id = await _create_match_for_clips(client, auth_headers)
+
+    # Create
+    create_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 12.0, "end_seconds": 32.0,
+        "title": "Press triggers (early in match)",
+        "description": "Three back-pass triggers in the first 5 minutes.",
+        "category": "pressing", "visibility": "team",
+    }, headers=auth_headers)
+    assert create_resp.status_code == 200, create_resp.text
+    clip = create_resp.json()["clip"]
+    assert clip["title"] == "Press triggers (early in match)"
+    assert clip["start_seconds"] == 12.0 and clip["end_seconds"] == 32.0
+    assert clip["duration_seconds"] == 20.0
+    assert clip["visibility"] == "team"
+    assert clip["source_note_id"] is None
+
+    # List
+    list_resp = await client.get("/api/coach/clips", headers=auth_headers)
+    assert list_resp.status_code == 200
+    assert [c["id"] for c in list_resp.json()["clips"]] == [clip["id"]]
+
+    # List with match filter
+    other_match_id = await _create_match_for_clips(
+        client, auth_headers, away="Other FC", date="2026-06-02"
+    )
+    filtered = await client.get(
+        f"/api/coach/clips?match_id={other_match_id}", headers=auth_headers
+    )
+    assert filtered.json()["clips"] == []
+
+    # Update
+    update_resp = await client.patch(
+        f"/api/coach/clips/{clip['id']}",
+        json={"title": "Press triggers (renamed)", "end_seconds": 40.0},
+        headers=auth_headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    updated = update_resp.json()["clip"]
+    assert updated["title"] == "Press triggers (renamed)"
+    assert updated["end_seconds"] == 40.0
+    assert updated["duration_seconds"] == 28.0
+
+    # Get one
+    get_resp = await client.get(f"/api/coach/clips/{clip['id']}", headers=auth_headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["clip"]["title"] == "Press triggers (renamed)"
+
+    # Delete
+    del_resp = await client.delete(f"/api/coach/clips/{clip['id']}", headers=auth_headers)
+    assert del_resp.status_code == 200
+    assert (await client.get("/api/coach/clips", headers=auth_headers)).json()["clips"] == []
+
+
+@pytest.mark.asyncio
+async def test_clip_viewer_cannot_create_update_delete(client, auth_headers):
+    """Backend access control: viewers can never write to /api/coach/clips."""
+    await client.post("/api/users", json={
+        "username": "viewer_clip_blocked", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer_headers = await _login(client, "viewer_clip_blocked")
+
+    match_id = await _create_match_for_clips(client, auth_headers)
+    # Coach creates a clip first so we have something to attempt updating.
+    coach_create = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 10.0,
+        "title": "Test clip", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = coach_create.json()["clip"]["id"]
+
+    # Viewer create → 403
+    create_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 10.0,
+        "title": "Sneaky clip", "category": "other", "visibility": "team",
+    }, headers=viewer_headers)
+    assert create_resp.status_code == 403
+
+    # Viewer list → 403
+    assert (await client.get("/api/coach/clips", headers=viewer_headers)).status_code == 403
+
+    # Viewer update → 403
+    update_resp = await client.patch(
+        f"/api/coach/clips/{clip_id}",
+        json={"title": "Hijacked"},
+        headers=viewer_headers,
+    )
+    assert update_resp.status_code == 403
+
+    # Viewer delete → 403
+    assert (await client.delete(f"/api/coach/clips/{clip_id}", headers=viewer_headers)).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_clip_my_feedback_team_visible_to_signed_in_viewer(client, auth_headers):
+    """A `team` clip is visible to any signed-in viewer through /api/my-feedback."""
+    await client.post("/api/users", json={
+        "username": "feedback_team_viewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_id = await _create_match_for_clips(client, auth_headers, away="Team Vis FC")
+    create_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 5.0, "end_seconds": 25.0,
+        "title": "Team-visible moment", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = create_resp.json()["clip"]["id"]
+
+    viewer_headers = await _login(client, "feedback_team_viewer")
+    feedback_resp = await client.get("/api/my-feedback", headers=viewer_headers)
+    assert feedback_resp.status_code == 200
+    assert [c["id"] for c in feedback_resp.json()["clips"]] == [clip_id]
+
+
+@pytest.mark.asyncio
+async def test_clip_my_feedback_player_visibility(client, auth_headers):
+    """A `player` clip is visible only to viewers linked to a tagged player.
+    Unrelated viewers must NOT see it."""
+    family_resp = await client.post("/api/users", json={
+        "username": "clip_family", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    family_id = family_resp.json()["user"]["id"]
+    await client.post("/api/users", json={
+        "username": "clip_stranger", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Sam Player", "jersey_number": "10",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": family_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    match_id = await _create_match_for_clips(client, auth_headers, away="Player Vis FC")
+    create_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 12.0,
+        "title": "Player-only moment", "category": "decision", "visibility": "player",
+        "player_ids": [player_id],
+    }, headers=auth_headers)
+    clip_id = create_resp.json()["clip"]["id"]
+
+    family_headers = await _login(client, "clip_family")
+    stranger_headers = await _login(client, "clip_stranger")
+
+    family_clips = (await client.get("/api/my-feedback", headers=family_headers)).json()["clips"]
+    stranger_clips = (await client.get("/api/my-feedback", headers=stranger_headers)).json()["clips"]
+    assert [c["id"] for c in family_clips] == [clip_id]
+    assert stranger_clips == []
+
+
+@pytest.mark.asyncio
+async def test_clip_private_does_not_leak_to_viewer(client, auth_headers):
+    """Private clips must NEVER reach My Feedback for any viewer (including
+    a player who happens to be tagged on the clip)."""
+    family_resp = await client.post("/api/users", json={
+        "username": "private_clip_family", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    family_id = family_resp.json()["user"]["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Tagged Player", "jersey_number": "11",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": family_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    match_id = await _create_match_for_clips(client, auth_headers, away="Private FC")
+    await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 1.0, "end_seconds": 11.0,
+        "title": "Coach-only review", "category": "other", "visibility": "private",
+        # Tagging the linked player MUST NOT escalate visibility past
+        # `private` — that's the bug the Phase 1 / Phase 3a privacy
+        # tests pinned for notes / thumbnails. Same rule applies to
+        # clips.
+        "player_ids": [player_id],
+    }, headers=auth_headers)
+
+    family_headers = await _login(client, "private_clip_family")
+    feedback = (await client.get("/api/my-feedback", headers=family_headers)).json()
+    assert feedback["clips"] == [], (
+        "private clip must never reach a viewer, even if they're linked to a tagged player"
+    )
+
+
+@pytest.mark.asyncio
+async def test_clip_source_note_does_not_leak_private_text(client, auth_headers):
+    """When a clip is created from `source_note_id`, the source note's
+    private text fields (body, coach_private_note, what_happened, etc.)
+    must NOT be auto-copied into the clip — only match/slot/category +
+    drawing-snapshot defaults are pulled in. The clip's own title /
+    description come from the request body.
+
+    This is the Phase 4a equivalent of the `_strip_private_fields`
+    invariant: the clip endpoint creates a NEW visibility surface for
+    the moment, and a coach-private note's text must not slip out
+    through a more permissive clip visibility."""
+    match_id = await _create_match_for_clips(client, auth_headers, away="Source FC")
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 30.0,
+        "title": "Private note title", "category": "other", "visibility": "private",
+        "body": "Public-ish body text.",
+        "coach_private_note": "TOP-SECRET coach observation",
+        "what_happened": "Specific tactical context coach notes only.",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    # Coach explicitly requests team visibility on the new clip,
+    # against a clip title they wrote (not the private note's title).
+    create_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 25.0, "end_seconds": 45.0,
+        "title": "Team-shareable clip", "description": "",
+        "category": "pressing", "visibility": "team",
+        "source_note_id": note_id,
+    }, headers=auth_headers)
+    assert create_resp.status_code == 200, create_resp.text
+    clip = create_resp.json()["clip"]
+
+    # The clip retains its own title — NOT the source note's private title.
+    assert clip["title"] == "Team-shareable clip"
+    assert clip["description"] == ""
+    # And the clip carries no field that re-publishes the source's
+    # text. (We don't even *store* `body` / `coach_private_note` on
+    # clips — this is structural, not just runtime — but verify the
+    # response payload too as belt-and-braces.)
+    forbidden_text_substrings = [
+        "TOP-SECRET", "coach observation",
+        "Public-ish body text",
+        "Specific tactical context",
+        "Private note title",
+    ]
+    serialized = str(clip)
+    for forbidden in forbidden_text_substrings:
+        assert forbidden not in serialized, (
+            f"clip response leaked source-note text: {forbidden!r}"
+        )
+
+    # source_note_id reference is preserved.
+    assert clip["source_note_id"] == note_id
+
+
+@pytest.mark.asyncio
+async def test_clip_source_note_drawing_default(client, auth_headers):
+    """When a clip is seeded from `source_note_id` and `drawing` is empty,
+    the server defaults the clip's drawing to a SNAPSHOT of the source's
+    drawing. The clip stores its own copy so a later note edit/delete
+    doesn't strand the clip without context."""
+    match_id = await _create_match_for_clips(client, auth_headers, away="Drawing FC")
+    note_drawing = {
+        "version": 2,
+        "objects": [
+            {"type": "arrow", "color": "#38bdf8", "width": 4,
+             "x1": 0.1, "y1": 0.2, "x2": 0.4, "y2": 0.5},
+        ],
+    }
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 30.0,
+        "title": "Note with drawing", "category": "shape", "visibility": "team",
+        "drawing": note_drawing,
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    create_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 28.0, "end_seconds": 38.0,
+        "title": "Clip from drawn note", "category": "shape", "visibility": "team",
+        "source_note_id": note_id,
+    }, headers=auth_headers)
+    clip = create_resp.json()["clip"]
+    assert clip["drawing"]["version"] == 2
+    assert clip["drawing"]["objects"][0]["type"] == "arrow"
+
+    # Now delete the source note. The clip should remain valid.
+    assert (await client.delete(
+        f"/api/coach/notes/{note_id}", headers=auth_headers,
+    )).status_code == 200
+    after = (await client.get(
+        f"/api/coach/clips/{clip['id']}", headers=auth_headers,
+    )).json()["clip"]
+    # Clip drawing snapshot is intact.
+    assert after["drawing"]["version"] == 2
+    # The source_note_id FK is now NULL (ON DELETE SET NULL).
+    assert after["source_note_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_clip_invalid_window_rejected(client, auth_headers):
+    """Pydantic-level rejections: end <= start, duration > 120s, negative
+    start, etc. All should land as 422 from FastAPI's request-body
+    validator without ever creating a row."""
+    match_id = await _create_match_for_clips(client, auth_headers, away="Validation FC")
+
+    # end == start → rejected
+    resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 5.0, "end_seconds": 5.0,
+        "title": "Bad", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert resp.status_code == 422
+
+    # end < start → rejected
+    resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 10.0, "end_seconds": 5.0,
+        "title": "Bad", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert resp.status_code == 422
+
+    # duration > 120s → rejected (MVP cap)
+    resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 150.0,
+        "title": "Too long", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert resp.status_code == 422
+
+    # negative start → rejected
+    resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": -1.0, "end_seconds": 10.0,
+        "title": "Negative", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_clip_invalid_visibility_and_slot_and_category(client, auth_headers):
+    """Enum guards mirror the note model's. Each invalid value lands as 422
+    with a message naming the offending field."""
+    match_id = await _create_match_for_clips(client, auth_headers, away="Enum FC")
+
+    for body, field in [
+        ({"slot": "extra_time"}, "slot"),
+        ({"visibility": "public"}, "visibility"),
+        ({"category": "skills"}, "category"),
+    ]:
+        payload = {
+            "match_id": match_id, "slot": "full",
+            "start_seconds": 0.0, "end_seconds": 10.0,
+            "title": "Test", "category": "other", "visibility": "team",
+        }
+        payload.update(body)
+        resp = await client.post("/api/coach/clips", json=payload, headers=auth_headers)
+        assert resp.status_code == 422, f"{field} should be rejected"
+        assert field in resp.text
+
+
+@pytest.mark.asyncio
+async def test_clip_invalid_match_player_source_note_handled(client, auth_headers):
+    """Unknown FK references return 404, not 500."""
+    match_id = await _create_match_for_clips(client, auth_headers, away="FK FC")
+
+    # Unknown match_id → 404
+    resp = await client.post("/api/coach/clips", json={
+        "match_id": "no-such-match", "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 10.0,
+        "title": "Test", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert resp.status_code == 404
+
+    # Unknown player_id → 404
+    resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 10.0,
+        "title": "Test", "category": "other", "visibility": "player",
+        "player_ids": ["nonexistent-player-id"],
+    }, headers=auth_headers)
+    assert resp.status_code == 404
+
+    # Unknown source_note_id → 404
+    resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 10.0,
+        "title": "Test", "category": "other", "visibility": "team",
+        "source_note_id": 9999999,
+    }, headers=auth_headers)
+    assert resp.status_code == 404
+
+    # Update of unknown clip → 404
+    resp = await client.patch("/api/coach/clips/9999999", json={"title": "x"}, headers=auth_headers)
+    assert resp.status_code == 404
+    # Get of unknown clip → 404
+    resp = await client.get("/api/coach/clips/9999999", headers=auth_headers)
+    assert resp.status_code == 404
+    # Delete of unknown clip → 404
+    resp = await client.delete("/api/coach/clips/9999999", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clip_update_window_invariants(client, auth_headers):
+    """The PATCH endpoint must enforce the same end>start and ≤120s
+    invariants when only one endpoint is modified (Pydantic only catches
+    the both-fields-supplied case; the route handler closes the gap by
+    merging against the existing row)."""
+    match_id = await _create_match_for_clips(client, auth_headers, away="Patch FC")
+    create = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 10.0, "end_seconds": 30.0,
+        "title": "Existing", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = create.json()["clip"]["id"]
+
+    # Move start past the existing end → 422 from route handler
+    resp = await client.patch(
+        f"/api/coach/clips/{clip_id}",
+        json={"start_seconds": 35.0},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "end_seconds must be greater than start_seconds" in resp.text
+
+    # Stretch end so duration > 120s → 422
+    resp = await client.patch(
+        f"/api/coach/clips/{clip_id}",
+        json={"end_seconds": 200.0},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "120 seconds" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_clip_unauthenticated_blocked(client):
+    """No-auth requests to coach clip endpoints get 401, not 403 or 500.
+    The /api/my-feedback endpoint also requires auth, so anonymous
+    requests there can't probe clip existence either."""
+    assert (await client.get("/api/coach/clips")).status_code in (401, 403)
+    assert (await client.post("/api/coach/clips", json={
+        "match_id": "x", "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 1.0, "title": "x",
+    })).status_code in (401, 403)
+    assert (await client.get("/api/my-feedback")).status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_clip_admin_only_visibility_in_my_feedback_for_coach(client, auth_headers):
+    """The admin/coach call to /api/my-feedback should still see clips
+    (admins inherit coach role and can call this surface)."""
+    match_id = await _create_match_for_clips(client, auth_headers, away="Admin FC")
+    create = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 5.0,
+        "title": "For admin view", "category": "other", "visibility": "private",
+    }, headers=auth_headers)
+    clip_id = create.json()["clip"]["id"]
+
+    feedback = (await client.get("/api/my-feedback", headers=auth_headers)).json()
+    assert clip_id in {c["id"] for c in feedback["clips"]}, (
+        "admin/coach should see private clips in their own /api/my-feedback view"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4a — PR #95 review follow-up regressions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clip_player_only_patch_bumps_updated_at(client, auth_headers, monkeypatch):
+    """A PATCH that changes ONLY `player_ids` (no scalar field, no
+    drawing) must still bump `updated_at` on the clip row, so the
+    clip surfaces correctly in `ORDER BY updated_at` lists.
+
+    Pre-fix: `update_coaching_clip`'s `len(updates) > 1` guard
+    skipped the UPDATE statement entirely when only `player_ids`
+    changed (the `updates` dict at that point only contained
+    `updated_at` itself, length 1). The join table was rewritten
+    but the row's timestamp stayed stale.
+
+    `_now_iso()` only resolves to seconds, so we monkeypatch a
+    deterministic counter so each call returns a distinct timestamp
+    without slowing the test with real-time sleeps.
+    """
+    import db as _db
+    counter = {"n": 0}
+    def fake_now():
+        counter["n"] += 1
+        return f"2026-06-10T00:00:{counter['n']:02d}Z"
+    monkeypatch.setattr(_db, "_now_iso", fake_now)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Updated FC", "date": "2026-06-10",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Roster Player", "jersey_number": "5",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+
+    create = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 10.0,
+        "title": "Existing", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip = create.json()["clip"]
+    initial_updated_at = clip["updated_at"]
+
+    patch = await client.patch(
+        f"/api/coach/clips/{clip['id']}",
+        json={"player_ids": [player_id]},
+        headers=auth_headers,
+    )
+    assert patch.status_code == 200, patch.text
+    after = patch.json()["clip"]
+    assert after["player_ids"] == [player_id], "player relationship should be updated"
+    assert after["updated_at"] != initial_updated_at, (
+        f"updated_at must advance on a player-only PATCH "
+        f"(was {initial_updated_at}, still {after['updated_at']})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_note_player_only_patch_bumps_updated_at(client, auth_headers, monkeypatch):
+    """Phase 1 parity fix: same `updated_at` bump applies to coaching
+    notes when only `player_ids` or `tags` changes. `_now_iso()` only
+    resolves to seconds, so we monkeypatch a deterministic counter."""
+    import db as _db
+    counter = {"n": 0}
+    def fake_now():
+        counter["n"] += 1
+        return f"2026-06-11T00:00:{counter['n']:02d}Z"
+    monkeypatch.setattr(_db, "_now_iso", fake_now)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Note Updated FC", "date": "2026-06-11",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Note Roster", "jersey_number": "8",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 12.0,
+        "title": "Note for player-only PATCH", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    note = note_resp.json()["note"]
+    initial_updated_at = note["updated_at"]
+
+    # player_ids-only change
+    patch_p = await client.patch(
+        f"/api/coach/notes/{note['id']}",
+        json={"player_ids": [player_id]},
+        headers=auth_headers,
+    )
+    assert patch_p.status_code == 200
+    after_p = patch_p.json()["note"]
+    assert after_p["player_ids"] == [player_id]
+    assert after_p["updated_at"] != initial_updated_at, (
+        "note updated_at must advance on player-only PATCH"
+    )
+
+    # tags-only change should ALSO bump updated_at
+    second_stamp = after_p["updated_at"]
+    patch_t = await client.patch(
+        f"/api/coach/notes/{note['id']}",
+        json={"tags": ["receiving"]},
+        headers=auth_headers,
+    )
+    assert patch_t.status_code == 200
+    after_t = patch_t.json()["note"]
+    assert after_t["tags"] == ["receiving"]
+    assert after_t["updated_at"] != second_stamp, (
+        "note updated_at must advance on tags-only PATCH"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_player_cleans_coaching_clip_players(client, auth_headers):
+    """When a roster player is deleted, the join rows in
+    `coaching_clip_players` must be removed too — otherwise we leave
+    orphan FK references that point at a non-existent player_id.
+
+    Pre-fix: `delete_player` only cleaned `coaching_note_players` and
+    `coaching_playlist_players`, missing the new (Phase 4a) clips
+    join table. SQLite's `ON DELETE CASCADE` on that table requires
+    `PRAGMA foreign_keys = ON`, which this codebase doesn't enable —
+    so the manual cleanup is the only safety net.
+    """
+    import db as _db
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Player Cleanup FC", "date": "2026-06-12",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "About-to-delete", "jersey_number": "99",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 0.0, "end_seconds": 8.0,
+        "title": "Tagged with deletable player", "category": "other",
+        "visibility": "player", "player_ids": [player_id],
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+
+    # Sanity: the join row exists at first.
+    conn = _db.connect()
+    rows = conn.execute(
+        "SELECT player_id FROM coaching_clip_players WHERE clip_id = ?", (clip_id,)
+    ).fetchall()
+    assert [r["player_id"] for r in rows] == [player_id], (
+        "test setup: clip should be joined to the player before deletion"
+    )
+
+    # Delete the player.
+    del_resp = await client.delete(
+        f"/api/coach/players/{player_id}", headers=auth_headers,
+    )
+    assert del_resp.status_code == 200, del_resp.text
+
+    # Join rows must be gone.
+    conn = _db.connect()
+    rows_after = conn.execute(
+        "SELECT player_id FROM coaching_clip_players WHERE clip_id = ?", (clip_id,)
+    ).fetchall()
+    assert rows_after == [], (
+        "deleting a player must remove all coaching_clip_players rows for that "
+        "player; orphan rows would point at a non-existent player_id"
+    )
+
+    # The clip itself remains (with empty player_ids hydrated).
+    clip_after = (await client.get(
+        f"/api/coach/clips/{clip_id}", headers=auth_headers,
+    )).json()["clip"]
+    assert clip_after["player_ids"] == [], (
+        "clip's player_ids should hydrate as empty after the only tagged player was deleted"
+    )
