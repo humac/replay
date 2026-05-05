@@ -9072,3 +9072,201 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     border-color: rgba(0, 0, 0, 0.08);
 }
 
+
+/* ==========================================================================
+ * Phase 3b — Coach-note thumbnail tiles
+ *
+ * Single primitive `.coach-thumb` used by every surface that shows a
+ * per-note thumbnail. The `data-thumb-state="placeholder"` attribute
+ * keeps a neutral fallback visible until JS swaps in the authenticated
+ * object URL (see `mountCoachNoteThumbnail` in `js/api.js`); on success
+ * the attribute flips to `loaded` and the placeholder background is
+ * hidden. Variants set the size only — no color or shadow tokens are
+ * duplicated, so dark / light theming follows the rest of the app.
+ *
+ * Defense-in-depth: the rendered <img> never carries a token in its
+ * URL, never gets cached by a shared proxy (Cache-Control: no-cache on
+ * the GET endpoint), and a 404 / 403 from the server simply leaves the
+ * placeholder visible — no broken-image icon.
+ * ========================================================================== */
+
+.coach-thumb {
+    position: relative;
+    flex: 0 0 auto;
+    overflow: hidden;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    isolation: isolate;
+}
+[data-theme="light"] .coach-thumb {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* The placeholder pattern: a faint film-strip glyph rendered as an SVG
+ * data URI so we don't need a network request to show "no thumbnail
+ * yet". Hidden once the real <img> loads (state flip via JS). */
+.coach-thumb[data-thumb-state="placeholder"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='6' width='18' height='12' rx='2'/><path d='M3 10h18M3 14h18M7 6v12M17 6v12'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 38% auto;
+    opacity: 0.5;
+    pointer-events: none;
+}
+[data-theme="light"] .coach-thumb[data-thumb-state="placeholder"]::after {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='6' width='18' height='12' rx='2'/><path d='M3 10h18M3 14h18M7 6v12M17 6v12'/></svg>");
+    opacity: 0.55;
+}
+
+/* The real <img> sits on top; while it has no `src` it is invisible
+ * (no broken-image icon because we never hand it a bad URL — see
+ * `mountCoachNoteThumbnail` which only assigns on success). */
+.coach-thumb-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+}
+.coach-thumb[data-thumb-state="loaded"] .coach-thumb-img {
+    opacity: 1;
+}
+
+/* Time chip overlay — bottom-right corner, mirrors the match-thumbnail
+ * timestamp rendering on the public season page. */
+.coach-thumb-time {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Variant sizes. 16:9 throughout so the tile composition feels native
+ * to the underlying video frame. */
+.coach-thumb--list  { width: 120px;  aspect-ratio: 16 / 9; }
+.coach-thumb--card  { width: 100%;   max-width: 220px; aspect-ratio: 16 / 9; }
+.coach-thumb--chip  { width: 56px;   aspect-ratio: 16 / 9; }
+.coach-thumb--rail  { width: 80px;   aspect-ratio: 16 / 9; }
+.coach-thumb--strip { width: 48px;   aspect-ratio: 16 / 9; }
+
+/* Stacked thumbnail strip used on Coach Playlists rows. Tiles overlap
+ * slightly (negative margin) and the leftmost tile sits on top via
+ * z-index — same idiom as a stacked-avatar group. */
+.coach-thumb-strip {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+.coach-thumb-strip .coach-thumb {
+    margin-right: -10px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+[data-theme="light"] .coach-thumb-strip .coach-thumb {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.coach-thumb-strip .coach-thumb:first-child { z-index: 3; }
+.coach-thumb-strip .coach-thumb:nth-child(2) { z-index: 2; }
+.coach-thumb-strip .coach-thumb:nth-child(3) { z-index: 1; }
+.coach-thumb-strip-more {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 0.6rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+}
+[data-theme="light"] .coach-thumb-strip-more {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Coach-row layout adjustments when a thumbnail is present. The flex
+ * row picks up a leading thumb tile + body + actions; we widen the
+ * gap a touch so the tile breathes. */
+.coach-row.coach-row-with-thumb {
+    align-items: center;
+    gap: 0.85rem;
+}
+.coach-row-with-thumb .coach-row-body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Coach Review timeline chip with a thumbnail. The chip is a
+ * horizontal pill with a tiny tile on the left and a stacked meta
+ * column on the right. We override flex-direction (existing chip is a
+ * single-row hgroup) so the meta lines wrap cleanly under the time. */
+.coach-timeline-chip--with-thumb {
+    align-items: center;
+    gap: 0.5rem;
+    padding-left: 0.35rem;
+}
+.coach-timeline-chip--with-thumb .coach-timeline-chip-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+.coach-timeline-chip--with-thumb .coach-timeline-chip-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 14ch;
+}
+
+/* Feedback cards — wrap the original card body in a flex row so the
+ * thumbnail sits to the left and the body fills the rest. */
+.feedback-card.feedback-card--with-thumb {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 1rem;
+    align-items: stretch;
+}
+.feedback-card.feedback-card--with-thumb .coach-thumb {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    aspect-ratio: auto;
+}
+.feedback-card.feedback-card--with-thumb .feedback-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 0;
+}
+@media (max-width: 720px) {
+    .feedback-card.feedback-card--with-thumb {
+        grid-template-columns: 1fr;
+    }
+    .feedback-card.feedback-card--with-thumb .coach-thumb {
+        height: auto;
+        aspect-ratio: 16 / 9;
+        max-width: 100%;
+    }
+}
+
+/* Playlist session rail tile — sits to the left of the session info
+ * block. Existing `.feedback-rail-info` is the next sibling; rely on
+ * the rail container's flex layout. */
+.feedback-rail-info { min-width: 0; }

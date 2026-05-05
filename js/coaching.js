@@ -724,8 +724,9 @@ export const coachingMixin = {
             return;
         }
         container.innerHTML = notes.map((n) => `
-            <article class="coach-row">
-                <div>
+            <article class="coach-row coach-row-with-thumb">
+                ${this._coachNoteThumbHtml(n, { size: 'list' })}
+                <div class="coach-row-body">
                     <strong>${this.esc(n.title)}</strong>
                     <span>${this.esc(this.matchLabel(n.match_id))} · ${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${this.esc(n.category)} · ${this.esc(n.visibility)}</span>
                     ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
@@ -733,10 +734,72 @@ export const coachingMixin = {
                 <div class="coach-row-actions">
                     <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openNoteInReview(${n.id})">Open in Review</button>
                     <button type="button" class="mini-action-btn" onclick="app.openCoachNoteModal(${n.id})">Edit</button>
+                    <button type="button" class="mini-action-btn" onclick="app.handleRegenCoachThumb(${n.id})" title="Regenerate thumbnail" aria-label="Regenerate thumbnail">↻</button>
                     <button type="button" class="mini-action-btn" onclick="app.handleCoachDeleteNote(${n.id})">Delete</button>
                 </div>
             </article>
         `).join('');
+        // Phase 3b: kick off a single batch of authenticated thumbnail
+        // fetches now that the placeholders are in the DOM. Failures are
+        // silent — placeholder stays visible.
+        this.mountCoachNoteThumbnailsIn(container);
+    },
+
+    /** Phase 3b — render the thumbnail tile for a coaching note. The
+     *  tile starts with a CSS placeholder background; the real JPEG is
+     *  swapped in by `mountCoachNoteThumbnailsIn()` after auth-fetch.
+     *
+     *  Variants:
+     *    `list`  — Notes-tab row tile (~120 × 68 px), shows time chip
+     *    `chip`  — Coach Review timeline chip (smaller, 56 × 32 px)
+     *    `card`  — Feedback card (full-width, 16:9, with time chip)
+     *    `rail`  — playlist session rail strip (compact 80 × 45 px)
+     *    `strip` — playlist row stacked tiles (very compact, no chip)
+     */
+    _coachNoteThumbHtml(note, { size = 'list' } = {}) {
+        const id = Number(note?.id);
+        if (!Number.isFinite(id) || id <= 0) return '';
+        const sizeClass = `coach-thumb--${size}`;
+        const ts = this.formatClock(note?.timestamp_seconds);
+        // Time chip is helpful on the larger variants where it's
+        // legible — skip on the timeline chip (which already shows the
+        // timestamp on its label) and the rail strip (very small).
+        const timeChip = (size === 'list' || size === 'card')
+            ? `<span class="coach-thumb-time">${this.esc(ts)}</span>`
+            : '';
+        // `data-thumb-state="placeholder"` lets CSS pin the empty state
+        // until the mount completes; on success the mount sets it to
+        // `loaded` and the background-image is hidden.
+        return `
+            <div class="coach-thumb ${sizeClass}" data-thumb data-thumb-state="placeholder" aria-hidden="true">
+                <img class="coach-thumb-img" data-coach-note-thumb="${id}" alt="" loading="lazy" decoding="async">
+                ${timeChip}
+            </div>
+        `;
+    },
+
+    /** Phase 3b — coach/admin "Regenerate thumbnail" action exposed on
+     *  Coach Notes list rows. Useful when the source video was uploaded
+     *  after the note was saved (the original best-effort spawn would
+     *  have logged "no source MP4" and returned generated:false). */
+    async handleRegenCoachThumb(noteId) {
+        try {
+            const result = await this.regenerateCoachNoteThumbnail(noteId);
+            if (result?.generated) {
+                this.showSuccess('Thumbnail regenerated.');
+            } else {
+                this.showInfo('Could not regenerate — source video may still be processing.');
+            }
+            // Repaint surfaces that may show the stale tile. Cheap because
+            // mountCoachNoteThumbnailsIn() short-circuits on cache miss
+            // for notes that don't appear on screen.
+            this.renderCoachNotes();
+            const reviewMatchSel = document.getElementById('coach-review-match');
+            const reviewMatchId = reviewMatchSel?.value;
+            if (reviewMatchId) await this.renderCoachReviewNotes(reviewMatchId);
+        } catch (err) {
+            this.showError(err.message);
+        }
     },
 
     async openCoachNoteModal(noteId = null) {
@@ -867,6 +930,12 @@ export const coachingMixin = {
             container.innerHTML = '<div class="session-empty">No review playlists yet. Click <strong>+ New playlist</strong> to build one.</div>';
             return;
         }
+        // Phase 3b: build a quick lookup from note id → note so we can
+        // show a stacked thumbnail strip (first 3 notes of the playlist)
+        // on each row. Cheap one-pass map build; the full notes list is
+        // already loaded in `_coachBundle`.
+        const notesById = new Map();
+        (this._coachBundle?.notes || []).forEach((n) => notesById.set(Number(n.id), n));
         container.innerHTML = playlists.map((p) => {
             const noteCount = p.note_ids?.length || 0;
             const playerCount = p.player_ids?.length || 0;
@@ -877,8 +946,9 @@ export const coachingMixin = {
             ];
             if (playerCount) meta.push(`${playerCount} player${playerCount === 1 ? '' : 's'}`);
             return `
-            <article class="coach-row">
-                <div>
+            <article class="coach-row coach-row-with-thumb">
+                ${this._coachPlaylistThumbStripHtml(p, notesById)}
+                <div class="coach-row-body">
                     <strong>${this.esc(p.title)}</strong>
                     <span>${meta.join(' · ')}</span>
                     ${p.description ? `<p>${this.esc(p.description)}</p>` : ''}
@@ -891,6 +961,40 @@ export const coachingMixin = {
             </article>
         `;
         }).join('');
+        this.mountCoachNoteThumbnailsIn(container);
+    },
+
+    /** Phase 3b — render a stacked thumbnail strip representing the
+     *  first few notes in a playlist. Up to 3 tiles; if there are more
+     *  items we add a `+N` overflow chip. Uses the same `coach-thumb`
+     *  primitive as individual notes so the placeholder/loaded state
+     *  behaves identically. */
+    _coachPlaylistThumbStripHtml(playlist, notesById) {
+        const ids = (playlist?.note_ids || []).slice(0, 3);
+        const total = playlist?.note_ids?.length || 0;
+        if (!ids.length) {
+            return `
+                <div class="coach-thumb-strip coach-thumb-strip--empty" aria-hidden="true">
+                    <div class="coach-thumb coach-thumb--strip" data-thumb data-thumb-state="placeholder"></div>
+                </div>
+            `;
+        }
+        const tiles = ids.map((id) => {
+            const note = notesById.get(Number(id));
+            if (!note) {
+                return `<div class="coach-thumb coach-thumb--strip" data-thumb data-thumb-state="placeholder"></div>`;
+            }
+            return this._coachNoteThumbHtml(note, { size: 'strip' });
+        }).join('');
+        const overflow = total > 3
+            ? `<span class="coach-thumb-strip-more" aria-label="${total - 3} more clips">+${total - 3}</span>`
+            : '';
+        return `
+            <div class="coach-thumb-strip" aria-hidden="true">
+                ${tiles}
+                ${overflow}
+            </div>
+        `;
     },
 
     async openCoachPlaylistModal(playlistId = null) {
@@ -1203,20 +1307,26 @@ export const coachingMixin = {
             const ariaLabel = `Jump to ${ts}${playerAria}, ${catTitle}: ${this.esc(n.title)}`;
             return `
                 <button type="button"
-                        class="coach-timeline-chip ${active ? 'is-active' : ''}"
+                        class="coach-timeline-chip coach-timeline-chip--with-thumb ${active ? 'is-active' : ''}"
                         data-coach-note-id="${n.id}"
                         data-coach-category="${this.esc(cat)}"
                         title="${ariaLabel}"
                         aria-label="${ariaLabel}"
                         aria-pressed="${active ? 'true' : 'false'}"
                         onclick="app.seekCoachReviewNote(${n.id})">
-                    <span class="coach-timeline-chip-time">${ts}</span>
-                    <span class="coach-timeline-chip-player">${playerIndicator}</span>
-                    <span class="coach-timeline-chip-cat" aria-hidden="true" data-cat="${this.esc(cat)}"></span>
-                    <span class="coach-timeline-chip-title">${this.esc(n.title)}</span>
+                    ${this._coachNoteThumbHtml(n, { size: 'chip' })}
+                    <span class="coach-timeline-chip-meta">
+                        <span class="coach-timeline-chip-time">${ts}</span>
+                        <span class="coach-timeline-chip-player">${playerIndicator}</span>
+                        <span class="coach-timeline-chip-cat" aria-hidden="true" data-cat="${this.esc(cat)}"></span>
+                        <span class="coach-timeline-chip-title">${this.esc(n.title)}</span>
+                    </span>
                 </button>
             `;
         }).join('');
+        // Phase 3b: kick off thumbnail loads for every chip in one
+        // pass. Each chip's tile is independent; failures are silent.
+        this.mountCoachNoteThumbnailsIn(container);
     },
 
     seekCoachReviewNote(noteId) {
@@ -2926,21 +3036,35 @@ export const coachingMixin = {
             container.innerHTML = '<div class="session-empty">No review playlists have been shared with you yet.</div>';
             return;
         }
+        // Phase 3b: feedback playlists embed their items under
+        // `playlists[].items[]` (server `_playlists_with_items`), each
+        // already scrubbed of `coach_private_note`. Use the first item
+        // as the playlist cover thumbnail so the card has visual
+        // anchor parity with the notes-tab cards. Falls back to a
+        // placeholder when items are missing or have no thumbnail.
         container.innerHTML = playlists.map((p) => {
             const isReviewed = reviewed.has(Number(p.id));
-            const clipCount = p.note_ids?.length || 0;
+            const clipCount = p.note_ids?.length || p.items?.length || 0;
+            const cover = (p.items && p.items[0]) || null;
+            const coverThumb = cover
+                ? this._coachNoteThumbHtml(cover, { size: 'card' })
+                : `<div class="coach-thumb coach-thumb--card" data-thumb data-thumb-state="placeholder" aria-hidden="true"></div>`;
             return `
-            <article class="feedback-card feedback-playlist-card">
-                <span class="feedback-card-kicker">Review Session</span>
-                <h3 class="feedback-card-title">${this.esc(p.title)}</h3>
-                <div class="feedback-card-meta">${clipCount} clip${clipCount === 1 ? '' : 's'} · ${isReviewed ? 'Reviewed' : 'New'}</div>
-                ${p.description ? `<p class="feedback-card-description">${this.esc(p.description)}</p>` : ''}
-                <div class="feedback-card-actions">
-                    <button type="button" class="btn-primary" onclick="app.openFeedbackPlaylist(${p.id})">▶ Play session</button>
-                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
+            <article class="feedback-card feedback-playlist-card feedback-card--with-thumb">
+                ${coverThumb}
+                <div class="feedback-card-body">
+                    <span class="feedback-card-kicker">Review Session</span>
+                    <h3 class="feedback-card-title">${this.esc(p.title)}</h3>
+                    <div class="feedback-card-meta">${clipCount} clip${clipCount === 1 ? '' : 's'} · ${isReviewed ? 'Reviewed' : 'New'}</div>
+                    ${p.description ? `<p class="feedback-card-description">${this.esc(p.description)}</p>` : ''}
+                    <div class="feedback-card-actions">
+                        <button type="button" class="btn-primary" onclick="app.openFeedbackPlaylist(${p.id})">▶ Play session</button>
+                        <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ playlist_id: ${p.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
+                    </div>
                 </div>
             </article>`;
         }).join('');
+        this.mountCoachNoteThumbnailsIn(container);
     },
 
     /** Render the Notes tab as a responsive grid of self-contained
@@ -2969,20 +3093,28 @@ export const coachingMixin = {
             const { primary } = this._feedbackNoteSummary(n);
             const meta = `${this.esc(this.matchLabel(n.match_id))} · ${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${isReviewed ? 'Reviewed' : 'New'}`;
             return `
-            <article class="feedback-card feedback-note-card">
-                <div class="feedback-card-head">
-                    ${tonePill}
-                    ${isReviewed ? '<span class="feedback-card-status">Reviewed ✓</span>' : ''}
-                </div>
-                <h3 class="feedback-card-title">${this.esc(n.title)}</h3>
-                <div class="feedback-card-meta">${meta}</div>
-                ${primary ? `<p class="feedback-card-summary">${this.esc(primary)}</p>` : ''}
-                <div class="feedback-card-actions">
-                    <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">▶ Watch</button>
-                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
+            <article class="feedback-card feedback-note-card feedback-card--with-thumb">
+                ${this._coachNoteThumbHtml(n, { size: 'card' })}
+                <div class="feedback-card-body">
+                    <div class="feedback-card-head">
+                        ${tonePill}
+                        ${isReviewed ? '<span class="feedback-card-status">Reviewed ✓</span>' : ''}
+                    </div>
+                    <h3 class="feedback-card-title">${this.esc(n.title)}</h3>
+                    <div class="feedback-card-meta">${meta}</div>
+                    ${primary ? `<p class="feedback-card-summary">${this.esc(primary)}</p>` : ''}
+                    <div class="feedback-card-actions">
+                        <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">▶ Watch</button>
+                        <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
+                    </div>
                 </div>
             </article>`;
         }).join('');
+        // Phase 3b: viewer-side mount uses the same authenticated fetch
+        // path. Visibility is enforced server-side per-note — a viewer
+        // who can't see a note will get a 404 from the endpoint and
+        // we'll render the placeholder. No client-side filtering needed.
+        this.mountCoachNoteThumbnailsIn(container);
     },
 
     openFeedbackNote(noteId) {
@@ -3333,6 +3465,7 @@ export const coachingMixin = {
         const tone = this._feedbackTonePillHtml(item.note_type);
         const { primary } = this._feedbackNoteSummary(item);
         rail.innerHTML = `
+            ${this._coachNoteThumbHtml(item, { size: 'rail' })}
             <div class="feedback-rail-info">
                 <span>Review Session</span>
                 <strong>${this.esc(session.playlist.title)}</strong>
@@ -3351,6 +3484,7 @@ export const coachingMixin = {
                 <button type="button" class="mini-action-btn" onclick="app.nextCoachingPlaylistItem()">Next</button>
             </div>
         `;
+        this.mountCoachNoteThumbnailsIn(rail);
     },
 
     toggleCoachingPlaylistPause() {

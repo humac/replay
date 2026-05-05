@@ -1647,6 +1647,14 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
     # structured fields, tags, visibility) leave the thumbnail
     # accurate, so we skip the regen and the existing JPEG keeps
     # serving. Same best-effort spawn pattern as create.
+    #
+    # Note: `UpdateCoachingNoteRequest` (models.py) currently only
+    # exposes `timestamp_seconds` from this set — `match_id` and `slot`
+    # are not editable today (the model is `extra="forbid"`). They are
+    # listed here as a forward-compat hook: if a future iteration adds
+    # "move this note to a different match/slot" the regen logic stays
+    # correct without a change. The set intersection is the cheap and
+    # honest way to express "any moment-anchoring field changed".
     moment_fields = {"match_id", "slot", "timestamp_seconds"}
     if moment_fields.intersection(updates.keys()):
         _spawn_task(_spawn_coach_note_thumbnail(note))

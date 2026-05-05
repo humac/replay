@@ -90,6 +90,10 @@ export const apiMixin = {
         this.userRole = null;
         this.userRoles = [];
         this.userName = null;
+        // Phase 3b: revoke every cached thumbnail object URL so blobs
+        // from the prior session don't outlive their visibility
+        // context. The cache is rebuilt lazily on the next mount.
+        this.clearCoachNoteThumbnailCache?.();
         const navAdmin = document.getElementById('nav-admin');
         if (navAdmin) navAdmin.style.display = 'none';
         const navCoach = document.getElementById('nav-coach');
@@ -479,6 +483,153 @@ export const apiMixin = {
     async loadMyFeedback() {
         const resp = await this.authFetch('/api/my-feedback', { headers: this.getAuthHeaders() });
         if (!resp.ok) throw new Error('Failed to load feedback');
+        return resp.json();
+    },
+
+    // ===== Phase 3b — coach-note thumbnails =====
+    //
+    // The thumbnail endpoint (`GET /api/coach/notes/{id}/thumbnail`) is
+    // visibility-checked per-viewer and authenticated via the same
+    // Bearer token used by every other API call. Plain `<img src>` can't
+    // attach an Authorization header, and we can't put the token in a
+    // query param (auth.py only accepts Authorization), so we fetch the
+    // JPEG with `getAuthHeaders()` and convert it to an object URL the
+    // browser can render via `<img src>`.
+    //
+    // Cache layout: per-note entry of one of three shapes:
+    //   - Promise<string|null>     in-flight fetch (dedupes concurrent calls)
+    //   - { url: string }          successful — object URL ready to assign
+    //   - { url: null }            negative cache (404 / 403 / network) —
+    //                              prevents the same broken image from
+    //                              re-firing on every re-render
+    //
+    // Negative cache entries are kept until `clearCoachNoteThumbnailCache()`
+    // is called (after a regenerate) — that's deliberate so the timeline
+    // rail doesn't issue 30 requests per second when the user scrolls past
+    // a stretch of notes that genuinely have no thumbnail.
+
+    coachNoteThumbnailUrl(noteId) {
+        // Returns the API URL — NOT a usable <img src> (no auth header).
+        // Use loadCoachNoteThumbnail() to get a renderable object URL.
+        return `/api/coach/notes/${Number(noteId)}/thumbnail`;
+    },
+
+    _coachNoteThumbnailCache() {
+        if (!this._coachThumbCache) this._coachThumbCache = new Map();
+        return this._coachThumbCache;
+    },
+
+    async loadCoachNoteThumbnail(noteId) {
+        // Returns a string object-URL on success, or `null` when the
+        // server has no thumbnail / the viewer can't see this note /
+        // the network errored. Never throws — callers should treat
+        // `null` as "show placeholder" and move on.
+        const id = Number(noteId);
+        if (!Number.isFinite(id) || id <= 0) return null;
+        const cache = this._coachNoteThumbnailCache();
+        const cached = cache.get(id);
+        if (cached !== undefined) {
+            // Promise (in-flight) — await it; or { url } — return the value.
+            if (cached && typeof cached.then === 'function') return cached;
+            return cached.url;
+        }
+        const promise = (async () => {
+            try {
+                const resp = await fetch(this.coachNoteThumbnailUrl(id), {
+                    headers: this.getAuthHeaders(),
+                });
+                if (!resp.ok) {
+                    // 404 (not generated yet / not authorized) is the
+                    // common case — degrade silently to placeholder.
+                    cache.set(id, { url: null });
+                    return null;
+                }
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                cache.set(id, { url });
+                return url;
+            } catch {
+                // Network error / aborted fetch — also negative-cache.
+                cache.set(id, { url: null });
+                return null;
+            }
+        })();
+        cache.set(id, promise);
+        return promise;
+    },
+
+    /** Mount a thumbnail into an `<img>` element. The element should
+     *  start with the placeholder class; on success this method swaps in
+     *  the object URL and removes the placeholder marker. On failure or
+     *  missing thumbnail the placeholder stays as-is — no broken-image
+     *  icon, no error toast.
+     *
+     *  Idempotent: safe to call repeatedly with the same element (e.g.
+     *  on re-render — the cache hit makes it a no-op after the first
+     *  successful load). */
+    async mountCoachNoteThumbnail(imgEl, noteId) {
+        if (!imgEl) return;
+        const url = await this.loadCoachNoteThumbnail(noteId);
+        if (!url) return; // placeholder already in DOM — leave it.
+        // Element may have been removed from the DOM between request
+        // and response (e.g. user navigated away). Skip the assignment
+        // in that case so we don't pin an orphan.
+        if (!imgEl.isConnected) return;
+        imgEl.src = url;
+        imgEl.dataset.thumbState = 'loaded';
+        const wrapper = imgEl.closest('[data-thumb]');
+        if (wrapper) wrapper.dataset.thumbState = 'loaded';
+    },
+
+    /** Mount thumbnails for every `<img data-coach-note-thumb="<id>">`
+     *  inside a container. Used after rendering a list — one call wires
+     *  every row. Errors on individual thumbnails are isolated. */
+    mountCoachNoteThumbnailsIn(container) {
+        if (!container) return;
+        const imgs = container.querySelectorAll('img[data-coach-note-thumb]');
+        imgs.forEach((img) => {
+            const id = Number(img.dataset.coachNoteThumb);
+            if (Number.isFinite(id) && id > 0) {
+                this.mountCoachNoteThumbnail(img, id);
+            }
+        });
+    },
+
+    /** Drop the cached thumbnail (and its object URL, if any) for one
+     *  note. Used after a coach calls regenerate so the next render
+     *  refetches the freshly-generated JPEG. */
+    invalidateCoachNoteThumbnail(noteId) {
+        const id = Number(noteId);
+        const cache = this._coachNoteThumbnailCache();
+        const entry = cache.get(id);
+        if (entry && typeof entry === 'object' && entry.url) {
+            try { URL.revokeObjectURL(entry.url); } catch { /* ignore */ }
+        }
+        cache.delete(id);
+    },
+
+    /** Drop every cached thumbnail. Useful when the user signs out so
+     *  blobs from the prior session don't outlive their visibility
+     *  context. */
+    clearCoachNoteThumbnailCache() {
+        const cache = this._coachNoteThumbnailCache();
+        cache.forEach((entry) => {
+            if (entry && typeof entry === 'object' && entry.url) {
+                try { URL.revokeObjectURL(entry.url); } catch { /* ignore */ }
+            }
+        });
+        cache.clear();
+    },
+
+    async regenerateCoachNoteThumbnail(noteId) {
+        const resp = await this.authFetch(`/api/coach/notes/${Number(noteId)}/thumbnail/regenerate`, {
+            method: 'POST',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error('Failed to regenerate thumbnail');
+        // Drop the cached blob (positive or negative) so the next
+        // mount call fetches the fresh JPEG.
+        this.invalidateCoachNoteThumbnail(noteId);
         return resp.json();
     },
 
