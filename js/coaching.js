@@ -1252,19 +1252,60 @@ export const coachingMixin = {
             this.showError('Pick a match in the Review tab before saving a clip.');
             return;
         }
+        // Phase 4c (issue #100): metadata must be loaded before we
+        // trust `currentTime` / `duration`. The `loadedmetadata`
+        // listener in `loadCoachReviewVideo` flips `metadataReady`
+        // to true; until then `currentTime` is 0 and pre-fill would
+        // silently produce a [0, 8] window with no relation to what
+        // the coach was watching. Surface a clear message instead.
         const video = document.getElementById(this._coachVideoId);
-        const t = Number(video?.currentTime || 0);
+        const ready = review.metadataReady && video && Number.isFinite(video.duration) && video.duration > 0;
+        if (!ready) {
+            this.showError('Wait for the video to load before saving a clip.');
+            return;
+        }
+        const t = Number(video.currentTime || 0);
         const start = Math.max(0, t - COACH_CLIP_DEFAULT_PRE_ROLL);
         const end = Math.max(start + 1, t + COACH_CLIP_DEFAULT_POST_ROLL);
         // Cap at the MVP duration ceiling so the pre-fill always
         // produces a server-acceptable window.
         const capped_end = Math.min(end, start + COACH_CLIP_MAX_DURATION_SECONDS);
+        // Also cap end at the video's duration so a clip near the
+        // end of the match doesn't suggest a timestamp past EOS.
+        const safe_end = Math.min(capped_end, video.duration);
         this.openCoachClipModal(null, {
             match_id: review.matchId,
             slot: review.slot || 'full',
             start_seconds: Number(start.toFixed(1)),
-            end_seconds: Number(capped_end.toFixed(1)),
+            end_seconds: Number(safe_end.toFixed(1)),
         });
+    },
+
+    /** Phase 4c (issue #100): single source of truth for the Save
+     *  Clip button's enabled/disabled state. Reads `_coachReview`,
+     *  the video element, and the metadata flag and applies them to
+     *  the picker-bar button. Called from `loadCoachReviewVideo` on
+     *  the metadata flip, from `tearDownCoachReview` on the unmount,
+     *  and from `setCoachTab('review')` so a coach who returns to
+     *  the Review tab without re-loading sees the correct state.
+     *  Pure DOM toggling — no hidden side effects on note saves or
+     *  the rest of the picker bar. */
+    _refreshCoachReviewSaveClipState() {
+        const btn = document.getElementById('coach-review-save-clip');
+        if (!btn) return;
+        const review = this._coachReview;
+        const video = document.getElementById(this._coachVideoId);
+        const ready = !!review?.metadataReady
+            && !!video
+            && Number.isFinite(video.duration)
+            && video.duration > 0;
+        btn.disabled = !ready;
+        btn.title = ready
+            ? 'Save a clip of the current moment'
+            : 'Pick a match and wait for the video to load before saving a clip';
+        // `aria-disabled` mirrors `disabled` for AT clarity; some
+        // screen readers announce only one of the two.
+        btn.setAttribute('aria-disabled', ready ? 'false' : 'true');
     },
 
     /** Mount the clip composer modal. `clipId === null` is the create
@@ -1466,6 +1507,11 @@ export const coachingMixin = {
         const toolbar = document.getElementById('coach-review-toolbar');
         if (toolbar) toolbar.innerHTML = this.renderCoachTelestratorToolbar();
         this.renderCoachReviewForm();
+        // Phase 4c (issue #100): apply the Save-Clip enabled state to
+        // the picker bar AS SOON as it's rendered, so a coach who
+        // arrives without a video selected sees the disabled state
+        // rather than an inviting blue button that errors on click.
+        this._refreshCoachReviewSaveClipState();
 
         const pending = this._coachReviewPending || this._coachReview;
         if (pending?.matchId) {
@@ -1493,6 +1539,11 @@ export const coachingMixin = {
         this.deactivateCoachCanvas();
         this.clearCoachDrawing();
         this._coachReview = null;
+        // Phase 4c (issue #100): the Save-Clip button reads
+        // `_coachReview.metadataReady`; with the session cleared the
+        // refresh helper picks the disabled state, which is the
+        // correct UX for "no match loaded".
+        this._refreshCoachReviewSaveClipState();
         // Sprint 2: reset the top-bar time readout so it doesn't show a
         // stale clock when the user reopens Review later.
         const timeEl = document.getElementById('coach-review-time');
@@ -1575,7 +1626,13 @@ export const coachingMixin = {
         const empty = document.getElementById('coach-review-empty');
         if (!video) return;
         if (empty) empty.style.display = 'none';
-        this._coachReview = { matchId, slot };
+        // Phase 4c (issue #100): start every fresh load with
+        // `metadataReady = false` so the Save-Clip button reflects
+        // the loading state (no `currentTime` / `duration` yet).
+        // The `loadedmetadata` listener flips it true once the
+        // browser knows the video's dimensions + duration.
+        this._coachReview = { matchId, slot, metadataReady: false };
+        this._refreshCoachReviewSaveClipState();
 
         const { hlsUrl, mp4Url } = this.getStreamUrls(matchId, slot);
         this._playRequestToken = (this._playRequestToken || 0) + 1;
@@ -1588,6 +1645,14 @@ export const coachingMixin = {
             if (seekTo > 0) video.currentTime = seekTo;
             this.setupCoachCanvas();
             if (drawing) this.renderCoachDrawing(drawing);
+            // Phase 4c (issue #100): metadata is now available.
+            // `_coachReview` may have been replaced by a different
+            // match load while we were waiting — only flip the flag
+            // if the active session is still ours.
+            if (this._coachReview && this._coachReview.matchId === matchId && this._coachReview.slot === slot) {
+                this._coachReview.metadataReady = true;
+                this._refreshCoachReviewSaveClipState();
+            }
         };
         video.addEventListener('loadedmetadata', onLoaded);
 
@@ -3732,11 +3797,18 @@ export const coachingMixin = {
         this.destroyHlsPlayer();
         this.loadPlaybackSource(video, hlsUrl, mp4Url, token);
 
-        // Set up the canvas listeners EVEN THOUGH we don't render a
-        // drawing for clips in Phase 4b — keeps the resize behavior
-        // consistent for both note + clip modes so the canvas
-        // bitmap matches the wrapper if the user resizes.
-        this.setupCoachCanvas();
+        // Phase 4c (issue #99): clips do NOT render a telestrator
+        // overlay. Earlier code called `setupCoachCanvas()` here for
+        // the resize-listener side effect, but that wired the canvas
+        // event handlers (`paintCoachCanvas`, the global resize
+        // observer) into a session that never paints anything — pure
+        // wasted work, and it implied clip-drawing support exists
+        // when it doesn't. The drawing canvas is left dormant for
+        // clip mode; if a future phase adds clip telestration, it
+        // can opt back in by calling `setupCoachCanvas` here AND
+        // wiring the equivalent of `_renderFeedbackTelestration` for
+        // clip drawings. Note + playlist playback paths still call
+        // `setupCoachCanvas` themselves — unchanged.
 
         const startTime = Math.max(0, Number(clip.start_seconds || 0));
         const endTime = Math.max(startTime + 0.5, Number(clip.end_seconds || 0));
