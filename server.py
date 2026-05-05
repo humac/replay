@@ -33,12 +33,12 @@ import settings as _settings
 import streams as _streams
 import uploads as _uploads
 from models import (
-    CreateCoachingNoteRequest, CreateCoachingPlaylistRequest, CreateMatchRequest,
-    CreatePlayerRequest, CreatePlayerUserLinkRequest, CreateUploadSessionRequest,
-    CreateUserRequest, LiveAuthRequest, LoginRequest, MarkCoachingReviewRequest,
-    StartCaptureRequest, UnblockStreamRequest, UpdateCoachingNoteRequest,
-    UpdateCoachingPlaylistRequest, UpdateMatchRequest, UpdatePlayerRequest,
-    UpdateUserRequest,
+    CreateCoachingClipRequest, CreateCoachingNoteRequest, CreateCoachingPlaylistRequest,
+    CreateMatchRequest, CreatePlayerRequest, CreatePlayerUserLinkRequest,
+    CreateUploadSessionRequest, CreateUserRequest, LiveAuthRequest, LoginRequest,
+    MarkCoachingReviewRequest, StartCaptureRequest, UnblockStreamRequest,
+    UpdateCoachingClipRequest, UpdateCoachingNoteRequest, UpdateCoachingPlaylistRequest,
+    UpdateMatchRequest, UpdatePlayerRequest, UpdateUserRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -1470,6 +1470,32 @@ def _filter_playlists_for_user(playlists: list[dict], user: dict) -> list[dict]:
     return visible
 
 
+def _filter_clips_for_user(clips: list[dict], user: dict) -> list[dict]:
+    """Phase 4a — same visibility ladder as notes/playlists. Coach/admin
+    see everything; viewers see `team` + `unlisted` clips plus `player`
+    clips for players they're linked to via `player_user_links`.
+    Private clips never reach a viewer.
+
+    Mirrors `_filter_notes_for_user` exactly. Kept as a separate
+    function (rather than parameterizing the existing helper) so the
+    visibility ladder is enforced once per object kind — if a future
+    phase needs clip-specific filter behavior (e.g. honoring playlist-
+    grants-access for clips inside a visible playlist) it slots in
+    here without leaking into note filtering."""
+    if _auth.has_role(user, "admin", "coach"):
+        return clips
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    visible = []
+    for clip in clips:
+        visibility = clip.get("visibility", "private")
+        if visibility in {"team", "unlisted"}:
+            visible.append(clip)
+            continue
+        if visibility == "player" and linked_players.intersection(clip.get("player_ids", [])):
+            visible.append(clip)
+    return visible
+
+
 def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None) -> list[dict]:
     notes_by_id = {note["id"]: note for note in (notes if notes is not None else _db.list_coaching_notes())}
     hydrated = []
@@ -1949,6 +1975,140 @@ async def coach_delete_playlist(playlist_id: int, request: Request):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Coaching clips (Phase 4a — backend only)
+#
+# Clips are first-class coaching objects: a saved [start, end] window
+# of a match slot, optionally seeded from a note via `source_note_id`.
+# Visibility uses the same ladder as notes/playlists. The clip's
+# drawing is captured as a snapshot at create time so the clip stays
+# self-contained even if the source note is later edited or deleted.
+#
+# **Privacy invariant**: when a clip is created from `source_note_id`,
+# the create handler defaults a small set of fields from the source
+# note (match_id / slot / category / drawing) but NEVER copies any
+# coach-private text — neither `coach_private_note` nor anything else
+# from the note's body. The clip's own `title` / `description` come
+# from the request body or empty defaults; the source note's text
+# fields are never auto-copied. This keeps `coach_private_note`
+# scoped to its single defense-in-depth surface (`_strip_private_fields`)
+# and prevents a clip from accidentally re-publishing private text
+# under a more permissive visibility.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/coach/clips")
+async def coach_list_clips(request: Request, match_id: str | None = None):
+    _require_coach(request)
+    return {"clips": _db.list_coaching_clips(match_id=match_id)}
+
+
+@app.get("/api/coach/clips/{clip_id}")
+async def coach_get_clip(clip_id: int, request: Request):
+    _require_coach(request)
+    clip = _db.get_coaching_clip(clip_id)
+    if not clip:
+        raise HTTPException(404, "Clip not found")
+    return {"clip": clip}
+
+
+@app.post("/api/coach/clips")
+async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
+    user = _require_coach(request)
+    if not _db.get_match_by_id(body.match_id):
+        raise HTTPException(404, "Match not found")
+    for player_id in body.player_ids:
+        if not _db.get_player(player_id):
+            raise HTTPException(404, f"Player not found: {player_id}")
+    payload = body.model_dump()
+    # `source_note_id` is a forward-compat reference. If the coach
+    # provides one, verify the note exists and (only when the request
+    # didn't already set them) default a small, NON-SENSITIVE subset
+    # of fields from it: match/slot/category/drawing. Title +
+    # description must come from the request body — we do NOT auto-
+    # copy any of the note's text fields, especially `body` /
+    # `coach_private_note` / `what_happened` / etc., to avoid a
+    # private-text leak through a more permissive clip visibility.
+    if payload.get("source_note_id") is not None:
+        source = _db.get_coaching_note(payload["source_note_id"])
+        if not source:
+            raise HTTPException(404, "Source note not found")
+        # Defense-in-depth: even if the request body's match_id /
+        # slot disagree with the source note's, we trust the request
+        # — the coach explicitly specified them. Do NOT silently
+        # rewrite to the source's match (would surprise the coach).
+        if not payload.get("drawing"):
+            payload["drawing"] = source.get("drawing") or {}
+    clip = _db.create_coaching_clip(payload, actor=user["username"])
+    _log_activity(
+        "coach.clip_created",
+        severity="info",
+        message=f"Coaching clip created: {clip.get('title')}",
+        match_id=clip.get("match_id"),
+        slot=clip.get("slot"),
+        actor=user["username"],
+        metadata={
+            "clip_id": clip.get("id"),
+            "visibility": clip.get("visibility"),
+            "duration_seconds": clip.get("duration_seconds"),
+            "source_note_id": clip.get("source_note_id"),
+        },
+    )
+    return {"ok": True, "clip": clip}
+
+
+@app.patch("/api/coach/clips/{clip_id}")
+async def coach_update_clip(clip_id: int, request: Request, body: UpdateCoachingClipRequest):
+    user = _require_coach(request)
+    existing = _db.get_coaching_clip(clip_id)
+    if not existing:
+        raise HTTPException(404, "Clip not found")
+    updates = body.model_dump(exclude_unset=True)
+    # Window invariant when only one endpoint is being changed: merge
+    # against the existing row before re-checking. The Pydantic model
+    # already validated the all-fields-supplied case; this catches the
+    # half-supplied case too.
+    if "start_seconds" in updates or "end_seconds" in updates:
+        new_start = updates.get("start_seconds", existing["start_seconds"])
+        new_end = updates.get("end_seconds", existing["end_seconds"])
+        if new_end <= new_start:
+            raise HTTPException(422, "end_seconds must be greater than start_seconds")
+        if new_end - new_start > 120.0:
+            raise HTTPException(422, "clip duration must be 120 seconds or less")
+    for player_id in updates.get("player_ids") or []:
+        if not _db.get_player(player_id):
+            raise HTTPException(404, f"Player not found: {player_id}")
+    clip = _db.update_coaching_clip(clip_id, updates) or existing
+    _log_activity(
+        "coach.clip_updated",
+        severity="info",
+        message=f"Coaching clip updated: {clip.get('title')}",
+        match_id=clip.get("match_id"),
+        slot=clip.get("slot"),
+        actor=user["username"],
+        metadata={"clip_id": clip_id, "fields": sorted(updates.keys())},
+    )
+    return {"ok": True, "clip": clip}
+
+
+@app.delete("/api/coach/clips/{clip_id}")
+async def coach_delete_clip(clip_id: int, request: Request):
+    user = _require_coach(request)
+    clip = _db.get_coaching_clip(clip_id)
+    if not _db.delete_coaching_clip(clip_id):
+        raise HTTPException(404, "Clip not found")
+    _log_activity(
+        "coach.clip_deleted",
+        severity="warning",
+        message=f"Coaching clip deleted: {clip.get('title', clip_id) if clip else clip_id}",
+        match_id=clip.get("match_id") if clip else None,
+        slot=clip.get("slot") if clip else None,
+        actor=user["username"],
+        metadata={"clip_id": clip_id},
+    )
+    return {"ok": True}
+
+
 @app.get("/api/my-feedback")
 async def my_feedback(request: Request):
     user = _auth.require_auth(request)
@@ -1969,7 +2129,19 @@ async def my_feedback(request: Request):
     items_source = all_notes if is_privileged else [_strip_private_fields(n) for n in all_notes]
     playlists = _playlists_with_items(_filter_playlists_for_user(_db.list_coaching_playlists(), user), items_source)
     reviews = _db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else []
-    return {"players": players, "notes": notes, "playlists": playlists, "reviews": reviews}
+    # Phase 4a: clips are first-class objects with the same visibility
+    # ladder as notes / playlists. The clip's stored `drawing_json` is a
+    # snapshot taken at clip-create time (not a live link to the source
+    # note), so a viewer who can see the clip sees the exact visual
+    # context the coach saved — no risk of pulling fresh `coach_private_note`
+    # text via `source_note_id` because the drawing is JSON metadata, not
+    # the source note's body. The clip itself never carries text from
+    # the source note's private fields.
+    clips = _filter_clips_for_user(_db.list_coaching_clips(), user)
+    return {
+        "players": players, "notes": notes, "playlists": playlists,
+        "reviews": reviews, "clips": clips,
+    }
 
 
 @app.post("/api/my-feedback/review")
