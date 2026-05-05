@@ -165,6 +165,14 @@ export const apiMixin = {
     },
 
     async logout() {
+        // Phase 3b PR #92 review follow-up: cancel any in-flight
+        // coach-note thumbnail fetches BEFORE we POST /api/logout.
+        // Otherwise the server-side token revocation lands while our
+        // thumbnail fetches are still on the wire, causing each one to
+        // come back with a 401 and emit a browser-level DevTools error.
+        // The abort short-circuits them cleanly with `AbortError` (which
+        // `loadCoachNoteThumbnail` catches silently).
+        this.clearCoachNoteThumbnailCache?.();
         try {
             await fetch('/api/logout', {
                 method: 'POST',
@@ -496,6 +504,20 @@ export const apiMixin = {
     // JPEG with `getAuthHeaders()` and convert it to an object URL the
     // browser can render via `<img src>`.
     //
+    // **Why raw `fetch` instead of `authFetch`** (Phase 3b PR #92 review
+    // follow-up): thumbnails fan out — a Coach Notes list re-render
+    // fires one fetch per visible row. Routing every thumbnail through
+    // `authFetch` would cause a single expired-token state to spam
+    // dozens of `setLoggedOut()` + `showLoginModal()` calls in
+    // parallel as each individual thumbnail 401'd. Instead we use raw
+    // `fetch` so 401/403/404 all degrade silently to the placeholder
+    // (the user's next non-thumbnail action — opening a note, saving,
+    // etc. — runs through `authFetch` and surfaces the auth flow
+    // properly). When we DO see a 401 we still drop the auth state via
+    // a single `setLoggedOut()` call so the next user click doesn't
+    // succeed with a stale token; we just don't pop the login modal
+    // from a fetch the user didn't trigger.
+    //
     // Cache layout: per-note entry of one of three shapes:
     //   - Promise<string|null>     in-flight fetch (dedupes concurrent calls)
     //   - { url: string }          successful — object URL ready to assign
@@ -504,9 +526,20 @@ export const apiMixin = {
     //                              re-firing on every re-render
     //
     // Negative cache entries are kept until `clearCoachNoteThumbnailCache()`
-    // is called (after a regenerate) — that's deliberate so the timeline
+    // or `invalidateCoachNoteThumbnail(id)` is called (the latter runs
+    // after a successful regenerate) — that's deliberate so the timeline
     // rail doesn't issue 30 requests per second when the user scrolls past
     // a stretch of notes that genuinely have no thumbnail.
+    //
+    // **Generation counter** (Phase 3b PR #92 review follow-up): every
+    // call to `clearCoachNoteThumbnailCache()` bumps `_coachThumbGen`.
+    // In-flight `loadCoachNoteThumbnail` fetches capture the generation
+    // at start and check it again before committing the resulting
+    // object URL to the cache. If the generation moved (because the
+    // user logged out mid-fetch), the resolved blob URL is revoked
+    // immediately and the cache entry is NOT written — so a logout
+    // during pending fetches cannot leave orphan blobs from the prior
+    // session alive past the next page reload.
 
     coachNoteThumbnailUrl(noteId) {
         // Returns the API URL — NOT a usable <img src> (no auth header).
@@ -517,6 +550,29 @@ export const apiMixin = {
     _coachNoteThumbnailCache() {
         if (!this._coachThumbCache) this._coachThumbCache = new Map();
         return this._coachThumbCache;
+    },
+
+    _coachThumbGeneration() {
+        // Monotonically increasing token bumped on every cache clear.
+        // Used by in-flight loads to detect "the cache I started this
+        // fetch against is no longer the active one" (logout race).
+        if (typeof this._coachThumbGen !== 'number') this._coachThumbGen = 0;
+        return this._coachThumbGen;
+    },
+
+    _coachThumbAbortController() {
+        // One AbortController per generation. `clearCoachNoteThumbnailCache()`
+        // calls `.abort()` on the current one and replaces it, so any
+        // in-flight thumbnail fetches at logout time are cleanly
+        // cancelled rather than running to completion against the
+        // now-stale token (which would cause browser-level 401s in the
+        // DevTools console).
+        if (!this._coachThumbAbort || this._coachThumbAbort._gen !== this._coachThumbGeneration()) {
+            const ctrl = new AbortController();
+            ctrl._gen = this._coachThumbGeneration();
+            this._coachThumbAbort = ctrl;
+        }
+        return this._coachThumbAbort;
     },
 
     async loadCoachNoteThumbnail(noteId) {
@@ -533,24 +589,63 @@ export const apiMixin = {
             if (cached && typeof cached.then === 'function') return cached;
             return cached.url;
         }
+        // Snapshot the cache generation + abort signal BEFORE we kick
+        // off the fetch so we can both (a) detect a clear that lands
+        // while we're awaiting, and (b) get cancelled cleanly via
+        // signal.abort() when logout happens.
+        const startGen = this._coachThumbGeneration();
+        const signal = this._coachThumbAbortController().signal;
         const promise = (async () => {
             try {
                 const resp = await fetch(this.coachNoteThumbnailUrl(id), {
                     headers: this.getAuthHeaders(),
+                    signal,
                 });
+                // Generation changed mid-fetch (logout / cache clear) —
+                // bail without writing to the cache or producing a
+                // blob URL. The body is discarded; nothing to revoke.
+                if (this._coachThumbGeneration() !== startGen) return null;
                 if (!resp.ok) {
-                    // 404 (not generated yet / not authorized) is the
-                    // common case — degrade silently to placeholder.
+                    if (resp.status === 401) {
+                        // Token is stale. Don't pop the login modal
+                        // from a fetch the user didn't trigger (every
+                        // visible row would race), but DO clear local
+                        // auth state so the next user-driven authFetch
+                        // surfaces the login flow naturally.
+                        try { this.setLoggedOut?.(); } catch { /* ignore */ }
+                        return null;
+                    }
+                    // 403 / 404 (not generated yet, no permission to view) is
+                    // the common case — degrade silently to placeholder.
                     cache.set(id, { url: null });
                     return null;
                 }
                 const blob = await resp.blob();
+                // Re-check generation: clearCache() may have run while we
+                // were reading the blob body. If so, never call
+                // createObjectURL — there is nothing to revoke and the
+                // viewer this blob was authorized for is gone.
+                if (this._coachThumbGeneration() !== startGen) return null;
                 const url = URL.createObjectURL(blob);
+                // Final guard between `createObjectURL` and `cache.set`:
+                // if a clear happened in the same microtask tick, revoke
+                // the blob we just created so it doesn't leak.
+                if (this._coachThumbGeneration() !== startGen) {
+                    try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+                    return null;
+                }
                 cache.set(id, { url });
                 return url;
-            } catch {
-                // Network error / aborted fetch — also negative-cache.
-                cache.set(id, { url: null });
+            } catch (err) {
+                // AbortError on logout-cancel is expected and silent —
+                // no console noise, no negative-cache write (the cache
+                // was already cleared by the same call that aborted us).
+                if (err?.name === 'AbortError') return null;
+                // Network error — negative-cache only if the cache is
+                // still the one we started against.
+                if (this._coachThumbGeneration() === startGen) {
+                    cache.set(id, { url: null });
+                }
                 return null;
             }
         })();
@@ -608,17 +703,36 @@ export const apiMixin = {
         cache.delete(id);
     },
 
-    /** Drop every cached thumbnail. Useful when the user signs out so
-     *  blobs from the prior session don't outlive their visibility
-     *  context. */
+    /** Drop every cached thumbnail. Bumps the generation counter so any
+     *  in-flight `loadCoachNoteThumbnail` fetches that resolve after this
+     *  call discard their results (and revoke any blob URL they created)
+     *  instead of re-populating the now-empty cache with orphan entries.
+     *
+     *  Also `.abort()`s the current generation's AbortController so any
+     *  pending HTTP requests are cancelled cleanly — no browser-level
+     *  401 console noise from in-flight thumbnail fetches racing logout.
+     *
+     *  Wired into `setLoggedOut()` so blobs from a prior session don't
+     *  outlive their visibility context. */
     clearCoachNoteThumbnailCache() {
         const cache = this._coachNoteThumbnailCache();
         cache.forEach((entry) => {
             if (entry && typeof entry === 'object' && entry.url) {
                 try { URL.revokeObjectURL(entry.url); } catch { /* ignore */ }
             }
+            // Promise entries don't carry a URL yet — the abort+gen
+            // bump below makes their continuation discard whatever they
+            // produce. No revocation needed here.
         });
         cache.clear();
+        // Cancel any in-flight HTTP requests for the current generation
+        // before bumping. The next call to `_coachThumbAbortController()`
+        // sees the bumped generation and creates a fresh controller.
+        if (this._coachThumbAbort) {
+            try { this._coachThumbAbort.abort(); } catch { /* ignore */ }
+            this._coachThumbAbort = null;
+        }
+        this._coachThumbGen = this._coachThumbGeneration() + 1;
     },
 
     async regenerateCoachNoteThumbnail(noteId) {

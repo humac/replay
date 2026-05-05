@@ -790,16 +790,51 @@ export const coachingMixin = {
             } else {
                 this.showInfo('Could not regenerate — source video may still be processing.');
             }
-            // Repaint surfaces that may show the stale tile. Cheap because
-            // mountCoachNoteThumbnailsIn() short-circuits on cache miss
-            // for notes that don't appear on screen.
-            this.renderCoachNotes();
-            const reviewMatchSel = document.getElementById('coach-review-match');
-            const reviewMatchId = reviewMatchSel?.value;
-            if (reviewMatchId) await this.renderCoachReviewNotes(reviewMatchId);
+            // The regenerate call already invalidated the per-note cache
+            // entry. Re-mount thumbnail placeholders in every currently
+            // visible surface container so the freshly-generated JPEG
+            // appears without a full view re-render.
+            this._refreshCoachNoteThumbnailSurfaces();
         } catch (err) {
             this.showError(err.message);
         }
+    },
+
+    /** Phase 3b PR #92 review follow-up — remount any `<img
+     *  data-coach-note-thumb>` placeholders inside the known thumbnail
+     *  containers that are currently in the DOM. Each surface that
+     *  isn't mounted (because the user is on a different tab) is a
+     *  silent no-op via `mountCoachNoteThumbnailsIn`'s null-safe check.
+     *
+     *  Used after `regenerateCoachNoteThumbnail` so the new JPEG
+     *  surfaces wherever it's already on screen. Does NOT trigger any
+     *  re-render of the surrounding view, so DOM identities, focus
+     *  state, scroll position, and the Coach Review video element are
+     *  all preserved. */
+    _refreshCoachNoteThumbnailSurfaces() {
+        // The 6 containers currently rendered with thumbnail tiles —
+        // each owns one of the size variants from `_coachNoteThumbHtml`.
+        // The list is intentionally hard-coded rather than discovered
+        // because each container has a different lifecycle (e.g. the
+        // playlist session rail lives inside a modal that may not be
+        // mounted). A no-op `null` check covers each absent surface.
+        const containerIds = [
+            'coach-notes-list',          // Coach > Notes
+            'coach-review-notes',        // Coach > Review timeline rail
+            'coach-playlists-list',      // Coach > Playlists
+            'feedback-notes-list',       // My Feedback > Notes
+            'feedback-playlists-list',   // My Feedback > Playlists
+        ];
+        for (const id of containerIds) {
+            const el = document.getElementById(id);
+            if (el) this.mountCoachNoteThumbnailsIn(el);
+        }
+        // The focused-feedback player modal's session rail is not an
+        // id-bound container — it's `[data-field="rail"]` inside a
+        // cloned template. Look it up via the active player ref so we
+        // don't accidentally pick up an unrelated `[data-field="rail"]`.
+        const railEl = this._feedbackPlayer?.body?.querySelector?.('[data-field="rail"]');
+        if (railEl) this.mountCoachNoteThumbnailsIn(railEl);
     },
 
     async openCoachNoteModal(noteId = null) {
@@ -3038,17 +3073,26 @@ export const coachingMixin = {
         }
         // Phase 3b: feedback playlists embed their items under
         // `playlists[].items[]` (server `_playlists_with_items`), each
-        // already scrubbed of `coach_private_note`. Use the first item
-        // as the playlist cover thumbnail so the card has visual
-        // anchor parity with the notes-tab cards. Falls back to a
-        // placeholder when items are missing or have no thumbnail.
+        // already scrubbed of `coach_private_note`. The cover thumbnail
+        // is the first item whose standalone thumbnail the viewer can
+        // actually load — see `_resolveFeedbackPlaylistCover` below.
+        // PR #92 review follow-up: previously we hard-pinned to
+        // `items[0]`, which meant a private-first-item playlist always
+        // showed the placeholder cover even when later items had
+        // viewer-accessible thumbnails. Walking the list fixes that
+        // without weakening the standalone GET endpoint's auth model.
         container.innerHTML = playlists.map((p) => {
             const isReviewed = reviewed.has(Number(p.id));
             const clipCount = p.note_ids?.length || p.items?.length || 0;
-            const cover = (p.items && p.items[0]) || null;
-            const coverThumb = cover
-                ? this._coachNoteThumbHtml(cover, { size: 'card' })
-                : `<div class="coach-thumb coach-thumb--card" data-thumb data-thumb-state="placeholder" aria-hidden="true"></div>`;
+            // Always render a placeholder tile first so layout is
+            // stable while the cover-resolver runs. The
+            // `data-feedback-cover-playlist` attribute lets the
+            // resolver find this <img> without holding a DOM ref.
+            const coverThumb = `
+                <div class="coach-thumb coach-thumb--card" data-thumb data-thumb-state="placeholder" aria-hidden="true">
+                    <img class="coach-thumb-img" data-feedback-cover-playlist="${Number(p.id)}" alt="" loading="lazy" decoding="async">
+                </div>
+            `;
             return `
             <article class="feedback-card feedback-playlist-card feedback-card--with-thumb">
                 ${coverThumb}
@@ -3064,7 +3108,51 @@ export const coachingMixin = {
                 </div>
             </article>`;
         }).join('');
-        this.mountCoachNoteThumbnailsIn(container);
+        // Kick off cover resolution for each playlist in parallel —
+        // each playlist walks its own items[] until one returns a
+        // non-null thumbnail URL. Failures stay as placeholders.
+        for (const p of playlists) {
+            this._resolveFeedbackPlaylistCover(container, p);
+        }
+    },
+
+    /** Phase 3b PR #92 review follow-up — walk `playlist.items[]` until
+     *  we find one whose standalone thumbnail actually loads, then
+     *  assign that URL to the playlist's cover `<img>`. The standalone
+     *  endpoint deliberately doesn't honour the playlist-grants-access
+     *  rule for private items (per CLAUDE.md), so a private item
+     *  returns null here and we fall through to the next item. If
+     *  every item fails, the placeholder remains in place — which is
+     *  the correct "no cover available" state.
+     *
+     *  Sequential rather than `Promise.all` so a long playlist stops
+     *  fetching as soon as a cover is found, and so we don't race
+     *  multiple winners onto the same `<img>`. */
+    async _resolveFeedbackPlaylistCover(container, playlist) {
+        if (!container || !playlist) return;
+        const items = playlist.items || [];
+        if (!items.length) return;
+        const imgEl = container.querySelector(
+            `img[data-feedback-cover-playlist="${Number(playlist.id)}"]`
+        );
+        if (!imgEl) return;
+        for (const item of items) {
+            // Check the cache via loadCoachNoteThumbnail; on a hit it
+            // resolves immediately. On a miss it goes through the same
+            // auth-bearing fetch + negative-cache path used everywhere
+            // else, so subsequent renders short-circuit.
+            const url = await this.loadCoachNoteThumbnail(item?.id);
+            if (!url) continue;
+            // The container may have re-rendered (or the user navigated
+            // away) before this cover resolved. Bail if so.
+            if (!imgEl.isConnected) return;
+            imgEl.src = url;
+            imgEl.dataset.thumbState = 'loaded';
+            const wrapper = imgEl.closest('[data-thumb]');
+            if (wrapper) wrapper.dataset.thumbState = 'loaded';
+            return;
+        }
+        // All items failed → placeholder stays as-is. Nothing else to do.
     },
 
     /** Render the Notes tab as a responsive grid of self-contained
