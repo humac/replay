@@ -1223,58 +1223,54 @@ export const coachingMixin = {
             </article>
             `;
         }).join('');
-        // Phase 3b: source-note thumbnails reuse the existing
-        // `mountCoachNoteThumbnailsIn` so the auth-bearing fetch +
-        // negative cache + placeholder behavior is identical.
-        this.mountCoachNoteThumbnailsIn(container);
+        // Phase 4e: clip thumbnails first (per-clip JPEGs at start_seconds),
+        // with `data-coach-note-thumb-fallback` providing the source-note /
+        // co-located note as a render-time fallback for clips that haven't
+        // been generated yet. `mountCoachClipThumbnailsIn` runs the chain.
+        this.mountCoachClipThumbnailsIn(container);
     },
 
-    /** Render a thumbnail tile for a clip. Phase 4b explicitly does
-     *  NOT generate clip-specific thumbnails (per the roadmap). When
-     *  a clip has a `source_note_id`, we render the source note's
-     *  thumbnail as a visual preview using the existing visibility-
-     *  checked endpoint.
+    /** Render a thumbnail tile for a clip. Phase 4e adds first-class
+     *  per-clip thumbnails generated from the source video at
+     *  `start_seconds`, served from `GET /api/coach/clips/{id}/thumbnail`
+     *  (visibility-checked per-viewer).
      *
-     *  Issue #104: every clip created before the composer started
-     *  setting `source_note_id` (and any clip created from "+ New
-     *  clip" without a co-located note) carries `source_note_id =
-     *  null`, so the original code path always rendered the
-     *  placeholder tile. Pre-existing clips can't be back-filled
-     *  because `UpdateCoachingClipRequest` is `extra="forbid"` and
-     *  the docstring on `db.update_coaching_clip` warns that
-     *  rebinding mid-life would silently swap the captured drawing
-     *  snapshot. Instead, when no explicit linkage exists we look
-     *  for a co-located note in the client-side bundle / feedback
-     *  payload (same `match_id` / `slot`, `timestamp_seconds` inside
-     *  the clip window) and use ITS visibility-checked thumbnail
-     *  endpoint as the render-time fallback. **Privacy**: this only
-     *  picks notes already in the data payload the server returned
-     *  for THIS user, so a viewer who can't see a private note never
-     *  sees its thumbnail surface here. The thumbnail GET endpoint
-     *  also runs `_can_view_coach_note` per-fetch — defense in depth. */
+     *  Resolution order (single `<img>` element with a fallback hint):
+     *    1. clip thumbnail        — `data-coach-clip-thumb="<id>"`
+     *    2. source-note thumbnail — `data-coach-note-thumb-fallback="<noteId>"`
+     *       used when (1) returns null AND `clip.source_note_id` is set
+     *    3. co-located note thumb — same fallback, derived from the
+     *       client-side `notes[]` bundle when no explicit linkage exists
+     *    4. placeholder           — both above failed; the
+     *       `data-thumb-state="placeholder"` tile stays visible
+     *
+     *  `mountCoachClipThumbnailsIn` runs the chain in `js/api.js`. The
+     *  thumbnail GETs each enforce `_can_view_coach_clip` /
+     *  `_can_view_coach_note` server-side, so a viewer who can't see a
+     *  private note or private clip never sees its thumbnail leak. */
     _coachClipThumbHtml(clip) {
-        let noteId = Number(clip?.source_note_id);
-        if (!Number.isFinite(noteId) || noteId <= 0) {
-            // No explicit linkage — try the client-side fallback.
-            // `notes` covers both the coach bundle and the viewer
-            // `/api/my-feedback` payload (same `notes[]` shape).
-            const notes = this._coachBundle?.notes || this._feedbackData?.notes || [];
-            const fallback = this._coLocatedNoteId(clip, notes);
-            if (!fallback) {
-                return `
-                    <div class="coach-thumb coach-thumb--list" data-thumb data-thumb-state="placeholder" aria-hidden="true">
-                        <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
-                    </div>
-                `;
-            }
-            noteId = fallback;
+        const clipId = Number(clip?.id);
+        if (!Number.isFinite(clipId) || clipId <= 0) {
+            return `
+                <div class="coach-thumb coach-thumb--list" data-thumb data-thumb-state="placeholder" aria-hidden="true">
+                    <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
+                </div>
+            `;
         }
-        // Reuse the source note's thumbnail. The
-        // `mountCoachNoteThumbnailsIn` helper picks this <img> up via
-        // its `data-coach-note-thumb` attribute.
+        // Pick the best note fallback: explicit `source_note_id` first,
+        // then a co-located note from the user's bundle/feedback notes.
+        let fallbackNoteId = Number(clip?.source_note_id);
+        if (!Number.isFinite(fallbackNoteId) || fallbackNoteId <= 0) {
+            const notes = this._coachBundle?.notes || this._feedbackData?.notes || [];
+            const co = this._coLocatedNoteId(clip, notes);
+            fallbackNoteId = Number.isFinite(co) && co > 0 ? co : 0;
+        }
+        const fallbackAttr = fallbackNoteId > 0
+            ? ` data-coach-note-thumb-fallback="${fallbackNoteId}"`
+            : '';
         return `
             <div class="coach-thumb coach-thumb--list" data-thumb data-thumb-state="placeholder" aria-hidden="true">
-                <img class="coach-thumb-img" data-coach-note-thumb="${noteId}" alt="" loading="lazy" decoding="async">
+                <img class="coach-thumb-img" data-coach-clip-thumb="${clipId}"${fallbackAttr} alt="" loading="lazy" decoding="async">
                 <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
             </div>
         `;
@@ -3928,10 +3924,9 @@ export const coachingMixin = {
                 </div>
             </article>`;
         }).join('');
-        // Reuse the auth-bearing thumbnail mount — `_coachClipThumbHtml`
-        // emits `<img data-coach-note-thumb="...">` for clips that
-        // carry a `source_note_id`, so this mount picks them up too.
-        this.mountCoachNoteThumbnailsIn(container);
+        // Phase 4e: clip thumbnails first, with source-note / co-located
+        // note as the auth-checked fallback for clips not yet generated.
+        this.mountCoachClipThumbnailsIn(container);
     },
 
     openFeedbackClip(clipId) {

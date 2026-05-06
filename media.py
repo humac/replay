@@ -237,6 +237,15 @@ def coach_note_thumbnail_path(videos_dir: Path, match_id: str, note_id: int) -> 
     return videos_dir / match_id / "coach_thumbs" / f"{note_id}.jpg"
 
 
+def clip_thumbnail_path(videos_dir: Path, match_id: str, clip_id: int) -> Path:
+    """Phase 4e — per-coaching-clip thumbnail path. Same convention as
+    `coach_note_thumbnail_path` but rooted under `clip_thumbs/` so the
+    namespace can't collide with note ids. Derived purely from
+    match_id + clip_id so no DB column is needed; the serving endpoint
+    just checks `path.is_file()`."""
+    return videos_dir / match_id / "clip_thumbs" / f"{clip_id}.jpg"
+
+
 # ---------------------------------------------------------------------------
 # Probing
 # ---------------------------------------------------------------------------

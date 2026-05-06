@@ -90,10 +90,11 @@ export const apiMixin = {
         this.userRole = null;
         this.userRoles = [];
         this.userName = null;
-        // Phase 3b: revoke every cached thumbnail object URL so blobs
-        // from the prior session don't outlive their visibility
-        // context. The cache is rebuilt lazily on the next mount.
+        // Phase 3b/4e: revoke every cached thumbnail object URL so
+        // blobs from the prior session don't outlive their visibility
+        // context. The caches are rebuilt lazily on the next mount.
         this.clearCoachNoteThumbnailCache?.();
+        this.clearCoachClipThumbnailCache?.();
         const navAdmin = document.getElementById('nav-admin');
         if (navAdmin) navAdmin.style.display = 'none';
         const navCoach = document.getElementById('nav-coach');
@@ -173,6 +174,7 @@ export const apiMixin = {
         // The abort short-circuits them cleanly with `AbortError` (which
         // `loadCoachNoteThumbnail` catches silently).
         this.clearCoachNoteThumbnailCache?.();
+        this.clearCoachClipThumbnailCache?.();
         try {
             await fetch('/api/logout', {
                 method: 'POST',
@@ -828,6 +830,175 @@ export const apiMixin = {
         // Drop the cached blob (positive or negative) so the next
         // mount call fetches the fresh JPEG.
         this.invalidateCoachNoteThumbnail(noteId);
+        return resp.json();
+    },
+
+    // -----------------------------------------------------------------
+    // Phase 4e — per-coaching-clip thumbnails
+    //
+    // Mirrors the per-note thumbnail helpers above. Clip thumbnails are
+    // served by `GET /api/coach/clips/{id}/thumbnail` which requires a
+    // Bearer header, so `<img src="/api/...">` cannot be used directly —
+    // we fetch with auth headers, wrap the response in `URL.createObjectURL`,
+    // and cache one object URL per clip id. Negative responses (404 / 403
+    // / network error) are negative-cached so a long timeline rail of
+    // un-thumbnailed clips doesn't re-fire requests every render.
+    //
+    // Cache lifecycle is shared with the note cache: `setLoggedOut()`
+    // calls `clearCoachClipThumbnailCache()` which revokes every
+    // outstanding object URL and `.abort()`s any in-flight fetches so
+    // blobs from the prior session don't outlive their visibility
+    // context.
+    // -----------------------------------------------------------------
+
+    coachClipThumbnailUrl(clipId) {
+        return `/api/coach/clips/${Number(clipId)}/thumbnail`;
+    },
+
+    _coachClipThumbnailCache() {
+        if (!this._coachClipThumbCache) this._coachClipThumbCache = new Map();
+        return this._coachClipThumbCache;
+    },
+
+    _coachClipThumbGeneration() {
+        if (typeof this._coachClipThumbGen !== 'number') this._coachClipThumbGen = 0;
+        return this._coachClipThumbGen;
+    },
+
+    _coachClipThumbAbortController() {
+        if (!this._coachClipThumbAbort || this._coachClipThumbAbort._gen !== this._coachClipThumbGeneration()) {
+            const ctrl = new AbortController();
+            ctrl._gen = this._coachClipThumbGeneration();
+            this._coachClipThumbAbort = ctrl;
+        }
+        return this._coachClipThumbAbort;
+    },
+
+    async loadCoachClipThumbnail(clipId) {
+        const id = Number(clipId);
+        if (!Number.isFinite(id) || id <= 0) return null;
+        const cache = this._coachClipThumbnailCache();
+        const cached = cache.get(id);
+        if (cached !== undefined) {
+            if (cached && typeof cached.then === 'function') return cached;
+            return cached.url;
+        }
+        const startGen = this._coachClipThumbGeneration();
+        const signal = this._coachClipThumbAbortController().signal;
+        const promise = (async () => {
+            try {
+                const resp = await fetch(this.coachClipThumbnailUrl(id), {
+                    headers: this.getAuthHeaders(),
+                    signal,
+                });
+                if (this._coachClipThumbGeneration() !== startGen) return null;
+                if (!resp.ok) {
+                    if (resp.status === 401) {
+                        try { this.setLoggedOut?.(); } catch { /* ignore */ }
+                        return null;
+                    }
+                    cache.set(id, { url: null });
+                    return null;
+                }
+                const blob = await resp.blob();
+                if (this._coachClipThumbGeneration() !== startGen) return null;
+                const url = URL.createObjectURL(blob);
+                if (this._coachClipThumbGeneration() !== startGen) {
+                    try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+                    return null;
+                }
+                cache.set(id, { url });
+                return url;
+            } catch (err) {
+                if (err?.name === 'AbortError') return null;
+                if (this._coachClipThumbGeneration() === startGen) {
+                    cache.set(id, { url: null });
+                }
+                return null;
+            }
+        })();
+        cache.set(id, promise);
+        return promise;
+    },
+
+    /** Mount a clip thumbnail into an `<img>`. On miss, optionally fall
+     *  back to the source-note (or co-located note) thumbnail provided
+     *  by the caller via `data-coach-note-thumb-fallback="<noteId>"` so
+     *  pre-Phase-4e clips keep their borrowed thumbnail until a coach
+     *  hits Regenerate. The placeholder stays visible if both fail. */
+    async mountCoachClipThumbnail(imgEl, clipId, fallbackNoteId = null) {
+        if (!imgEl) return;
+        const url = await this.loadCoachClipThumbnail(clipId);
+        if (url) {
+            if (!imgEl.isConnected) return;
+            imgEl.src = url;
+            imgEl.dataset.thumbState = 'loaded';
+            const wrapper = imgEl.closest('[data-thumb]');
+            if (wrapper) wrapper.dataset.thumbState = 'loaded';
+            return;
+        }
+        // Fall back to the note thumbnail if the caller provided one.
+        // `loadCoachNoteThumbnail` itself returns null on miss, so the
+        // placeholder simply stays visible.
+        const noteId = Number(fallbackNoteId);
+        if (Number.isFinite(noteId) && noteId > 0) {
+            const noteUrl = await this.loadCoachNoteThumbnail(noteId);
+            if (!noteUrl || !imgEl.isConnected) return;
+            imgEl.src = noteUrl;
+            imgEl.dataset.thumbState = 'loaded';
+            const wrapper = imgEl.closest('[data-thumb]');
+            if (wrapper) wrapper.dataset.thumbState = 'loaded';
+        }
+    },
+
+    /** Mount thumbnails for every `<img data-coach-clip-thumb="<id>">`
+     *  inside a container. Honours an optional
+     *  `data-coach-note-thumb-fallback="<noteId>"` so clips without a
+     *  generated thumbnail can borrow the source / co-located note. */
+    mountCoachClipThumbnailsIn(container) {
+        if (!container) return;
+        const imgs = container.querySelectorAll('img[data-coach-clip-thumb]');
+        imgs.forEach((img) => {
+            const id = Number(img.dataset.coachClipThumb);
+            const fallback = img.dataset.coachNoteThumbFallback;
+            if (Number.isFinite(id) && id > 0) {
+                this.mountCoachClipThumbnail(img, id, fallback);
+            }
+        });
+    },
+
+    invalidateCoachClipThumbnail(clipId) {
+        const id = Number(clipId);
+        const cache = this._coachClipThumbnailCache();
+        const entry = cache.get(id);
+        if (entry && typeof entry === 'object' && entry.url) {
+            try { URL.revokeObjectURL(entry.url); } catch { /* ignore */ }
+        }
+        cache.delete(id);
+    },
+
+    clearCoachClipThumbnailCache() {
+        const cache = this._coachClipThumbnailCache();
+        cache.forEach((entry) => {
+            if (entry && typeof entry === 'object' && entry.url) {
+                try { URL.revokeObjectURL(entry.url); } catch { /* ignore */ }
+            }
+        });
+        cache.clear();
+        if (this._coachClipThumbAbort) {
+            try { this._coachClipThumbAbort.abort(); } catch { /* ignore */ }
+            this._coachClipThumbAbort = null;
+        }
+        this._coachClipThumbGen = this._coachClipThumbGeneration() + 1;
+    },
+
+    async regenerateCoachClipThumbnail(clipId) {
+        const resp = await this.authFetch(`/api/coach/clips/${Number(clipId)}/thumbnail/regenerate`, {
+            method: 'POST',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error('Failed to regenerate clip thumbnail');
+        this.invalidateCoachClipThumbnail(clipId);
         return resp.json();
     },
 

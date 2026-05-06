@@ -2491,3 +2491,430 @@ async def test_dev_profile_viewer_endpoint_scrubs_for_coach_caller(client, auth_
         (n.get("coach_private_note") or "").strip() == secret
         for n in coach_profile["recent_notes"]
     ), "Coach endpoint must still expose coach_private_note text to a coach caller"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4e — per-coaching-clip thumbnails
+#
+# Mirrors the Phase 3a per-note thumbnail tests. Same JPEG stub pattern:
+# a lightweight replacement for `_media.generate_thumbnail_at_timestamp`
+# writes a 4-byte JPEG payload synchronously so the serving endpoint
+# sees a real file without depending on ffmpeg. Tests cover:
+#   - path convention helper
+#   - coach/admin GET on a generated thumbnail
+#   - team-visible clip thumbnail reachable by signed-in viewer
+#   - player-visible clip thumbnail reachable only by linked family
+#   - private clip thumbnail never leaks to any viewer
+#   - unknown clip / missing file -> 404
+#   - generation failure does not break clip create
+#   - regenerate requires coach/admin
+#   - regenerate returns generated:false when source missing
+#   - delete clip removes thumbnail file
+#   - path containment on every read/write site
+# ---------------------------------------------------------------------------
+
+
+def _coach_clip_thumb_path(data_dir, match_id: str, clip_id: int):
+    """Mirror of `_media.clip_thumbnail_path` rooted at the test
+    fixture's `data_dir / videos`. Duplicated so a regression in the
+    path convention shows up as a test failure here, not a silent move."""
+    return data_dir / "videos" / match_id / "clip_thumbs" / f"{clip_id}.jpg"
+
+
+async def _install_clip_thumbnail_stub(monkeypatch, *, succeed: bool = True, raise_exc: bool = False):
+    """Replace `_media.generate_thumbnail_at_timestamp` so clip create /
+    update / regenerate flows don't shell out to ffmpeg in the test
+    suite. Same stub used by note-thumbnail tests; we install our own
+    copy so the call log is per-test and the existing note tests stay
+    isolated."""
+    import media as _media
+    calls: list[dict] = []
+
+    async def stub(src, dest, *, timestamp_s):
+        calls.append({"src": str(src), "dest": str(dest), "timestamp_s": timestamp_s})
+        if raise_exc:
+            raise RuntimeError("simulated ffmpeg crash for clip thumbnail")
+        if succeed:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"\xff\xd8\xff\xd9")
+        return succeed
+
+    monkeypatch.setattr(_media, "generate_thumbnail_at_timestamp", stub)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_path_convention(data_dir):
+    """Lock the storage path the spec calls out — anything that
+    relocates `clip_thumbs/` will trip this."""
+    from media import clip_thumbnail_path
+    p = clip_thumbnail_path(data_dir / "videos", "match-abc", 7)
+    assert p == data_dir / "videos" / "match-abc" / "clip_thumbs" / "7.jpg"
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_404_when_file_missing(client, auth_headers):
+    """No file on disk -> 404, never a 500."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Falcons FC", "date": "2026-05-20",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 5.0, "end_seconds": 18.0,
+        "title": "No source video here", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    assert clip_resp.status_code == 200, clip_resp.text
+    clip_id = clip_resp.json()["clip"]["id"]
+    # No stub installed + no real video means no file written.
+    resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_404_for_unknown_clip(client, auth_headers):
+    resp = await client.get("/api/coach/clips/9999999/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_requires_auth(client):
+    resp = await client.get("/api/coach/clips/1/thumbnail")
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_admin_and_coach_can_access(client, auth_headers, data_dir, monkeypatch):
+    """Coach/admin can fetch the JPEG once it exists on disk."""
+    await _install_clip_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "clipcoach", "password": "password123", "role": "coach",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Riverside FC", "date": "2026-05-21",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 30.0, "end_seconds": 50.0,
+        "title": "Team shape (clip)", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+    assert _coach_clip_thumb_path(data_dir, match_id, clip_id).is_file(), \
+        "stub should have written the JPEG synchronously"
+
+    admin_resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert admin_resp.status_code == 200
+    assert admin_resp.headers["content-type"] == "image/jpeg"
+    assert admin_resp.content == b"\xff\xd8\xff\xd9"
+
+    coach_headers = await _login(client, "clipcoach")
+    coach_resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=coach_headers)
+    assert coach_resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_team_visible_reachable_by_viewer(client, auth_headers, data_dir, monkeypatch):
+    """A `visibility=team` clip thumbnail must be reachable by any
+    signed-in viewer — same boundary as note thumbnails."""
+    await _install_clip_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "clipviewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Northgate", "date": "2026-05-22",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 45.0, "end_seconds": 60.0,
+        "title": "Press in midfield (clip)", "category": "pressing", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+
+    viewer_headers = await _login(client, "clipviewer")
+    resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=viewer_headers)
+    assert resp.status_code == 200
+    assert resp.content == b"\xff\xd8\xff\xd9"
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_player_visible_only_to_linked_family(client, auth_headers, data_dir, monkeypatch):
+    """`visibility=player` clip thumbnail: linked family member can
+    fetch it; an unlinked viewer cannot."""
+    await _install_clip_thumbnail_stub(monkeypatch)
+    family_resp = await client.post("/api/users", json={
+        "username": "clipfamily", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    linked_user_id = family_resp.json()["user"]["id"]
+    await client.post("/api/users", json={
+        "username": "clipstranger", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Sam Park", "jersey_number": "11",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": linked_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Highbridge", "date": "2026-05-23",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 60.0, "end_seconds": 75.0,
+        "title": "Player #11 — recovery (clip)", "category": "defending",
+        "visibility": "player", "player_ids": [player_id],
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+
+    family_headers = await _login(client, "clipfamily")
+    family_resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=family_headers)
+    assert family_resp.status_code == 200, family_resp.text
+
+    stranger_headers = await _login(client, "clipstranger")
+    stranger_resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=stranger_headers)
+    assert stranger_resp.status_code == 404, \
+        "unlinked viewer must NOT be able to fetch a player-visible clip thumbnail"
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_private_never_leaks_to_viewer(client, auth_headers, data_dir, monkeypatch):
+    """`visibility=private` clip thumbnail must be invisible to ANY non-coach
+    user, even if the JPEG file exists on disk. Returns 404 — same response
+    shape as 'clip doesn't exist' so a viewer cannot probe."""
+    await _install_clip_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "clipprivateviewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Pinehurst", "date": "2026-05-24",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 75.0, "end_seconds": 90.0,
+        "title": "Internal coach analysis (clip)", "category": "other",
+        "visibility": "private",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+
+    # File IS on disk — point of the test is that the file existing
+    # does NOT make the endpoint serve it to viewers.
+    assert _coach_clip_thumb_path(data_dir, match_id, clip_id).is_file()
+
+    coach_resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert coach_resp.status_code == 200
+
+    viewer_headers = await _login(client, "clipprivateviewer")
+    viewer_resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=viewer_headers)
+    assert viewer_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_create_does_not_break_when_generator_raises(client, auth_headers, monkeypatch):
+    """Acceptance: generation failure must not block clip save. Stub
+    raises so we exercise the safety net in `_spawn_coach_clip_thumbnail`."""
+    await _install_clip_thumbnail_stub(monkeypatch, succeed=False, raise_exc=True)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Bridgewater", "date": "2026-05-25",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 25.0, "end_seconds": 40.0,
+        "title": "ffmpeg crashes here", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert clip_resp.status_code == 200, clip_resp.text
+    clip_id = clip_resp.json()["clip"]["id"]
+
+    await _drain_background_tasks()
+
+    resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_regenerate_requires_coach(client, auth_headers, monkeypatch):
+    """The manual regenerate endpoint is gated like the rest of
+    `/api/coach/*` — viewers get 403."""
+    await _install_clip_thumbnail_stub(monkeypatch)
+    await client.post("/api/users", json={
+        "username": "clipregenviewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Eastside", "date": "2026-05-26",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 33.0, "end_seconds": 50.0,
+        "title": "Regen-gating clip", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+
+    coach_resp = await client.post(
+        f"/api/coach/clips/{clip_id}/thumbnail/regenerate", headers=auth_headers,
+    )
+    assert coach_resp.status_code == 200
+    assert coach_resp.json() == {"ok": True, "generated": True}
+
+    viewer_headers = await _login(client, "clipregenviewer")
+    viewer_resp = await client.post(
+        f"/api/coach/clips/{clip_id}/thumbnail/regenerate", headers=viewer_headers,
+    )
+    assert viewer_resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_regenerate_handles_unknown_clip(client, auth_headers):
+    resp = await client.post("/api/coach/clips/99999/thumbnail/regenerate", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_regenerate_returns_ok_false_when_source_missing(client, auth_headers):
+    """Source MP4 doesn't exist -> {ok: True, generated: False}, distinct
+    from a 404 unknown-clip response."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Coastal", "date": "2026-05-27",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 5.0, "end_seconds": 12.0,
+        "title": "No source video", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+
+    resp = await client.post(f"/api/coach/clips/{clip_id}/thumbnail/regenerate", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "generated": False}
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_delete_clip_removes_file(client, auth_headers, data_dir, monkeypatch):
+    """DELETE /api/coach/clips/{id} should unlink the JPEG so the
+    `<videos>/<match>/clip_thumbs/` tree doesn't accumulate orphans."""
+    await _install_clip_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Marsh Lane", "date": "2026-05-28",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 10.0, "end_seconds": 25.0,
+        "title": "To be deleted", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+    thumb_path = _coach_clip_thumb_path(data_dir, match_id, clip_id)
+    assert thumb_path.is_file()
+
+    del_resp = await client.delete(f"/api/coach/clips/{clip_id}", headers=auth_headers)
+    assert del_resp.status_code == 200
+    assert not thumb_path.exists(), "DELETE /api/coach/clips must unlink the thumbnail JPEG"
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_response_is_not_public_cacheable(client, auth_headers, data_dir, monkeypatch):
+    """Per-user access-controlled responses must NEVER set
+    `Cache-Control: public`. Mirrors the note thumbnail header policy."""
+    await _install_clip_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Cache Test FC", "date": "2026-05-29",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 12.0, "end_seconds": 25.0,
+        "title": "Cache header check", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+
+    resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 200
+    cache_control = resp.headers.get("cache-control", "")
+    assert "public" not in cache_control.lower(), (
+        f"Cache-Control must NOT be public on a per-viewer access-controlled "
+        f"response (got {cache_control!r})"
+    )
+    assert "no-cache" in cache_control.lower() or "private" in cache_control.lower()
+    etag = resp.headers.get("etag", "")
+    assert etag.startswith('"') and etag.endswith('"') and len(etag) > 2
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_get_refuses_path_escape(client, auth_headers, data_dir, monkeypatch):
+    """If a corrupted DB row's `match_id` resolves outside `VIDEOS_DIR`,
+    the GET endpoint must return the same 404 it uses for unknown /
+    unauthorized / missing-file cases — never serve a file from
+    outside the videos tree."""
+    import db as _db
+    await _install_clip_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Containment FC", "date": "2026-05-30",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 7.0, "end_seconds": 22.0,
+        "title": "Containment GET", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+
+    # Simulate a corrupted DB row whose `match_id` contains `..` so
+    # `videos_dir / match_id / clip_thumbs / <id>.jpg` would resolve
+    # outside `VIDEOS_DIR`.
+    conn = _db.connect()
+    try:
+        conn.execute("UPDATE coaching_clips SET match_id=? WHERE id=?",
+                     ("../escape", clip_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_regenerated_after_start_seconds_patch(client, auth_headers, data_dir, monkeypatch):
+    """PATCH /api/coach/clips/{id} with a new start_seconds must trigger
+    a regeneration spawn so the captured frame matches the new window."""
+    calls = await _install_clip_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Window Edit FC", "date": "2026-05-31",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 10.0, "end_seconds": 25.0,
+        "title": "Window-edit", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+    initial_calls = len(calls)
+    assert initial_calls >= 1, "create should have scheduled one generation"
+
+    # PATCH the start_seconds — must spawn a new generation.
+    patch_resp = await client.patch(
+        f"/api/coach/clips/{clip_id}",
+        json={"start_seconds": 12.0},
+        headers=auth_headers,
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    await _drain_background_tasks()
+    assert len(calls) > initial_calls, \
+        "PATCH start_seconds must schedule a new clip thumbnail generation"
+    # The most recent call should reflect the new start time.
+    assert calls[-1]["timestamp_s"] == 12.0

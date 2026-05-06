@@ -6,6 +6,23 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Coaching Analysis Phase 4e — Per-clip thumbnails (first-class) ✅ COMPLETE (2026-05-05)
+
+Generates a clip-specific JPEG from the source video at `clip.start_seconds` so every clip gets a real thumbnail — no longer dependent on borrowing a source-note thumbnail. Backend mirrors the Phase 3a per-note thumbnail flow exactly.
+
+- **Storage**: `<videos>/<match_id>/clip_thumbs/<clip_id>.jpg` resolved by `_media.clip_thumbnail_path(videos_dir, match_id, clip_id)`. Path is purely deterministic from `match_id` + `clip_id` so no DB column / migration ships in this PR.
+- **Generation**: best-effort, runs as a background `_spawn_task(_spawn_coach_clip_thumbnail(clip))` from `POST /api/coach/clips` and from `PATCH /api/coach/clips/{id}` when `start_seconds` changes (the clip's `match_id`/`slot` are immutable per `UpdateCoachingClipRequest`'s `extra="forbid"`). Uses the existing `_media.generate_thumbnail_at_timestamp(src, dest, timestamp_s=clip.start_seconds)` helper which clamps negative timestamps to 0 and timestamps past duration to (duration - 1). Missing source MP4, ffmpeg crash, or disk full all log a warning and return `False` — the parent task's response to the coach is never blocked. `DELETE /api/coach/clips/{id}` `unlink(missing_ok=True)`s the JPEG.
+- **Serving**: `GET /api/coach/clips/{id}/thumbnail` requires any signed-in user (`_auth.require_auth`) and enforces visibility via `_can_view_coach_clip(user, clip)` which **reuses `_filter_clips_for_user`** so the visibility ladder cannot drift; unknown clips, clips the user can't see, and missing files all return the same `404` so a viewer cannot probe private-clip existence. **Manual coach refresh**: `POST /api/coach/clips/{id}/thumbnail/regenerate` (gated by `_require_coach`) returns `{ok: true, generated: bool}`. **Caching**: `Cache-Control: no-cache, must-revalidate` + `ETag: "{mtime}"` (mirrors note thumbnails) — never `public`, because the response is access-controlled per-viewer. **Path containment**: every site (`spawn`, `GET`, `regenerate POST`, delete cleanup) runs the path through `_thumb_path_within_videos_dir(thumb)` so a corrupted DB row whose `match_id` contains `..` cannot escape `VIDEOS_DIR`.
+- **Frontend**: new `loadCoachClipThumbnail(clipId)` + `mountCoachClipThumbnailsIn(container)` helpers in `js/api.js` (mirror of the per-note pair). Clip cards now resolve thumbnails in this order: **(1) clip-specific thumbnail** from `/api/coach/clips/{id}/thumbnail`, **(2) source-note thumbnail** if `clip.source_note_id` is set, **(3) co-located note thumbnail** derived from the user's bundle / feedback notes payload, **(4) placeholder**. The fallback chain runs entirely on the client via the `<img data-coach-clip-thumb>` + `data-coach-note-thumb-fallback` attributes; the placeholder is the same CSS film-strip glyph as Phase 3a. Wired into Coach > Clips (`renderCoachClips`) and My Feedback > Clips (`renderFeedbackClips`). Object URLs are revoked on `setLoggedOut()` and on `regenerateCoachClipThumbnail()` so a refreshed JPEG appears immediately.
+- **Privacy**: every fetch goes through the visibility-checked GET endpoint; a viewer who can't see a clip simply gets a placeholder. There is no client-side role check and no client-side authorization logic.
+- **Out of scope**: no MP4 export (still seek-based), no clip drawing overlays.
+
+Tests in `tests/test_coaching.py` cover: path-convention helper, coach/admin can fetch any clip thumbnail, team-visible clip thumbnail reachable by signed-in viewer, player-visible clip thumbnail only reaches linked family, private clip thumbnail never leaks (file on disk + endpoint 404 for viewer), unknown clip / missing file / path-escape all return controlled 404, generation failure does not break clip create, regenerate gating + ok-false-when-source-missing, delete-clip removes the JPEG, response is not public-cacheable, PATCH-start_seconds re-spawns generation. 16 new tests (334 total, all passing).
+
+Browser QA: dark + light mode Coach > Clips with three real clip-specific thumbnails (one placeholder for the no-source-video clip), My Feedback > Clips desktop + mobile with TEAM-visible clips rendering the JPEGs and the PRIVATE clip filtered out, plus the placeholder demo card. Screenshots in `docs/screenshots/phase-4e-clip-thumbnails/`.
+
+---
+
 ## Hotfix — Clip playback + clip thumbnails (issues #104 / #105) ✅ COMPLETE (2026-05-06)
 
 Two production regressions found after Phase 4b landed. Both fixed in `js/coaching.js`; no backend changes, no schema changes, no privacy-ladder changes.
