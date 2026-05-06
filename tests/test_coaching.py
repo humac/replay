@@ -1775,3 +1775,719 @@ async def test_delete_player_cleans_coaching_clip_players(client, auth_headers):
     assert clip_after["player_ids"] == [], (
         "clip's player_ids should hydrate as empty after the only tagged player was deleted"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — Player development profile aggregation
+# ---------------------------------------------------------------------------
+
+
+async def _seed_dev_profile_fixture(client, auth_headers):
+    """Build a small but realistic data set for development-profile
+    tests: one match, one rostered player, a viewer linked to that
+    player, an unrelated viewer, and a mix of notes/clips/playlists at
+    different visibilities and note_types so the aggregation paths are
+    actually exercised."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Steel", "away_team": "Riverside", "date": "2026-05-20",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Ava Dev", "jersey_number": "9",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+
+    other_player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Other Dev", "jersey_number": "12",
+    }, headers=auth_headers)
+    other_player_id = other_player_resp.json()["player"]["id"]
+
+    linked_user_resp = await client.post("/api/users", json={
+        "username": "dev_family_linked", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    linked_user_id = linked_user_resp.json()["user"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": linked_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    await client.post("/api/users", json={
+        "username": "dev_family_other", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+
+    notes: dict[str, int] = {}
+    payloads = [
+        {
+            "title": "Great body shape", "note_type": "positive",
+            "category": "shape", "visibility": "team", "tags": ["receiving"],
+            "what_to_do_next": "Keep doing this", "player_summary": "Nice shape!",
+        },
+        {
+            "title": "Scan before receiving", "note_type": "correction",
+            "category": "decision", "visibility": "player",
+            "tags": ["scan"], "what_to_do_next": "Check shoulder twice before the pass",
+        },
+        {
+            "title": "Why did you cross there?", "note_type": "question",
+            "category": "decision", "visibility": "player",
+            "tags": ["scan"], "what_to_do_next": "",
+        },
+        {
+            "title": "Recovery run shape", "note_type": "team_concept",
+            "category": "transition", "visibility": "team",
+            "tags": ["transition"], "what_to_do_next": "",
+        },
+        {
+            "title": "Goal: scan twice before receiving", "note_type": "individual_goal",
+            "category": "decision", "visibility": "player",
+            "tags": ["scan"], "what_to_do_next": "Scan twice every reception this week",
+        },
+        {
+            "title": "Private coach thought", "note_type": "correction",
+            "category": "shape", "visibility": "private", "tags": [],
+            "coach_private_note": "Talk to parents about confidence",
+            "what_to_do_next": "Coach-only follow up",
+        },
+    ]
+    for p in payloads:
+        body = {
+            "match_id": match_id, "slot": "full", "timestamp_seconds": 30.0,
+            "title": p["title"], "body": "...", "category": p["category"],
+            "visibility": p["visibility"], "player_ids": [player_id],
+            "tags": p.get("tags", []), "note_type": p["note_type"],
+            "what_to_do_next": p.get("what_to_do_next", ""),
+            "player_summary": p.get("player_summary", ""),
+            "coach_private_note": p.get("coach_private_note", ""),
+        }
+        resp = await client.post("/api/coach/notes", json=body, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        notes[p["title"]] = resp.json()["note"]["id"]
+
+    # Note targeting only the OTHER player so we can verify the
+    # development profile excludes it.
+    await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 60.0,
+        "title": "Other player only", "body": "...", "category": "other",
+        "visibility": "team", "player_ids": [other_player_id],
+        "note_type": "positive",
+    }, headers=auth_headers)
+
+    # A clip on the focal player (team-visible) and a private clip that
+    # must NOT appear on the viewer surface.
+    clip_team = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 10.0, "end_seconds": 18.0,
+        "title": "Body shape clip", "category": "shape",
+        "visibility": "team", "player_ids": [player_id],
+    }, headers=auth_headers)
+    assert clip_team.status_code == 200, clip_team.text
+    clip_private = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 22.0, "end_seconds": 28.0,
+        "title": "Private clip", "category": "other",
+        "visibility": "private", "player_ids": [player_id],
+    }, headers=auth_headers)
+    assert clip_private.status_code == 200
+
+    # A team-visible playlist that includes the player's correction note,
+    # plus a private playlist tagged with the player.
+    pl_team = await client.post("/api/coach/playlists", json={
+        "title": "Scanning improvements", "description": "",
+        "visibility": "team", "player_ids": [player_id],
+        "note_ids": [notes["Scan before receiving"]],
+    }, headers=auth_headers)
+    assert pl_team.status_code == 200
+    pl_private = await client.post("/api/coach/playlists", json={
+        "title": "Coach private playlist", "description": "",
+        "visibility": "private", "player_ids": [player_id],
+        "note_ids": [],
+    }, headers=auth_headers)
+    assert pl_private.status_code == 200
+
+    return {
+        "match_id": match_id,
+        "player_id": player_id,
+        "other_player_id": other_player_id,
+        "notes": notes,
+    }
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_coach_returns_full_aggregation(client, auth_headers):
+    fx = await _seed_dev_profile_fixture(client, auth_headers)
+    resp = await client.get(
+        f"/api/coach/players/{fx['player_id']}/development",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    profile = resp.json()["profile"]
+
+    # Player object surfaces the coach-side linked-accounts summary.
+    assert profile["player"]["display_name"] == "Ava Dev"
+    assert profile["viewer_scoped"] is False
+    assert profile["linked_accounts"]
+    assert profile["linked_accounts"][0]["username"] == "dev_family_linked"
+    assert profile["linked_accounts"][0]["relationship"] == "parent"
+
+    # Aggregation includes ALL six notes assigned to this player —
+    # the seventh note is on the other roster player so it must be
+    # excluded.
+    assert profile["counts"]["notes"] == 6
+    by_type = profile["themes"]["by_note_type"]
+    assert by_type["positive"] == 1
+    assert by_type["correction"] == 2  # team-correction + private-correction
+    assert by_type["question"] == 1
+    assert by_type["team_concept"] == 1
+    assert by_type["individual_goal"] == 1
+    assert profile["themes"]["positive_to_correction_ratio"] == 0.5
+
+    # Top categories/tags include the player's notes only.
+    cat_top = {row["value"] for row in profile["themes"]["top_categories"]}
+    assert "decision" in cat_top
+    tag_top = {row["value"] for row in profile["themes"]["top_tags"]}
+    assert "scan" in tag_top
+
+    # Recent positives / corrections are bucketed correctly.
+    recent_pos_titles = [n["title"] for n in profile["recent_positives"]]
+    assert recent_pos_titles == ["Great body shape"]
+    recent_cor_titles = [n["title"] for n in profile["recent_corrections"]]
+    assert "Scan before receiving" in recent_cor_titles
+    assert "Private coach thought" in recent_cor_titles
+
+    # Coach surface MUST surface coach_private_note text since the raw
+    # note list is used (mirrors `_filter_notes_for_user` short-circuit
+    # for privileged users). Otherwise Phase 5a would silently regress
+    # the coach's existing access.
+    private_match = [
+        n for n in profile["recent_notes"]
+        if n.get("title") == "Private coach thought"
+    ]
+    assert private_match
+    assert private_match[0]["coach_private_note"] == "Talk to parents about confidence"
+
+    # Clips: both the team and private clip count for the coach.
+    assert profile["counts"]["clips"] == 2
+    clip_titles = {c["title"] for c in profile["recent_clips"]}
+    assert clip_titles == {"Body shape clip", "Private clip"}
+
+    # Playlists: both team and private playlist appear.
+    pl_titles = {p["title"] for p in profile["recent_playlists"]}
+    assert pl_titles == {"Scanning improvements", "Coach private playlist"}
+
+    # Focus areas come from recent correction / individual_goal notes
+    # with a non-empty `what_to_do_next`.
+    focus_titles = [f["what_to_do_next"] for f in profile["current_focus_areas"]]
+    assert any("Scan twice" in t for t in focus_titles)
+    assert any("Check shoulder" in t for t in focus_titles)
+    assert all(f["source"] == "derived_from_recent_notes" for f in profile["current_focus_areas"])
+
+    # Review-status structure exists with clip-not-supported flag set.
+    assert profile["review_status"]["clips"]["review_supported"] is False
+    assert profile["review_status"]["clips"]["assigned_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_coach_404_for_unknown_player(client, auth_headers):
+    resp = await client.get(
+        "/api/coach/players/does-not-exist/development",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_coach_endpoint_blocks_viewer(client, auth_headers):
+    fx = await _seed_dev_profile_fixture(client, auth_headers)
+    viewer_headers = await _login(client, "dev_family_other")
+    resp = await client.get(
+        f"/api/coach/players/{fx['player_id']}/development",
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_linked_user_sees_visible_only(client, auth_headers):
+    fx = await _seed_dev_profile_fixture(client, auth_headers)
+    linked_headers = await _login(client, "dev_family_linked")
+    resp = await client.get(
+        f"/api/my-feedback/players/{fx['player_id']}/development",
+        headers=linked_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    profile = resp.json()["profile"]
+
+    assert profile["viewer_scoped"] is True
+    # Linked accounts is a coach-only field — viewer endpoint omits it.
+    assert "linked_accounts" not in profile
+
+    # Of the six player-tagged notes, the viewer can see only the
+    # team-visible note plus the player-visible notes — five total —
+    # because the private note is filtered out.
+    visible_titles = {n["title"] for n in profile["recent_notes"]}
+    assert "Private coach thought" not in visible_titles
+    assert "Great body shape" in visible_titles
+    assert "Scan before receiving" in visible_titles
+    assert profile["counts"]["notes"] == 5
+
+    # `coach_private_note` must be scrubbed even on notes the viewer
+    # can see — defense-in-depth at the development-profile layer
+    # mirroring `_filter_notes_for_user`'s `_strip_private_fields`.
+    for n in profile["recent_notes"]:
+        assert n.get("coach_private_note", "") == ""
+
+    # Clips: only the team-visible clip is visible to the viewer.
+    assert profile["counts"]["clips"] == 1
+    assert [c["title"] for c in profile["recent_clips"]] == ["Body shape clip"]
+
+    # Playlists: only the team-visible playlist surfaces.
+    pl_titles = [p["title"] for p in profile["recent_playlists"]]
+    assert pl_titles == ["Scanning improvements"]
+
+    # Theme counts aggregate over visible notes only.
+    by_type = profile["themes"]["by_note_type"]
+    # Visible: 1 positive, 1 correction (the team-correction-via-tags),
+    # 1 question, 1 team_concept, 1 individual_goal — totals to 5.
+    assert by_type["positive"] == 1
+    assert by_type["correction"] == 1
+    assert sum(by_type.values()) == 5
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_unrelated_user_returns_404(client, auth_headers):
+    fx = await _seed_dev_profile_fixture(client, auth_headers)
+    other_headers = await _login(client, "dev_family_other")
+    resp = await client.get(
+        f"/api/my-feedback/players/{fx['player_id']}/development",
+        headers=other_headers,
+    )
+    # 404 (not 403) so an unrelated viewer cannot probe whether a roster
+    # id exists. Same shape as "unknown player".
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_unknown_player_returns_404(client, auth_headers):
+    await _seed_dev_profile_fixture(client, auth_headers)
+    linked_headers = await _login(client, "dev_family_linked")
+    resp = await client.get(
+        "/api/my-feedback/players/does-not-exist/development",
+        headers=linked_headers,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_review_scoped_to_signed_in_user(client, auth_headers):
+    fx = await _seed_dev_profile_fixture(client, auth_headers)
+    linked_headers = await _login(client, "dev_family_linked")
+
+    # Mark a note review as the linked viewer.
+    visible_note_id = fx["notes"]["Scan before receiving"]
+    review_resp = await client.post("/api/my-feedback/review", json={
+        "note_id": visible_note_id,
+        "reflection": "I'll scan twice this week",
+    }, headers=linked_headers)
+    assert review_resp.status_code == 200
+
+    resp = await client.get(
+        f"/api/my-feedback/players/{fx['player_id']}/development",
+        headers=linked_headers,
+    )
+    profile = resp.json()["profile"]
+    rs = profile["review_status"]
+    assert rs["notes"]["reviewed_count"] == 1
+    assert rs["reflection_count"] == 1
+    assert rs["latest_reflection"]["reflection"] == "I'll scan twice this week"
+    assert rs["clips"]["review_supported"] is False
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_empty_player_returns_zero_counts(client, auth_headers):
+    """A roster player with no notes/clips/playlists must return empty
+    arrays + zero counts, not 500."""
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Bench Warmer", "jersey_number": "13",
+    }, headers=auth_headers)
+    pid = player_resp.json()["player"]["id"]
+    resp = await client.get(
+        f"/api/coach/players/{pid}/development",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    profile = resp.json()["profile"]
+    assert profile["counts"] == {"notes": 0, "clips": 0, "playlists": 0}
+    assert profile["recent_notes"] == []
+    assert profile["recent_clips"] == []
+    assert profile["recent_playlists"] == []
+    assert profile["current_focus_areas"] == []
+    assert profile["themes"]["positive_to_correction_ratio"] is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — Targeted regression tests (PR #103 review follow-up)
+#
+# The original 8 tests cover happy-path aggregation + the privacy ladder.
+# These three pin behaviors that were verified at runtime during code
+# review but not directly asserted at the test layer:
+#
+#   1. corrections=0 -> positive_to_correction_ratio is None
+#   2. A playlist with NO explicit `player_ids` but containing an ordered
+#      note item tagged with the player IS included in the profile.
+#   3. A viewer-side playlist whose only player-related note item is
+#      `visibility: private` is excluded from the viewer profile (because
+#      the private note has been filtered out before the playlist
+#      association check runs, so the playlist no longer "matches" the
+#      player from the viewer's perspective).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_zero_corrections_yields_null_ratio(client, auth_headers):
+    """1 positive + 0 corrections -> ratio MUST be null (not 0, not Inf).
+    The empty-player test pins the all-zeros case; this one covers the
+    "all positive, no correction baseline" branch in `_theme_counts`."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Ratio FC", "away_team": "Null Town", "date": "2026-05-22",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Positive-only Player", "jersey_number": "7",
+    }, headers=auth_headers)
+    pid = player_resp.json()["player"]["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5.0,
+        "title": "Only positive", "category": "shape",
+        "visibility": "team", "player_ids": [pid], "note_type": "positive",
+    }, headers=auth_headers)
+    assert note_resp.status_code == 200, note_resp.text
+
+    resp = await client.get(
+        f"/api/coach/players/{pid}/development", headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    themes = resp.json()["profile"]["themes"]
+    assert themes["positive_count"] == 1
+    assert themes["correction_count"] == 0
+    # JSON-encoded as `null` — Python decodes it to None.
+    assert themes["positive_to_correction_ratio"] is None
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_playlist_included_via_ordered_note_items_only(client, auth_headers):
+    """A playlist with empty `player_ids` but containing an ordered note
+    item tagged with the player must surface in the profile. This is
+    the "playlist about a teaching theme that happens to involve the
+    player" path documented in the playlist association rule."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Pl FC", "away_team": "Items Only", "date": "2026-05-23",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Indirect Player", "jersey_number": "21",
+    }, headers=auth_headers)
+    pid = player_resp.json()["player"]["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 12.0,
+        "title": "Player-tagged note", "category": "shape",
+        "visibility": "team", "player_ids": [pid], "note_type": "correction",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    # Playlist explicitly has NO `player_ids` — only its ordered note
+    # items connect it to the player.
+    pl_resp = await client.post("/api/coach/playlists", json={
+        "title": "Theme playlist (no explicit player tag)",
+        "description": "", "visibility": "team",
+        "player_ids": [], "note_ids": [note_id],
+    }, headers=auth_headers)
+    assert pl_resp.status_code == 200, pl_resp.text
+
+    resp = await client.get(
+        f"/api/coach/players/{pid}/development", headers=auth_headers,
+    )
+    profile = resp.json()["profile"]
+    assert profile["counts"]["playlists"] == 1
+    titles = [p["title"] for p in profile["recent_playlists"]]
+    assert titles == ["Theme playlist (no explicit player tag)"]
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_excludes_playlist_with_only_private_player_item(client, auth_headers):
+    """If a playlist's ONLY player-tagged item is a private note, then
+    on the viewer surface the private note is filtered out before the
+    playlist association check runs — so from the viewer's perspective
+    the playlist has no matching item and must NOT surface in their
+    development profile.
+
+    The playlist itself is `team`-visible (so it's reachable as a
+    playlist), but it should not be classified as "for this player"
+    from the viewer's perspective because the only thing connecting
+    it to the player is invisible to them."""
+    viewer_resp = await client.post("/api/users", json={
+        "username": "playlist_private_only_viewer",
+        "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    linked_user_id = viewer_resp.json()["user"]["id"]
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Private-Item Player", "jersey_number": "33",
+    }, headers=auth_headers)
+    pid = player_resp.json()["player"]["id"]
+
+    await client.post("/api/coach/player-links", json={
+        "player_id": pid, "user_id": linked_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Hidden FC", "away_team": "Visible FC", "date": "2026-05-24",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    # The ONLY player-tagged note in the playlist is private.
+    private_note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 8.0,
+        "title": "Private player-tagged note", "category": "shape",
+        "visibility": "private", "player_ids": [pid], "note_type": "correction",
+    }, headers=auth_headers)
+    private_note_id = private_note_resp.json()["note"]["id"]
+
+    # Add a second item that's team-visible but tagged with a different
+    # player so the viewer can reach the playlist itself but cannot see
+    # any item that ties it back to THIS player.
+    other_player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Other Indirect", "jersey_number": "44",
+    }, headers=auth_headers)
+    other_pid = other_player_resp.json()["player"]["id"]
+    other_note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 18.0,
+        "title": "Team note for other player", "category": "transition",
+        "visibility": "team", "player_ids": [other_pid], "note_type": "correction",
+    }, headers=auth_headers)
+    other_note_id = other_note_resp.json()["note"]["id"]
+
+    # Team-visible playlist, no explicit `player_ids`, items = [private,
+    # team-other]. From the viewer's perspective, the only thing
+    # connecting this playlist to the focal player is the private item,
+    # which is filtered out.
+    pl_resp = await client.post("/api/coach/playlists", json={
+        "title": "Mixed-item playlist",
+        "description": "", "visibility": "team",
+        "player_ids": [], "note_ids": [private_note_id, other_note_id],
+    }, headers=auth_headers)
+    assert pl_resp.status_code == 200, pl_resp.text
+
+    linked_headers = await _login(client, "playlist_private_only_viewer")
+    resp = await client.get(
+        f"/api/my-feedback/players/{pid}/development", headers=linked_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    profile = resp.json()["profile"]
+
+    # Viewer surface: the private note is filtered out, so the playlist
+    # has no surviving player-tagged item — it must not be counted as
+    # "for this player".
+    assert profile["counts"]["playlists"] == 0, (
+        "Viewer profile should exclude a playlist whose only "
+        "connection to this player is a private (filtered-out) note. "
+        f"Got recent_playlists: {profile['recent_playlists']}"
+    )
+    assert profile["recent_playlists"] == []
+
+    # Sanity: the coach surface (which sees the private note) DOES
+    # include the playlist, confirming the only difference is the
+    # viewer-side visibility filter.
+    coach_resp = await client.get(
+        f"/api/coach/players/{pid}/development", headers=auth_headers,
+    )
+    coach_profile = coach_resp.json()["profile"]
+    assert coach_profile["counts"]["playlists"] == 1
+    assert [p["title"] for p in coach_profile["recent_playlists"]] == [
+        "Mixed-item playlist",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — PR #103 review fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_latest_reflection_uses_global_sort(client, auth_headers):
+    """`latest_reflection` MUST be the globally most-recent review with
+    a non-empty reflection — not the first element of the
+    `note_reviews + playlist_reviews` concatenation.
+
+    This test seeds the data so the newer reflection lives in the
+    SECOND sub-list (the playlist sub-list), proving the fix forces a
+    global sort instead of accidentally relying on note-reviews
+    appearing first."""
+    import db as _db
+
+    viewer_resp = await client.post("/api/users", json={
+        "username": "reflection_order_viewer",
+        "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer_user_id = viewer_resp.json()["user"]["id"]
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Order Test", "jersey_number": "8",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": viewer_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Order FC", "date": "2026-05-25",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5.0,
+        "title": "Note for review", "category": "shape",
+        "visibility": "team", "player_ids": [player_id], "note_type": "correction",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    playlist_resp = await client.post("/api/coach/playlists", json={
+        "title": "Playlist for review", "description": "",
+        "visibility": "team", "player_ids": [player_id], "note_ids": [note_id],
+    }, headers=auth_headers)
+    playlist_id = playlist_resp.json()["playlist"]["id"]
+
+    # Seed the reviews directly so we control `reviewed_at` ordering
+    # exactly. Note review is OLDER (2026-05-25T10:00) and playlist
+    # review is NEWER (2026-05-26T10:00). With the buggy unsorted
+    # concatenation, `reflections[0]` would be the older note row;
+    # the fix's global sort returns the playlist row instead.
+    conn = _db.connect()
+    conn.execute(
+        "INSERT INTO coaching_reviews (user_id, note_id, playlist_id, reflection, reviewed_at) "
+        "VALUES (?, ?, NULL, ?, ?)",
+        (viewer_user_id, note_id, "Older note reflection", "2026-05-25T10:00:00.000Z"),
+    )
+    conn.execute(
+        "INSERT INTO coaching_reviews (user_id, note_id, playlist_id, reflection, reviewed_at) "
+        "VALUES (?, NULL, ?, ?, ?)",
+        (viewer_user_id, playlist_id, "Newer playlist reflection", "2026-05-26T10:00:00.000Z"),
+    )
+    conn.commit()
+
+    viewer_headers = await _login(client, "reflection_order_viewer")
+    resp = await client.get(
+        f"/api/my-feedback/players/{player_id}/development", headers=viewer_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rs = resp.json()["profile"]["review_status"]
+
+    # The fix sources `latest_reflection` from the globally sorted list
+    # so the playlist row wins.
+    assert rs["latest_reviewed_at"] == "2026-05-26T10:00:00.000Z"
+    assert rs["reflection_count"] == 2
+    assert rs["latest_reflection"]["reflection"] == "Newer playlist reflection"
+    assert rs["latest_reflection"]["playlist_id"] == playlist_id
+    assert rs["latest_reflection"]["note_id"] is None
+    assert rs["latest_reflection"]["reviewed_at"] == "2026-05-26T10:00:00.000Z"
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_endpoint_scrubs_for_coach_caller(client, auth_headers):
+    """A coach/admin user who is also linked to a player via
+    `player_user_links` can call `GET /api/my-feedback/players/{id}/development`.
+    The endpoint sets `viewer_scoped=True` in the response, so the
+    payload contract is "no `coach_private_note` text in any
+    note-derived field."
+
+    Without the fix, `_filter_notes_for_user` short-circuits for
+    coach/admin and returns the raw list, so a coach caller would see
+    the un-scrubbed `coach_private_note` despite `viewer_scoped: true`.
+    The fix wraps the filtered list in `_strip_private_fields` for
+    every viewer-scoped build."""
+    # Create a coach user AND link them to a player.
+    coach_resp = await client.post("/api/users", json={
+        "username": "linked_coach_caller",
+        "password": "password123", "role": "coach,uploader",
+    }, headers=auth_headers)
+    coach_user_id = coach_resp.json()["user"]["id"]
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Coach's Kid", "jersey_number": "10",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    link_resp = await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": coach_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+    assert link_resp.status_code == 200
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Coach FC", "away_team": "Kids FC", "date": "2026-05-26",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    # Notes designed to flow into every viewer-shaped surface that
+    # reads from `notes_source`: recent_notes, recent_corrections,
+    # current_focus_areas. All three carry `coach_private_note` text
+    # that MUST be scrubbed when viewer_scoped=True regardless of
+    # caller role.
+    secret = "COACH-PRIVATE: should be scrubbed under viewer_scoped=true"
+    await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 10.0,
+        "title": "Recent correction with private text", "body": "...",
+        "category": "decision", "visibility": "team",
+        "player_ids": [player_id], "note_type": "correction",
+        "what_to_do_next": "Public follow-up text",
+        "coach_private_note": secret,
+    }, headers=auth_headers)
+    await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 25.0,
+        "title": "Individual goal with private text", "body": "...",
+        "category": "decision", "visibility": "team",
+        "player_ids": [player_id], "note_type": "individual_goal",
+        "what_to_do_next": "Goal follow-up text",
+        "coach_private_note": secret,
+    }, headers=auth_headers)
+
+    coach_headers = await _login(client, "linked_coach_caller")
+    resp = await client.get(
+        f"/api/my-feedback/players/{player_id}/development", headers=coach_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    profile = resp.json()["profile"]
+
+    # Contract: viewer_scoped=true MUST imply scrubbed payload.
+    assert profile["viewer_scoped"] is True
+    # `linked_accounts` is coach-endpoint-only; the viewer endpoint
+    # must not surface it even for a coach caller.
+    assert "linked_accounts" not in profile
+
+    # Defense-in-depth: NO note-derived list may contain the private
+    # text. Check every surface that sources from `notes_source`.
+    for n in profile["recent_notes"]:
+        assert (n.get("coach_private_note") or "") == "", (
+            f"recent_notes leaked coach_private_note for coach caller: {n}"
+        )
+    for n in profile["recent_corrections"]:
+        assert (n.get("coach_private_note") or "") == ""
+    for n in profile["recent_positives"]:
+        assert (n.get("coach_private_note") or "") == ""
+    # Focus areas only emit the curated public fields by construction,
+    # but assert nothing leaks through anyway.
+    for f in profile["current_focus_areas"]:
+        assert "coach_private_note" not in f
+        # The public fields stay populated so a downstream UI can render them.
+        assert f.get("what_to_do_next")
+
+    # Sanity: the same coach calling the COACH endpoint still sees
+    # the raw private text — the fix is scoped to viewer_scoped=True.
+    coach_resp = await client.get(
+        f"/api/coach/players/{player_id}/development", headers=coach_headers,
+    )
+    coach_profile = coach_resp.json()["profile"]
+    assert coach_profile["viewer_scoped"] is False
+    assert any(
+        (n.get("coach_private_note") or "").strip() == secret
+        for n in coach_profile["recent_notes"]
+    ), "Coach endpoint must still expose coach_private_note text to a coach caller"
