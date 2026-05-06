@@ -2307,3 +2307,187 @@ async def test_dev_profile_viewer_excludes_playlist_with_only_private_player_ite
     assert [p["title"] for p in coach_profile["recent_playlists"]] == [
         "Mixed-item playlist",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — PR #103 review fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_latest_reflection_uses_global_sort(client, auth_headers):
+    """`latest_reflection` MUST be the globally most-recent review with
+    a non-empty reflection — not the first element of the
+    `note_reviews + playlist_reviews` concatenation.
+
+    This test seeds the data so the newer reflection lives in the
+    SECOND sub-list (the playlist sub-list), proving the fix forces a
+    global sort instead of accidentally relying on note-reviews
+    appearing first."""
+    import db as _db
+
+    viewer_resp = await client.post("/api/users", json={
+        "username": "reflection_order_viewer",
+        "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer_user_id = viewer_resp.json()["user"]["id"]
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Order Test", "jersey_number": "8",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": viewer_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Order FC", "date": "2026-05-25",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5.0,
+        "title": "Note for review", "category": "shape",
+        "visibility": "team", "player_ids": [player_id], "note_type": "correction",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+
+    playlist_resp = await client.post("/api/coach/playlists", json={
+        "title": "Playlist for review", "description": "",
+        "visibility": "team", "player_ids": [player_id], "note_ids": [note_id],
+    }, headers=auth_headers)
+    playlist_id = playlist_resp.json()["playlist"]["id"]
+
+    # Seed the reviews directly so we control `reviewed_at` ordering
+    # exactly. Note review is OLDER (2026-05-25T10:00) and playlist
+    # review is NEWER (2026-05-26T10:00). With the buggy unsorted
+    # concatenation, `reflections[0]` would be the older note row;
+    # the fix's global sort returns the playlist row instead.
+    conn = _db.connect()
+    conn.execute(
+        "INSERT INTO coaching_reviews (user_id, note_id, playlist_id, reflection, reviewed_at) "
+        "VALUES (?, ?, NULL, ?, ?)",
+        (viewer_user_id, note_id, "Older note reflection", "2026-05-25T10:00:00.000Z"),
+    )
+    conn.execute(
+        "INSERT INTO coaching_reviews (user_id, note_id, playlist_id, reflection, reviewed_at) "
+        "VALUES (?, NULL, ?, ?, ?)",
+        (viewer_user_id, playlist_id, "Newer playlist reflection", "2026-05-26T10:00:00.000Z"),
+    )
+    conn.commit()
+
+    viewer_headers = await _login(client, "reflection_order_viewer")
+    resp = await client.get(
+        f"/api/my-feedback/players/{player_id}/development", headers=viewer_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rs = resp.json()["profile"]["review_status"]
+
+    # The fix sources `latest_reflection` from the globally sorted list
+    # so the playlist row wins.
+    assert rs["latest_reviewed_at"] == "2026-05-26T10:00:00.000Z"
+    assert rs["reflection_count"] == 2
+    assert rs["latest_reflection"]["reflection"] == "Newer playlist reflection"
+    assert rs["latest_reflection"]["playlist_id"] == playlist_id
+    assert rs["latest_reflection"]["note_id"] is None
+    assert rs["latest_reflection"]["reviewed_at"] == "2026-05-26T10:00:00.000Z"
+
+
+@pytest.mark.asyncio
+async def test_dev_profile_viewer_endpoint_scrubs_for_coach_caller(client, auth_headers):
+    """A coach/admin user who is also linked to a player via
+    `player_user_links` can call `GET /api/my-feedback/players/{id}/development`.
+    The endpoint sets `viewer_scoped=True` in the response, so the
+    payload contract is "no `coach_private_note` text in any
+    note-derived field."
+
+    Without the fix, `_filter_notes_for_user` short-circuits for
+    coach/admin and returns the raw list, so a coach caller would see
+    the un-scrubbed `coach_private_note` despite `viewer_scoped: true`.
+    The fix wraps the filtered list in `_strip_private_fields` for
+    every viewer-scoped build."""
+    # Create a coach user AND link them to a player.
+    coach_resp = await client.post("/api/users", json={
+        "username": "linked_coach_caller",
+        "password": "password123", "role": "coach,uploader",
+    }, headers=auth_headers)
+    coach_user_id = coach_resp.json()["user"]["id"]
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Coach's Kid", "jersey_number": "10",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    link_resp = await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": coach_user_id, "relationship": "parent",
+    }, headers=auth_headers)
+    assert link_resp.status_code == 200
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Coach FC", "away_team": "Kids FC", "date": "2026-05-26",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+
+    # Notes designed to flow into every viewer-shaped surface that
+    # reads from `notes_source`: recent_notes, recent_corrections,
+    # current_focus_areas. All three carry `coach_private_note` text
+    # that MUST be scrubbed when viewer_scoped=True regardless of
+    # caller role.
+    secret = "COACH-PRIVATE: should be scrubbed under viewer_scoped=true"
+    await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 10.0,
+        "title": "Recent correction with private text", "body": "...",
+        "category": "decision", "visibility": "team",
+        "player_ids": [player_id], "note_type": "correction",
+        "what_to_do_next": "Public follow-up text",
+        "coach_private_note": secret,
+    }, headers=auth_headers)
+    await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 25.0,
+        "title": "Individual goal with private text", "body": "...",
+        "category": "decision", "visibility": "team",
+        "player_ids": [player_id], "note_type": "individual_goal",
+        "what_to_do_next": "Goal follow-up text",
+        "coach_private_note": secret,
+    }, headers=auth_headers)
+
+    coach_headers = await _login(client, "linked_coach_caller")
+    resp = await client.get(
+        f"/api/my-feedback/players/{player_id}/development", headers=coach_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    profile = resp.json()["profile"]
+
+    # Contract: viewer_scoped=true MUST imply scrubbed payload.
+    assert profile["viewer_scoped"] is True
+    # `linked_accounts` is coach-endpoint-only; the viewer endpoint
+    # must not surface it even for a coach caller.
+    assert "linked_accounts" not in profile
+
+    # Defense-in-depth: NO note-derived list may contain the private
+    # text. Check every surface that sources from `notes_source`.
+    for n in profile["recent_notes"]:
+        assert (n.get("coach_private_note") or "") == "", (
+            f"recent_notes leaked coach_private_note for coach caller: {n}"
+        )
+    for n in profile["recent_corrections"]:
+        assert (n.get("coach_private_note") or "") == ""
+    for n in profile["recent_positives"]:
+        assert (n.get("coach_private_note") or "") == ""
+    # Focus areas only emit the curated public fields by construction,
+    # but assert nothing leaks through anyway.
+    for f in profile["current_focus_areas"]:
+        assert "coach_private_note" not in f
+        # The public fields stay populated so a downstream UI can render them.
+        assert f.get("what_to_do_next")
+
+    # Sanity: the same coach calling the COACH endpoint still sees
+    # the raw private text — the fix is scoped to viewer_scoped=True.
+    coach_resp = await client.get(
+        f"/api/coach/players/{player_id}/development", headers=coach_headers,
+    )
+    coach_profile = coach_resp.json()["profile"]
+    assert coach_profile["viewer_scoped"] is False
+    assert any(
+        (n.get("coach_private_note") or "").strip() == secret
+        for n in coach_profile["recent_notes"]
+    ), "Coach endpoint must still expose coach_private_note text to a coach caller"

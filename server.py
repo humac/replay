@@ -2286,9 +2286,16 @@ def _summarize_review_status(
     playlist_ids = {p["id"] for p in playlists}
     note_reviews = [r for r in reviews if r.get("note_id") in note_ids]
     playlist_reviews = [r for r in reviews if r.get("playlist_id") in playlist_ids]
-    reflections = [r for r in (note_reviews + playlist_reviews) if (r.get("reflection") or "").strip()]
+    # `_db.list_coaching_reviews` returns rows ORDER BY reviewed_at DESC,
+    # so each sub-list above is individually DESC-sorted — but their
+    # concatenation is NOT globally sorted (the first playlist review
+    # could pre-date the last note review). Build one globally sorted
+    # list and source BOTH `latest_reviewed_at` and `latest_reflection`
+    # from it so they can never disagree. (PR #103 review fix.)
     all_reviews_sorted = _sort_recent(note_reviews + playlist_reviews, key="reviewed_at")
     latest_reviewed_at = all_reviews_sorted[0]["reviewed_at"] if all_reviews_sorted else None
+    reflections_sorted = [r for r in all_reviews_sorted if (r.get("reflection") or "").strip()]
+    latest_reflection_row = reflections_sorted[0] if reflections_sorted else None
     return {
         "notes": {
             "assigned_count": len(note_ids),
@@ -2303,15 +2310,15 @@ def _summarize_review_status(
             "review_supported": False,
         },
         "latest_reviewed_at": latest_reviewed_at,
-        "reflection_count": len(reflections),
+        "reflection_count": len(reflections_sorted),
         "latest_reflection": (
             {
-                "note_id": reflections[0].get("note_id") if reflections else None,
-                "playlist_id": reflections[0].get("playlist_id") if reflections else None,
-                "reflection": reflections[0]["reflection"],
-                "reviewed_at": reflections[0]["reviewed_at"],
+                "note_id": latest_reflection_row.get("note_id"),
+                "playlist_id": latest_reflection_row.get("playlist_id"),
+                "reflection": latest_reflection_row["reflection"],
+                "reviewed_at": latest_reflection_row["reviewed_at"],
             }
-            if reflections
+            if latest_reflection_row
             else None
         ),
     }
@@ -2357,7 +2364,19 @@ def _build_player_development_profile(
     all_clips = _db.list_coaching_clips()
     all_playlists = _db.list_coaching_playlists()
     if viewer_scoped:
-        notes_source = _filter_notes_for_user(all_notes, user)
+        # Defense-in-depth: `_filter_notes_for_user` short-circuits for
+        # admin/coach callers and returns the raw list (with
+        # `coach_private_note` un-stripped). A coach/admin who happens
+        # to be linked to this player via `player_user_links` can hit
+        # this viewer endpoint, so we must NOT rely on that helper to
+        # scrub for us. Always run every note flowing into a
+        # `viewer_scoped=True` profile through `_strip_private_fields`
+        # so `coach_private_note` is `""` regardless of caller role.
+        # (PR #103 review fix — keeps the `viewer_scoped: true` payload
+        # contract honest even for coach callers.)
+        notes_source = [
+            _strip_private_fields(n) for n in _filter_notes_for_user(all_notes, user)
+        ]
         clips_source = _filter_clips_for_user(all_clips, user)
         playlists_source = _filter_playlists_for_user(all_playlists, user)
     else:
