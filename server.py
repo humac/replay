@@ -2228,6 +2228,13 @@ async def coach_get_clip_thumbnail(clip_id: int, request: Request):
       across all four cases so a probing viewer cannot distinguish them.
     """
     user = _auth.require_auth(request)
+    # PR #108 review fix-up — normalize the 404 detail across all four
+    # not-servable cases (unknown clip / unauthorized / path-escape /
+    # missing file) so a viewer cannot distinguish them by response
+    # body. The note GET still uses two distinct strings ("Thumbnail
+    # not found" vs "Thumbnail not generated yet") for backwards
+    # compatibility; the clip GET is new in Phase 4e and ships with
+    # the cleaner shape from day one.
     clip = _db.get_coaching_clip(clip_id)
     if not clip:
         raise HTTPException(404, "Thumbnail not found")
@@ -2237,7 +2244,7 @@ async def coach_get_clip_thumbnail(clip_id: int, request: Request):
     if not _thumb_path_within_videos_dir(thumb):
         raise HTTPException(404, "Thumbnail not found")
     if not thumb.is_file():
-        raise HTTPException(404, "Thumbnail not generated yet")
+        raise HTTPException(404, "Thumbnail not found")
     mtime = int(thumb.stat().st_mtime)
     return FileResponse(
         str(thumb),

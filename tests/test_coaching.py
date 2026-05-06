@@ -2938,6 +2938,138 @@ async def test_clip_thumbnail_get_refuses_path_escape(client, auth_headers, data
 
 
 @pytest.mark.asyncio
+async def test_clip_thumbnail_regenerate_refuses_path_escape(client, auth_headers, data_dir, monkeypatch):
+    """PR #108 review fix-up — port the Phase 3a regenerate path-escape
+    regression test for the new clip endpoint.
+
+    If a corrupted DB row's `match_id` resolves outside `VIDEOS_DIR`,
+    the regenerate POST must short-circuit with `{ok: True,
+    generated: False}` — same shape as the source-missing branch — so
+    a future refactor can't accidentally drop the `_thumb_path_within_videos_dir`
+    guard and start writing JPEGs outside the videos tree. The
+    runtime defense lives at `server.py:2266-2272`; this test locks
+    the behavior in.
+    """
+    import db as _db
+    # Install the stub so we can ALSO assert ffmpeg is never invoked
+    # for the escaping path — the call log lets us see if the
+    # short-circuit failed and the generator ran anyway.
+    calls = await _install_clip_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Containment Regen FC", "date": "2026-05-31",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 7.0, "end_seconds": 22.0,
+        "title": "Containment regen", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+    initial_calls = len(calls)
+
+    # Corrupt the DB row's match_id to a `..` payload so the path
+    # would escape `VIDEOS_DIR`.
+    conn = _db.connect()
+    try:
+        conn.execute("UPDATE coaching_clips SET match_id=? WHERE id=?",
+                     ("../escape", clip_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = await client.post(
+        f"/api/coach/clips/{clip_id}/thumbnail/regenerate", headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"ok": True, "generated": False}, (
+        "regenerate must return generated:false when path escapes VIDEOS_DIR — "
+        "same shape as the source-missing branch so callers handle it identically"
+    )
+    # And ffmpeg must NOT have been invoked for the escaping path.
+    assert len(calls) == initial_calls, (
+        f"generate_thumbnail_at_timestamp must NOT run when path escapes VIDEOS_DIR "
+        f"(calls before={initial_calls}, after={len(calls)})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_clip_thumbnail_get_404_detail_is_unified(client, auth_headers, data_dir, monkeypatch):
+    """PR #108 review fix-up — the clip GET must return the SAME 404
+    detail string for every not-servable case (unknown / unauthorized
+    / missing file / path escape) so a probing viewer cannot
+    distinguish them by response body. This is a tightening of the
+    Phase 3a per-note pattern, where the missing-file branch returned
+    `Thumbnail not generated yet` — the clip endpoint normalizes to
+    `Thumbnail not found` across all four cases.
+    """
+    import db as _db
+    await _install_clip_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Detail Norm FC", "date": "2026-06-01",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 5.0, "end_seconds": 20.0,
+        "title": "Detail norm", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+
+    # Case 1 — unknown clip
+    r1 = await client.get("/api/coach/clips/9999999/thumbnail", headers=auth_headers)
+    assert r1.status_code == 404
+    detail = r1.json().get("detail")
+    assert detail == "Thumbnail not found", f"unknown clip detail: {detail!r}"
+
+    # Case 2 — missing file (clip exists, no JPEG on disk yet).
+    # Delete the stub-generated JPEG so the file-missing branch fires.
+    thumb_path = _coach_clip_thumb_path(data_dir, match_id, clip_id)
+    thumb_path.unlink(missing_ok=True)
+    r2 = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert r2.status_code == 404
+    assert r2.json().get("detail") == "Thumbnail not found", (
+        f"missing-file detail must match unknown-clip detail (got {r2.json().get('detail')!r})"
+    )
+
+    # Case 3 — unauthorized viewer probing a private clip.
+    # Re-create the JPEG so the missing-file branch isn't what trips
+    # the 404; we want the visibility branch to fire.
+    await client.post(f"/api/coach/clips/{clip_id}/thumbnail/regenerate", headers=auth_headers)
+    private_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 5.0, "end_seconds": 20.0,
+        "title": "Private detail norm", "category": "shape", "visibility": "private",
+    }, headers=auth_headers)
+    private_clip_id = private_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+    await client.post("/api/users", json={
+        "username": "detail_norm_viewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer_headers = await _login(client, "detail_norm_viewer")
+    r3 = await client.get(f"/api/coach/clips/{private_clip_id}/thumbnail", headers=viewer_headers)
+    assert r3.status_code == 404
+    assert r3.json().get("detail") == "Thumbnail not found", (
+        f"unauthorized detail must match unknown-clip detail (got {r3.json().get('detail')!r})"
+    )
+
+    # Case 4 — path escape. Reuse the public clip and corrupt match_id.
+    conn = _db.connect()
+    try:
+        conn.execute("UPDATE coaching_clips SET match_id=? WHERE id=?",
+                     ("../escape", clip_id))
+        conn.commit()
+    finally:
+        conn.close()
+    r4 = await client.get(f"/api/coach/clips/{clip_id}/thumbnail", headers=auth_headers)
+    assert r4.status_code == 404
+    assert r4.json().get("detail") == "Thumbnail not found", (
+        f"path-escape detail must match unknown-clip detail (got {r4.json().get('detail')!r})"
+    )
+
+
+@pytest.mark.asyncio
 async def test_clip_thumbnail_regenerated_after_start_seconds_patch(client, auth_headers, data_dir, monkeypatch):
     """PATCH /api/coach/clips/{id} with a new start_seconds must trigger
     a regeneration spawn so the captured frame matches the new window."""
