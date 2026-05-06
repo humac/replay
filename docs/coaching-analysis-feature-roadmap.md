@@ -327,7 +327,7 @@ Player profile should show:
 - top categories
 - recent positives
 - recent corrections
-- current goals
+- current derived focus areas, and later active goals once the goals phase lands
 - progress over recent matches
 
 Coach view:
@@ -345,7 +345,7 @@ Review Completion: 8/11 items reviewed
 Family/player view:
 
 - simpler, more encouraging language
-- current goals
+- current derived focus areas, and later active goals once the goals phase lands
 - assigned feedback
 - reviewed/completed status
 
@@ -371,7 +371,7 @@ Possibly add:
 ### Coding agent prompt
 
 ```text
-Add player development profiles. Build a coach-facing player profile that aggregates assigned notes, playlists, clips, review status, reflections, top categories, recent positives, recent corrections, and current goals. Add a player/family-safe version under My Feedback scoped to linked accounts. Preserve privacy: private coach notes and internal coach_private_note fields must not leak to viewers. Add endpoints for coach and viewer profile data, then add UI entry points from roster, notes, playlists, and feedback items.
+Add player development profiles. Build a coach-facing player profile that aggregates assigned notes, playlists, clips, review status, reflections, top categories, recent positives, recent corrections, and current derived focus areas (formal active goals will be wired in once the goals phase lands). Add a player/family-safe version under My Feedback scoped to linked accounts. Preserve privacy: private coach notes and internal coach_private_note fields must not leak to viewers. Add endpoints for coach and viewer profile data, then add UI entry points from roster, notes, playlists, and feedback items.
 ```
 
 ---
@@ -1175,19 +1175,66 @@ Includes:
 - privacy filtering for `coach_private_note`
 - tests
 
-## PR 5: Coach observations and tactical board
+Phase 6 ships across four PRs, one per subphase, in 6a → 6b → 6c → 6d order. Do not bundle them.
+
+## PR 5: Observation note backend
 
 Includes:
 
-- Phase 6 (6a–6d)
+- Phase 6a
 - `note_context` schema extension and validation
-- observation note composer in Coach
-- tactical board MVP (pitch, tokens, arrows, labels) with `tactical_board_json`
-- read-only tactical board rendering
-- My Feedback and Player Development Profile integration for observation notes
+- nullable `match_id` / `slot` / `timestamp_seconds` for observation notes
+- `event_title` / `event_date` / `event_type` / `tactical_board_json` fields
+- existing note visibility/privacy behavior
+- `coach_private_note` remains coach/admin-only
+- no UI
 - tests
 
-## PR 6: Goals / action plans
+## PR 6: Coach observation composer
+
+Includes:
+
+- Phase 6b
+- text-only observation note creation
+- Coach > Roster "Add observation" entry point
+- Coach > Notes "New observation" entry point
+- structured note fields reused
+- event title / date / type fields
+- no tactical board yet
+- tests / Playwright screenshots where applicable
+
+## PR 7: Tactical board MVP
+
+Includes:
+
+- Phase 6c
+- soccer pitch renderer
+- `pitch_kind` discriminator
+- normalized pitch-space coordinates
+- draggable player tokens
+- ball token
+- arrows / lines / zones
+- text labels
+- save / load `tactical_board_json`
+- read-only viewer rendering
+- no drill libraries, animations, PDF export, or AI tactical analysis
+- tests / Playwright screenshots where applicable
+
+## PR 8: Observation notes in My Feedback and Development Profiles
+
+Includes:
+
+- Phase 6d
+- My Feedback > Notes rendering for observation notes
+- Player Development Profile integration
+- clear observation labels:
+  - "Practice observation"
+  - "Tactical note"
+  - "Coach observation"
+- tactical board sketches follow parent note visibility rules
+- privacy tests / browser QA
+
+## PR 9: Goals / action plans
 
 Includes:
 
@@ -1198,7 +1245,7 @@ Includes:
 - coach controls for achieved / needs follow-up / archived
 - tests
 
-## PR 7: Match summaries and engagement dashboard
+## PR 10: Match summaries and engagement dashboard
 
 Includes:
 
@@ -1208,7 +1255,7 @@ Includes:
 - review completion dashboard
 - tests
 
-## PR 8: Analytics dashboard
+## PR 11: Analytics dashboard
 
 Includes:
 
@@ -1218,7 +1265,7 @@ Includes:
 - drill-down links
 - tests where practical
 
-## PR 9: Optional text AI assistance
+## PR 12: Optional text AI assistance
 
 Includes:
 
@@ -1230,7 +1277,7 @@ Includes:
 - playlist suggestions
 - no-auto-publish guardrails
 
-## PR 10: Computer-vision analysis foundation
+## PR 13: Computer-vision analysis foundation
 
 Includes:
 
@@ -1240,7 +1287,7 @@ Includes:
 - mock provider
 - coach/admin-only APIs
 
-## PR 11: Offline detection provider and job runner
+## PR 14: Offline detection provider and job runner
 
 Includes:
 
@@ -1250,7 +1297,7 @@ Includes:
 - job status UI
 - tests with mock provider
 
-## PR 12: Detection overlays and detected moments
+## PR 15: Detection overlays and detected moments
 
 Includes:
 
@@ -1259,7 +1306,7 @@ Includes:
 - detected moments queue
 - convert to note/clip actions
 
-## PR 13: Tracking, tactical snapshots, player identification
+## PR 16: Tracking, tactical snapshots, player identification
 
 Includes:
 
@@ -1268,7 +1315,7 @@ Includes:
 - shape snapshots
 - manual track-to-player assignment
 
-## PR 14: Heatmaps, metrics, and broadcast overlays
+## PR 17: Heatmaps, metrics, and broadcast overlays
 
 Includes:
 
