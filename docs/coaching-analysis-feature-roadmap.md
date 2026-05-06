@@ -57,11 +57,27 @@ Computer vision can later help Replay find candidate moments, player tracks, tac
 
 # Recommended feature rollout
 
-## Phase 1: Coaching note structure and feedback quality
+## Status snapshot
+
+- ✅ Phase 1 — Coaching note structure and feedback quality — **complete**
+- ✅ Phase 2 — Coach review templates — **complete**
+- ✅ Phase 3 — Per-note thumbnails and clip scanability — **complete**
+- ✅ Phase 4 — First-class clip builder (incl. per-clip thumbnails) — **complete**
+- ✅ Phase 5 — Player development profiles — **complete**
+- ⏭️ Phase 6 — Coach observations and tactical board — **next**
+- ⏳ Phases 7–17 — not started
+
+See `ROADMAP.md` for the per-PR completion log and exact dates.
+
+## Phase 1: Coaching note structure and feedback quality ✅ COMPLETE
 
 ### Goal
 
 Make individual notes more useful, consistent, and player-friendly.
+
+### Shipped
+
+PR 1a (`db.py` `_migrate_v9`) added `note_type` (`positive` / `correction` / `question` / `team_concept` / `individual_goal`, default `correction`) plus `what_happened`, `why_it_matters`, `what_to_do_next`, `player_summary`, and `coach_private_note` to `coaching_notes`. PR 1b surfaced the structured fields in the Coach Review composer and Notes-tab Edit modal. PR 1c rendered the player-facing layer in My Feedback (tone pill, `player_summary || body` fallback, structured `<dl>`). `coach_private_note` is scrubbed for viewers via `_strip_private_fields()` on every viewer-visible code path.
 
 ### Features
 
@@ -128,11 +144,15 @@ Implement structured coaching note fields for Replay. Add a note_type/tone enum 
 
 ---
 
-## Phase 2: Coach review templates
+## Phase 2: Coach review templates ✅ COMPLETE
 
 ### Goal
 
 Reduce coach typing and make note quality more consistent.
+
+### Shipped
+
+A static template registry (`js/coaching-templates.js`) with 14 starter soccer templates wired into the Coach Review composer. Selecting a template prefills `note_type`, `category`, `title`, `player_summary`, `what_happened`, `why_it_matters`, `what_to_do_next`, and `tags`; coach-typed text is protected by a confirm-overwrite guard. Templates never populate `coach_private_note`.
 
 ### Features
 
@@ -192,11 +212,15 @@ Add coach review templates for common soccer coaching moments. Use a static temp
 
 ---
 
-## Phase 3: Per-note thumbnails and clip scanability
+## Phase 3: Per-note thumbnails and clip scanability ✅ COMPLETE
 
 ### Goal
 
 Make notes and playlists visually scannable.
+
+### Shipped
+
+Phase 3a backend generated per-note JPEGs at `<videos>/<match_id>/coach_thumbs/<note_id>.jpg`, served via a visibility-checked `GET /api/coach/notes/{id}/thumbnail` (404 for unknown / unauthorized / missing — viewers cannot probe private-note existence) plus a coach-only regenerate endpoint. Phase 3b mounted thumbnails in Coach Notes, Coach Review timeline, Coach Playlists, the playlist session rail, My Feedback notes, and My Feedback playlists with negative-cached blob loaders, object-URL revocation on logout, and a CSS film-strip placeholder for the no-thumbnail case.
 
 ### Features
 
@@ -250,11 +274,15 @@ Add per-note thumbnail generation for coaching notes. When a note is created or 
 
 ---
 
-## Phase 4: First-class clip builder
+## Phase 4: First-class clip builder ✅ COMPLETE
 
 ### Goal
 
 Let coaches create actual shareable clip moments, not only timestamped notes.
+
+### Shipped
+
+Phase 4a added the `coaching_clips` + `coaching_clip_players` schema (`_migrate_v10`) and CRUD under `/api/coach/clips` with the strict privacy invariant that only the drawing snapshot is auto-copied from a `source_note_id` — never text fields. Phase 4b wired Coach > Clips, a "Save Clip" button in Coach Review, and seek-based clip playback inside the focused feedback player (no MP4 export). Phase 4e added per-clip thumbnails at `<videos>/<match_id>/clip_thumbs/<clip_id>.jpg` with the same visibility-checked GET + regenerate pattern as note thumbnails, and a four-step JS fallback chain (clip → source-note → co-located note → placeholder). MVP duration cap is 120 s; clips remain video-only.
 
 ### Features
 
@@ -307,11 +335,15 @@ Implement first-class coaching clips. Add a coaching_clips data model with match
 
 ---
 
-## Phase 5: Player development profiles
+## Phase 5: Player development profiles ✅ COMPLETE
 
 ### Goal
 
 Give coaches and families a player-centered view of development over time.
+
+### Shipped
+
+Phase 5a added two read-only aggregation endpoints — coach-only `GET /api/coach/players/{id}/development` and viewer-scoped `GET /api/my-feedback/players/{id}/development` — sharing one `_build_player_development_profile()` builder so the privacy ladder cannot drift. Unknown players and unrelated viewers both return 404 (so a viewer cannot probe roster ids). The profile aggregates counts, themes (note_type buckets, positive-to-correction ratio, top categories/tags), review status, recent notes / positives / corrections / clips / playlists (each capped at 5), and `current_focus_areas` derived from recent corrections + individual_goal notes (labelled `source: "derived_from_recent_notes"` so a future client doesn't treat them as formal goals — Phase 7 will graduate this once `player_goals` lands). `coach_private_note` text is privileged-only on the coach surface and stripped on the viewer surface. Phase 5b wired the UI: a coach-only chart-icon button on every Coach > Roster row opens a wide-modal profile, and a new `Development` sub-tab in My Feedback renders the same profile via `_renderPlayerDevelopmentProfile()`. Note + clip thumbnails go through the existing visibility-checked mounters.
 
 ### Features
 
@@ -327,7 +359,7 @@ Player profile should show:
 - top categories
 - recent positives
 - recent corrections
-- current goals
+- current derived focus areas, and later active goals once the goals phase lands
 - progress over recent matches
 
 Coach view:
@@ -345,7 +377,7 @@ Review Completion: 8/11 items reviewed
 Family/player view:
 
 - simpler, more encouraging language
-- current goals
+- current derived focus areas, and later active goals once the goals phase lands
 - assigned feedback
 - reviewed/completed status
 
@@ -371,12 +403,152 @@ Possibly add:
 ### Coding agent prompt
 
 ```text
-Add player development profiles. Build a coach-facing player profile that aggregates assigned notes, playlists, clips, review status, reflections, top categories, recent positives, recent corrections, and current goals. Add a player/family-safe version under My Feedback scoped to linked accounts. Preserve privacy: private coach notes and internal coach_private_note fields must not leak to viewers. Add endpoints for coach and viewer profile data, then add UI entry points from roster, notes, playlists, and feedback items.
+Add player development profiles. Build a coach-facing player profile that aggregates assigned notes, playlists, clips, review status, reflections, top categories, recent positives, recent corrections, and current derived focus areas (formal active goals will be wired in once the goals phase lands). Add a player/family-safe version under My Feedback scoped to linked accounts. Preserve privacy: private coach notes and internal coach_private_note fields must not leak to viewers. Add endpoints for coach and viewer profile data, then add UI entry points from roster, notes, playlists, and feedback items.
 ```
 
 ---
 
-## Phase 6: Action items and next-match goals
+## Phase 6: Coach observations and tactical board
+
+### Goal
+
+Let coaches create player feedback when no match video is available — practice, sideline observations, tactical concepts, formations, set pieces, meetings, and games without footage.
+
+### Why
+
+The existing coaching workflow is video-first: structured notes, clips, playlists, thumbnails, and player development profiles all assume there is a match slot with a `timestamp_seconds` to anchor against. Coaches also need to capture feedback that originates outside that flow. Adding a non-video context to coaching notes — and a simple tactical sketch surface — lets the same structured note shape (note_type, player_summary, what_happened, why_it_matters, what_to_do_next, coach_private_note, visibility, tags, player_ids) carry feedback regardless of whether video evidence exists.
+
+### Concept
+
+Extend coaching notes into two contexts:
+
+1. Video notes
+   - Existing match/slot/timestamp-based notes.
+   - Can include video telestration/drawing at the note timestamp.
+   - The current video workflow stays intact.
+
+2. Observation notes
+   - Non-video coaching feedback.
+   - Can be attached to a practice, game, meeting, tactical concept, or other event.
+   - Can optionally include a tactical board sketch.
+   - Reuses the existing structured coaching note fields.
+
+### MVP fields
+
+Extend `coaching_notes` (or a companion table) with:
+
+- `note_context`: `video` | `observation`
+- `event_title`
+- `event_date`
+- `event_type`: `practice` | `game` | `meeting` | `tactical` | `other`
+- `tactical_board_json`
+- `match_id`, `slot`, `timestamp_seconds` become nullable for observation notes
+
+`tactical_board_json` stores a structured board scene, not a raster image. It should contain `pitch_kind`, normalized coordinates, tokens, shapes, arrows, zones, labels, and any future board metadata needed to re-render or edit the sketch.
+
+Video notes still require `match_id`, `slot`, `timestamp_seconds`. Observation notes do not. Existing video-note payloads should continue to work without requiring `tactical_board_json` or event fields.
+
+### Subphase 6a — Observation note backend
+
+- Add support for non-video coaching notes through the schema changes above.
+- Validation: `note_context = video` requires `match_id` + `slot` + `timestamp_seconds`; `note_context = observation` does not.
+- Observation notes use the same visibility/privacy ladder as existing notes (`team` / `player` / `private`).
+- `coach_private_note` remains coach/admin-only on both contexts.
+- No UI in this subphase.
+
+### Subphase 6b — Coach observation composer
+
+- Add a Coach UI for creating observation notes without video.
+- Entry points from Coach > Roster (per-player "Add observation") and Coach > Notes ("New observation").
+- Reuse the existing structured note fields:
+  - `note_type`
+  - `category`
+  - `player_summary`
+  - `what_happened`
+  - `why_it_matters`
+  - `what_to_do_next`
+  - `coach_private_note`
+  - `visibility`
+  - `tags`
+  - `player_ids`
+- Add the new event title / event date / event type fields.
+
+### Subphase 6c — Tactical board MVP
+
+- Add a simple tactical sketch component attached to observation notes.
+- The board background is sport-specific, not a blank canvas. The MVP ships a **soccer pitch** background drawn to scale with standard markings:
+  - touchlines and goal lines
+  - halfway line and centre circle / centre spot
+  - both penalty areas (18-yard boxes) and goal areas (6-yard boxes)
+  - both penalty spots and penalty arcs
+  - corner arcs
+  - both goals
+- The pitch is rendered as resolution-independent vector graphics (SVG or canvas paths) so tokens, arrows, and labels stay aligned across screen sizes and in the read-only viewer. Coordinates inside `tactical_board_json` are stored as normalized pitch-space values (e.g. `0..1` along length and width) so a future re-render at a different size or orientation does not break saved sketches.
+- Pitch orientation defaults to landscape (attacking left-to-right). A simple "rotate 90°" toggle is acceptable but not required for the MVP.
+- The pitch surface is implemented as a swappable background layer. The MVP only ships soccer, but the data model and renderer should not hardcode "soccer" everywhere — store a `pitch_kind` discriminator (e.g. `soccer_full`) inside `tactical_board_json` so future sports (futsal, 7-a-side, basketball, hockey, etc.) can be added later without a schema migration.
+- MVP drawing tools:
+  - draggable player tokens (with optional jersey number / roster player label)
+  - ball token
+  - arrows / lines / zones
+  - text labels
+  - save / load `tactical_board_json`
+  - read-only viewer rendering that paints the same pitch background plus the saved tokens and shapes
+- The MVP does not include drill libraries, multi-frame animations, PDF export, kit-color theming, or AI tactical analysis.
+- A board preview/thumbnail can be generated later for scanability in Coach Notes, My Feedback, and Player Development Profiles. The MVP only requires editable coach rendering and read-only viewer rendering; thumbnail generation can be deferred.
+
+### Subphase 6d — My Feedback and Development Profile integration
+
+- Show observation notes in My Feedback > Notes.
+- Include observation notes in Player Development Profiles alongside video notes.
+- Label observation notes clearly:
+  - "Practice observation"
+  - "Tactical note"
+  - "Coach observation"
+- Tactical board sketches follow the parent note's visibility rules.
+
+### Privacy rules
+
+- Existing note visibility rules still apply.
+- `coach_private_note` never appears to viewers in either context.
+- Private observation notes are hidden from viewers.
+- Player observation notes are visible only to linked player/family accounts.
+- Team observation notes are visible to signed-in viewers according to existing note behavior.
+- `tactical_board_json` follows the same visibility rules as the parent note.
+
+### Product boundaries
+
+- Observation notes do not replace video notes.
+- Clips remain video-only — tactical board sketches are attached to observation notes, not clips.
+- Goals are intentionally placed after observations so a goal can be created from either video feedback or a practice/tactical observation.
+
+### Acceptance criteria
+
+- Coach can create an observation note without selecting a match.
+- Coach can attach a tactical board sketch to an observation note.
+- My Feedback renders observation notes with a clear context label.
+- Player Development Profiles surface observation notes alongside video notes.
+- All visibility rules (team / player / private / `coach_private_note`) match existing note behavior.
+
+### Recommended implementation order
+
+Implement the subphases in order; each one is a self-contained ship-target:
+
+- **6a**: backend model + API support for observation notes, no board UI yet.
+- **6b**: Coach observation composer, text-only observation notes (no tactical board yet).
+- **6c**: tactical board editor and read-only viewer.
+- **6d**: My Feedback + Player Development Profile integration polish.
+
+The coding-agent prompt below describes the full Phase 6 target. Individual implementation PRs should remain split by subphase, starting with 6a backend-only. Do not attempt to ship the backend, composer, tactical board editor, and viewer integration in one PR.
+
+### Coding agent prompt
+
+```text
+Add coach observation notes and a tactical board MVP. Extend coaching notes with a note_context field (video | observation), nullable match_id/slot/timestamp_seconds for observation notes, and event_title/event_date/event_type/tactical_board_json fields. Video notes must still require match/slot/timestamp; observation notes must not. Reuse the existing structured note fields and visibility ladder. Add Coach UI entry points from roster and notes to create observation notes without video. Add a sport-specific tactical board: the MVP ships a soccer pitch background drawn to scale (touchlines, goal lines, halfway line, centre circle and spot, both penalty and goal areas, both penalty spots and arcs, corner arcs, goals) rendered as resolution-independent vector graphics. Drawing tools: draggable player tokens with optional jersey number / roster label, ball token, arrows / lines / zones, text labels. Store tactical_board_json with a pitch_kind discriminator (start with soccer_full) and normalized pitch-space coordinates so future sports can be added without a migration. Provide read-only viewer rendering that paints the same pitch background plus saved tokens and shapes. Surface observation notes in My Feedback and Player Development Profiles with a clear context label. Preserve existing privacy rules: coach_private_note never reaches viewers, private observation notes stay hidden, tactical_board_json follows the parent note's visibility.
+```
+
+---
+
+## Phase 7: Action items and next-match goals
 
 ### Goal
 
@@ -413,7 +585,7 @@ Implement player action items and next-match goals. Add a data model for player_
 
 ---
 
-## Phase 7: Match-level coaching summary
+## Phase 8: Match-level coaching summary
 
 ### Goal
 
@@ -470,7 +642,7 @@ Add match-level coaching summaries. Create a backend model and endpoints for sum
 
 ---
 
-## Phase 8: Review completion and engagement dashboard
+## Phase 9: Review completion and engagement dashboard
 
 ### Goal
 
@@ -509,7 +681,7 @@ Add a coaching engagement dashboard showing review completion by player, playlis
 
 ---
 
-## Phase 9: Coaching analytics dashboards
+## Phase 10: Coaching analytics dashboards
 
 ### Goal
 
@@ -555,7 +727,7 @@ Add simple coaching analytics dashboards. Start with aggregate cards and tables 
 
 ---
 
-## Phase 10: AI-assisted coaching workflow
+## Phase 11: AI-assisted coaching workflow
 
 ### Goal
 
@@ -612,7 +784,7 @@ Add optional AI-assisted coaching helpers using existing notes and metadata firs
 
 ---
 
-## Phase 11: Computer-vision analysis foundation
+## Phase 12: Computer-vision analysis foundation
 
 ### Goal
 
@@ -683,7 +855,7 @@ Add a detector-agnostic video analysis foundation to Replay. Create video_analys
 
 ---
 
-## Phase 12: Offline player detection job runner
+## Phase 13: Offline player detection job runner
 
 ### Goal
 
@@ -742,7 +914,7 @@ Implement the offline video analysis job runner. Sample frames from a ready matc
 
 ---
 
-## Phase 13: Coach Review detection overlay and detected moments queue
+## Phase 14: Coach Review detection overlay and detected moments queue
 
 ### Goal
 
@@ -806,7 +978,7 @@ Add Coach Review analysis overlays and a detected moments queue. Render stored d
 
 ---
 
-## Phase 14: Tracking, tactical snapshots, and semi-automatic player identification
+## Phase 15: Tracking, tactical snapshots, and semi-automatic player identification
 
 ### Goal
 
@@ -851,7 +1023,7 @@ Add tracking and tactical analysis on top of stored detections. Implement a simp
 
 ---
 
-## Phase 15: Heatmaps and player performance metrics
+## Phase 16: Heatmaps and player performance metrics
 
 ### Goal
 
@@ -910,7 +1082,7 @@ Add heatmaps and player metrics in conservative maturity levels. Start with safe
 
 ---
 
-## Phase 16: Broadcast-style stat-tags and live analysis
+## Phase 17: Broadcast-style stat-tags and live analysis
 
 ### Goal
 
@@ -964,24 +1136,27 @@ Recommended order:
 3. Phase 3: Per-note thumbnails
 4. Phase 4: First-class clip builder
 5. Phase 5: Player development profiles
-6. Phase 6: Action items and next-match goals
-7. Phase 7: Match-level coaching summary
-8. Phase 8: Review completion and engagement dashboard
-9. Phase 9: Coaching analytics dashboards
-10. Phase 10: AI-assisted coaching workflow
-11. Phase 11: Computer-vision analysis foundation
-12. Phase 12: Offline player detection job runner
-13. Phase 13: Coach Review detection overlay and detected moments queue
-14. Phase 14: Tracking, tactical snapshots, and semi-automatic player identification
-15. Phase 15: Heatmaps and player performance metrics
-16. Phase 16: Broadcast-style stat-tags and live analysis
+6. Phase 6: Coach observations and tactical board
+7. Phase 7: Action items and next-match goals
+8. Phase 8: Match-level coaching summary
+9. Phase 9: Review completion and engagement dashboard
+10. Phase 10: Coaching analytics dashboards
+11. Phase 11: AI-assisted coaching workflow
+12. Phase 12: Computer-vision analysis foundation
+13. Phase 13: Offline player detection job runner
+14. Phase 14: Coach Review detection overlay and detected moments queue
+15. Phase 15: Tracking, tactical snapshots, and semi-automatic player identification
+16. Phase 16: Heatmaps and player performance metrics
+17. Phase 17: Broadcast-style stat-tags and live analysis
 
 Reasoning:
 
 - Notes are the atomic unit. Improve note structure first.
 - Templates make better notes easier.
 - Thumbnails and clips make review more usable.
-- Player profiles and goals create the development loop.
+- Player profiles aggregate the video-based feedback loop.
+- Coach observations and the tactical board extend feedback to non-video contexts (practice, sideline, tactical, meetings) so the development picture is not limited to footage.
+- Goals come after observations so action items can be created from either video feedback or practice/tactical observations.
 - Summaries and dashboards build on accumulated structured data.
 - Text-based AI should come after the workflow and data model are stable.
 - Computer vision should come after the manual coaching loop because detections need a strong human review path.
@@ -991,7 +1166,7 @@ Reasoning:
 
 # Suggested PR breakdown
 
-## PR 1: Structured notes
+## PR 1: Structured notes ✅ COMPLETE
 
 Includes:
 
@@ -1002,7 +1177,7 @@ Includes:
 - My Feedback rendering updates
 - tests
 
-## PR 2: Templates and note thumbnails
+## PR 2: Templates and note thumbnails ✅ COMPLETE
 
 Includes:
 
@@ -1012,7 +1187,7 @@ Includes:
 - thumbnail generation and serving
 - access control tests
 
-## PR 3: Clip builder MVP
+## PR 3: Clip builder MVP ✅ COMPLETE
 
 Includes:
 
@@ -1022,41 +1197,111 @@ Includes:
 - My Feedback clip playback
 - tests
 
-## PR 4: Player development profiles and goals
+## PR 4: Player development profiles ✅ COMPLETE
 
 Includes:
 
 - Phase 5
-- Phase 6
-- player profile endpoints/UI
-- player goals/action items
+- coach and viewer profile endpoints
+- profile UI in Coach and My Feedback
+- privacy filtering for `coach_private_note`
 - tests
 
-## PR 5: Match summaries and engagement dashboard
+Phase 6 ships across four PRs, one per subphase, in 6a → 6b → 6c → 6d order. Do not bundle them.
+
+## PR 5: Observation note backend
+
+Includes:
+
+- Phase 6a
+- `note_context` schema extension and validation
+- nullable `match_id` / `slot` / `timestamp_seconds` for observation notes
+- `event_title` / `event_date` / `event_type` / `tactical_board_json` fields
+- existing note visibility/privacy behavior
+- `coach_private_note` remains coach/admin-only
+- no UI
+- tests
+
+## PR 6: Coach observation composer
+
+Includes:
+
+- Phase 6b
+- text-only observation note creation
+- Coach > Roster "Add observation" entry point
+- Coach > Notes "New observation" entry point
+- structured note fields reused
+- event title / date / type fields
+- no tactical board yet
+- tests / Playwright screenshots where applicable
+
+## PR 7: Tactical board MVP
+
+Includes:
+
+- Phase 6c
+- soccer pitch renderer
+- `pitch_kind` discriminator
+- normalized pitch-space coordinates
+- draggable player tokens
+- ball token
+- arrows / lines / zones
+- text labels
+- save / load `tactical_board_json`
+- read-only viewer rendering
+- no drill libraries, animations, PDF export, or AI tactical analysis
+- tests / Playwright screenshots where applicable
+
+## PR 8: Observation notes in My Feedback and Development Profiles
+
+Includes:
+
+- Phase 6d
+- My Feedback > Notes rendering for observation notes
+- Player Development Profile integration
+- clear observation labels:
+  - "Practice observation"
+  - "Tactical note"
+  - "Coach observation"
+- tactical board sketches follow parent note visibility rules
+- privacy tests / browser QA
+
+## PR 9: Goals / action plans
 
 Includes:
 
 - Phase 7
+- player goals data model and endpoints
+- Coach UI to create goals from notes, clips, playlist items, observation notes, or player profile
+- My Feedback display for active goals and reflections
+- coach controls for achieved / needs follow-up / archived
+- tests
+
+## PR 10: Match summaries and engagement dashboard
+
+Includes:
+
 - Phase 8
+- Phase 9
 - match summary model/UI
 - review completion dashboard
 - tests
 
-## PR 6: Analytics dashboard
+## PR 11: Analytics dashboard
 
 Includes:
 
-- Phase 9
+- Phase 10
 - aggregate helpers
 - simple tables/cards
 - drill-down links
 - tests where practical
 
-## PR 7: Optional text AI assistance
+## PR 12: Optional text AI assistance
 
 Includes:
 
-- Phase 10
+- Phase 11
 - AI configuration
 - note rewrite draft
 - tag/category suggestions
@@ -1064,50 +1309,50 @@ Includes:
 - playlist suggestions
 - no-auto-publish guardrails
 
-## PR 8: Computer-vision analysis foundation
+## PR 13: Computer-vision analysis foundation
 
 Includes:
 
-- Phase 11
+- Phase 12
 - detector-agnostic job/detection/track schema
 - provider abstraction
 - mock provider
 - coach/admin-only APIs
 
-## PR 9: Offline detection provider and job runner
+## PR 14: Offline detection provider and job runner
 
 Includes:
 
-- Phase 12
+- Phase 13
 - offline frame sampling
 - optional Roboflow provider
 - job status UI
 - tests with mock provider
 
-## PR 10: Detection overlays and detected moments
-
-Includes:
-
-- Phase 13
-- Coach Review analysis overlay
-- detected moments queue
-- convert to note/clip actions
-
-## PR 11: Tracking, tactical snapshots, player identification
+## PR 15: Detection overlays and detected moments
 
 Includes:
 
 - Phase 14
-- tracking/smoothing
-- shape snapshots
-- manual track-to-player assignment
+- Coach Review analysis overlay
+- detected moments queue
+- convert to note/clip actions
 
-## PR 12: Heatmaps, metrics, and broadcast overlays
+## PR 16: Tracking, tactical snapshots, player identification
 
 Includes:
 
 - Phase 15
-- Phase 16, offline portions first
+- tracking/smoothing
+- shape snapshots
+- manual track-to-player assignment
+
+## PR 17: Heatmaps, metrics, and broadcast overlays
+
+Includes:
+
+- Phase 16
+- Phase 17, offline portions first
 - conservative metric labels
 - optional stat-tags
 - no live dependency on analysis
