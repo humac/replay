@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Hotfix — Clip playback + clip thumbnails (issues #104 / #105) ✅ COMPLETE (2026-05-06)
+
+Two production regressions found after Phase 4b landed. Both fixed in `js/coaching.js`; no backend changes, no schema changes, no privacy-ladder changes.
+
+- **#105 — Clip playback Play button does nothing.** The focused feedback player template (`<template id="feedback-player-template">` in `index.html`) ships a `<canvas id="feedback-drawing-canvas">` that absolute-positions over the `<video>` with `pointer-events: auto` so the painter can capture strokes for note / playlist mode. Clip mode never paints (Phase 4c removed `setupCoachCanvas()` from the clip path), but the canvas was still mounted with full pointer-event capture — so every native HLS-control click landed on the canvas instead. `_loadFeedbackVideoForClip` now sets the canvas `display: none` + `pointer-events: none` immediately before arming the monitor. Note + playlist paths still call `setupCoachCanvas` themselves; those modes end up `display: block` + `pointer-events: none` so the saved drawing renders over the video without blocking controls.
+- **#104 — Clip thumbnails always show the placeholder in production.** `openCoachClipModal` never plumbed `source_note_id` through, so every clip created via "Save Clip" or "+ New clip" carried `source_note_id = null` and `_coachClipThumbHtml` rendered the film-strip placeholder. Two complementary fixes: (1) `openClipComposerFromReview` now calls `_deriveClipSourceNoteId(matchId, slot, start, end)` which prefers `_coachActiveNoteId` (the chip last clicked in Coach Review) and falls back to a co-located note (same `match_id` / `slot`, `timestamp_seconds` inside `[start, end]`, closest to window midpoint); the derived id seeds the composer, surfaces in the existing "From note #N" pill (visible on CREATE now too), and goes into the POST body. (2) `_coachClipThumbHtml` adds a render-time fallback via the same `_coLocatedNoteId` helper so already-saved clips with `source_note_id = null` (which can't be back-filled because `UpdateCoachingClipRequest` is `extra="forbid"` on that field) still render a thumbnail when a co-located note exists in the user's bundle / `/api/my-feedback` payload. **Privacy invariant preserved**: the fallback only picks notes already in the data the server returned for THIS user, and the per-fetch `_can_view_coach_note` check on the thumbnail GET endpoint stays the authoritative gate. Works on both Coach > Clips (uses `_coachBundle.notes`) and My Feedback > Clips (uses `_feedbackData.notes`).
+
+Validation: `pytest tests/` 318/318, `node --check` clean, browser-tested with coach (`coach1`) and viewer (`family1`) accounts on the seeded mock match `86a12a56` / `first_half`.
+
+---
+
 ## Code Review Summary
 
 The codebase is a well-structured single-file FastAPI backend (`server.py`, 1768 lines) with a no-build-step vanilla JS SPA (`script.js`, ~2600 lines). Core functionality — chunked uploads, GPU/CPU transcoding, HLS streaming, Cast/AirPlay — is solid. The milestones below represent the highest-impact improvements in recommended execution order.
