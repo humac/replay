@@ -57,11 +57,27 @@ Computer vision can later help Replay find candidate moments, player tracks, tac
 
 # Recommended feature rollout
 
-## Phase 1: Coaching note structure and feedback quality
+## Status snapshot
+
+- ✅ Phase 1 — Coaching note structure and feedback quality — **complete**
+- ✅ Phase 2 — Coach review templates — **complete**
+- ✅ Phase 3 — Per-note thumbnails and clip scanability — **complete**
+- ✅ Phase 4 — First-class clip builder (incl. per-clip thumbnails) — **complete**
+- ✅ Phase 5 — Player development profiles — **complete**
+- ⏭️ Phase 6 — Coach observations and tactical board — **next**
+- ⏳ Phases 7–17 — not started
+
+See `ROADMAP.md` for the per-PR completion log and exact dates.
+
+## Phase 1: Coaching note structure and feedback quality ✅ COMPLETE
 
 ### Goal
 
 Make individual notes more useful, consistent, and player-friendly.
+
+### Shipped
+
+PR 1a (`db.py` `_migrate_v9`) added `note_type` (`positive` / `correction` / `question` / `team_concept` / `individual_goal`, default `correction`) plus `what_happened`, `why_it_matters`, `what_to_do_next`, `player_summary`, and `coach_private_note` to `coaching_notes`. PR 1b surfaced the structured fields in the Coach Review composer and Notes-tab Edit modal. PR 1c rendered the player-facing layer in My Feedback (tone pill, `player_summary || body` fallback, structured `<dl>`). `coach_private_note` is scrubbed for viewers via `_strip_private_fields()` on every viewer-visible code path.
 
 ### Features
 
@@ -128,11 +144,15 @@ Implement structured coaching note fields for Replay. Add a note_type/tone enum 
 
 ---
 
-## Phase 2: Coach review templates
+## Phase 2: Coach review templates ✅ COMPLETE
 
 ### Goal
 
 Reduce coach typing and make note quality more consistent.
+
+### Shipped
+
+A static template registry (`js/coaching-templates.js`) with 14 starter soccer templates wired into the Coach Review composer. Selecting a template prefills `note_type`, `category`, `title`, `player_summary`, `what_happened`, `why_it_matters`, `what_to_do_next`, and `tags`; coach-typed text is protected by a confirm-overwrite guard. Templates never populate `coach_private_note`.
 
 ### Features
 
@@ -192,11 +212,15 @@ Add coach review templates for common soccer coaching moments. Use a static temp
 
 ---
 
-## Phase 3: Per-note thumbnails and clip scanability
+## Phase 3: Per-note thumbnails and clip scanability ✅ COMPLETE
 
 ### Goal
 
 Make notes and playlists visually scannable.
+
+### Shipped
+
+Phase 3a backend generated per-note JPEGs at `<videos>/<match_id>/coach_thumbs/<note_id>.jpg`, served via a visibility-checked `GET /api/coach/notes/{id}/thumbnail` (404 for unknown / unauthorized / missing — viewers cannot probe private-note existence) plus a coach-only regenerate endpoint. Phase 3b mounted thumbnails in Coach Notes, Coach Review timeline, Coach Playlists, the playlist session rail, My Feedback notes, and My Feedback playlists with negative-cached blob loaders, object-URL revocation on logout, and a CSS film-strip placeholder for the no-thumbnail case.
 
 ### Features
 
@@ -250,11 +274,15 @@ Add per-note thumbnail generation for coaching notes. When a note is created or 
 
 ---
 
-## Phase 4: First-class clip builder
+## Phase 4: First-class clip builder ✅ COMPLETE
 
 ### Goal
 
 Let coaches create actual shareable clip moments, not only timestamped notes.
+
+### Shipped
+
+Phase 4a added the `coaching_clips` + `coaching_clip_players` schema (`_migrate_v10`) and CRUD under `/api/coach/clips` with the strict privacy invariant that only the drawing snapshot is auto-copied from a `source_note_id` — never text fields. Phase 4b wired Coach > Clips, a "Save Clip" button in Coach Review, and seek-based clip playback inside the focused feedback player (no MP4 export). Phase 4e added per-clip thumbnails at `<videos>/<match_id>/clip_thumbs/<clip_id>.jpg` with the same visibility-checked GET + regenerate pattern as note thumbnails, and a four-step JS fallback chain (clip → source-note → co-located note → placeholder). MVP duration cap is 120 s; clips remain video-only.
 
 ### Features
 
@@ -307,11 +335,15 @@ Implement first-class coaching clips. Add a coaching_clips data model with match
 
 ---
 
-## Phase 5: Player development profiles
+## Phase 5: Player development profiles ✅ COMPLETE
 
 ### Goal
 
 Give coaches and families a player-centered view of development over time.
+
+### Shipped
+
+Phase 5a added two read-only aggregation endpoints — coach-only `GET /api/coach/players/{id}/development` and viewer-scoped `GET /api/my-feedback/players/{id}/development` — sharing one `_build_player_development_profile()` builder so the privacy ladder cannot drift. Unknown players and unrelated viewers both return 404 (so a viewer cannot probe roster ids). The profile aggregates counts, themes (note_type buckets, positive-to-correction ratio, top categories/tags), review status, recent notes / positives / corrections / clips / playlists (each capped at 5), and `current_focus_areas` derived from recent corrections + individual_goal notes (labelled `source: "derived_from_recent_notes"` so a future client doesn't treat them as formal goals — Phase 7 will graduate this once `player_goals` lands). `coach_private_note` text is privileged-only on the coach surface and stripped on the viewer surface. Phase 5b wired the UI: a coach-only chart-icon button on every Coach > Roster row opens a wide-modal profile, and a new `Development` sub-tab in My Feedback renders the same profile via `_renderPlayerDevelopmentProfile()`. Note + clip thumbnails go through the existing visibility-checked mounters.
 
 ### Features
 
@@ -1134,7 +1166,7 @@ Reasoning:
 
 # Suggested PR breakdown
 
-## PR 1: Structured notes
+## PR 1: Structured notes ✅ COMPLETE
 
 Includes:
 
@@ -1145,7 +1177,7 @@ Includes:
 - My Feedback rendering updates
 - tests
 
-## PR 2: Templates and note thumbnails
+## PR 2: Templates and note thumbnails ✅ COMPLETE
 
 Includes:
 
@@ -1155,7 +1187,7 @@ Includes:
 - thumbnail generation and serving
 - access control tests
 
-## PR 3: Clip builder MVP
+## PR 3: Clip builder MVP ✅ COMPLETE
 
 Includes:
 
@@ -1165,7 +1197,7 @@ Includes:
 - My Feedback clip playback
 - tests
 
-## PR 4: Player development profiles
+## PR 4: Player development profiles ✅ COMPLETE
 
 Includes:
 
