@@ -32,8 +32,13 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT))
 
+import asyncio
+import shutil as _shutil
+
 import db as _db
 import auth as _auth
+import media as _media
+import settings as _settings
 
 
 SEEDED_USERS = ("uploader1", "viewer1", "coach1", "family1", "family2")
@@ -61,9 +66,32 @@ def _abort_if_real_archive(conn) -> None:
         ).fetchall()
     except Exception:
         return
-    if rows:
+    # Re-running the seed must be idempotent. The mock-video step
+    # populates `videos_json = {"first_half": "first_half.mp4"}` (or
+    # similar single-slot mock shape), so the bare check above would
+    # flag the script's OWN previous output as "looks like a real
+    # archive." Treat any row whose only filenames are the seed-known
+    # mock filenames (and whose other slots are null/missing) as
+    # seed-produced output, not user uploads.
+    real = []
+    for row in rows:
+        try:
+            videos = json.loads(row["videos_json"] or "{}")
+        except Exception:
+            real.append(row)
+            continue
+        seed_only = True
+        for slot, fname in videos.items():
+            if fname is None:
+                continue
+            if slot != MOCK_VIDEO_SLOT or fname != f"{MOCK_VIDEO_SLOT}.mp4":
+                seed_only = False
+                break
+        if not seed_only:
+            real.append(row)
+    if real:
         print(
-            f"\nABORT: The matches table at this data dir contains {len(rows)} match(es) "
+            f"\nABORT: The matches table at this data dir contains {len(real)} match(es) "
             "with uploaded videos.\nThis looks like a real archive. Refusing to wipe it.\n"
             "Re-run against an isolated dir, e.g.\n"
             "  export REPLAY_DATA_DIR=/tmp/replay-docs-data",
@@ -549,6 +577,102 @@ def _seed_playlists(note_ids: list[int], roster: dict[str, str]) -> int:
     return 2
 
 
+# ---------------------------------------------------------------------------
+# Mock video — committed alongside the seed script so a fresh seed always has
+# at least one playable match. The committed file is a 30-second 1280x720
+# h.264/aac SMPTE-bars clip (~420 KB) generated with ffmpeg lavfi. We attach
+# it to the first 2025 Riverside FC home match's `first_half` slot, run the
+# real HLS variant ladder + match thumbnail through `media.py`, and persist
+# `videos`/`video_status` directly so the surfaces that depend on a real
+# playable video (player view, Coach Review video player, focused feedback
+# clip player) work end-to-end.
+#
+# Idempotent: skips re-transcoding if the HLS master already exists.
+# ---------------------------------------------------------------------------
+
+MOCK_VIDEO_SOURCE = Path(__file__).parent / "videos" / "mock_first_half.mp4"
+MOCK_VIDEO_TARGET = ("Riverside FC", "Northgate United", "2025-09-14")
+MOCK_VIDEO_SLOT = "first_half"
+
+
+def _seed_mock_video(
+    data_dir: Path,
+    matches_by_key: dict[tuple[str, str, str], str],
+) -> str:
+    """Copy the committed mock mp4 into the slot path, build HLS variants,
+    generate the match thumbnail, and update the match record so playback
+    surfaces work. Returns a one-line status string for the seed summary.
+
+    Note on idempotence: `_seed_matches` deletes and re-inserts every
+    match each run (new UUIDs), so on a re-seed the previous run's
+    `<old_id>/first_half.mp4` is orphaned and this function transcodes
+    fresh into `<new_id>/`. The skip-if-exists branch only fires if
+    the seed runs twice without `_seed_matches` having reset the
+    table — for example if a future change makes match seeding
+    upsert-by-key. The skip path is kept for that future case and
+    for safety against partial runs."""
+    if not MOCK_VIDEO_SOURCE.is_file():
+        return f"  skipped (mock source missing: {MOCK_VIDEO_SOURCE})"
+
+    match_id = matches_by_key.get(MOCK_VIDEO_TARGET)
+    if not match_id:
+        return f"  skipped (target match {MOCK_VIDEO_TARGET} not found)"
+
+    videos_dir = data_dir / "videos"
+    originals_dir = data_dir / "videos"  # un-tiered single-volume layout
+    final_mp4 = originals_dir / match_id / f"{MOCK_VIDEO_SLOT}.mp4"
+    hls_master = _media.slot_hls_master_path(videos_dir, match_id, MOCK_VIDEO_SLOT)
+
+    # Idempotent: a previous seed in the same data dir already produced
+    # everything. Re-running shouldn't re-transcode.
+    if final_mp4.is_file() and hls_master.is_file():
+        return f"  reused existing HLS for {MOCK_VIDEO_TARGET[0]} vs {MOCK_VIDEO_TARGET[1]}"
+
+    final_mp4.parent.mkdir(parents=True, exist_ok=True)
+    _shutil.copyfile(MOCK_VIDEO_SOURCE, final_mp4)
+
+    # Pull the live HLS preset list from settings — same source the
+    # admin tuning panel + transcode pipeline use, so the seed produces
+    # whatever variant ladder the dev's environment is configured for.
+    settings_snapshot = _settings.load_unlocked()
+    hls_segment_duration = _settings.get_int(
+        settings_snapshot, "hls_segment_duration", 4,
+    )
+    hls_variant_presets = _settings.get_hls_variant_presets(settings_snapshot)
+
+    async def _run_pipeline() -> None:
+        ok = await _media.build_hls_assets(
+            final_mp4, match_id, MOCK_VIDEO_SLOT,
+            videos_dir=videos_dir,
+            hls_segment_duration=hls_segment_duration,
+            hls_variant_presets=hls_variant_presets,
+        )
+        if not ok:
+            raise RuntimeError("build_hls_assets returned False")
+        thumb_path = videos_dir / match_id / "thumb.jpg"
+        if not thumb_path.exists():
+            await _media.generate_thumbnail(final_mp4, thumb_path)
+
+    asyncio.run(_run_pipeline())
+
+    # Persist videos[slot] + video_status[slot] = "ready" so the match
+    # row reflects a real playable asset. Mirrors what
+    # `_set_video_status(..., "ready", filename)` does at runtime, but
+    # we don't need the activity-feed write or the async lock here —
+    # we're seeding, not racing concurrent uploads.
+    matches = _db.load_matches_unlocked()
+    match = _db.find_match(matches, match_id)
+    if match is None:
+        return f"  skipped (match record vanished mid-seed: {match_id})"
+    match.setdefault("videos", {})
+    match.setdefault("video_status", {})
+    match["videos"][MOCK_VIDEO_SLOT] = f"{MOCK_VIDEO_SLOT}.mp4"
+    match["video_status"][MOCK_VIDEO_SLOT] = "ready"
+    _db.save_matches_unlocked(matches)
+
+    return f"  seeded mock {MOCK_VIDEO_SLOT} for {MOCK_VIDEO_TARGET[0]} vs {MOCK_VIDEO_TARGET[1]}"
+
+
 def main() -> None:
     data_dir = _resolve_data_dir()
     db_file = data_dir / "replay.db"
@@ -567,6 +691,7 @@ def main() -> None:
     links = _seed_player_user_links(roster, users)
     note_ids = _seed_coaching_notes(matches_by_key, roster)
     playlists = _seed_playlists(note_ids, roster)
+    mock_video_status = _seed_mock_video(data_dir, matches_by_key)
 
     print()
     print("=" * 60)
@@ -577,6 +702,8 @@ def main() -> None:
     print(f"  Notes:      {len(note_ids)}")
     print(f"  Playlists:  {playlists}")
     print(f"  Links:      {links} player ↔ user")
+    print(f"  Mock video:")
+    print(mock_video_status)
     print()
     print("  Demo accounts (password: %s):" % DEMO_PASSWORD)
     print("    uploader1  — uploader        (admin → matches only)")
