@@ -847,6 +847,7 @@
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-feedback-tab="playlists" onclick="app.setFeedbackTab('playlists')">Playlists</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="notes" onclick="app.setFeedbackTab('notes')">Notes</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="clips" onclick="app.setFeedbackTab('clips')">Clips</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="development" onclick="app.setFeedbackTab('development')">Development</button>
             </nav>
 
             <!-- Single-pane card grid: each note/playlist/clip is a self-
@@ -866,6 +867,15 @@
                  reach this surface. -->
             <div id="feedback-tab-clips" class="coach-tab-panel feedback-tab-panel" hidden>
                 <div id="feedback-clips-list" class="feedback-card-grid" aria-label="Coaching clips"></div>
+            </div>
+
+            <!-- Phase 5b: per-player development profile. Driven by
+                 GET /api/my-feedback/players/{player_id}/development.
+                 Server scrubs `coach_private_note` and any
+                 unrelated-player feedback before it reaches this
+                 surface. -->
+            <div id="feedback-tab-development" class="coach-tab-panel feedback-tab-panel" hidden>
+                <div id="feedback-development-content" class="player-dev-shell" aria-label="Player development profile"></div>
             </div>
         </section>
 

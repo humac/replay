@@ -9372,3 +9372,598 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     font-style: italic;
     line-height: 1.3;
 }
+
+/* ===== Phase 5b — Player development profile =====
+ *
+ * Two surfaces share these styles:
+ *   - Coach: rendered inside `.app-modal-card.is-wide` opened via
+ *     `app.openCoachPlayerDevelopmentModal`, so all rules below
+ *     also need to look right against the modal's `.app-modal-body`
+ *     padding.
+ *   - Viewer: rendered inline inside `#feedback-tab-development`'s
+ *     panel. Same rules, no modal chrome.
+ *
+ * Theme: dark by default, with `[data-theme="light"]` overrides for
+ * borders/backgrounds where the modal background changes. Mobile
+ * collapses tile grid + flex rows below 720px to stay scannable.
+ */
+
+.player-dev-shell {
+    display: block;
+    width: 100%;
+}
+
+.player-dev-modal-body {
+    display: block;
+    min-width: 0;
+}
+
+.player-dev-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 1rem;
+}
+[data-theme="light"] .player-dev-header {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.player-dev-headline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+}
+
+.player-dev-jersey {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.25rem;
+    height: 2.25rem;
+    padding: 0 0.5rem;
+    border-radius: 8px;
+    background: rgba(41, 139, 237, 0.16);
+    color: var(--accent, #298bed);
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: 0.04em;
+}
+[data-theme="light"] .player-dev-jersey {
+    background: rgba(23, 113, 201, 0.10);
+    color: #1d4ed8;
+}
+
+.player-dev-name {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 1.2rem;
+    line-height: 1.2;
+    color: var(--text-main);
+}
+
+.player-dev-notes {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.player-dev-linked {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.player-dev-linked-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.player-dev-linked-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.78rem;
+}
+[data-theme="light"] .player-dev-linked-chip {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+.player-dev-linked-rel {
+    color: var(--accent, #298bed);
+    font-weight: 600;
+    text-transform: capitalize;
+}
+.player-dev-linked-user {
+    color: var(--text-muted);
+}
+
+.player-dev-section {
+    padding: 1rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.player-dev-section:last-child {
+    border-bottom: 0;
+}
+[data-theme="light"] .player-dev-section {
+    border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.player-dev-section-title {
+    margin: 0 0 0.4rem;
+    font-family: var(--font-heading);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: 0.02em;
+}
+
+.player-dev-section-sub {
+    margin: 0 0 0.65rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+
+.player-dev-empty {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    padding: 0.5rem 0;
+}
+
+/* ----- Counts / Summary tile grid ----- */
+
+.player-dev-tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.55rem;
+}
+
+.player-dev-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+[data-theme="light"] .player-dev-tile {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.06);
+}
+
+.player-dev-tile-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.player-dev-tile-value {
+    font-family: var(--font-heading);
+    font-size: 1.15rem;
+    color: var(--text-main);
+}
+
+/* ----- Themes chips ----- */
+
+.player-dev-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.player-dev-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.78rem;
+    color: var(--text-main);
+}
+[data-theme="light"] .player-dev-chip {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+.player-dev-chip strong {
+    color: var(--accent, #298bed);
+    font-weight: 700;
+}
+
+/* Same accents the feedback tone pills use, for consistency. */
+.player-dev-chip--type[data-tone="positive"]      { border-color: rgba(34, 197, 94, 0.55); }
+.player-dev-chip--type[data-tone="correction"]    { border-color: rgba(245, 158, 11, 0.55); }
+.player-dev-chip--type[data-tone="question"]      { border-color: rgba(59, 130, 246, 0.55); }
+.player-dev-chip--type[data-tone="team_concept"]  { border-color: rgba(168, 85, 247, 0.55); }
+.player-dev-chip--type[data-tone="individual_goal"]{ border-color: rgba(20, 184, 166, 0.55); }
+/* Light-mode tone overrides — mirrors `.feedback-tone-pill[data-tone=…]`
+ * (see ~line 7722) so the chip backgrounds + text remain readable on a
+ * light card. Without these the 55%-opacity dark-tuned border on a near-
+ * transparent background dropped contrast below readable on light. */
+[data-theme="light"] .player-dev-chip--type[data-tone="positive"] {
+    background: rgba(22, 163, 74, 0.14);
+    color: #166534;
+    border-color: rgba(22, 163, 74, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="correction"] {
+    background: rgba(217, 119, 6, 0.14);
+    color: #92400e;
+    border-color: rgba(217, 119, 6, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="question"] {
+    background: rgba(37, 99, 235, 0.12);
+    color: #1d4ed8;
+    border-color: rgba(37, 99, 235, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="team_concept"] {
+    background: rgba(126, 34, 206, 0.12);
+    color: #6b21a8;
+    border-color: rgba(126, 34, 206, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="individual_goal"] {
+    background: rgba(13, 148, 136, 0.12);
+    color: #115e59;
+    border-color: rgba(13, 148, 136, 0.40);
+}
+.player-dev-chip--tag {
+    background: rgba(168, 85, 247, 0.10);
+    border-color: rgba(168, 85, 247, 0.30);
+}
+[data-theme="light"] .player-dev-chip--tag {
+    background: rgba(126, 34, 206, 0.10);
+    color: #6b21a8;
+    border-color: rgba(126, 34, 206, 0.35);
+}
+
+.player-dev-meta-row {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+.player-dev-meta-item {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+.player-dev-meta-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.player-dev-subsection {
+    margin-top: 0.55rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.player-dev-subsection-title {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* ----- Focus areas ----- */
+
+.player-dev-focus-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.player-dev-focus-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.08);
+    border-left: 3px solid rgba(245, 158, 11, 0.6);
+    color: var(--text-main);
+}
+[data-theme="light"] .player-dev-focus-item {
+    background: rgba(245, 158, 11, 0.10);
+}
+
+.player-dev-focus-cat {
+    flex-shrink: 0;
+    align-self: flex-start;
+    padding: 0.1rem 0.4rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    text-transform: capitalize;
+    letter-spacing: 0.04em;
+}
+[data-theme="light"] .player-dev-focus-cat {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.player-dev-focus-body {
+    color: var(--text-main);
+    font-size: 0.9rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+/* ----- Recent notes ----- */
+
+.player-dev-note-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.player-dev-note-item {
+    display: flex;
+    gap: 0.7rem;
+    padding: 0.55rem;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.02);
+}
+[data-theme="light"] .player-dev-note-item {
+    border-color: rgba(0, 0, 0, 0.06);
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.player-dev-note-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.player-dev-note-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.player-dev-note-title {
+    color: var(--text-main);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+
+.player-dev-note-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
+.player-dev-note-summary {
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.player-dev-note-next {
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    background: rgba(20, 184, 166, 0.08);
+    color: var(--text-main);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+.player-dev-note-next.is-emphasized {
+    background: rgba(245, 158, 11, 0.10);
+}
+/* Light-mode overrides — the 8–10% opacity tints disappear on a light
+ * background. Mirrors the `.feedback-structured-item` precedent
+ * (see ~line 7813) by inverting transparency direction so the tint
+ * still reads against #fff. */
+[data-theme="light"] .player-dev-note-next {
+    background: rgba(13, 148, 136, 0.10);
+    border-left: 3px solid rgba(13, 148, 136, 0.45);
+    padding-left: 0.55rem;
+}
+[data-theme="light"] .player-dev-note-next.is-emphasized {
+    background: rgba(217, 119, 6, 0.12);
+    border-left-color: rgba(217, 119, 6, 0.55);
+}
+.player-dev-note-next-label {
+    display: inline-block;
+    margin-right: 0.35rem;
+    font-weight: 600;
+    color: var(--accent, #298bed);
+}
+.player-dev-note-next.is-emphasized .player-dev-note-next-label {
+    color: rgba(245, 158, 11, 1);
+}
+[data-theme="light"] .player-dev-note-next-label {
+    color: #115e59;
+}
+[data-theme="light"] .player-dev-note-next.is-emphasized .player-dev-note-next-label {
+    color: #92400e;
+}
+
+/* ----- Recent clips ----- */
+
+.player-dev-clip-list,
+.player-dev-playlist-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.player-dev-clip-item {
+    display: flex;
+    gap: 0.7rem;
+    padding: 0.55rem;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.02);
+    align-items: center;
+}
+[data-theme="light"] .player-dev-clip-item {
+    border-color: rgba(0, 0, 0, 0.06);
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.player-dev-clip-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.player-dev-clip-title {
+    color: var(--text-main);
+    font-size: 0.92rem;
+    overflow-wrap: anywhere;
+}
+.player-dev-clip-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+.player-dev-clip-desc {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.player-dev-clip-actions {
+    display: flex;
+    flex-shrink: 0;
+}
+
+/* ----- Recent playlists ----- */
+
+.player-dev-playlist-item {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.02);
+}
+[data-theme="light"] .player-dev-playlist-item {
+    border-color: rgba(0, 0, 0, 0.06);
+    background: rgba(0, 0, 0, 0.02);
+}
+.player-dev-playlist-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.player-dev-playlist-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* ----- Linked-players selector chips for the My Feedback Development tab ----- */
+
+.feedback-dev-player-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.9rem;
+}
+.feedback-dev-player-chip {
+    appearance: none;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main);
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    /* Smooth interaction-state transitions matching `.coach-subnav-btn`. */
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+[data-theme="light"] .feedback-dev-player-chip {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+.feedback-dev-player-chip:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+[data-theme="light"] .feedback-dev-player-chip:hover {
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.18);
+}
+/* Visible keyboard focus — never rely on the browser default outline,
+ * which gets suppressed by `appearance: none` on some platforms.
+ * Matches the focus-ring treatment used elsewhere in the app. */
+.feedback-dev-player-chip:focus-visible {
+    outline: 2px solid var(--accent, #298bed);
+    outline-offset: 2px;
+}
+.feedback-dev-player-chip.is-active {
+    background: rgba(41, 139, 237, 0.16);
+    border-color: var(--accent, #298bed);
+    color: var(--text-main);
+}
+[data-theme="light"] .feedback-dev-player-chip.is-active {
+    background: rgba(23, 113, 201, 0.14);
+    border-color: var(--accent, #298bed);
+    color: #1d4ed8;
+}
+/* Keep the active state visually dominant on hover so the selected
+ * chip never silently regresses to the resting hover style. */
+.feedback-dev-player-chip.is-active:hover {
+    background: rgba(41, 139, 237, 0.22);
+}
+[data-theme="light"] .feedback-dev-player-chip.is-active:hover {
+    background: rgba(23, 113, 201, 0.20);
+}
+
+/* ----- Mobile collapse ----- */
+
+@media (max-width: 720px) {
+    .player-dev-tile-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .player-dev-clip-item {
+        flex-wrap: wrap;
+    }
+    .player-dev-clip-actions {
+        width: 100%;
+    }
+    .player-dev-clip-actions .mini-action-btn {
+        width: 100%;
+        text-align: center;
+    }
+}
