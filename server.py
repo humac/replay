@@ -2064,6 +2064,12 @@ async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
             "source_note_id": clip.get("source_note_id"),
         },
     )
+    # Phase 4e — best-effort clip thumbnail generation. Schedule AFTER
+    # the response is built so a missing source MP4 / ffmpeg crash never
+    # blocks clip save. The serving endpoint just returns 404 when the
+    # JPEG is absent, and the manual regenerate endpoint lets the coach
+    # retry once the source video lands.
+    _spawn_task(_spawn_coach_clip_thumbnail(clip))
     return {"ok": True, "clip": clip}
 
 
@@ -2098,6 +2104,13 @@ async def coach_update_clip(clip_id: int, request: Request, body: UpdateCoaching
         actor=user["username"],
         metadata={"clip_id": clip_id, "fields": sorted(updates.keys())},
     )
+    # Phase 4e — regenerate the clip thumbnail when the start_seconds
+    # changes. `match_id` and `slot` are immutable for clips today
+    # (`UpdateCoachingClipRequest` rejects them with `extra="forbid"`)
+    # so start_seconds is the only field that can shift the captured
+    # frame. Scheduled as a background task; failures don't block save.
+    if "start_seconds" in updates and updates["start_seconds"] != existing.get("start_seconds"):
+        _spawn_task(_spawn_coach_clip_thumbnail(clip))
     return {"ok": True, "clip": clip}
 
 
@@ -2107,6 +2120,23 @@ async def coach_delete_clip(clip_id: int, request: Request):
     clip = _db.get_coaching_clip(clip_id)
     if not _db.delete_coaching_clip(clip_id):
         raise HTTPException(404, "Clip not found")
+    # Phase 4e — clean up the per-clip thumbnail JPEG. Same defense-in-
+    # depth path-containment check as note delete: a corrupted DB row's
+    # `match_id` containing `..` must NOT be allowed to unlink a file
+    # outside `VIDEOS_DIR`. `unlink(missing_ok=True)` is a no-op when
+    # the file was never generated. Best-effort — a missing file is
+    # fine; an OS error is logged but not raised, so a permission /
+    # read-only-FS failure can never surface as a 500 after the DB row
+    # was already deleted (matches `coach_delete_note` exactly).
+    if clip:
+        try:
+            thumb = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id)
+            if _thumb_path_within_videos_dir(thumb):
+                thumb.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.setup("replay").warning(
+                "Could not unlink coach clip thumbnail for clip %s: %s", clip_id, exc
+            )
     _log_activity(
         "coach.clip_deleted",
         severity="warning",
@@ -2117,6 +2147,145 @@ async def coach_delete_clip(clip_id: int, request: Request):
         metadata={"clip_id": clip_id},
     )
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Phase 4e — per-coaching-clip thumbnails
+#
+# Storage: $REPLAY_DATA_DIR/videos/<match_id>/clip_thumbs/<clip_id>.jpg
+# (resolved by `_media.clip_thumbnail_path`). Same convention as the
+# Phase 3a per-note thumbnails (separate directory so the namespaces
+# can never collide); derived purely from match_id + clip_id so no DB
+# column or migration ships with this PR.
+#
+# Generation runs on POST /api/coach/clips and on PATCH when
+# `start_seconds` changes (the clip's match_id/slot are immutable per
+# `UpdateCoachingClipRequest`'s `extra="forbid"` config). DELETE
+# unlinks the JPEG. Generation failures are best-effort and never
+# block the parent clip save — the serving endpoint just returns 404
+# when the file is absent, and the manual regenerate endpoint lets a
+# coach retry once the source video lands.
+#
+# Auth follows the same visibility ladder as `/api/my-feedback` clips:
+# coach/admin can fetch any clip thumbnail; signed-in viewers see
+# `team`/`unlisted` clips and `player` clips for linked players.
+# Private clips never leak. Path containment runs through the same
+# `_thumb_path_within_videos_dir` guard used by note thumbnails.
+# ---------------------------------------------------------------------------
+
+
+async def _spawn_coach_clip_thumbnail(clip: dict) -> None:
+    """Best-effort generator — never raises. Caller (clip create / update /
+    regenerate endpoint) should call this AFTER the DB row is written
+    (we need the clip's id) and AFTER the response has been returned to
+    the client (we don't block on ffmpeg)."""
+    if not clip or not clip.get("id") or not clip.get("match_id"):
+        return
+    clip_id = int(clip["id"])
+    match_id = clip["match_id"]
+    slot = clip.get("slot") or "full"
+    # Capture a frame at clip.start_seconds so the still represents the
+    # opening moment of the clip. `generate_thumbnail_at_timestamp`
+    # already clamps negative values to 0 and timestamps past the
+    # video's duration to (duration - 1).
+    start_s = float(clip.get("start_seconds") or 0)
+    src = _slot_mp4_path(match_id, slot)
+    dest = _media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id)
+    if not _thumb_path_within_videos_dir(dest):
+        _log.setup("replay").warning(
+            "Coach-clip thumbnail spawn skipped for clip %s: dest path escapes VIDEOS_DIR (%s)",
+            clip_id, dest,
+        )
+        return
+    try:
+        await _media.generate_thumbnail_at_timestamp(src, dest, timestamp_s=start_s)
+    except Exception as exc:                                # noqa: BLE001
+        _log.setup("replay").warning(
+            "Coach-clip thumbnail spawn failed for clip %s: %s", clip_id, exc
+        )
+
+
+def _can_view_coach_clip(user: dict, clip: dict) -> bool:
+    """Phase 4e — single-source visibility check shared by the clip
+    thumbnail GET. Reuses `_filter_clips_for_user` so visibility logic
+    stays single-sourced. Coach/admin always pass; viewers must survive
+    the same filter that powers `/api/my-feedback` clips."""
+    if _auth.has_role(user, "admin", "coach"):
+        return True
+    visible = _filter_clips_for_user([clip], user)
+    return bool(visible)
+
+
+@app.get("/api/coach/clips/{clip_id}/thumbnail")
+async def coach_get_clip_thumbnail(clip_id: int, request: Request):
+    """Serve the per-clip thumbnail JPEG.
+
+    - Any signed-in user can call this; visibility is enforced per-clip
+      via `_can_view_coach_clip`.
+    - Returns 404 when the clip does not exist OR when the user cannot
+      see it OR when the thumbnail file is missing OR when the
+      computed path would escape `VIDEOS_DIR`. Same response shape
+      across all four cases so a probing viewer cannot distinguish them.
+    """
+    user = _auth.require_auth(request)
+    # PR #108 review fix-up — normalize the 404 detail across all four
+    # not-servable cases (unknown clip / unauthorized / path-escape /
+    # missing file) so a viewer cannot distinguish them by response
+    # body. The note GET still uses two distinct strings ("Thumbnail
+    # not found" vs "Thumbnail not generated yet") for backwards
+    # compatibility; the clip GET is new in Phase 4e and ships with
+    # the cleaner shape from day one.
+    clip = _db.get_coaching_clip(clip_id)
+    if not clip:
+        raise HTTPException(404, "Thumbnail not found")
+    if not _can_view_coach_clip(user, clip):
+        raise HTTPException(404, "Thumbnail not found")
+    thumb = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id)
+    if not _thumb_path_within_videos_dir(thumb):
+        raise HTTPException(404, "Thumbnail not found")
+    if not thumb.is_file():
+        raise HTTPException(404, "Thumbnail not found")
+    mtime = int(thumb.stat().st_mtime)
+    return FileResponse(
+        str(thumb),
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "ETag": f'"{mtime}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.post("/api/coach/clips/{clip_id}/thumbnail/regenerate")
+async def coach_regenerate_clip_thumbnail(clip_id: int, request: Request):
+    """Coach/admin manual trigger for the clip thumbnail generator.
+    Useful when the source video lands AFTER the clip was created or
+    when a coach edits start_seconds. Synchronous on purpose — the
+    caller wants to know whether the refresh succeeded so the UI can
+    re-fetch the image."""
+    _require_coach(request)
+    clip = _db.get_coaching_clip(clip_id)
+    if not clip:
+        raise HTTPException(404, "Clip not found")
+    src = _slot_mp4_path(clip["match_id"], clip.get("slot") or "full")
+    dest = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id)
+    if not _thumb_path_within_videos_dir(dest):
+        _log.setup("replay").warning(
+            "Coach-clip thumbnail regenerate skipped for clip %s: dest path escapes VIDEOS_DIR (%s)",
+            clip_id, dest,
+        )
+        return {"ok": True, "generated": False}
+    try:
+        ok = await _media.generate_thumbnail_at_timestamp(
+            src, dest, timestamp_s=float(clip.get("start_seconds") or 0)
+        )
+    except Exception as exc:                                # noqa: BLE001
+        _log.setup("replay").warning(
+            "Coach-clip thumbnail regenerate failed for clip %s: %s", clip_id, exc
+        )
+        ok = False
+    return {"ok": True, "generated": ok}
 
 
 @app.get("/api/my-feedback")
