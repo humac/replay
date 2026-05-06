@@ -1011,4 +1011,46 @@ export const apiMixin = {
         if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to mark reviewed');
         return resp.json();
     },
+
+    // ===== Phase 5b — Player development profiles =====
+    //
+    // Two endpoints share the aggregator (`_build_player_development_profile`
+    // in server.py), so the UI gets the same shape regardless of caller
+    // role. Privacy is enforced server-side: the viewer endpoint scrubs
+    // `coach_private_note` (and excludes private notes/clips/playlists),
+    // while the coach endpoint returns the full data set including
+    // `linked_accounts`. The UI never re-implements those rules — it
+    // simply calls the right endpoint and renders what comes back.
+    async getCoachPlayerDevelopment(playerId) {
+        const resp = await this.authFetch(
+            `/api/coach/players/${encodeURIComponent(playerId)}/development`,
+            { headers: this.getAuthHeaders() },
+        );
+        if (!resp.ok) {
+            const detail = await resp.json().catch(() => ({}));
+            throw new Error(detail.detail || `Failed to load player profile (${resp.status})`);
+        }
+        const data = await resp.json();
+        return data.profile || null;
+    },
+
+    async getMyPlayerDevelopment(playerId) {
+        const resp = await this.authFetch(
+            `/api/my-feedback/players/${encodeURIComponent(playerId)}/development`,
+            { headers: this.getAuthHeaders() },
+        );
+        if (resp.status === 404) {
+            // Per backend contract, unknown / unrelated viewer / unlinked
+            // player all collapse to 404 so the viewer can't probe roster
+            // ids. Surface a `null` profile so the caller can render a
+            // "Profile not available" empty state without throwing.
+            return null;
+        }
+        if (!resp.ok) {
+            const detail = await resp.json().catch(() => ({}));
+            throw new Error(detail.detail || `Failed to load development profile (${resp.status})`);
+        }
+        const data = await resp.json();
+        return data.profile || null;
+    },
 };

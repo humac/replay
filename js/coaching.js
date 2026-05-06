@@ -41,7 +41,7 @@ const FEEDBACK_NOTE_TYPE_LABELS = {
 };
 
 const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'review'];
-const VALID_FEEDBACK_TABS = ['playlists', 'notes', 'clips'];
+const VALID_FEEDBACK_TABS = ['playlists', 'notes', 'clips', 'development'];
 
 // Phase 4b: pre/post-roll defaults for the Coach Review "Save Clip"
 // affordance. Match the existing playlist defaults so a coach who's
@@ -239,6 +239,7 @@ export const coachingMixin = {
             const url = `/feedback?tab=${name}`;
             this.pushHistoryState({ view: 'feedback', tab: name }, { replace: true, url });
         }
+        if (name === 'development') this.renderFeedbackDevelopment();
     },
 
     // ===== Coach workspace data load =====
@@ -512,6 +513,9 @@ export const coachingMixin = {
                 <td class="roster-cell roster-col-status">${statusPill}</td>
                 <td class="roster-cell roster-col-actions">
                     <div class="roster-actions-row">
+                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="View development profile" aria-label="View development profile" onclick="app.openCoachPlayerDevelopmentModal(${playerIdJs})">
+                            ${this._rosterIcon('chart')}
+                        </button>
                         <button type="button" class="mini-action-btn mini-action-btn-icon" title="Link a family or player account" aria-label="Link account" onclick="app.openCoachLinkModal(${playerIdJs})">
                             ${this._rosterIcon('link')}
                         </button>
@@ -562,6 +566,15 @@ export const coachingMixin = {
             return SVG([
                 'M11 19a8 8 0 100-16 8 8 0 000 16z',
                 'M21 21l-4.35-4.35',
+            ]);
+        }
+        if (name === 'chart') {
+            // Bar-chart glyph for the "View development profile" action.
+            return SVG([
+                'M3 3v18h18',
+                'M7 14v4',
+                'M12 9v9',
+                'M17 5v13',
             ]);
         }
         return '';
@@ -4565,4 +4578,438 @@ export const coachingMixin = {
             await this.renderMyFeedback();
         } catch (err) { this.showError(err.message); }
     },
+
+    // ===== Phase 5b — Player development profiles =====
+    //
+    // Two surfaces share the same render helpers:
+    //   - Coach > Roster > "View development profile" → modal, viewer=false
+    //   - My Feedback > Development tab               → inline, viewer=true
+    //
+    // Both go through the same `_renderPlayerDevelopmentProfile` so the
+    // visible structure stays consistent. Privacy lives entirely server-
+    // side: the coach surface renders whatever the coach endpoint
+    // returned (including `coach_private_note` text, `linked_accounts`),
+    // the viewer surface renders whatever the viewer endpoint returned
+    // (already scrubbed). No client-side authorization decisions.
+
+    async openCoachPlayerDevelopmentModal(playerId) {
+        if (!this.canCoach()) return;
+        const players = this._coachBundle?.players || [];
+        const player = players.find((p) => String(p.id) === String(playerId));
+        const headerName = player ? this.playerLabel(player) : 'Player';
+        const body = document.createElement('div');
+        body.className = 'player-dev-modal-body';
+        body.innerHTML = '<div class="session-empty">Loading development profile…</div>';
+        await this.formModal({
+            title: headerName,
+            kicker: 'Development Profile',
+            body,
+            confirmLabel: 'Close',
+            cancelLabel: '',
+            size: 'wide',
+            onSubmit: (close) => close(true),
+            onMount: async () => {
+                try {
+                    const profile = await this.getCoachPlayerDevelopment(playerId);
+                    if (!profile) {
+                        body.innerHTML = '<div class="session-empty">Profile unavailable.</div>';
+                        return;
+                    }
+                    body.innerHTML = this._renderPlayerDevelopmentProfile(profile, { viewer: false });
+                    this.mountCoachNoteThumbnailsIn(body);
+                    this.mountCoachClipThumbnailsIn(body);
+                } catch (err) {
+                    body.innerHTML = `<div class="session-empty">Could not load profile. ${this.esc(err.message || '')}</div>`;
+                }
+            },
+        });
+    },
+
+    /** Render the inline Development tab in My Feedback. Driven by
+     *  `_feedbackData.players` (linked players) + a per-player viewer
+     *  endpoint fetch. If multiple players are linked, a chip selector
+     *  switches between them — for a single player we skip the
+     *  selector and show the profile straight away. */
+    async renderFeedbackDevelopment() {
+        const root = document.getElementById('feedback-development-content');
+        if (!root) return;
+        const players = this._feedbackData?.players || [];
+        if (!players.length) {
+            root.innerHTML = '<div class="session-empty">No roster player is linked to your account yet. Ask a coach to link you.</div>';
+            return;
+        }
+        // Pick the active player — sticky across re-renders so the user
+        // doesn't get yanked back to the first chip on every refresh.
+        const known = new Set(players.map((p) => String(p.id)));
+        if (!this._feedbackDevPlayerId || !known.has(String(this._feedbackDevPlayerId))) {
+            this._feedbackDevPlayerId = String(players[0].id);
+        }
+        const activeId = this._feedbackDevPlayerId;
+        const chips = players.length > 1 ? `
+            <div class="feedback-dev-player-strip" role="tablist" aria-label="Linked players">
+                ${players.map((p) => `
+                    <button type="button"
+                            class="feedback-dev-player-chip${String(p.id) === activeId ? ' is-active' : ''}"
+                            role="tab"
+                            aria-selected="${String(p.id) === activeId ? 'true' : 'false'}"
+                            onclick="app.setFeedbackDevPlayer('${this.esc(String(p.id))}')">
+                        ${this.esc(this.playerLabel(p))}
+                    </button>
+                `).join('')}
+            </div>` : '';
+        root.innerHTML = `${chips}<div id="feedback-development-profile"><div class="session-empty">Loading development profile…</div></div>`;
+        const target = document.getElementById('feedback-development-profile');
+        try {
+            const profile = await this.getMyPlayerDevelopment(activeId);
+            if (!profile) {
+                target.innerHTML = '<div class="session-empty">Profile not available.</div>';
+                return;
+            }
+            target.innerHTML = this._renderPlayerDevelopmentProfile(profile, { viewer: true });
+            this.mountCoachNoteThumbnailsIn(target);
+            this.mountCoachClipThumbnailsIn(target);
+        } catch (err) {
+            target.innerHTML = `<div class="session-empty">Could not load profile. ${this.esc(err.message || '')}</div>`;
+        }
+    },
+
+    setFeedbackDevPlayer(playerId) {
+        this._feedbackDevPlayerId = String(playerId);
+        this.renderFeedbackDevelopment();
+    },
+
+    /** Single render path for Coach + viewer development profiles.
+     *  `viewer=true` swaps coach-only labels ("Linked accounts",
+     *  technical wording) for player-friendly copy. Both surfaces
+     *  render the same fields when present so the structure is
+     *  predictable. */
+    _renderPlayerDevelopmentProfile(profile, { viewer = false } = {}) {
+        const sections = [];
+        sections.push(this._renderDevHeader(profile, { viewer }));
+        sections.push(this._renderDevCounts(profile, { viewer }));
+        if (!viewer) sections.push(this._renderDevThemes(profile));
+        sections.push(this._renderDevFocusAreas(profile, { viewer }));
+        sections.push(this._renderDevRecentPositives(profile, { viewer }));
+        sections.push(this._renderDevRecentCorrections(profile, { viewer }));
+        sections.push(this._renderDevRecentClips(profile, { viewer }));
+        sections.push(this._renderDevRecentPlaylists(profile, { viewer }));
+        // Empty-state collapse: if NOTHING in the profile has data, show
+        // a single friendly message instead of seven "no items" blocks.
+        const counts = profile.counts || {};
+        const total = Number(counts.notes || 0) + Number(counts.clips || 0) + Number(counts.playlists || 0);
+        if (total === 0) {
+            const msg = viewer
+                ? 'No development feedback yet.'
+                : 'No coaching activity for this player yet.';
+            return `${sections[0]}<div class="player-dev-empty session-empty">${this.esc(msg)}</div>`;
+        }
+        return sections.join('');
+    },
+
+    _renderDevHeader(profile, { viewer }) {
+        const p = profile.player || {};
+        const jersey = p.jersey_number
+            ? `<span class="player-dev-jersey">#${this.esc(p.jersey_number)}</span>`
+            : '';
+        const status = p.active
+            ? '<span class="roster-status-pill is-active"><span class="roster-status-dot" aria-hidden="true"></span>Active</span>'
+            : '<span class="roster-status-pill is-inactive"><span class="roster-status-dot" aria-hidden="true"></span>Inactive</span>';
+        const notes = !viewer && p.notes_field
+            ? `<p class="player-dev-notes">${this.esc(p.notes_field)}</p>`
+            : '';
+        const linkedAccounts = !viewer && Array.isArray(profile.linked_accounts) && profile.linked_accounts.length
+            ? `<div class="player-dev-linked">
+                  <span class="player-dev-linked-label">Linked accounts (${profile.linked_accounts.length}):</span>
+                  ${profile.linked_accounts.map((l) => `
+                      <span class="player-dev-linked-chip" title="${this.esc(l.relationship || '')}">
+                          <span class="player-dev-linked-rel">${this.esc(l.relationship || 'link')}</span>
+                          <span class="player-dev-linked-user">@${this.esc(l.username || '')}</span>
+                      </span>`).join('')}
+              </div>`
+            : '';
+        return `
+            <header class="player-dev-header">
+                <div class="player-dev-headline">
+                    ${jersey}
+                    <h3 class="player-dev-name">${this.esc(p.display_name || 'Player')}</h3>
+                    ${status}
+                </div>
+                ${notes}
+                ${linkedAccounts}
+            </header>`;
+    },
+
+    _renderDevCounts(profile, { viewer }) {
+        const c = profile.counts || {};
+        const r = profile.review_status || {};
+        const noteRev = r.notes || {};
+        const plRev = r.playlists || {};
+        const clipRev = r.clips || {};
+        const tiles = [
+            { label: viewer ? 'Notes shared' : 'Notes', value: c.notes ?? 0 },
+            { label: viewer ? 'Clips shared' : 'Clips', value: c.clips ?? 0 },
+            { label: viewer ? 'Playlists shared' : 'Playlists', value: c.playlists ?? 0 },
+            {
+                label: viewer ? 'Notes reviewed' : 'Notes reviewed',
+                value: `${noteRev.reviewed_count ?? 0} / ${noteRev.assigned_count ?? 0}`,
+            },
+            {
+                label: 'Playlists reviewed',
+                value: `${plRev.reviewed_count ?? 0} / ${plRev.assigned_count ?? 0}`,
+            },
+            {
+                label: 'Reflections',
+                value: r.reflection_count ?? 0,
+            },
+        ];
+        if (!viewer && clipRev.review_supported === false) {
+            // Surface that clip-review is not yet supported so the coach
+            // doesn't read "0 / N" as a coverage gap.
+            tiles.push({
+                label: 'Clips reviewed',
+                value: '—',
+                hint: 'Clip review not tracked yet',
+            });
+        }
+        return `
+            <section class="player-dev-section player-dev-counts">
+                <h4 class="player-dev-section-title">Summary</h4>
+                <div class="player-dev-tile-grid">
+                    ${tiles.map((t) => `
+                        <div class="player-dev-tile" ${t.hint ? `title="${this.esc(t.hint)}"` : ''}>
+                            <span class="player-dev-tile-label">${this.esc(t.label)}</span>
+                            <strong class="player-dev-tile-value">${this.esc(String(t.value))}</strong>
+                        </div>
+                    `).join('')}
+                </div>
+            </section>`;
+    },
+
+    _renderDevThemes(profile) {
+        // Coach-only: a viewer doesn't need positives-vs-corrections
+        // ratios or top-tag breakdowns.
+        const t = profile.themes || {};
+        const byType = t.by_note_type || {};
+        const order = ['positive', 'correction', 'question', 'team_concept', 'individual_goal'];
+        const labels = {
+            positive: 'Positives',
+            correction: 'Corrections',
+            question: 'Questions',
+            team_concept: 'Team concepts',
+            individual_goal: 'Individual goals',
+        };
+        const typeChips = order
+            .filter((k) => (byType[k] ?? 0) > 0)
+            .map((k) => `
+                <span class="player-dev-chip player-dev-chip--type" data-tone="${this.esc(k)}">
+                    ${this.esc(labels[k])} <strong>${this.esc(String(byType[k]))}</strong>
+                </span>`).join('');
+        const ratioStr = (() => {
+            const r = t.positive_to_correction_ratio;
+            if (r === null || r === undefined) return '—';
+            return r.toFixed ? r.toFixed(2) : String(r);
+        })();
+        const topCats = (t.top_categories || []).map((c) => `
+            <span class="player-dev-chip">${this.esc(c.value || '—')} <strong>${this.esc(String(c.count))}</strong></span>
+        `).join('');
+        const topTags = (t.top_tags || []).map((c) => `
+            <span class="player-dev-chip player-dev-chip--tag">#${this.esc(c.value || '')} <strong>${this.esc(String(c.count))}</strong></span>
+        `).join('');
+        const empty = !typeChips && !topCats && !topTags;
+        if (empty) {
+            return `
+                <section class="player-dev-section">
+                    <h4 class="player-dev-section-title">Themes</h4>
+                    <div class="player-dev-empty">No themes yet.</div>
+                </section>`;
+        }
+        return `
+            <section class="player-dev-section">
+                <h4 class="player-dev-section-title">Themes</h4>
+                ${typeChips ? `<div class="player-dev-chip-row">${typeChips}</div>` : ''}
+                <div class="player-dev-meta-row">
+                    <span class="player-dev-meta-item">
+                        <span class="player-dev-meta-label">Positive : Correction ratio</span>
+                        <strong>${this.esc(ratioStr)}</strong>
+                    </span>
+                </div>
+                ${topCats ? `<div class="player-dev-subsection">
+                    <span class="player-dev-subsection-title">Top categories</span>
+                    <div class="player-dev-chip-row">${topCats}</div>
+                </div>` : ''}
+                ${topTags ? `<div class="player-dev-subsection">
+                    <span class="player-dev-subsection-title">Top tags</span>
+                    <div class="player-dev-chip-row">${topTags}</div>
+                </div>` : ''}
+            </section>`;
+    },
+
+    _renderDevFocusAreas(profile, { viewer }) {
+        const focus = profile.current_focus_areas || [];
+        const title = viewer ? 'Focus areas from recent feedback' : 'Suggested focus areas from recent notes';
+        const subtitle = viewer
+            ? 'Things to keep working on, drawn from your most recent feedback.'
+            : 'Derived from recent feedback. Phase 6 will add explicit goals and action plans.';
+        if (!focus.length) {
+            return `
+                <section class="player-dev-section">
+                    <h4 class="player-dev-section-title">${this.esc(title)}</h4>
+                    <p class="player-dev-section-sub">${this.esc(subtitle)}</p>
+                    <div class="player-dev-empty">No focus areas yet.</div>
+                </section>`;
+        }
+        return `
+            <section class="player-dev-section">
+                <h4 class="player-dev-section-title">${this.esc(title)}</h4>
+                <p class="player-dev-section-sub">${this.esc(subtitle)}</p>
+                <ul class="player-dev-focus-list">
+                    ${focus.map((f) => `
+                        <li class="player-dev-focus-item">
+                            <span class="player-dev-focus-cat">${this.esc(f.category || f.note_type || '')}</span>
+                            <span class="player-dev-focus-body">${this.esc(f.what_to_do_next || '')}</span>
+                        </li>
+                    `).join('')}
+                </ul>
+            </section>`;
+    },
+
+    _renderDevRecentPositives(profile, { viewer }) {
+        const items = profile.recent_positives || [];
+        const title = viewer ? 'Recent positives' : 'Recent positives';
+        if (!items.length) {
+            return `
+                <section class="player-dev-section">
+                    <h4 class="player-dev-section-title">${this.esc(title)}</h4>
+                    <div class="player-dev-empty">No positives yet.</div>
+                </section>`;
+        }
+        return `
+            <section class="player-dev-section">
+                <h4 class="player-dev-section-title">${this.esc(title)}</h4>
+                <ul class="player-dev-note-list">
+                    ${items.map((n) => this._renderDevNoteItem(n, { viewer })).join('')}
+                </ul>
+            </section>`;
+    },
+
+    _renderDevRecentCorrections(profile, { viewer }) {
+        const items = profile.recent_corrections || [];
+        const title = viewer ? 'Recent things to work on' : 'Recent corrections';
+        if (!items.length) {
+            return `
+                <section class="player-dev-section">
+                    <h4 class="player-dev-section-title">${this.esc(title)}</h4>
+                    <div class="player-dev-empty">${this.esc(viewer ? 'Nothing to work on right now.' : 'No corrections yet.')}</div>
+                </section>`;
+        }
+        return `
+            <section class="player-dev-section">
+                <h4 class="player-dev-section-title">${this.esc(title)}</h4>
+                <ul class="player-dev-note-list">
+                    ${items.map((n) => this._renderDevNoteItem(n, { viewer, emphasizeNext: true })).join('')}
+                </ul>
+            </section>`;
+    },
+
+    /** Single row layout for a recent note across positives /
+     *  corrections / general lists. Renders only what the server
+     *  returned. `coach_private_note` is intentionally never templated
+     *  (the viewer endpoint scrubs it server-side; the coach endpoint
+     *  exposes it but we don't show coach-private text in this UI to
+     *  keep the surface consistent — Phase 6 may add an explicit
+     *  coach-only block). */
+    _renderDevNoteItem(note, { viewer, emphasizeNext = false } = {}) {
+        const summary = (note.player_summary || '').trim() || (note.body || '').trim();
+        const title = (note.title || '').trim();
+        const next = (note.what_to_do_next || '').trim();
+        const matchPart = note.match_id ? this.esc(this.matchLabel(note.match_id)) : '';
+        const slotPart = note.slot ? this.esc(this.slotLabel(note.slot)) : '';
+        const tsPart = Number.isFinite(Number(note.timestamp_seconds))
+            ? this.esc(this.formatClock(note.timestamp_seconds)) : '';
+        const meta = [matchPart, slotPart, tsPart].filter(Boolean).join(' · ');
+        const tonePill = this._feedbackTonePillHtml(note.note_type);
+        return `
+            <li class="player-dev-note-item">
+                ${this._coachNoteThumbHtml(note, { size: 'list' })}
+                <div class="player-dev-note-body">
+                    <div class="player-dev-note-head">
+                        ${tonePill}
+                        ${title ? `<strong class="player-dev-note-title">${this.esc(title)}</strong>` : ''}
+                    </div>
+                    ${meta ? `<div class="player-dev-note-meta">${meta}</div>` : ''}
+                    ${summary ? `<p class="player-dev-note-summary">${this.esc(summary)}</p>` : ''}
+                    ${next ? `<p class="player-dev-note-next${emphasizeNext ? ' is-emphasized' : ''}">
+                        <span class="player-dev-note-next-label">${this.esc(viewer ? 'Try this next:' : 'What to do next:')}</span>
+                        ${this.esc(next)}
+                    </p>` : ''}
+                </div>
+            </li>`;
+    },
+
+    _renderDevRecentClips(profile, { viewer }) {
+        const clips = profile.recent_clips || [];
+        if (!clips.length) {
+            return `
+                <section class="player-dev-section">
+                    <h4 class="player-dev-section-title">Recent clips</h4>
+                    <div class="player-dev-empty">No clips yet.</div>
+                </section>`;
+        }
+        const watchHandler = viewer ? 'app.openFeedbackClip' : 'app.previewCoachClip';
+        return `
+            <section class="player-dev-section">
+                <h4 class="player-dev-section-title">Recent clips</h4>
+                <ul class="player-dev-clip-list">
+                    ${clips.map((c) => {
+                        const meta = [
+                            this.matchLabel(c.match_id),
+                            this.slotLabel(c.slot),
+                            `${this.formatClock(c.start_seconds)}–${this.formatClock(c.end_seconds)}`,
+                            this._clipDurationLabel(c),
+                            c.category || '',
+                        ].filter(Boolean).map((s) => this.esc(s)).join(' · ');
+                        return `
+                            <li class="player-dev-clip-item">
+                                ${this._coachClipThumbHtml(c)}
+                                <div class="player-dev-clip-body">
+                                    <strong class="player-dev-clip-title">${this.esc(c.title || 'Untitled clip')}</strong>
+                                    <div class="player-dev-clip-meta">${meta}</div>
+                                    ${c.description ? `<p class="player-dev-clip-desc">${this.esc(c.description)}</p>` : ''}
+                                </div>
+                                <div class="player-dev-clip-actions">
+                                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="${watchHandler}(${Number(c.id)})">${viewer ? '▶ Watch' : 'Preview'}</button>
+                                </div>
+                            </li>`;
+                    }).join('')}
+                </ul>
+            </section>`;
+    },
+
+    _renderDevRecentPlaylists(profile, { viewer }) {
+        const playlists = profile.recent_playlists || [];
+        if (!playlists.length) {
+            return `
+                <section class="player-dev-section">
+                    <h4 class="player-dev-section-title">Recent playlists</h4>
+                    <div class="player-dev-empty">No playlists yet.</div>
+                </section>`;
+        }
+        const playHandler = viewer ? 'app.openFeedbackPlaylist' : null;
+        return `
+            <section class="player-dev-section">
+                <h4 class="player-dev-section-title">Recent playlists</h4>
+                <ul class="player-dev-playlist-list">
+                    ${playlists.map((p) => `
+                        <li class="player-dev-playlist-item">
+                            <div class="player-dev-playlist-body">
+                                <strong>${this.esc(p.title || 'Untitled playlist')}</strong>
+                                <span class="player-dev-playlist-meta">${this.esc(String(p.item_count || 0))} item${(p.item_count || 0) === 1 ? '' : 's'} · ${this.esc(p.visibility || '')}</span>
+                            </div>
+                            ${playHandler ? `<button type="button" class="mini-action-btn mini-action-btn-primary" onclick="${playHandler}(${Number(p.id)})">▶ Play session</button>` : ''}
+                        </li>
+                    `).join('')}
+                </ul>
+            </section>`;
+    },
+
 };
