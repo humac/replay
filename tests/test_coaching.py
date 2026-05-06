@@ -2823,6 +2823,56 @@ async def test_clip_thumbnail_delete_clip_removes_file(client, auth_headers, dat
 
 
 @pytest.mark.asyncio
+async def test_clip_thumbnail_delete_survives_unlink_oserror(client, auth_headers, data_dir, monkeypatch):
+    """PR #108 review fix-up — `coach_delete_clip` must mirror
+    `coach_delete_note`'s defensive `try/except OSError` around the
+    thumbnail `unlink(missing_ok=True)`. `missing_ok=True` only swallows
+    `FileNotFoundError`; a `PermissionError` / `EBUSY` / `EROFS` would
+    otherwise propagate as a 500 AFTER the DB row was already deleted.
+    The handler must log the OSError and still return 200 so the UI's
+    delete state stays consistent with the DB."""
+    import db as _db
+    await _install_clip_thumbnail_stub(monkeypatch)
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Unlink OSError FC", "date": "2026-05-30",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    clip_resp = await client.post("/api/coach/clips", json={
+        "match_id": match_id, "slot": "full",
+        "start_seconds": 10.0, "end_seconds": 25.0,
+        "title": "Unlink raises OSError", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    clip_id = clip_resp.json()["clip"]["id"]
+    await _drain_background_tasks()
+
+    # Patch Path.unlink to raise PermissionError exactly when the clip
+    # thumbnail path is the unlink target. Using a sentinel substring
+    # so the patch does not interfere with the dozens of unrelated
+    # `unlink(missing_ok=True)` calls FastAPI's TestClient may make on
+    # tempfiles inside the request lifecycle.
+    from pathlib import Path
+    real_unlink = Path.unlink
+    sentinel = f"clip_thumbs/{clip_id}.jpg"
+
+    def _raising_unlink(self, *args, **kwargs):
+        if sentinel in str(self):
+            raise PermissionError("simulated EACCES on clip thumbnail unlink")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", _raising_unlink)
+
+    del_resp = await client.delete(f"/api/coach/clips/{clip_id}", headers=auth_headers)
+    assert del_resp.status_code == 200, (
+        f"DELETE /api/coach/clips must NOT 500 when thumbnail unlink raises OSError "
+        f"(got {del_resp.status_code}: {del_resp.text})"
+    )
+    # And the DB row is gone — the OSError handling is purely about the
+    # thumbnail cleanup; the delete itself committed before the unlink.
+    assert _db.get_coaching_clip(clip_id) is None, \
+        "Clip should be removed from the DB even when thumbnail unlink fails"
+
+
+@pytest.mark.asyncio
 async def test_clip_thumbnail_response_is_not_public_cacheable(client, auth_headers, data_dir, monkeypatch):
     """Per-user access-controlled responses must NEVER set
     `Cache-Control: public`. Mirrors the note thumbnail header policy."""

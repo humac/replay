@@ -2124,11 +2124,19 @@ async def coach_delete_clip(clip_id: int, request: Request):
     # depth path-containment check as note delete: a corrupted DB row's
     # `match_id` containing `..` must NOT be allowed to unlink a file
     # outside `VIDEOS_DIR`. `unlink(missing_ok=True)` is a no-op when
-    # the file was never generated.
+    # the file was never generated. Best-effort — a missing file is
+    # fine; an OS error is logged but not raised, so a permission /
+    # read-only-FS failure can never surface as a 500 after the DB row
+    # was already deleted (matches `coach_delete_note` exactly).
     if clip:
-        thumb = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id) if clip else None
-        if thumb is not None and _thumb_path_within_videos_dir(thumb):
-            thumb.unlink(missing_ok=True)
+        try:
+            thumb = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id)
+            if _thumb_path_within_videos_dir(thumb):
+                thumb.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.setup("replay").warning(
+                "Could not unlink coach clip thumbnail for clip %s: %s", clip_id, exc
+            )
     _log_activity(
         "coach.clip_deleted",
         severity="warning",
