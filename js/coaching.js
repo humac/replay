@@ -850,17 +850,25 @@ export const coachingMixin = {
      *  all preserved. */
     _refreshCoachNoteThumbnailSurfaces() {
         // Containers currently rendered with thumbnail tiles — each owns
-        // one of the size variants from `_coachNoteThumbHtml`. The list
-        // is intentionally hard-coded rather than discovered because
-        // each container has a different lifecycle (e.g. the playlist
+        // one of the size variants from `_coachNoteThumbHtml` /
+        // `_coachClipThumbHtml`. Despite the historical name, this
+        // helper now refreshes BOTH note and clip thumbnail mounts for
+        // every visible coaching surface so a regenerate hit on either
+        // type lands wherever it's already on screen. The list is
+        // intentionally hard-coded rather than discovered because each
+        // container has a different lifecycle (e.g. the playlist
         // session rail lives inside a modal that may not be mounted).
-        // A no-op `null` check covers each absent surface.
+        // A no-op `null` check covers each absent surface; the mount
+        // helpers themselves are no-ops on a container with zero
+        // matching `data-*` placeholders.
         const containerIds = [
             'coach-notes-list',                // Coach > Notes
             'coach-review-notes',              // Coach > Review timeline rail
             'coach-playlists-list',            // Coach > Playlists
+            'coach-clips-list',                // Coach > Clips
             'feedback-notes-list',             // My Feedback > Notes
             'feedback-playlists-list',         // My Feedback > Playlists
+            'feedback-clips-list',             // My Feedback > Clips
             // Phase 5b — also remount thumbnails inside the viewer
             // Development tab. Re-mounting both note + clip thumbnails
             // so a regenerate hit while Development is open surfaces
@@ -871,9 +879,12 @@ export const coachingMixin = {
             const el = document.getElementById(id);
             if (el) {
                 this.mountCoachNoteThumbnailsIn(el);
-                // Recent clips section also lives in the development
-                // surface and renders `<img data-coach-clip-thumb>`
-                // placeholders — refresh those alongside the notes.
+                // Clip thumbnails appear in Coach > Clips, My Feedback
+                // > Clips, and the Development surfaces alongside notes.
+                // The mount helper is itself a no-op for containers
+                // without `<img data-coach-clip-thumb>` placeholders, so
+                // the cost on notes-only containers is a single
+                // `querySelectorAll` returning zero matches.
                 this.mountCoachClipThumbnailsIn?.(el);
             }
         }
