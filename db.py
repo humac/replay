@@ -394,6 +394,158 @@ def _migrate_v9(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_notes_note_type ON coaching_notes(note_type)")
 
 
+def _migrate_v11(conn: sqlite3.Connection):
+    """Phase 6a — observation notes.
+
+    Coaching notes can now represent either a `video` note (existing
+    behavior, anchored to `match_id` + `slot` + `timestamp_seconds`)
+    or an `observation` note (no video, attached to a practice / game /
+    meeting / tactical concept / other event, optionally carrying a
+    `tactical_board_json` sketch).
+
+    Schema-wise this is purely additive:
+
+    - `note_context TEXT NOT NULL DEFAULT 'video'` — every existing row
+      becomes a video note, preserving current behavior with no data
+      migration. The Pydantic + DB layers default to `'video'` for old
+      payloads and old rows.
+    - `event_title` / `event_date` / `event_type` / `tactical_board_json`
+      — optional, default empty / NULL. Video notes leave them empty.
+
+    `match_id` / `slot` / `timestamp_seconds` stay declared `NOT NULL`
+    in the original `_migrate_v8` CREATE TABLE — but observation notes
+    need to omit them. SQLite doesn't support dropping NOT NULL via
+    `ALTER TABLE`, so we re-create the table without those constraints
+    and copy every row over. This is the safest path: SQLite lets us
+    swap tables atomically inside the migration's implicit txn, and
+    re-running the migration is safe because the post-condition is
+    `pragma table_info(coaching_notes).match_id.notnull == 0`.
+
+    Re-running the migration is safe: each ADD COLUMN is idempotent via
+    the `cols` check, the table-rebuild is gated on the same check
+    (skipped when `match_id` is already nullable), and the indexes use
+    `IF NOT EXISTS`.
+    """
+    cols_info = {row["name"]: row for row in conn.execute("PRAGMA table_info(coaching_notes)").fetchall()}
+
+    if "note_context" not in cols_info:
+        conn.execute(
+            "ALTER TABLE coaching_notes ADD COLUMN note_context TEXT NOT NULL DEFAULT 'video'"
+        )
+    if "event_title" not in cols_info:
+        conn.execute(
+            "ALTER TABLE coaching_notes ADD COLUMN event_title TEXT NOT NULL DEFAULT ''"
+        )
+    if "event_date" not in cols_info:
+        # Stored as ISO-date text (YYYY-MM-DD) when supplied; empty
+        # string otherwise. Kept TEXT so a future format extension
+        # (e.g. ISO datetime) doesn't require another migration.
+        conn.execute(
+            "ALTER TABLE coaching_notes ADD COLUMN event_date TEXT NOT NULL DEFAULT ''"
+        )
+    if "event_type" not in cols_info:
+        conn.execute(
+            "ALTER TABLE coaching_notes ADD COLUMN event_type TEXT NOT NULL DEFAULT ''"
+        )
+    if "tactical_board_json" not in cols_info:
+        # NULL means "no board"; an empty object `{}` would also be
+        # valid but NULL keeps the storage tighter and lets the
+        # row-mapper distinguish "never set" from "explicitly cleared".
+        conn.execute(
+            "ALTER TABLE coaching_notes ADD COLUMN tactical_board_json TEXT"
+        )
+
+    # Re-create the table to drop NOT NULL on the moment-anchoring
+    # columns. Skip when the rebuild has already happened. `pragma
+    # table_info` returns sqlite3.Row objects; index by name into a
+    # plain dict so we can read the `notnull` flag uniformly.
+    info = {
+        r["name"]: {"notnull": r["notnull"]}
+        for r in conn.execute("PRAGMA table_info(coaching_notes)").fetchall()
+    }
+    needs_rebuild = any(
+        info.get(key, {}).get("notnull")
+        for key in ("match_id", "slot", "timestamp_seconds")
+    )
+
+    if needs_rebuild:
+        # Drop indexes that point at the old table; re-created below.
+        conn.execute("DROP INDEX IF EXISTS idx_coaching_notes_match")
+        conn.execute("DROP INDEX IF EXISTS idx_coaching_notes_visibility")
+        conn.execute("DROP INDEX IF EXISTS idx_coaching_notes_note_type")
+        conn.execute(
+            """
+            CREATE TABLE coaching_notes_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT,
+                slot TEXT,
+                timestamp_seconds REAL,
+                title TEXT NOT NULL,
+                body TEXT DEFAULT '',
+                category TEXT NOT NULL DEFAULT 'other',
+                visibility TEXT NOT NULL DEFAULT 'private',
+                drawing_json TEXT NOT NULL DEFAULT '{}',
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                note_type TEXT NOT NULL DEFAULT 'correction',
+                what_happened TEXT NOT NULL DEFAULT '',
+                why_it_matters TEXT NOT NULL DEFAULT '',
+                what_to_do_next TEXT NOT NULL DEFAULT '',
+                player_summary TEXT NOT NULL DEFAULT '',
+                coach_private_note TEXT NOT NULL DEFAULT '',
+                note_context TEXT NOT NULL DEFAULT 'video',
+                event_title TEXT NOT NULL DEFAULT '',
+                event_date TEXT NOT NULL DEFAULT '',
+                event_type TEXT NOT NULL DEFAULT '',
+                tactical_board_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO coaching_notes_new (
+                id, match_id, slot, timestamp_seconds, title, body, category,
+                visibility, drawing_json, created_by, created_at, updated_at,
+                note_type, what_happened, why_it_matters, what_to_do_next,
+                player_summary, coach_private_note, note_context, event_title,
+                event_date, event_type, tactical_board_json
+            )
+            SELECT
+                id, match_id, slot, timestamp_seconds, title, body, category,
+                visibility, drawing_json, created_by, created_at, updated_at,
+                note_type, what_happened, why_it_matters, what_to_do_next,
+                player_summary, coach_private_note, note_context, event_title,
+                event_date, event_type, tactical_board_json
+            FROM coaching_notes
+            """
+        )
+        conn.execute("DROP TABLE coaching_notes")
+        conn.execute("ALTER TABLE coaching_notes_new RENAME TO coaching_notes")
+
+    # Re-create indexes (idempotent — IF NOT EXISTS).
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_notes_match "
+        "ON coaching_notes(match_id, slot, timestamp_seconds)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_notes_visibility "
+        "ON coaching_notes(visibility)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_notes_note_type "
+        "ON coaching_notes(note_type)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_notes_note_context "
+        "ON coaching_notes(note_context)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_notes_event_date "
+        "ON coaching_notes(event_date)"
+    )
+
+
 def _migrate_v10(conn: sqlite3.Connection):
     """Add `coaching_clips` + `coaching_clip_players` (Phase 4a).
 
@@ -475,7 +627,7 @@ def _migrate_v10(conn: sqlite3.Connection):
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
-    _migrate_v10,
+    _migrate_v10, _migrate_v11,
 ]
 
 
@@ -955,15 +1107,30 @@ def _row_to_note(row: sqlite3.Row, player_ids: list[str] | None = None, tags: li
         drawing = json.loads(row["drawing_json"] or "{}")
     except Exception:
         drawing = {}
-    # Defensively `_row_get` the v9 columns so existing call sites that
-    # mock a sqlite3.Row without those keys (or older snapshots that
-    # haven't migrated yet) still get a sane default instead of a
+    # Defensively `_row_get` the v9 / v11 columns so existing call sites
+    # that mock a sqlite3.Row without those keys (or older snapshots
+    # that haven't migrated yet) still get a sane default instead of a
     # KeyError. sqlite3.Row supports `keys()`; mappings support `in`.
     keys = set(row.keys()) if hasattr(row, "keys") else set()
     def _opt(key: str, default: str = "") -> str:
         return row[key] if key in keys else default
+    # Phase 6a — observation notes. `tactical_board_json` is stored as
+    # text JSON (or NULL); decode defensively so a corrupted blob
+    # surfaces as `None` rather than a 500. The rest of the new fields
+    # follow the same `_opt` defensive read pattern as the v9 columns.
+    raw_board = _opt("tactical_board_json", "") if "tactical_board_json" in keys else ""
+    if raw_board:
+        try:
+            tactical_board = json.loads(raw_board)
+        except Exception:
+            tactical_board = None
+    else:
+        tactical_board = None
     return {
         "id": row["id"],
+        # match_id / slot / timestamp_seconds are nullable for
+        # observation notes (Phase 6a). Existing video notes still
+        # carry all three.
         "match_id": row["match_id"],
         "slot": row["slot"],
         "timestamp_seconds": row["timestamp_seconds"],
@@ -985,6 +1152,14 @@ def _row_to_note(row: sqlite3.Row, player_ids: list[str] | None = None, tags: li
         "what_to_do_next": _opt("what_to_do_next", ""),
         "player_summary": _opt("player_summary", ""),
         "coach_private_note": _opt("coach_private_note", ""),
+        # Phase 6a — observation note fields. `note_context` defaults
+        # to 'video' so legacy clients that ignore it keep behaving
+        # as before. `tactical_board_json` is None (not {}) when unset.
+        "note_context": _opt("note_context", "video") or "video",
+        "event_title": _opt("event_title", ""),
+        "event_date": _opt("event_date", ""),
+        "event_type": _opt("event_type", ""),
+        "tactical_board_json": tactical_board,
     }
 
 
@@ -1030,6 +1205,12 @@ def _replace_note_children(conn: sqlite3.Connection, note_id: int, player_ids: l
 
 def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
     now = _now_iso()
+    # Phase 6a — observation notes: match_id / slot / timestamp_seconds
+    # may be absent for `note_context == 'observation'`. `.get(...)`
+    # returns None which the schema now allows for those columns.
+    # `tactical_board_json` is stored as JSON text or NULL.
+    board = data.get("tactical_board_json")
+    board_json = json.dumps(board) if board is not None else None
     with connect() as conn:
         cur = conn.execute(
             """
@@ -1037,11 +1218,12 @@ def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
                 match_id, slot, timestamp_seconds, title, body, category, visibility,
                 drawing_json, created_by, created_at, updated_at,
                 note_type, what_happened, why_it_matters, what_to_do_next,
-                player_summary, coach_private_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                player_summary, coach_private_note,
+                note_context, event_title, event_date, event_type, tactical_board_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                data["match_id"], data["slot"], data["timestamp_seconds"],
+                data.get("match_id"), data.get("slot"), data.get("timestamp_seconds"),
                 data["title"], data.get("body", ""), data.get("category", "other"),
                 data.get("visibility", "private"), json.dumps(data.get("drawing") or {}),
                 actor, now, now,
@@ -1051,6 +1233,11 @@ def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
                 data.get("what_to_do_next", ""),
                 data.get("player_summary", ""),
                 data.get("coach_private_note", ""),
+                data.get("note_context", "video"),
+                data.get("event_title", ""),
+                data.get("event_date", ""),
+                data.get("event_type", ""),
+                board_json,
             ),
         )
         note_id = cur.lastrowid
@@ -1067,10 +1254,30 @@ def update_coaching_note(note_id: int, data: dict) -> dict | None:
         # untouched.
         "note_type", "what_happened", "why_it_matters", "what_to_do_next",
         "player_summary", "coach_private_note",
+        # Phase 6a — observation note fields. `match_id` / `slot` are
+        # writable so a coach can flip between video and observation
+        # contexts (e.g. attach the note to a match later). The route
+        # handler validates the merged state so a video note can't end
+        # up with `match_id` cleared but `note_context` still 'video'.
+        "match_id", "slot", "note_context", "event_title", "event_date", "event_type",
     }
-    updates = {k: v for k, v in data.items() if k in scalar_allowed and v is not None}
+    # `None` values clear nullable columns (match_id / slot /
+    # timestamp_seconds for observation notes). Allow them through for
+    # those keys, but for the legacy keys keep the original behavior
+    # (skip None so unset PATCH fields don't blank stored text).
+    nullable_keys = {"match_id", "slot", "timestamp_seconds"}
+    updates = {
+        k: v for k, v in data.items()
+        if k in scalar_allowed and (v is not None or k in nullable_keys)
+    }
     if "drawing" in data and data["drawing"] is not None:
         updates["drawing_json"] = json.dumps(data["drawing"])
+    # `tactical_board_json` is the only non-scalar observation field —
+    # it's stored as JSON text. Allow explicit None to clear the
+    # stored sketch (NULL in the DB).
+    if "tactical_board_json" in data:
+        board = data["tactical_board_json"]
+        updates["tactical_board_json"] = json.dumps(board) if board is not None else None
     # PR #95 review follow-up: a join-table-only PATCH (player_ids /
     # tags only) is still a real edit and must bump `updated_at` so
     # the row surfaces in `ORDER BY updated_at` lists. Compute that
