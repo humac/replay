@@ -1622,8 +1622,13 @@ async def coach_list_notes(request: Request, match_id: str | None = None):
 @app.post("/api/coach/notes")
 async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
     user = _require_coach(request)
-    if not _db.get_match_by_id(body.match_id):
-        raise HTTPException(404, "Match not found")
+    # Phase 6a — observation notes have no `match_id` so we only check
+    # the match-exists invariant for video notes. Pydantic's
+    # `validate_context_invariants` already rejects a video note with
+    # missing match_id / slot / timestamp_seconds before we get here.
+    if body.note_context == "video":
+        if not _db.get_match_by_id(body.match_id):
+            raise HTTPException(404, "Match not found")
     for player_id in body.player_ids:
         if not _db.get_player(player_id):
             raise HTTPException(404, f"Player not found: {player_id}")
@@ -1635,7 +1640,11 @@ async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
         match_id=note.get("match_id"),
         slot=note.get("slot"),
         actor=user["username"],
-        metadata={"note_id": note.get("id"), "visibility": note.get("visibility")},
+        metadata={
+            "note_id": note.get("id"),
+            "visibility": note.get("visibility"),
+            "note_context": note.get("note_context"),
+        },
     )
     # Phase 3a: kick the per-note thumbnail generator off in the
     # background. Best-effort — the spawn helper swallows failures so
@@ -1643,7 +1652,11 @@ async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
     # transcoded yet (`<match>/<slot>.mp4` missing), the generator
     # logs a warning and returns False; the coach can manually
     # regenerate later via the POST regenerate endpoint.
-    _spawn_task(_spawn_coach_note_thumbnail(note))
+    #
+    # Phase 6a: observation notes have no video timestamp so we skip
+    # generation entirely — there is no source frame to capture.
+    if note.get("note_context") == "video":
+        _spawn_task(_spawn_coach_note_thumbnail(note))
     return {"ok": True, "note": note}
 
 
@@ -1657,6 +1670,35 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
     for player_id in updates.get("player_ids") or []:
         if not _db.get_player(player_id):
             raise HTTPException(404, f"Player not found: {player_id}")
+    # Phase 6a — validate the MERGED state so a partial PATCH can't
+    # leave a video note in an invalid shape. Examples:
+    #   - PATCH `note_context: "video"` on an observation row that has
+    #     no `match_id`/`slot`/`timestamp_seconds` → must require the
+    #     three anchoring fields (either already in the row or in this
+    #     PATCH) before the row flips to 'video'.
+    #   - PATCH `match_id: null` on a video note (without flipping
+    #     context) → would leave a video note un-anchored. Reject.
+    # The merged-state validation here is the source of truth; the
+    # request-shape validators (Pydantic) only know about this PATCH.
+    merged = {**existing}
+    for k, v in updates.items():
+        merged[k] = v
+    merged_context = merged.get("note_context") or "video"
+    if merged_context == "video":
+        for key in ("match_id", "slot", "timestamp_seconds"):
+            if merged.get(key) in (None, ""):
+                raise HTTPException(
+                    422, f"video notes require {key}"
+                )
+        if not (merged.get("title") or "").strip():
+            raise HTTPException(422, "title must not be empty")
+        # If the merged match_id changed, double-check the match exists
+        # so a flip from observation→video doesn't reference a deleted
+        # / unknown match. (`existing.match_id == merged.match_id` is
+        # the cheap unchanged-match short-circuit.)
+        if merged.get("match_id") != existing.get("match_id"):
+            if not _db.get_match_by_id(merged["match_id"]):
+                raise HTTPException(404, "Match not found")
     note = _db.update_coaching_note(note_id, updates) or existing
     _log_activity(
         "coach.note_updated",
@@ -1665,7 +1707,11 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
         match_id=note.get("match_id"),
         slot=note.get("slot"),
         actor=user["username"],
-        metadata={"note_id": note_id, "fields": sorted(updates.keys())},
+        metadata={
+            "note_id": note_id,
+            "fields": sorted(updates.keys()),
+            "note_context": note.get("note_context"),
+        },
     )
     # Phase 3a: regenerate the thumbnail if the moment moved. Only
     # `match_id`, `slot`, and `timestamp_seconds` change which frame
@@ -1674,15 +1720,15 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
     # accurate, so we skip the regen and the existing JPEG keeps
     # serving. Same best-effort spawn pattern as create.
     #
-    # Note: `UpdateCoachingNoteRequest` (models.py) currently only
-    # exposes `timestamp_seconds` from this set — `match_id` and `slot`
-    # are not editable today (the model is `extra="forbid"`). They are
-    # listed here as a forward-compat hook: if a future iteration adds
-    # "move this note to a different match/slot" the regen logic stays
-    # correct without a change. The set intersection is the cheap and
-    # honest way to express "any moment-anchoring field changed".
+    # Phase 6a: observation notes never have a video frame to capture,
+    # so we suppress regeneration whenever the (post-update) note is
+    # an observation. A flip from video→observation also intentionally
+    # skips regen — the existing thumbnail stays on disk until the
+    # note is deleted. (We could unlink it here, but observation notes
+    # are cheap to leave alone; if a future iteration wants to clean
+    # them up it can do so without changing the public API.)
     moment_fields = {"match_id", "slot", "timestamp_seconds"}
-    if moment_fields.intersection(updates.keys()):
+    if note.get("note_context") == "video" and moment_fields.intersection(updates.keys()):
         _spawn_task(_spawn_coach_note_thumbnail(note))
     return {"ok": True, "note": note}
 
@@ -1709,7 +1755,14 @@ async def coach_delete_note(note_id: int, request: Request):
     # so a corrupted DB row that escapes its match folder cannot trick
     # this handler into unlinking a file outside `VIDEOS_DIR`.
     try:
-        thumb = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id) if note else None
+        # Phase 6a — observation notes have no `match_id`, so the
+        # thumbnail path is meaningless. Skip the unlink attempt
+        # entirely. Video notes still clean up their JPEG.
+        thumb = (
+            _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
+            if note and note.get("match_id") and (note.get("note_context") or "video") == "video"
+            else None
+        )
         if thumb is not None and _thumb_path_within_videos_dir(thumb):
             thumb.unlink(missing_ok=True)
     except OSError as exc:
@@ -1778,8 +1831,16 @@ async def _spawn_coach_note_thumbnail(note: dict) -> None:
     """Best-effort generator — never raises. Caller (note create / update /
     regenerate endpoint) should call this AFTER the DB row is written
     (we need the note's id) and AFTER the note response has been
-    returned to the client (we don't block on ffmpeg)."""
+    returned to the client (we don't block on ffmpeg).
+
+    Phase 6a defense-in-depth: if a caller forgets to gate on
+    `note_context == "video"` and routes an observation note here,
+    bail out cleanly. Observation notes have no video frame to
+    capture; trying to ffmpeg an empty match path would just log a
+    confusing warning and waste a worker slot."""
     if not note or not note.get("id") or not note.get("match_id"):
+        return
+    if (note.get("note_context") or "video") != "video":
         return
     note_id = int(note["id"])
     match_id = note["match_id"]
@@ -1838,6 +1899,13 @@ async def coach_get_note_thumbnail(note_id: int, request: Request):
         raise HTTPException(404, "Thumbnail not found")
     if not _can_view_coach_note(user, note):
         raise HTTPException(404, "Thumbnail not found")
+    # Phase 6a — observation notes never have a video frame, so the
+    # path resolution would only land on a missing-file 404 anyway.
+    # Short-circuit explicitly so the response is consistent regardless
+    # of file-system race conditions and a viewer can't probe whether
+    # an observation note exists by polling the thumbnail endpoint.
+    if (note.get("note_context") or "video") != "video" or not note.get("match_id"):
+        raise HTTPException(404, "Thumbnail not found")
     thumb = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
     # Defense-in-depth: refuse to serve a path that escapes VIDEOS_DIR.
     # Same response shape as the missing-file branch so a viewer can't
@@ -1884,6 +1952,12 @@ async def coach_regenerate_note_thumbnail(note_id: int, request: Request):
     note = _db.get_coaching_note(note_id)
     if not note:
         raise HTTPException(404, "Note not found")
+    # Phase 6a — observation notes have no video frame to extract.
+    # Return the same `generated: false` shape callers already handle
+    # for the source-video-missing case so frontend code paths don't
+    # need a new branch.
+    if (note.get("note_context") or "video") != "video" or not note.get("match_id"):
+        return {"ok": True, "generated": False}
     src = _slot_mp4_path(note["match_id"], note.get("slot") or "full")
     dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
     # Defense-in-depth: never write outside VIDEOS_DIR. Returns the

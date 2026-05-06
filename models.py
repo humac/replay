@@ -164,6 +164,27 @@ _VALID_SLOTS = {"full", "first_half", "second_half"}
 # `correction` is the legacy implied default — every existing pre-v9 note
 # round-trips as a correction unless explicitly re-tagged.
 _VALID_NOTE_TYPES = {"positive", "correction", "question", "team_concept", "individual_goal"}
+# Phase 6a — observation notes. `note_context` discriminates between
+# the existing video-anchored notes (the only kind before Phase 6) and
+# the new non-video observation notes (practice / game / meeting /
+# tactical / other).
+_VALID_NOTE_CONTEXTS = {"video", "observation"}
+_VALID_EVENT_TYPES = {"practice", "game", "meeting", "tactical", "other"}
+# tactical_board_json is opaque-ish JSON metadata. Cap the serialized
+# size so a corrupted client cannot stuff multi-megabyte boards into
+# the row. The board format will firm up in Phase 6c (tactical board
+# editor); the backend just stores whatever shape the editor saves
+# alongside a `pitch_kind` discriminator.
+_MAX_TACTICAL_BOARD_JSON_BYTES = 100_000
+# Observation notes still need *some* coaching content, otherwise the
+# row carries nothing useful. Any non-empty value in any of these fields
+# is enough — same spirit as the structured-fields list (Phase 1) but
+# applied at the request boundary so the empty-row case fails with 422
+# instead of saving and surfacing as an unreadable empty card later.
+_OBSERVATION_CONTENT_FIELDS = (
+    "title", "body", "player_summary", "what_happened", "why_it_matters",
+    "what_to_do_next", "event_title",
+)
 _VALID_DRAWING_TYPES = {"freehand", "arrow", "circle", "zone", "label", "spotlight", "dim", "formation"}
 _VALID_DRAWING_POINT_KEYS = {"x", "y", "x1", "y1", "x2", "y2", "w", "h", "opacity"}
 
@@ -331,11 +352,68 @@ class CreatePlayerUserLinkRequest(BaseModel):
         return v
 
 
+def _validate_event_type(v: str) -> str:
+    v = v.strip().lower()
+    if not v:
+        return ""
+    if v not in _VALID_EVENT_TYPES:
+        raise ValueError(
+            f"event_type must be one of: {', '.join(sorted(_VALID_EVENT_TYPES))}"
+        )
+    return v
+
+
+def _validate_event_date(v: str) -> str:
+    """Phase 6a — accept ISO-date `YYYY-MM-DD` (matches the rest of the
+    codebase's date pattern, e.g. `CreateMatchRequest.date`) or empty.
+    Anything else is a 422. Kept simple by design; if a future iteration
+    needs ISO datetime or timezones this validator gets extended."""
+    v = v.strip()
+    if not v:
+        return ""
+    if not _DATE_RE.match(v):
+        raise ValueError("event_date must be empty or YYYY-MM-DD")
+    return v
+
+
+def validate_tactical_board_payload(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Phase 6a — `tactical_board_json` is JSON-compatible metadata
+    that the Phase 6c tactical board editor will read and write. The
+    backend doesn't enforce a board schema yet (the editor will firm it
+    up); we just guard against obviously malformed input:
+
+    - None / missing → stored as NULL.
+    - Non-dict (list, string, number) → 422. The board surface is an
+      object with `pitch_kind` + tokens / shapes / labels.
+    - Oversized blob (> ~100 KB) → 422 so a corrupted client can't
+      stuff arbitrarily large payloads into the row.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("tactical_board_json must be an object")
+    if not value:
+        # Empty dict is allowed but normalized to None so the row
+        # mapper distinguishes "explicit empty" the same as "unset".
+        return None
+    if len(json.dumps(value, separators=(",", ":"))) > _MAX_TACTICAL_BOARD_JSON_BYTES:
+        raise ValueError("tactical_board_json payload is too large")
+    return value
+
+
 class CreateCoachingNoteRequest(BaseModel):
-    match_id: str = Field(..., min_length=1, max_length=120)
-    slot: str = Field("full")
-    timestamp_seconds: float = Field(..., ge=0)
-    title: str = Field(..., min_length=1, max_length=160)
+    # Phase 6a — `match_id` / `slot` / `timestamp_seconds` are now
+    # nullable so observation notes can omit them. Validation is split
+    # between field-level rules (each field's individual shape) and a
+    # `model_validator(mode="after")` that enforces per-context
+    # invariants:
+    #   - `note_context == "video"` requires all three.
+    #   - `note_context == "observation"` does not require any of them
+    #     and additionally requires meaningful coaching content.
+    match_id: Optional[str] = Field(None, min_length=1, max_length=120)
+    slot: Optional[str] = Field(None)
+    timestamp_seconds: Optional[float] = Field(None, ge=0)
+    title: str = Field("", max_length=160)
     body: str = Field("", max_length=4000)
     category: str = Field("other")
     visibility: str = Field("private")
@@ -352,10 +430,19 @@ class CreateCoachingNoteRequest(BaseModel):
     what_to_do_next: str = Field("", max_length=2000)
     player_summary: str = Field("", max_length=2000)
     coach_private_note: str = Field("", max_length=4000)
+    # Phase 6a — observation-note fields. All optional. Video notes
+    # leave them empty / None.
+    note_context: str = Field("video")
+    event_title: str = Field("", max_length=200)
+    event_date: str = Field("", max_length=10)
+    event_type: str = Field("")
+    tactical_board_json: Optional[dict[str, Any]] = None
 
     @field_validator("slot")
     @classmethod
-    def validate_slot(cls, v: str) -> str:
+    def validate_slot(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         if v not in _VALID_SLOTS:
             raise ValueError("slot must be full, first_half, or second_half")
         return v
@@ -384,8 +471,29 @@ class CreateCoachingNoteRequest(BaseModel):
             raise ValueError(f"note_type must be one of: {', '.join(sorted(_VALID_NOTE_TYPES))}")
         return v
 
+    @field_validator("note_context")
+    @classmethod
+    def validate_note_context(cls, v: str) -> str:
+        v = v.strip().lower() or "video"
+        if v not in _VALID_NOTE_CONTEXTS:
+            raise ValueError(
+                f"note_context must be one of: {', '.join(sorted(_VALID_NOTE_CONTEXTS))}"
+            )
+        return v
+
+    @field_validator("event_type")
+    @classmethod
+    def validate_event_type(cls, v: str) -> str:
+        return _validate_event_type(v)
+
+    @field_validator("event_date")
+    @classmethod
+    def validate_event_date(cls, v: str) -> str:
+        return _validate_event_date(v)
+
     @field_validator("title", "body", "what_happened", "why_it_matters",
-                     "what_to_do_next", "player_summary", "coach_private_note")
+                     "what_to_do_next", "player_summary", "coach_private_note",
+                     "event_title")
     @classmethod
     def strip_text(cls, v: str) -> str:
         return v.strip()
@@ -410,10 +518,63 @@ class CreateCoachingNoteRequest(BaseModel):
     def validate_drawing(cls, v: dict[str, Any]) -> dict[str, Any]:
         return validate_drawing_payload(v)
 
+    @field_validator("tactical_board_json")
+    @classmethod
+    def validate_tactical_board(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_tactical_board_payload(v)
+
+    @model_validator(mode="after")
+    def validate_context_invariants(self):
+        # Phase 6a — per-context invariants.
+        # The field-level title validator made title an empty-allowed
+        # string so observation notes that lean on `event_title` /
+        # `player_summary` / structured fields aren't forced to
+        # duplicate text into `title`. Re-enforce title presence for
+        # video notes here so existing video-note callers behave
+        # exactly as before.
+        if self.note_context == "video":
+            missing = [
+                name for name, value in (
+                    ("match_id", self.match_id),
+                    ("slot", self.slot),
+                    ("timestamp_seconds", self.timestamp_seconds),
+                )
+                if value is None
+            ]
+            if missing:
+                raise ValueError(
+                    "video notes require " + ", ".join(missing)
+                )
+            if not (self.title or "").strip():
+                raise ValueError("title must not be empty")
+            return self
+        # Observation notes — reject obviously empty-content rows.
+        # `tactical_board_json` is also accepted as "meaningful content"
+        # so a tactical-board-only note (Phase 6c will exercise this)
+        # passes without forcing the coach to type a title.
+        has_content = self.tactical_board_json is not None or any(
+            (getattr(self, name) or "").strip()
+            for name in _OBSERVATION_CONTENT_FIELDS
+        )
+        if not has_content:
+            raise ValueError(
+                "observation notes require at least one of: "
+                + ", ".join(_OBSERVATION_CONTENT_FIELDS)
+                + ", or tactical_board_json"
+            )
+        return self
+
 
 class UpdateCoachingNoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Phase 6a — `match_id` / `slot` / `note_context` are now editable
+    # via PATCH so a coach can flip a note between video and
+    # observation contexts. The route handler validates the merged
+    # state (existing row + this PATCH) so a video note can never end
+    # up with `match_id` cleared but `note_context` still 'video'.
+    match_id: Optional[str] = Field(None, min_length=1, max_length=120)
+    slot: Optional[str] = Field(None)
     timestamp_seconds: Optional[float] = Field(None, ge=0)
     title: Optional[str] = Field(None, min_length=1, max_length=160)
     body: Optional[str] = Field(None, max_length=4000)
@@ -429,6 +590,23 @@ class UpdateCoachingNoteRequest(BaseModel):
     what_to_do_next: Optional[str] = Field(None, max_length=2000)
     player_summary: Optional[str] = Field(None, max_length=2000)
     coach_private_note: Optional[str] = Field(None, max_length=4000)
+    # Phase 6a — observation-note fields. All optional partial-update.
+    # `tactical_board_json` accepts an explicit `null` JSON value (or a
+    # missing key) so a coach can clear the saved sketch.
+    note_context: Optional[str] = None
+    event_title: Optional[str] = Field(None, max_length=200)
+    event_date: Optional[str] = Field(None, max_length=10)
+    event_type: Optional[str] = None
+    tactical_board_json: Optional[dict[str, Any]] = None
+
+    @field_validator("slot")
+    @classmethod
+    def validate_slot(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in _VALID_SLOTS:
+            raise ValueError("slot must be full, first_half, or second_half")
+        return v
 
     @field_validator("category")
     @classmethod
@@ -451,8 +629,30 @@ class UpdateCoachingNoteRequest(BaseModel):
             return v
         return CreateCoachingNoteRequest.validate_note_type(v)
 
+    @field_validator("note_context")
+    @classmethod
+    def validate_note_context(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.validate_note_context(v)
+
+    @field_validator("event_type")
+    @classmethod
+    def validate_event_type(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_event_type(v)
+
+    @field_validator("event_date")
+    @classmethod
+    def validate_event_date(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_event_date(v)
+
     @field_validator("title", "body", "what_happened", "why_it_matters",
-                     "what_to_do_next", "player_summary", "coach_private_note")
+                     "what_to_do_next", "player_summary", "coach_private_note",
+                     "event_title")
     @classmethod
     def strip_text(cls, v: str | None) -> str | None:
         return v.strip() if v is not None else v
@@ -470,6 +670,11 @@ class UpdateCoachingNoteRequest(BaseModel):
         if v is None:
             return v
         return validate_drawing_payload(v)
+
+    @field_validator("tactical_board_json")
+    @classmethod
+    def validate_tactical_board(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_tactical_board_payload(v)
 
 
 class CreateCoachingPlaylistRequest(BaseModel):

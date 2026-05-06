@@ -3100,3 +3100,542 @@ async def test_clip_thumbnail_regenerated_after_start_seconds_patch(client, auth
         "PATCH start_seconds must schedule a new clip thumbnail generation"
     # The most recent call should reflect the new start time.
     assert calls[-1]["timestamp_s"] == 12.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 6a — Observation note backend
+#
+# These tests pin the contract for non-video coaching notes:
+# - Existing video notes default `note_context = "video"` and continue
+#   to require match_id / slot / timestamp_seconds.
+# - Observation notes can be created without those three.
+# - Validation rejects: missing required content, invalid event_type,
+#   malformed event_date, oversized tactical_board_json, video flips
+#   that drop the moment-anchoring fields.
+# - Privacy ladder is shared with video notes — coach_private_note never
+#   leaks; private observation notes never reach viewers.
+# - Thumbnail generation is suppressed for observation notes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_observation_existing_note_defaults_to_video_context(client, auth_headers):
+    """Migration invariant: every existing video-note payload (no
+    note_context sent) round-trips with `note_context = "video"` and
+    the empty observation defaults so older clients keep working."""
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Phase6 FC", "date": "2026-05-10",
+    }, headers=auth_headers)
+    match_id = match_resp.json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 4.0,
+        "title": "Legacy-shape video note", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert note_resp.status_code == 200, note_resp.text
+    note = note_resp.json()["note"]
+    assert note["note_context"] == "video"
+    assert note["event_title"] == ""
+    assert note["event_date"] == ""
+    assert note["event_type"] == ""
+    assert note["tactical_board_json"] is None
+
+
+@pytest.mark.asyncio
+async def test_observation_video_note_requires_match_slot_timestamp(client, auth_headers):
+    """Phase 6a — video notes still require all three moment-anchoring
+    fields. Omitting any of them must 422 even when note_context is
+    explicitly set to 'video' (the field-level validators allow them
+    to be None; the per-context model validator catches it)."""
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Missing match", "note_context": "video",
+        "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+    # Implicit context (legacy default) — still video, still rejected.
+    bad_implicit = await client.post("/api/coach/notes", json={
+        "title": "Missing match", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert bad_implicit.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_note_can_be_created_without_match(client, auth_headers):
+    """Phase 6a — observation notes do NOT require match/slot/timestamp.
+    All five new fields (`note_context`, `event_title`, `event_date`,
+    `event_type`, `tactical_board_json`) round-trip and the structured
+    text fields still apply."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Practice scanning drill",
+        "note_context": "observation",
+        "category": "decision", "visibility": "team",
+        "event_title": "Tuesday practice — scanning",
+        "event_date": "2026-05-07",
+        "event_type": "practice",
+        "what_happened": "Walked through scan-before-receive in 3v2 grid.",
+        "why_it_matters": "Carries to Saturday's match.",
+        "what_to_do_next": "Repeat the rondo with the same trigger.",
+        "tactical_board_json": {"pitch_kind": "soccer_full", "tokens": []},
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    note = resp.json()["note"]
+    assert note["note_context"] == "observation"
+    assert note["match_id"] is None
+    assert note["slot"] is None
+    assert note["timestamp_seconds"] is None
+    assert note["event_title"] == "Tuesday practice — scanning"
+    assert note["event_date"] == "2026-05-07"
+    assert note["event_type"] == "practice"
+    assert note["tactical_board_json"] == {"pitch_kind": "soccer_full", "tokens": []}
+    # Structured fields still flow through.
+    assert note["what_happened"].startswith("Walked through")
+
+
+@pytest.mark.asyncio
+async def test_observation_note_rejects_invalid_event_type(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad type", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "bogus",
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_note_rejects_invalid_event_date(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad date", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_date": "not-a-date",
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_note_trims_event_title(client, auth_headers):
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Trim me",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_title": "   Friday film session   ",
+    }, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["note"]["event_title"] == "Friday film session"
+
+
+@pytest.mark.asyncio
+async def test_observation_note_rejects_malformed_tactical_board(client, auth_headers):
+    """Pydantic accepts JSON-compatible dicts via `dict[str, Any]`.
+    `validate_tactical_board_payload` rejects non-dict and oversized
+    blobs explicitly."""
+    huge = {"pitch_kind": "soccer_full", "tokens": [{"i": i, "x": 0.5} for i in range(100_000)]}
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Huge board", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": huge,
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_note_requires_meaningful_content(client, auth_headers):
+    """An observation row that's empty across every coaching-content
+    field is meaningless — rejected at the request boundary so we
+    don't end up with empty cards in the UI."""
+    bad = await client.post("/api/coach/notes", json={
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_note_only_tactical_board_is_meaningful(client, auth_headers):
+    """A tactical-board-only note (no title, no body, no structured
+    text) is still meaningful coaching content because the board
+    itself carries the lesson. This is the forward path for Phase 6c
+    so a coach can save 'Set-piece corner shape' as a pure sketch."""
+    resp = await client.post("/api/coach/notes", json={
+        "note_context": "observation",
+        "category": "set_piece", "visibility": "team",
+        "tactical_board_json": {"pitch_kind": "soccer_full", "tokens": [{"x": 0.5, "y": 0.5}]},
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["note"]["tactical_board_json"]["pitch_kind"] == "soccer_full"
+
+
+@pytest.mark.asyncio
+async def test_observation_note_patch_event_fields(client, auth_headers):
+    """Partial PATCH must update event_title / event_date / event_type
+    / tactical_board_json and leave the rest of the row untouched."""
+    create = await client.post("/api/coach/notes", json={
+        "title": "Initial observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_title": "Old", "event_type": "tactical",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    patch = await client.patch(f"/api/coach/notes/{note_id}", json={
+        "event_title": "Updated",
+        "event_date": "2026-05-11",
+        "event_type": "meeting",
+        "tactical_board_json": {"pitch_kind": "soccer_full", "tokens": []},
+    }, headers=auth_headers)
+    assert patch.status_code == 200, patch.text
+    note = patch.json()["note"]
+    assert note["event_title"] == "Updated"
+    assert note["event_date"] == "2026-05-11"
+    assert note["event_type"] == "meeting"
+    assert note["tactical_board_json"] == {"pitch_kind": "soccer_full", "tokens": []}
+    # Untouched fields keep their original values.
+    assert note["title"] == "Initial observation"
+    assert note["note_context"] == "observation"
+
+
+@pytest.mark.asyncio
+async def test_observation_partial_patch_revalidates_video_note_state(client, auth_headers):
+    """PATCH must not be able to leave a video note un-anchored. A
+    direct attempt to clear `match_id` while keeping `note_context =
+    'video'` must fail."""
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Anchor FC", "date": "2026-05-12",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    create = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 30,
+        "title": "Anchored video note", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    bad = await client.patch(f"/api/coach/notes/{note_id}", json={
+        "match_id": None,
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_context_flip_video_to_observation_supported(client, auth_headers):
+    """Flipping a video note to an observation note via PATCH is
+    supported — the merged-state validator stops requiring match/slot/
+    timestamp once `note_context` becomes 'observation'."""
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Flip FC", "date": "2026-05-13",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    create = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 12,
+        "title": "Was a video note", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    flip = await client.patch(f"/api/coach/notes/{note_id}", json={
+        "note_context": "observation",
+        "event_type": "meeting",
+        "event_title": "Coach review chat",
+    }, headers=auth_headers)
+    assert flip.status_code == 200, flip.text
+    note = flip.json()["note"]
+    assert note["note_context"] == "observation"
+    # The original match/slot/timestamp stay on the row — they're not
+    # required for observation notes but clearing them isn't required
+    # either. A future surface that cares can ignore them when
+    # `note_context == "observation"`.
+    assert note["match_id"] == match_id
+
+
+@pytest.mark.asyncio
+async def test_observation_context_flip_observation_to_video_requires_match(client, auth_headers):
+    """Flipping an observation note BACK to video without supplying
+    match/slot/timestamp must 422."""
+    create = await client.post("/api/coach/notes", json={
+        "title": "Original observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "practice",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    bad = await client.patch(f"/api/coach/notes/{note_id}", json={
+        "note_context": "video",
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_observation_coach_sees_full_payload_including_private_note(client, auth_headers):
+    """Coach round-trip on an observation note still surfaces
+    coach_private_note (privacy ladder shared with video notes)."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Coach-only thoughts",
+        "note_context": "observation",
+        "category": "other", "visibility": "private",
+        "event_type": "tactical",
+        "coach_private_note": "Sketch — keep to bench.",
+        "what_to_do_next": "Discuss with assistant.",
+    }, headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["note"]["coach_private_note"] == "Sketch — keep to bench."
+
+
+@pytest.mark.asyncio
+async def test_observation_coach_private_note_scrubbed_for_viewer(client, auth_headers):
+    """Privacy invariant: a team-visible observation note shows up in
+    My Feedback for the viewer, but `coach_private_note` is `""`."""
+    await client.post("/api/users", json={
+        "username": "obs_viewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer = await _login(client, "obs_viewer")
+    create = await client.post("/api/coach/notes", json={
+        "title": "Team observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "meeting",
+        "player_summary": "Friday meeting takeaways.",
+        "coach_private_note": "INTERNAL — not for players.",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    feedback = await client.get("/api/my-feedback", headers=viewer)
+    payload = feedback.json()
+    notes = [n for n in payload["notes"] if n["id"] == note_id]
+    assert notes, "team-visible observation should appear in My Feedback"
+    assert notes[0]["coach_private_note"] == ""
+    assert notes[0]["note_context"] == "observation"
+
+
+@pytest.mark.asyncio
+async def test_observation_private_note_hidden_from_viewer(client, auth_headers):
+    await client.post("/api/users", json={
+        "username": "obs_viewer_priv", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer = await _login(client, "obs_viewer_priv")
+    await client.post("/api/coach/notes", json={
+        "title": "Private observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "private",
+        "event_type": "meeting",
+        "what_happened": "Coach-only.",
+    }, headers=auth_headers)
+    feedback = await client.get("/api/my-feedback", headers=viewer)
+    titles = [n["title"] for n in feedback.json()["notes"]]
+    assert "Private observation" not in titles
+
+
+@pytest.mark.asyncio
+async def test_observation_player_visibility_only_linked_family(client, auth_headers):
+    family_resp = await client.post("/api/users", json={
+        "username": "obs_family", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    family_id = family_resp.json()["user"]["id"]
+    await client.post("/api/users", json={
+        "username": "obs_unrelated", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Obs Player", "jersey_number": "11",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": family_id, "relationship": "parent",
+    }, headers=auth_headers)
+    create = await client.post("/api/coach/notes", json={
+        "title": "Player-tagged observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "player",
+        "event_type": "tactical",
+        "player_ids": [player_id],
+        "player_summary": "Heads up before pressure.",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+
+    family = await _login(client, "obs_family")
+    family_feedback = await client.get("/api/my-feedback", headers=family)
+    assert note_id in [n["id"] for n in family_feedback.json()["notes"]]
+
+    unrelated = await _login(client, "obs_unrelated")
+    unrelated_feedback = await client.get("/api/my-feedback", headers=unrelated)
+    assert note_id not in [n["id"] for n in unrelated_feedback.json()["notes"]]
+
+
+@pytest.mark.asyncio
+async def test_observation_note_appears_in_coach_list(client, auth_headers):
+    """GET /api/coach/notes returns observation notes alongside video
+    notes so existing list filtering keeps working."""
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Mixed FC", "date": "2026-05-14",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    video = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5,
+        "title": "Video note", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    obs = await client.post("/api/coach/notes", json={
+        "title": "Observation note",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "practice",
+    }, headers=auth_headers)
+    listing = await client.get("/api/coach/notes", headers=auth_headers)
+    payload = listing.json()
+    contexts = {n["id"]: n["note_context"] for n in payload["notes"]}
+    assert contexts.get(video.json()["note"]["id"]) == "video"
+    assert contexts.get(obs.json()["note"]["id"]) == "observation"
+
+
+@pytest.mark.asyncio
+async def test_observation_thumbnail_get_returns_404(client, auth_headers, monkeypatch):
+    """GET /api/coach/notes/{id}/thumbnail for an observation note
+    must return 404 (no video frame to capture). Same response shape
+    as the missing-file branch so a viewer can't probe."""
+    # Stub the generator just so we'd notice if it was ever invoked.
+    calls = await _install_thumbnail_stub(monkeypatch)
+    create = await client.post("/api/coach/notes", json={
+        "title": "Observation no-video",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "meeting",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    await _drain_background_tasks()
+    assert calls == [], (
+        "observation note must not schedule any thumbnail generation; "
+        f"got {len(calls)} call(s)"
+    )
+    resp = await client.get(f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_observation_thumbnail_regenerate_returns_generated_false(client, auth_headers):
+    """POST regenerate for an observation note returns the existing
+    `{ok: true, generated: false}` shape so frontends don't need a
+    new branch."""
+    create = await client.post("/api/coach/notes", json={
+        "title": "Observation regen-target",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "tactical",
+        "player_summary": "n/a",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    resp = await client.post(
+        f"/api/coach/notes/{note_id}/thumbnail/regenerate",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"ok": True, "generated": False}
+
+
+@pytest.mark.asyncio
+async def test_observation_create_does_not_invoke_thumbnail_generator(client, auth_headers, monkeypatch):
+    """Defense in depth: observation note POST must not schedule any
+    background thumbnail generation. Pairs with the GET 404 test."""
+    calls = await _install_thumbnail_stub(monkeypatch)
+    await client.post("/api/coach/notes", json={
+        "title": "Observation no-spawn",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "practice",
+    }, headers=auth_headers)
+    await _drain_background_tasks()
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_observation_delete_does_not_fail_without_thumbnail(client, auth_headers):
+    """DELETE on an observation note must succeed even though there
+    is no thumbnail file on disk and no `match_id` to construct a
+    path from."""
+    create = await client.post("/api/coach/notes", json={
+        "title": "Observation to delete",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "other",
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    resp = await client.delete(f"/api/coach/notes/{note_id}", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_observation_video_note_thumbnail_still_works(client, auth_headers, data_dir, monkeypatch):
+    """Phase 6a invariant: existing video-note thumbnail generation
+    keeps working — not regressed by the observation-note skip path."""
+    calls = await _install_thumbnail_stub(monkeypatch)
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Still Works FC", "date": "2026-05-15",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    note = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 7,
+        "title": "Video thumbnail check", "category": "other", "visibility": "team",
+    }, headers=auth_headers)
+    await _drain_background_tasks()
+    assert len(calls) == 1
+    note_id = note.json()["note"]["id"]
+    resp = await client.get(
+        f"/api/coach/notes/{note_id}/thumbnail", headers=auth_headers
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_observation_in_player_development_profile(client, auth_headers):
+    """Phase 5a aggregation must include visible observation notes
+    alongside video notes — observation notes are still notes."""
+    family_resp = await client.post("/api/users", json={
+        "username": "obs_dev_family", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    family_id = family_resp.json()["user"]["id"]
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Dev Player", "jersey_number": "21",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={
+        "player_id": player_id, "user_id": family_id, "relationship": "parent",
+    }, headers=auth_headers)
+
+    # Two notes for this player: one video, one observation. Both
+    # team-visible so the linked viewer sees both.
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Dev FC", "date": "2026-05-16",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 1,
+        "title": "Match note", "category": "other", "visibility": "team",
+        "player_ids": [player_id],
+    }, headers=auth_headers)
+    await client.post("/api/coach/notes", json={
+        "title": "Practice observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "practice",
+        "player_ids": [player_id],
+        "what_to_do_next": "Drill again Thursday.",
+        "note_type": "correction",
+    }, headers=auth_headers)
+    # A private observation should NOT show up on the viewer surface.
+    await client.post("/api/coach/notes", json={
+        "title": "Private observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "private",
+        "event_type": "meeting",
+        "player_ids": [player_id],
+        "coach_private_note": "Coach-only.",
+    }, headers=auth_headers)
+
+    coach_profile = await client.get(
+        f"/api/coach/players/{player_id}/development", headers=auth_headers,
+    )
+    assert coach_profile.status_code == 200
+    coach_counts = coach_profile.json()["profile"]["counts"]
+    # Coach sees all 3 notes.
+    assert coach_counts["notes"] == 3
+
+    family = await _login(client, "obs_dev_family")
+    viewer_profile = await client.get(
+        f"/api/my-feedback/players/{player_id}/development", headers=family,
+    )
+    assert viewer_profile.status_code == 200
+    viewer_counts = viewer_profile.json()["profile"]["counts"]
+    # Viewer sees the 2 team-visible notes (video + observation),
+    # never the private one.
+    assert viewer_counts["notes"] == 2
+    titles = [n["title"] for n in viewer_profile.json()["profile"]["recent_notes"]]
+    assert "Practice observation" in titles
+    assert "Private observation" not in titles
