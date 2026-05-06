@@ -3399,6 +3399,43 @@ async def test_observation_coach_private_note_scrubbed_for_viewer(client, auth_h
 
 
 @pytest.mark.asyncio
+async def test_observation_coach_private_note_scrubbed_via_playlist_items(client, auth_headers):
+    """Defense-in-depth — `_filter_notes_for_user` scrubs `coach_private_note`
+    on the top-level `notes[]` AND on the embedded `playlists[].items[]`
+    via `my_feedback`'s `items_source`. The chain doesn't differentiate
+    by `note_context`, so observation notes inside a team playlist must
+    also surface to viewers with `coach_private_note=""`."""
+    await client.post("/api/users", json={
+        "username": "obs_pl_viewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer = await _login(client, "obs_pl_viewer")
+    note = await client.post("/api/coach/notes", json={
+        "title": "Team observation in playlist",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "event_type": "meeting",
+        "coach_private_note": "INTERNAL — must not leak via playlist.",
+    }, headers=auth_headers)
+    note_id = note.json()["note"]["id"]
+    pl = await client.post("/api/coach/playlists", json={
+        "title": "Team observation playlist",
+        "visibility": "team",
+        "note_ids": [note_id],
+    }, headers=auth_headers)
+    assert pl.status_code == 200
+    feedback = await client.get("/api/my-feedback", headers=viewer)
+    payload = feedback.json()
+    leaked_items = [
+        i for p in payload["playlists"] for i in p.get("items", [])
+        if i.get("coach_private_note")
+    ]
+    assert leaked_items == [], (
+        "observation-note coach_private_note leaked via playlists[].items[]: "
+        f"{[(i.get('title'), i.get('coach_private_note')) for i in leaked_items]}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_observation_private_note_hidden_from_viewer(client, auth_headers):
     await client.post("/api/users", json={
         "username": "obs_viewer_priv", "password": "password123", "role": "viewer",
