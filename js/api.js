@@ -95,6 +95,12 @@ export const apiMixin = {
         // context. The caches are rebuilt lazily on the next mount.
         this.clearCoachNoteThumbnailCache?.();
         this.clearCoachClipThumbnailCache?.();
+        // Phase 5b: drop the sticky My Feedback Development player
+        // selection so user A's UUID can't seed user B's first render.
+        // The in-render guard in `renderFeedbackDevelopment` would also
+        // catch a mismatch, but resetting here keeps the cleanup
+        // pattern consistent with the coaching state above.
+        this._feedbackDevPlayerId = null;
         const navAdmin = document.getElementById('nav-admin');
         if (navAdmin) navAdmin.style.display = 'none';
         const navCoach = document.getElementById('nav-coach');

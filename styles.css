@@ -9432,6 +9432,10 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     font-size: 1.05rem;
     letter-spacing: 0.04em;
 }
+[data-theme="light"] .player-dev-jersey {
+    background: rgba(23, 113, 201, 0.10);
+    color: #1d4ed8;
+}
 
 .player-dev-name {
     margin: 0;
@@ -9585,9 +9589,43 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 .player-dev-chip--type[data-tone="question"]      { border-color: rgba(59, 130, 246, 0.55); }
 .player-dev-chip--type[data-tone="team_concept"]  { border-color: rgba(168, 85, 247, 0.55); }
 .player-dev-chip--type[data-tone="individual_goal"]{ border-color: rgba(20, 184, 166, 0.55); }
+/* Light-mode tone overrides — mirrors `.feedback-tone-pill[data-tone=…]`
+ * (see ~line 7722) so the chip backgrounds + text remain readable on a
+ * light card. Without these the 55%-opacity dark-tuned border on a near-
+ * transparent background dropped contrast below readable on light. */
+[data-theme="light"] .player-dev-chip--type[data-tone="positive"] {
+    background: rgba(22, 163, 74, 0.14);
+    color: #166534;
+    border-color: rgba(22, 163, 74, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="correction"] {
+    background: rgba(217, 119, 6, 0.14);
+    color: #92400e;
+    border-color: rgba(217, 119, 6, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="question"] {
+    background: rgba(37, 99, 235, 0.12);
+    color: #1d4ed8;
+    border-color: rgba(37, 99, 235, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="team_concept"] {
+    background: rgba(126, 34, 206, 0.12);
+    color: #6b21a8;
+    border-color: rgba(126, 34, 206, 0.40);
+}
+[data-theme="light"] .player-dev-chip--type[data-tone="individual_goal"] {
+    background: rgba(13, 148, 136, 0.12);
+    color: #115e59;
+    border-color: rgba(13, 148, 136, 0.40);
+}
 .player-dev-chip--tag {
     background: rgba(168, 85, 247, 0.10);
     border-color: rgba(168, 85, 247, 0.30);
+}
+[data-theme="light"] .player-dev-chip--tag {
+    background: rgba(126, 34, 206, 0.10);
+    color: #6b21a8;
+    border-color: rgba(126, 34, 206, 0.35);
 }
 
 .player-dev-meta-row {
@@ -9739,6 +9777,19 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 .player-dev-note-next.is-emphasized {
     background: rgba(245, 158, 11, 0.10);
 }
+/* Light-mode overrides — the 8–10% opacity tints disappear on a light
+ * background. Mirrors the `.feedback-structured-item` precedent
+ * (see ~line 7813) by inverting transparency direction so the tint
+ * still reads against #fff. */
+[data-theme="light"] .player-dev-note-next {
+    background: rgba(13, 148, 136, 0.10);
+    border-left: 3px solid rgba(13, 148, 136, 0.45);
+    padding-left: 0.55rem;
+}
+[data-theme="light"] .player-dev-note-next.is-emphasized {
+    background: rgba(217, 119, 6, 0.12);
+    border-left-color: rgba(217, 119, 6, 0.55);
+}
 .player-dev-note-next-label {
     display: inline-block;
     margin-right: 0.35rem;
@@ -9747,6 +9798,12 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 }
 .player-dev-note-next.is-emphasized .player-dev-note-next-label {
     color: rgba(245, 158, 11, 1);
+}
+[data-theme="light"] .player-dev-note-next-label {
+    color: #115e59;
+}
+[data-theme="light"] .player-dev-note-next.is-emphasized .player-dev-note-next-label {
+    color: #92400e;
 }
 
 /* ----- Recent clips ----- */
@@ -9852,15 +9909,45 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     border-radius: 999px;
     font-size: 0.85rem;
     cursor: pointer;
+    /* Smooth interaction-state transitions matching `.coach-subnav-btn`. */
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 [data-theme="light"] .feedback-dev-player-chip {
     background: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.10);
 }
+.feedback-dev-player-chip:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+[data-theme="light"] .feedback-dev-player-chip:hover {
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.18);
+}
+/* Visible keyboard focus — never rely on the browser default outline,
+ * which gets suppressed by `appearance: none` on some platforms.
+ * Matches the focus-ring treatment used elsewhere in the app. */
+.feedback-dev-player-chip:focus-visible {
+    outline: 2px solid var(--accent, #298bed);
+    outline-offset: 2px;
+}
 .feedback-dev-player-chip.is-active {
     background: rgba(41, 139, 237, 0.16);
     border-color: var(--accent, #298bed);
     color: var(--text-main);
+}
+[data-theme="light"] .feedback-dev-player-chip.is-active {
+    background: rgba(23, 113, 201, 0.14);
+    border-color: var(--accent, #298bed);
+    color: #1d4ed8;
+}
+/* Keep the active state visually dominant on hover so the selected
+ * chip never silently regresses to the resting hover style. */
+.feedback-dev-player-chip.is-active:hover {
+    background: rgba(41, 139, 237, 0.22);
+}
+[data-theme="light"] .feedback-dev-player-chip.is-active:hover {
+    background: rgba(23, 113, 201, 0.20);
 }
 
 /* ----- Mobile collapse ----- */

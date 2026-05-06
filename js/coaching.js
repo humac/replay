@@ -69,6 +69,12 @@ export const coachingMixin = {
     _coachPlaylistFreezeTimer: null,
     _coachTab: 'roster',
     _feedbackTab: 'playlists',
+    // Phase 5b: sticky linked-player selection inside the My Feedback
+    // Development sub-tab. Reset by `setLoggedOut()` so it cannot leak
+    // across users — the in-render guard in `renderFeedbackDevelopment`
+    // is a second line of defense for stale state during a single
+    // session (e.g. a coach unlinking a player via the Roster tab).
+    _feedbackDevPlayerId: null,
     _coachReview: null,
     _coachCanvasId: 'coach-drawing-canvas',
     _coachVideoId: 'coach-review-video',
@@ -843,22 +849,33 @@ export const coachingMixin = {
      *  state, scroll position, and the Coach Review video element are
      *  all preserved. */
     _refreshCoachNoteThumbnailSurfaces() {
-        // The 6 containers currently rendered with thumbnail tiles —
-        // each owns one of the size variants from `_coachNoteThumbHtml`.
-        // The list is intentionally hard-coded rather than discovered
-        // because each container has a different lifecycle (e.g. the
-        // playlist session rail lives inside a modal that may not be
-        // mounted). A no-op `null` check covers each absent surface.
+        // Containers currently rendered with thumbnail tiles — each owns
+        // one of the size variants from `_coachNoteThumbHtml`. The list
+        // is intentionally hard-coded rather than discovered because
+        // each container has a different lifecycle (e.g. the playlist
+        // session rail lives inside a modal that may not be mounted).
+        // A no-op `null` check covers each absent surface.
         const containerIds = [
-            'coach-notes-list',          // Coach > Notes
-            'coach-review-notes',        // Coach > Review timeline rail
-            'coach-playlists-list',      // Coach > Playlists
-            'feedback-notes-list',       // My Feedback > Notes
-            'feedback-playlists-list',   // My Feedback > Playlists
+            'coach-notes-list',                // Coach > Notes
+            'coach-review-notes',              // Coach > Review timeline rail
+            'coach-playlists-list',            // Coach > Playlists
+            'feedback-notes-list',             // My Feedback > Notes
+            'feedback-playlists-list',         // My Feedback > Playlists
+            // Phase 5b — also remount thumbnails inside the viewer
+            // Development tab. Re-mounting both note + clip thumbnails
+            // so a regenerate hit while Development is open surfaces
+            // the new JPEG without forcing a tab re-render.
+            'feedback-development-content',    // My Feedback > Development
         ];
         for (const id of containerIds) {
             const el = document.getElementById(id);
-            if (el) this.mountCoachNoteThumbnailsIn(el);
+            if (el) {
+                this.mountCoachNoteThumbnailsIn(el);
+                // Recent clips section also lives in the development
+                // surface and renders `<img data-coach-clip-thumb>`
+                // placeholders — refresh those alongside the notes.
+                this.mountCoachClipThumbnailsIn?.(el);
+            }
         }
         // The focused-feedback player modal's session rail is not an
         // id-bound container — it's `[data-field="rail"]` inside a
@@ -866,6 +883,17 @@ export const coachingMixin = {
         // don't accidentally pick up an unrelated `[data-field="rail"]`.
         const railEl = this._feedbackPlayer?.body?.querySelector?.('[data-field="rail"]');
         if (railEl) this.mountCoachNoteThumbnailsIn(railEl);
+        // Phase 5b — the coach development modal mounts a transient
+        // `.player-dev-modal-body` div that's re-created on each open.
+        // It's not id-addressable, but we can find the live one by
+        // class so a Coach > Notes regenerate refreshes the modal in
+        // place when both happen to be open. Only one such body is
+        // ever in the DOM at a time (the modal layer enforces this).
+        const modalBody = document.querySelector('.player-dev-modal-body');
+        if (modalBody) {
+            this.mountCoachNoteThumbnailsIn(modalBody);
+            this.mountCoachClipThumbnailsIn?.(modalBody);
+        }
     },
 
     async openCoachNoteModal(noteId = null) {
@@ -4588,9 +4616,14 @@ export const coachingMixin = {
     // Both go through the same `_renderPlayerDevelopmentProfile` so the
     // visible structure stays consistent. Privacy lives entirely server-
     // side: the coach surface renders whatever the coach endpoint
-    // returned (including `coach_private_note` text, `linked_accounts`),
-    // the viewer surface renders whatever the viewer endpoint returned
-    // (already scrubbed). No client-side authorization decisions.
+    // returned (the coach payload includes `linked_accounts` — surfaced
+    // by `_renderDevHeader` — but `coach_private_note` is intentionally
+    // NOT templated even on the coach surface; see
+    // `_renderDevNoteItem`'s docstring for the rationale and Phase 6
+    // for when a coach-only block may surface that text). The viewer
+    // surface renders whatever the viewer endpoint returned (already
+    // scrubbed by `_strip_private_fields`). No client-side
+    // authorization decisions.
 
     async openCoachPlayerDevelopmentModal(playerId) {
         if (!this.canCoach()) return;
@@ -4645,17 +4678,24 @@ export const coachingMixin = {
             this._feedbackDevPlayerId = String(players[0].id);
         }
         const activeId = this._feedbackDevPlayerId;
+        // Player IDs are UUID strings; build a safe JS literal for the
+        // onclick attribute the same way the Roster row does (see
+        // `renderCoachRoster`). `this.esc()` HTML-encodes for innerHTML
+        // and is the wrong tool for JS-literal construction.
         const chips = players.length > 1 ? `
             <div class="feedback-dev-player-strip" role="tablist" aria-label="Linked players">
-                ${players.map((p) => `
+                ${players.map((p) => {
+                    const playerIdJs = JSON.stringify(String(p.id)).replace(/"/g, '&quot;');
+                    const isActive = String(p.id) === activeId;
+                    return `
                     <button type="button"
-                            class="feedback-dev-player-chip${String(p.id) === activeId ? ' is-active' : ''}"
+                            class="feedback-dev-player-chip${isActive ? ' is-active' : ''}"
                             role="tab"
-                            aria-selected="${String(p.id) === activeId ? 'true' : 'false'}"
-                            onclick="app.setFeedbackDevPlayer('${this.esc(String(p.id))}')">
+                            aria-selected="${isActive ? 'true' : 'false'}"
+                            onclick="app.setFeedbackDevPlayer(${playerIdJs})">
                         ${this.esc(this.playerLabel(p))}
-                    </button>
-                `).join('')}
+                    </button>`;
+                }).join('')}
             </div>` : '';
         root.innerHTML = `${chips}<div id="feedback-development-profile"><div class="session-empty">Loading development profile…</div></div>`;
         const target = document.getElementById('feedback-development-profile');
@@ -4674,7 +4714,13 @@ export const coachingMixin = {
     },
 
     setFeedbackDevPlayer(playerId) {
-        this._feedbackDevPlayerId = String(playerId);
+        // Defensive: only accept non-empty strings. The chip handlers
+        // never pass undefined/null today, but a stray inline call
+        // shouldn't be able to wedge the selector into a "no player"
+        // limbo state.
+        const id = playerId == null ? '' : String(playerId);
+        if (!id) return;
+        this._feedbackDevPlayerId = id;
         this.renderFeedbackDevelopment();
     },
 
@@ -4961,6 +5007,15 @@ export const coachingMixin = {
                 <h4 class="player-dev-section-title">Recent clips</h4>
                 <ul class="player-dev-clip-list">
                     ${clips.map((c) => {
+                        // Validate the id once: if it's missing or not a
+                        // finite number, drop the Watch/Preview button
+                        // (the lookup helper would silently no-op anyway,
+                        // but rendering a button that does nothing is
+                        // worse than not rendering it). Server JSON
+                        // always populates this today; the guard is
+                        // defense-in-depth for malformed payloads.
+                        const cid = Number(c?.id);
+                        const idValid = Number.isFinite(cid) && cid > 0;
                         const meta = [
                             this.matchLabel(c.match_id),
                             this.slotLabel(c.slot),
@@ -4977,7 +5032,7 @@ export const coachingMixin = {
                                     ${c.description ? `<p class="player-dev-clip-desc">${this.esc(c.description)}</p>` : ''}
                                 </div>
                                 <div class="player-dev-clip-actions">
-                                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="${watchHandler}(${Number(c.id)})">${viewer ? '▶ Watch' : 'Preview'}</button>
+                                    ${idValid ? `<button type="button" class="mini-action-btn mini-action-btn-primary" onclick="${watchHandler}(${cid})">${viewer ? '▶ Watch' : 'Preview'}</button>` : ''}
                                 </div>
                             </li>`;
                     }).join('')}
@@ -4994,20 +5049,32 @@ export const coachingMixin = {
                     <div class="player-dev-empty">No playlists yet.</div>
                 </section>`;
         }
-        const playHandler = viewer ? 'app.openFeedbackPlaylist' : null;
+        // Phase 5b finding #11: the coach surface previously rendered
+        // no Preview button for recent playlists, an undocumented
+        // asymmetry vs. recent clips. Reuse the existing
+        // `previewCoachPlaylist` helper from Coach > Playlists — it
+        // looks the playlist up in `_coachBundle.playlists` (always
+        // loaded on the coach surface) and opens the same focused
+        // feedback player the viewer surface uses, so this introduces
+        // no new playback behavior.
+        const playHandler = viewer ? 'app.openFeedbackPlaylist' : 'app.previewCoachPlaylist';
+        const playLabel   = viewer ? '▶ Play session' : '▶ Preview';
         return `
             <section class="player-dev-section">
                 <h4 class="player-dev-section-title">Recent playlists</h4>
                 <ul class="player-dev-playlist-list">
-                    ${playlists.map((p) => `
+                    ${playlists.map((p) => {
+                        const pid = Number(p?.id);
+                        const idValid = Number.isFinite(pid) && pid > 0;
+                        return `
                         <li class="player-dev-playlist-item">
                             <div class="player-dev-playlist-body">
                                 <strong>${this.esc(p.title || 'Untitled playlist')}</strong>
                                 <span class="player-dev-playlist-meta">${this.esc(String(p.item_count || 0))} item${(p.item_count || 0) === 1 ? '' : 's'} · ${this.esc(p.visibility || '')}</span>
                             </div>
-                            ${playHandler ? `<button type="button" class="mini-action-btn mini-action-btn-primary" onclick="${playHandler}(${Number(p.id)})">▶ Play session</button>` : ''}
-                        </li>
-                    `).join('')}
+                            ${idValid ? `<button type="button" class="mini-action-btn mini-action-btn-primary" onclick="${playHandler}(${pid})">${playLabel}</button>` : ''}
+                        </li>`;
+                    }).join('')}
                 </ul>
             </section>`;
     },
