@@ -1233,17 +1233,41 @@ export const coachingMixin = {
      *  NOT generate clip-specific thumbnails (per the roadmap). When
      *  a clip has a `source_note_id`, we render the source note's
      *  thumbnail as a visual preview using the existing visibility-
-     *  checked endpoint. Otherwise the placeholder film-strip glyph
-     *  remains. */
+     *  checked endpoint.
+     *
+     *  Issue #104: every clip created before the composer started
+     *  setting `source_note_id` (and any clip created from "+ New
+     *  clip" without a co-located note) carries `source_note_id =
+     *  null`, so the original code path always rendered the
+     *  placeholder tile. Pre-existing clips can't be back-filled
+     *  because `UpdateCoachingClipRequest` is `extra="forbid"` and
+     *  the docstring on `db.update_coaching_clip` warns that
+     *  rebinding mid-life would silently swap the captured drawing
+     *  snapshot. Instead, when no explicit linkage exists we look
+     *  for a co-located note in the client-side bundle / feedback
+     *  payload (same `match_id` / `slot`, `timestamp_seconds` inside
+     *  the clip window) and use ITS visibility-checked thumbnail
+     *  endpoint as the render-time fallback. **Privacy**: this only
+     *  picks notes already in the data payload the server returned
+     *  for THIS user, so a viewer who can't see a private note never
+     *  sees its thumbnail surface here. The thumbnail GET endpoint
+     *  also runs `_can_view_coach_note` per-fetch — defense in depth. */
     _coachClipThumbHtml(clip) {
-        const noteId = Number(clip?.source_note_id);
+        let noteId = Number(clip?.source_note_id);
         if (!Number.isFinite(noteId) || noteId <= 0) {
-            // No source-note linkage — render a plain placeholder.
-            return `
-                <div class="coach-thumb coach-thumb--list" data-thumb data-thumb-state="placeholder" aria-hidden="true">
-                    <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
-                </div>
-            `;
+            // No explicit linkage — try the client-side fallback.
+            // `notes` covers both the coach bundle and the viewer
+            // `/api/my-feedback` payload (same `notes[]` shape).
+            const notes = this._coachBundle?.notes || this._feedbackData?.notes || [];
+            const fallback = this._coLocatedNoteId(clip, notes);
+            if (!fallback) {
+                return `
+                    <div class="coach-thumb coach-thumb--list" data-thumb data-thumb-state="placeholder" aria-hidden="true">
+                        <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
+                    </div>
+                `;
+            }
+            noteId = fallback;
         }
         // Reuse the source note's thumbnail. The
         // `mountCoachNoteThumbnailsIn` helper picks this <img> up via
@@ -1254,6 +1278,37 @@ export const coachingMixin = {
                 <span class="coach-thumb-time">${this.esc(this.formatClock(clip?.start_seconds))}</span>
             </div>
         `;
+    },
+
+    /** Find a note from `notes` that's most representative of the
+     *  clip — same `match_id` / `slot`, `timestamp_seconds` inside
+     *  `[start_seconds, end_seconds]`, closest to window midpoint
+     *  when several match. Returns the note id or null. Used by
+     *  `_coachClipThumbHtml` as a render-time thumbnail fallback for
+     *  clips that have no explicit `source_note_id`. */
+    _coLocatedNoteId(clip, notes) {
+        if (!clip || !Array.isArray(notes) || !notes.length) return null;
+        const matchId = clip.match_id;
+        const slot = clip.slot || 'full';
+        const start = Number(clip.start_seconds);
+        const end = Number(clip.end_seconds);
+        if (!matchId || !(end > start)) return null;
+        const mid = (start + end) / 2;
+        let best = null;
+        let bestDelta = Infinity;
+        for (const n of notes) {
+            if (n.match_id !== matchId) continue;
+            if ((n.slot || 'full') !== slot) continue;
+            const ts = Number(n.timestamp_seconds);
+            if (!Number.isFinite(ts)) continue;
+            if (ts < start || ts > end) continue;
+            const delta = Math.abs(ts - mid);
+            if (delta < bestDelta) {
+                best = Number(n.id);
+                bestDelta = delta;
+            }
+        }
+        return best;
     },
 
     /** Returns "1:23" style duration for a clip (clamped to ≥ 0). */
@@ -1295,12 +1350,56 @@ export const coachingMixin = {
         // Also cap end at the video's duration so a clip near the
         // end of the match doesn't suggest a timestamp past EOS.
         const safe_end = Math.min(capped_end, video.duration);
+        // Issue #104: clip thumbnails reuse the source note's thumbnail,
+        // but the composer never set `source_note_id` so every saved
+        // clip rendered as a placeholder tile. Derive a candidate source
+        // note here when the coach is clearly working off a moment:
+        //   1) prefer the explicitly-active timeline chip (set when the
+        //      coach clicks a note in Coach Review),
+        //   2) otherwise pick the same-match/same-slot note whose
+        //      `timestamp_seconds` falls inside the [start, end] window.
+        // The candidate is a hint — the composer renders a "From note
+        // #N" pill so the coach can confirm or clear it before saving.
+        const sourceNoteId = this._deriveClipSourceNoteId(
+            review.matchId, review.slot || 'full', start, safe_end,
+        );
         this.openCoachClipModal(null, {
             match_id: review.matchId,
             slot: review.slot || 'full',
             start_seconds: Number(start.toFixed(1)),
             end_seconds: Number(safe_end.toFixed(1)),
+            source_note_id: sourceNoteId,
         });
+    },
+
+    /** Pick a source note for a new clip when the coach is clearly
+     *  working off a specific moment. Returns the note id or null.
+     *  Order of preference:
+     *    1. The active timeline chip in Coach Review (`_coachActiveNoteId`).
+     *    2. A note on the same `match_id`/`slot` whose
+     *       `timestamp_seconds` falls inside `[start, end]`. When
+     *       multiple notes match, pick the one closest to the window
+     *       midpoint (most representative frame).
+     *  Returns null when no plausible source note exists — the clip
+     *  will then render the placeholder tile, which is the correct
+     *  degraded state. */
+    _deriveClipSourceNoteId(matchId, slot, start, end) {
+        const notes = this._coachBundle?.notes || [];
+        if (!matchId || !notes.length) return null;
+        // Prefer the explicitly-selected note when it matches the clip's
+        // match/slot. A coach who clicked a chip and then "Save Clip"
+        // expects that note to drive the clip.
+        if (this._coachActiveNoteId) {
+            const active = notes.find((n) => Number(n.id) === Number(this._coachActiveNoteId));
+            if (active && active.match_id === matchId && (active.slot || 'full') === slot) {
+                return Number(active.id);
+            }
+        }
+        // Fall through to the same co-located picker the render-time
+        // fallback uses, so the linkage logic has one source of truth.
+        return this._coLocatedNoteId({
+            match_id: matchId, slot, start_seconds: start, end_seconds: end,
+        }, notes);
     },
 
     /** Phase 4c (issue #100): single source of truth for the Save
@@ -1429,15 +1528,21 @@ export const coachingMixin = {
             });
         }
 
-        // Source-note pill — show on EDIT only when the clip was
-        // created from a note. `source_note_id` is intentionally NOT
-        // editable (rebinding would silently swap the saved drawing
-        // snapshot — see `db.update_coaching_clip`'s docstring).
-        if (clip?.source_note_id) {
+        // Source-note pill — show on EDIT when the clip was created
+        // from a note, OR on CREATE when `openClipComposerFromReview`
+        // pre-derived a candidate source note (issue #104). On edit
+        // `source_note_id` is intentionally NOT editable (rebinding
+        // would silently swap the saved drawing snapshot — see
+        // `db.update_coaching_clip`'s docstring). On create the coach
+        // can simply not save with the candidate (the field is hidden
+        // on the form; it's a hint, not a control).
+        const seedSourceNoteId = Number(seed?.source_note_id) || null;
+        const effectiveSourceNoteId = clip?.source_note_id || seedSourceNoteId || null;
+        if (effectiveSourceNoteId) {
             const sourceRow = body.querySelector('[data-field="sourceRow"]');
             const sourceLabel = body.querySelector('[data-field="sourceLabel"]');
             sourceRow.hidden = false;
-            sourceLabel.textContent = `From note #${clip.source_note_id}`;
+            sourceLabel.textContent = `From note #${effectiveSourceNoteId}`;
         }
 
         const result = await this.formModal({
@@ -1458,7 +1563,7 @@ export const coachingMixin = {
                     this.showError(`Clip duration must be ${COACH_CLIP_MAX_DURATION_SECONDS} seconds or less.`);
                     return;
                 }
-                close({
+                const out = {
                     match_id: matchVal,
                     slot: root.querySelector('[data-field="slot"]').value || 'full',
                     start_seconds: start,
@@ -1468,7 +1573,16 @@ export const coachingMixin = {
                     category: root.querySelector('[data-field="category"]').value || 'other',
                     visibility: root.querySelector('[data-field="visibility"]').value || 'private',
                     player_ids: Array.from(root.querySelector('[data-field="players"]').querySelectorAll('.coach-check-option.is-selected')).map((b) => b.dataset.value),
-                });
+                };
+                // Issue #104: only include `source_note_id` on CREATE
+                // when the seed pre-derived one. On EDIT we never
+                // re-emit it (the backend's `UpdateCoachingClipRequest`
+                // is `extra="forbid"` and rebinding mid-life would
+                // silently swap the captured drawing snapshot).
+                if (!clip && seedSourceNoteId) {
+                    out.source_note_id = seedSourceNoteId;
+                }
+                close(out);
             },
         });
         if (!result) return;
@@ -3968,6 +4082,21 @@ export const coachingMixin = {
         // wiring the equivalent of `_renderFeedbackTelestration` for
         // clip drawings. Note + playlist playback paths still call
         // `setupCoachCanvas` themselves — unchanged.
+        //
+        // Issue #105: the cloned `<canvas id="feedback-drawing-canvas">`
+        // sits absolute-positioned over the `<video>` with
+        // `pointer-events: auto` (see `.coach-drawing-canvas` in
+        // styles.css). For note / playlist mode `setupCoachCanvas` is
+        // the bridge that consumes those events for painting. In clip
+        // mode nothing consumes them — but the overlay still receives
+        // every click, swallowing presses on the native video Play /
+        // Pause / scrub controls. Hide and decouple it explicitly so
+        // the user can drive playback through the native chrome.
+        const clipCanvas = document.getElementById('feedback-drawing-canvas');
+        if (clipCanvas) {
+            clipCanvas.style.display = 'none';
+            clipCanvas.style.pointerEvents = 'none';
+        }
 
         const startTime = Math.max(0, Number(clip.start_seconds || 0));
         const endTime = Math.max(startTime + 0.5, Number(clip.end_seconds || 0));
