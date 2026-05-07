@@ -77,7 +77,7 @@ export function normalizeBoardForRender(board) {
     const tokens = Array.isArray(board.tokens) ? board.tokens : [];
     const shapes = Array.isArray(board.shapes) ? board.shapes : [];
     const validKinds = new Set(['player', 'ball']);
-    const validShapeKinds = new Set(['arrow', 'line', 'zone', 'label']);
+    const validShapeKinds = new Set(['arrow', 'line', 'zone', 'label', 'freehand']);
     const cleanTokens = tokens
         .filter((t) => t && typeof t === 'object' && validKinds.has(t.kind))
         .map((t) => ({
@@ -100,6 +100,10 @@ export function normalizeBoardForRender(board) {
                 if (w <= 0) w = 0.1; if (h <= 0) h = 0.1;
                 const x = clamp01(s.x), y = clamp01(s.y);
                 return { ...base, x, y, w: Math.min(w, 1 - x), h: Math.min(h, 1 - y) };
+            }
+            if (s.kind === 'freehand') {
+                const pts = Array.isArray(s.points) ? s.points.slice(0, 800).map((p) => ({ x: clamp01(p.x), y: clamp01(p.y) })) : [];
+                return { ...base, points: pts };
             }
             return { ...base, x: clamp01(s.x), y: clamp01(s.y), text: typeof s.text === 'string' ? s.text.slice(0, 80) : '' };
         });
@@ -187,6 +191,12 @@ function renderShapeSvg(shape, opts = {}) {
             <rect x="${x - approxW / 2}" y="${y - 22}" width="${approxW}" height="44" rx="22" fill="rgba(15, 23, 42, 0.78)" stroke="${stroke}" stroke-width="${strokeAttr}"/>
             <text x="${x}" y="${y + 7}" text-anchor="middle" fill="#fde047" font-size="22" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${text}</text>
         </g>`;
+    }
+    if (shape.kind === 'freehand') {
+        const pts = Array.isArray(shape.points) ? shape.points : [];
+        if (pts.length < 2) return '';
+        const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${(p.x * W).toFixed(1)} ${(p.y * H).toFixed(1)}`).join(' ');
+        return `<path ${dataAttr} d="${d}" fill="none" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-linecap="round" stroke-linejoin="round"/>`;
     }
     return '';
 }
@@ -277,6 +287,8 @@ function buildScenePayload(state) {
             } else if (s.kind === 'label') {
                 out.x = s.x; out.y = s.y;
                 out.text = s.text || '';
+            } else if (s.kind === 'freehand') {
+                out.points = (s.points || []).slice(0, 800);
             }
             return out;
         }),
@@ -417,6 +429,10 @@ export const tacticalBoardMixin = {
             renderPreviewMode();
         };
 
+        // onAutoSave is null in the standard section (save only on Done),
+        // and a callback in direct-editor mode (save on every committed stroke).
+        const onAutoSave = null;
+
         const renderEditorMode = () => {
             container.innerHTML = '';
             container.className = 'tb-section tb-section--editor';
@@ -441,29 +457,31 @@ export const tacticalBoardMixin = {
             editorRoot.innerHTML = `
                 <div class="tb-toolbar" role="toolbar" aria-label="Tactical board tools">
                     <div class="tb-tool-group" role="group" aria-label="Add to pitch">
-                        <button type="button" class="tb-tool-btn" data-tb-tool="player" aria-pressed="false" aria-label="Add player token" title="Add player token">+ Player</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="ball" aria-pressed="false" aria-label="Add ball" title="Add ball">+ Ball</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="arrow" aria-pressed="false" aria-label="Add arrow" title="Add arrow">+ Arrow</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="zone" aria-pressed="false" aria-label="Add zone" title="Add zone">+ Zone</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="label" aria-pressed="false" aria-label="Add text label" title="Add text label using the Label text field">+ Label</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="player" aria-pressed="false" aria-label="Add player token" title="Click pitch to place a player">+ Player</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="ball" aria-pressed="false" aria-label="Add ball" title="Click pitch to place the ball">+ Ball</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="freehand" aria-pressed="false" aria-label="Freehand draw" title="Drag on the pitch to draw freehand">Freehand</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="arrow" aria-pressed="false" aria-label="Draw arrow" title="Drag on the pitch to draw an arrow">Arrow</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="line" aria-pressed="false" aria-label="Draw line" title="Drag on the pitch to draw a line">Line</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="zone" aria-pressed="false" aria-label="Draw zone" title="Drag on the pitch to define a zone">Zone</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="label" aria-pressed="false" aria-label="Add text label" title="Type a label below, then click the pitch">Label</button>
                     </div>
                     <div class="tb-tool-group" role="group" aria-label="Token and label text">
                         <label class="tb-token-label-wrap">
-                            <span class="tb-token-label-text">Next player #</span>
+                            <span class="tb-token-label-text">Player #</span>
                             <input type="text" class="tb-token-label-input" data-tb-input="player-label" maxlength="24" placeholder="e.g. 7">
                         </label>
                         <label class="tb-token-label-wrap">
-                            <span class="tb-token-label-text">Label text</span>
+                            <span class="tb-token-label-text">Label</span>
                             <input type="text" class="tb-token-label-input" data-tb-input="label-text" maxlength="80" placeholder="e.g. press here">
                         </label>
                     </div>
                     <div class="tb-tool-group tb-tool-group--right" role="group" aria-label="Edit selection">
-                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="delete" disabled aria-label="Delete selected item">Delete selected</button>
-                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="clear" aria-label="Clear all items from the board">Clear board</button>
+                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="delete" disabled aria-label="Delete selected item">Delete</button>
+                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="clear" aria-label="Clear all items from the board">Clear</button>
                     </div>
                 </div>
                 <p class="tb-helper">
-                    Tap a tool, then tap the pitch to add. Arrows and zones use two clicks (start, then end). Drag tokens or shapes to reposition. Click an item to select it, then press Delete or use the toolbar. For labels, type into the <strong>Label text</strong> field first, then click the pitch.
+                    Select a tool, then interact with the pitch. <strong>Player / Ball</strong>: click to place. <strong>Arrow / Line / Zone / Freehand</strong>: drag to draw. <strong>Label</strong>: type text, click to place. Drag any item to reposition. Click to select, then Delete or use the toolbar.
                 </p>
                 <div class="tb-stage" data-tb-stage></div>
                 <p class="tb-status" data-tb-status aria-live="polite"></p>
@@ -496,11 +514,13 @@ export const tacticalBoardMixin = {
                     btn.classList.toggle('is-active', on);
                     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
                 });
-                if (tool === 'arrow' || tool === 'line') setStatus('Click the pitch to set the arrow start.');
-                else if (tool === 'zone') setStatus('Click the pitch to set one zone corner, then click the opposite corner.');
-                else if (tool === 'player') setStatus('Click the pitch to drop a player token.');
-                else if (tool === 'ball') setStatus('Click the pitch to drop the ball.');
-                else if (tool === 'label') setStatus('Click the pitch to add a text label.');
+                if (tool === 'arrow') setStatus('Drag on the pitch to draw an arrow.');
+                else if (tool === 'line') setStatus('Drag on the pitch to draw a line.');
+                else if (tool === 'freehand') setStatus('Drag on the pitch to draw freehand.');
+                else if (tool === 'zone') setStatus('Drag on the pitch to define a zone.');
+                else if (tool === 'player') setStatus('Click the pitch to place a player token.');
+                else if (tool === 'ball') setStatus('Click the pitch to place the ball.');
+                else if (tool === 'label') setStatus('Type label text above, then click the pitch.');
                 else setStatus('');
             };
 
@@ -572,9 +592,26 @@ export const tacticalBoardMixin = {
                 svg.addEventListener('touchstart', onPointerDown, { passive: false });
             };
 
+            // Live preview shape while dragging (not yet committed to sectionState.shapes).
+            let dragPreview = null;
+
+            const refreshWithPreview = () => {
+                const previewShapes = dragPreview
+                    ? [...sectionState.shapes, dragPreview]
+                    : sectionState.shapes;
+                stage.innerHTML = renderTacticalBoardSvg(
+                    { pitch_kind: 'soccer_full', tokens: sectionState.tokens, shapes: previewShapes },
+                    { editor: true, selectedId: sectionState.selectedId, size: 'full' },
+                );
+                attachStageHandlers();
+                deleteBtn.disabled = !sectionState.selectedId;
+            };
+
             const onPointerDown = (event) => {
+                const rawEvent = event.touches ? event.touches[0] : event;
                 const target = event.target.closest('[data-token-id], [data-shape-id]');
                 if (target) {
+                    // Select + begin drag-to-move on an existing item.
                     const id = target.dataset.tokenId || target.dataset.shapeId;
                     sectionState.selectedId = id;
                     sectionState.pendingShape = null;
@@ -584,83 +621,180 @@ export const tacticalBoardMixin = {
                     return;
                 }
                 if (!sectionState.activeTool) {
+                    // Deselect.
                     sectionState.selectedId = null;
                     refresh();
                     return;
                 }
                 event.preventDefault();
-                const pt = pitchPointFromEvent(event.touches ? event.touches[0] : event);
+                const pt = pitchPointFromEvent(rawEvent);
                 if (!pt) return;
-                applyToolClick(pt);
+                applyToolDown(pt, event);
             };
 
-            const applyToolClick = (pt) => {
+            /** Handle mousedown/touchstart on the pitch with an active tool.
+             *  Point-tools (player, ball, label) commit immediately on down.
+             *  Draw-tools (arrow, line, zone, freehand) begin a drag that
+             *  commits on mouseup/touchend. */
+            const applyToolDown = (startPt, downEvent) => {
                 const tool = sectionState.activeTool;
+
                 if (tool === 'player') {
                     if (sectionState.tokens.length >= 40) { setStatus('Player limit reached (40 tokens).'); return; }
                     const label = (playerLabelInput.value || '').trim().slice(0, 24);
-                    sectionState.tokens.push({ id: nextId('token'), kind: 'player', x: pt.x, y: pt.y, label, player_id: '' });
+                    sectionState.tokens.push({ id: nextId('token'), kind: 'player', x: startPt.x, y: startPt.y, label, player_id: '' });
                     if (label) playerLabelInput.value = '';
                     refresh();
+                    if (onAutoSave) onAutoSave(buildScenePayload(sectionState));
                     setStatus('Player added.');
-                } else if (tool === 'ball') {
+                    return;
+                }
+
+                if (tool === 'ball') {
                     if (sectionState.tokens.length >= 40) { setStatus('Token limit reached (40).'); return; }
-                    sectionState.tokens.push({ id: nextId('token'), kind: 'ball', x: pt.x, y: pt.y, label: '', player_id: '' });
+                    sectionState.tokens.push({ id: nextId('token'), kind: 'ball', x: startPt.x, y: startPt.y, label: '', player_id: '' });
                     setActiveTool(null);
                     refresh();
+                    if (onAutoSave) onAutoSave(buildScenePayload(sectionState));
                     setStatus('Ball added.');
-                } else if (tool === 'arrow' || tool === 'line') {
+                    return;
+                }
+
+                if (tool === 'label') {
                     if (sectionState.shapes.length >= 40) { setStatus('Shape limit reached (40).'); return; }
-                    if (!sectionState.pendingShape) {
-                        sectionState.pendingShape = { kind: tool, x1: pt.x, y1: pt.y };
-                        setStatus('Now click the arrow end point.');
-                    } else {
-                        sectionState.shapes.push({
-                            id: nextId('shape'), kind: sectionState.pendingShape.kind,
-                            x1: sectionState.pendingShape.x1, y1: sectionState.pendingShape.y1,
-                            x2: pt.x, y2: pt.y,
-                        });
-                        sectionState.pendingShape = null;
-                        refresh();
-                        setStatus(`${tool === 'arrow' ? 'Arrow' : 'Line'} added.`);
-                    }
-                } else if (tool === 'zone') {
-                    if (sectionState.shapes.length >= 40) { setStatus('Shape limit reached (40).'); return; }
-                    if (!sectionState.pendingShape) {
-                        sectionState.pendingShape = { kind: 'zone', x1: pt.x, y1: pt.y };
-                        setStatus('Now click the opposite corner of the zone.');
-                    } else {
-                        const x = Math.min(sectionState.pendingShape.x1, pt.x);
-                        const y = Math.min(sectionState.pendingShape.y1, pt.y);
-                        const w = Math.max(0.05, Math.abs(sectionState.pendingShape.x1 - pt.x));
-                        const h = Math.max(0.05, Math.abs(sectionState.pendingShape.y1 - pt.y));
-                        sectionState.shapes.push({
-                            id: nextId('shape'), kind: 'zone',
-                            x, y,
-                            w: Math.min(w, 1 - x),
-                            h: Math.min(h, 1 - y),
-                        });
-                        sectionState.pendingShape = null;
-                        refresh();
-                        setStatus('Zone added.');
-                    }
-                } else if (tool === 'label') {
-                    if (sectionState.shapes.length >= 40) { setStatus('Shape limit reached (40).'); return; }
-                    // Read label text from the inline toolbar input
-                    // instead of window.prompt (per project policy: no
-                    // raw browser dialogs / chrome). When empty, focus
-                    // the input and prompt the user inline.
                     const trimmed = (labelTextInput.value || '').trim().slice(0, 80);
                     if (!trimmed) {
                         labelTextInput.focus();
                         setStatus('Type label text in the Label text field, then click the pitch.');
                         return;
                     }
-                    sectionState.shapes.push({ id: nextId('shape'), kind: 'label', x: pt.x, y: pt.y, text: trimmed });
+                    sectionState.shapes.push({ id: nextId('shape'), kind: 'label', x: startPt.x, y: startPt.y, text: trimmed });
                     labelTextInput.value = '';
                     setActiveTool(null);
                     refresh();
+                    if (onAutoSave) onAutoSave(buildScenePayload(sectionState));
                     setStatus('Label added.');
+                    return;
+                }
+
+                // Drag-draw tools: arrow, line, zone, freehand.
+                if (tool === 'arrow' || tool === 'line' || tool === 'zone' || tool === 'freehand') {
+                    if (sectionState.shapes.length >= 40) { setStatus('Shape limit reached (40).'); return; }
+                    downEvent.preventDefault();
+
+                    if (tool === 'freehand') {
+                        // Freehand: collect points until mouseup.
+                        const pts = [{ x: startPt.x, y: startPt.y }];
+                        dragPreview = { id: '_preview', kind: 'freehand', points: pts };
+                        refreshWithPreview();
+                        setStatus('Drawing freehand — release to finish.');
+
+                        const onMove = (ev) => {
+                            ev.preventDefault();
+                            const p = pitchPointFromEvent(ev.touches ? ev.touches[0] : ev);
+                            if (!p) return;
+                            // Thin: only add point if distance threshold met.
+                            const last = pts[pts.length - 1];
+                            if (Math.abs(p.x - last.x) + Math.abs(p.y - last.y) > 0.005) {
+                                if (pts.length < 800) pts.push({ x: p.x, y: p.y });
+                            }
+                            dragPreview = { id: '_preview', kind: 'freehand', points: pts };
+                            refreshWithPreview();
+                        };
+                        const onUp = () => {
+                            window.removeEventListener('mousemove', onMove);
+                            window.removeEventListener('mouseup', onUp);
+                            window.removeEventListener('touchmove', onMove);
+                            window.removeEventListener('touchend', onUp);
+                            dragPreview = null;
+                            if (pts.length >= 2) {
+                                sectionState.shapes.push({ id: nextId('shape'), kind: 'freehand', points: [...pts] });
+                                if (onAutoSave) onAutoSave(buildScenePayload(sectionState));
+                                setStatus('Freehand drawn.');
+                            }
+                            refresh();
+                        };
+                        window.addEventListener('mousemove', onMove);
+                        window.addEventListener('mouseup', onUp);
+                        window.addEventListener('touchmove', onMove, { passive: false });
+                        window.addEventListener('touchend', onUp);
+                        return;
+                    }
+
+                    if (tool === 'arrow' || tool === 'line') {
+                        dragPreview = { id: '_preview', kind: tool, x1: startPt.x, y1: startPt.y, x2: startPt.x, y2: startPt.y };
+                        refreshWithPreview();
+                        setStatus('Drag to set the end point, release to commit.');
+
+                        const onMove = (ev) => {
+                            ev.preventDefault();
+                            const p = pitchPointFromEvent(ev.touches ? ev.touches[0] : ev);
+                            if (!p) return;
+                            dragPreview = { id: '_preview', kind: tool, x1: startPt.x, y1: startPt.y, x2: p.x, y2: p.y };
+                            refreshWithPreview();
+                        };
+                        const onUp = (ev) => {
+                            window.removeEventListener('mousemove', onMove);
+                            window.removeEventListener('mouseup', onUp);
+                            window.removeEventListener('touchmove', onMove);
+                            window.removeEventListener('touchend', onUp);
+                            const p = pitchPointFromEvent((ev.touches ? ev.changedTouches[0] : null) || ev) || { x: startPt.x, y: startPt.y };
+                            dragPreview = null;
+                            const dx = Math.abs(p.x - startPt.x), dy = Math.abs(p.y - startPt.y);
+                            if (dx + dy > 0.01) {
+                                sectionState.shapes.push({ id: nextId('shape'), kind: tool, x1: startPt.x, y1: startPt.y, x2: p.x, y2: p.y });
+                                if (onAutoSave) onAutoSave(buildScenePayload(sectionState));
+                                setStatus(`${tool === 'arrow' ? 'Arrow' : 'Line'} added.`);
+                            }
+                            refresh();
+                        };
+                        window.addEventListener('mousemove', onMove);
+                        window.addEventListener('mouseup', onUp);
+                        window.addEventListener('touchmove', onMove, { passive: false });
+                        window.addEventListener('touchend', onUp);
+                        return;
+                    }
+
+                    if (tool === 'zone') {
+                        dragPreview = { id: '_preview', kind: 'zone', x: startPt.x, y: startPt.y, w: 0.001, h: 0.001 };
+                        refreshWithPreview();
+                        setStatus('Drag to define zone, release to commit.');
+
+                        const onMove = (ev) => {
+                            ev.preventDefault();
+                            const p = pitchPointFromEvent(ev.touches ? ev.touches[0] : ev);
+                            if (!p) return;
+                            const x = Math.min(startPt.x, p.x);
+                            const y = Math.min(startPt.y, p.y);
+                            const w = Math.max(0.005, Math.abs(p.x - startPt.x));
+                            const h = Math.max(0.005, Math.abs(p.y - startPt.y));
+                            dragPreview = { id: '_preview', kind: 'zone', x, y, w: Math.min(w, 1 - x), h: Math.min(h, 1 - y) };
+                            refreshWithPreview();
+                        };
+                        const onUp = (ev) => {
+                            window.removeEventListener('mousemove', onMove);
+                            window.removeEventListener('mouseup', onUp);
+                            window.removeEventListener('touchmove', onMove);
+                            window.removeEventListener('touchend', onUp);
+                            const p = pitchPointFromEvent((ev.touches ? ev.changedTouches[0] : null) || ev) || { x: startPt.x, y: startPt.y };
+                            dragPreview = null;
+                            const w = Math.abs(p.x - startPt.x);
+                            const h = Math.abs(p.y - startPt.y);
+                            if (w > 0.02 && h > 0.02) {
+                                const x = Math.min(startPt.x, p.x);
+                                const y = Math.min(startPt.y, p.y);
+                                sectionState.shapes.push({ id: nextId('shape'), kind: 'zone', x, y, w: Math.min(w, 1 - x), h: Math.min(h, 1 - y) });
+                                if (onAutoSave) onAutoSave(buildScenePayload(sectionState));
+                                setStatus('Zone added.');
+                            }
+                            refresh();
+                        };
+                        window.addEventListener('mousemove', onMove);
+                        window.addEventListener('mouseup', onUp);
+                        window.addEventListener('touchmove', onMove, { passive: false });
+                        window.addEventListener('touchend', onUp);
+                        return;
+                    }
                 }
             };
 
@@ -719,5 +853,428 @@ export const tacticalBoardMixin = {
 
         // Initial paint.
         renderPreviewMode();
+    },
+
+    /**
+     * Mount the tactical board in DIRECT EDITOR mode — starts immediately
+     * in the editor without a preview step, no Cancel / Done buttons.
+     * Every committed stroke calls setBoard(scene) so the caller always
+     * has the latest state without any explicit save gesture.
+     *
+     * Used by Coach Review Tactical Board workspace (Phase 6d-1) where
+     * the board is always "live" — the coach never needs to step through
+     * a preview-then-edit flow.
+     */
+    mountTacticalBoardEditorDirect(container, { initialBoard = null, getBoard, setBoard } = {}) {
+        if (!container) return;
+
+        const sectionState = {
+            tokens: [],
+            shapes: [],
+            selectedId: null,
+            activeTool: null,
+            pendingShape: null,
+        };
+
+        // Seed from current saved scene.
+        const seed = normalizeBoardForRender(initialBoard);
+        if (seed) {
+            sectionState.tokens = seed.tokens.map((t) => ({ ...t }));
+            sectionState.shapes = seed.shapes.map((s) => ({ ...s }));
+        }
+
+        // Auto-save on every committed stroke.
+        const onAutoSave = (payload) => {
+            setBoard(payload && (payload.tokens.length || payload.shapes.length) ? payload : null);
+        };
+
+        container.innerHTML = '';
+        container.className = 'tb-section tb-section--editor tb-section--direct';
+
+        const editorRoot = document.createElement('div');
+        editorRoot.className = 'tb-editor';
+        editorRoot.innerHTML = `
+            <div class="tb-toolbar" role="toolbar" aria-label="Tactical board tools">
+                <div class="tb-tool-group" role="group" aria-label="Add to pitch">
+                    <button type="button" class="tb-tool-btn" data-tb-tool="player" aria-pressed="false" aria-label="Add player token" title="Click pitch to place a player">+ Player</button>
+                    <button type="button" class="tb-tool-btn" data-tb-tool="ball" aria-pressed="false" aria-label="Add ball" title="Click pitch to place the ball">+ Ball</button>
+                    <button type="button" class="tb-tool-btn" data-tb-tool="freehand" aria-pressed="false" aria-label="Freehand draw" title="Drag on the pitch to draw freehand">Freehand</button>
+                    <button type="button" class="tb-tool-btn" data-tb-tool="arrow" aria-pressed="false" aria-label="Draw arrow" title="Drag on the pitch to draw an arrow">Arrow</button>
+                    <button type="button" class="tb-tool-btn" data-tb-tool="line" aria-pressed="false" aria-label="Draw line" title="Drag on the pitch to draw a line">Line</button>
+                    <button type="button" class="tb-tool-btn" data-tb-tool="zone" aria-pressed="false" aria-label="Draw zone" title="Drag on the pitch to define a zone">Zone</button>
+                    <button type="button" class="tb-tool-btn" data-tb-tool="label" aria-pressed="false" aria-label="Add text label" title="Type a label below, then click the pitch">Label</button>
+                </div>
+                <div class="tb-tool-group" role="group" aria-label="Token and label text">
+                    <label class="tb-token-label-wrap">
+                        <span class="tb-token-label-text">Player #</span>
+                        <input type="text" class="tb-token-label-input" data-tb-input="player-label" maxlength="24" placeholder="e.g. 7">
+                    </label>
+                    <label class="tb-token-label-wrap">
+                        <span class="tb-token-label-text">Label</span>
+                        <input type="text" class="tb-token-label-input" data-tb-input="label-text" maxlength="80" placeholder="e.g. press here">
+                    </label>
+                </div>
+                <div class="tb-tool-group tb-tool-group--right" role="group" aria-label="Edit selection">
+                    <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="delete" disabled aria-label="Delete selected item">Delete</button>
+                    <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="clear" aria-label="Clear all items from the board">Clear</button>
+                </div>
+            </div>
+            <p class="tb-helper">
+                Select a tool, then interact with the pitch. <strong>Player / Ball</strong>: click to place. <strong>Arrow / Line / Zone / Freehand</strong>: drag to draw. <strong>Label</strong>: type text, click to place. Drag any item to reposition. Click to select, then Delete.
+            </p>
+            <div class="tb-stage" data-tb-stage></div>
+            <!-- Local confirm bar for Clear action — no global modals inside Review -->
+            <div class="tb-confirm-bar" data-tb-confirm hidden role="alertdialog" aria-label="Confirm action"></div>
+            <p class="tb-status" data-tb-status aria-live="polite"></p>
+        `;
+        container.appendChild(editorRoot);
+
+        const stage = editorRoot.querySelector('[data-tb-stage]');
+        const statusEl = editorRoot.querySelector('[data-tb-status]');
+        const playerLabelInput = editorRoot.querySelector('[data-tb-input="player-label"]');
+        const labelTextInput = editorRoot.querySelector('[data-tb-input="label-text"]');
+        const deleteBtn = editorRoot.querySelector('[data-tb-action="delete"]');
+        const toolButtons = Array.from(editorRoot.querySelectorAll('.tb-tool-btn[data-tb-tool]'));
+        const confirmBar = editorRoot.querySelector('[data-tb-confirm]');
+        const setStatus = (msg) => { statusEl.textContent = msg || ''; };
+
+        const refresh = () => {
+            stage.innerHTML = renderTacticalBoardSvg(
+                { pitch_kind: 'soccer_full', tokens: sectionState.tokens, shapes: sectionState.shapes },
+                { editor: true, selectedId: sectionState.selectedId, size: 'full' },
+            );
+            attachStageHandlers();
+            deleteBtn.disabled = !sectionState.selectedId;
+        };
+
+        const setActiveTool = (tool) => {
+            sectionState.activeTool = tool;
+            sectionState.pendingShape = null;
+            toolButtons.forEach((btn) => {
+                const on = btn.dataset.tbTool === tool;
+                btn.classList.toggle('is-active', on);
+                btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+            if (tool === 'arrow') setStatus('Drag on the pitch to draw an arrow.');
+            else if (tool === 'line') setStatus('Drag on the pitch to draw a line.');
+            else if (tool === 'freehand') setStatus('Drag on the pitch to draw freehand.');
+            else if (tool === 'zone') setStatus('Drag on the pitch to define a zone.');
+            else if (tool === 'player') setStatus('Click the pitch to place a player token.');
+            else if (tool === 'ball') setStatus('Click the pitch to place the ball.');
+            else if (tool === 'label') setStatus('Type label text above, then click the pitch.');
+            else setStatus('');
+        };
+
+        toolButtons.forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                event.preventDefault();
+                if (btn.classList.contains('is-active')) setActiveTool(null);
+                else setActiveTool(btn.dataset.tbTool);
+            });
+        });
+
+        deleteBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (!sectionState.selectedId) return;
+            sectionState.tokens = sectionState.tokens.filter((t) => t.id !== sectionState.selectedId);
+            sectionState.shapes = sectionState.shapes.filter((s) => s.id !== sectionState.selectedId);
+            sectionState.selectedId = null;
+            refresh();
+            onAutoSave(buildScenePayload(sectionState));
+            setStatus('Item deleted.');
+        });
+
+        editorRoot.querySelector('[data-tb-action="clear"]').addEventListener('click', async (event) => {
+            event.preventDefault();
+            if (!sectionState.tokens.length && !sectionState.shapes.length) return;
+            const confirmed = await runLocalConfirm(confirmBar, {
+                message: 'Clear every token and shape from the board?',
+                confirmLabel: 'Clear board',
+            });
+            if (!confirmed) return;
+            sectionState.tokens = [];
+            sectionState.shapes = [];
+            sectionState.selectedId = null;
+            refresh();
+            onAutoSave(buildScenePayload(sectionState));
+            setStatus('Board cleared.');
+        });
+
+        editorRoot.addEventListener('keydown', (event) => {
+            if ((event.key === 'Delete' || event.key === 'Backspace') && sectionState.selectedId) {
+                if (event.target === playerLabelInput || event.target === labelTextInput) return;
+                event.preventDefault();
+                deleteBtn.click();
+            }
+        });
+
+        const pitchPointFromEvent = (event) => {
+            const svg = stage.querySelector('svg.tb-svg');
+            if (!svg) return null;
+            const rect = svg.getBoundingClientRect();
+            const x = (event.clientX - rect.left) / rect.width;
+            const y = (event.clientY - rect.top) / rect.height;
+            return { x: clamp01(x), y: clamp01(y) };
+        };
+
+        const attachStageHandlers = () => {
+            const svg = stage.querySelector('svg.tb-svg');
+            if (!svg) return;
+            if (svg.dataset.tbStageBound === '1') return;
+            svg.dataset.tbStageBound = '1';
+            svg.addEventListener('mousedown', onPointerDown);
+            svg.addEventListener('touchstart', onPointerDown, { passive: false });
+        };
+
+        let dragPreview = null;
+
+        const refreshWithPreview = () => {
+            const previewShapes = dragPreview
+                ? [...sectionState.shapes, dragPreview]
+                : sectionState.shapes;
+            stage.innerHTML = renderTacticalBoardSvg(
+                { pitch_kind: 'soccer_full', tokens: sectionState.tokens, shapes: previewShapes },
+                { editor: true, selectedId: sectionState.selectedId, size: 'full' },
+            );
+            attachStageHandlers();
+            deleteBtn.disabled = !sectionState.selectedId;
+        };
+
+        const onPointerDown = (event) => {
+            const rawEvent = event.touches ? event.touches[0] : event;
+            const target = event.target.closest('[data-token-id], [data-shape-id]');
+            if (target) {
+                const id = target.dataset.tokenId || target.dataset.shapeId;
+                sectionState.selectedId = id;
+                sectionState.pendingShape = null;
+                refresh();
+                setStatus('Selected. Drag to move, press Delete or use the toolbar to remove.');
+                beginDrag(event, target);
+                return;
+            }
+            if (!sectionState.activeTool) {
+                sectionState.selectedId = null;
+                refresh();
+                return;
+            }
+            event.preventDefault();
+            const pt = pitchPointFromEvent(rawEvent);
+            if (!pt) return;
+            applyToolDown(pt, event);
+        };
+
+        const applyToolDown = (startPt, downEvent) => {
+            const tool = sectionState.activeTool;
+
+            if (tool === 'player') {
+                if (sectionState.tokens.length >= 40) { setStatus('Player limit reached (40 tokens).'); return; }
+                const label = (playerLabelInput.value || '').trim().slice(0, 24);
+                sectionState.tokens.push({ id: nextId('token'), kind: 'player', x: startPt.x, y: startPt.y, label, player_id: '' });
+                if (label) playerLabelInput.value = '';
+                refresh();
+                onAutoSave(buildScenePayload(sectionState));
+                setStatus('Player added.');
+                return;
+            }
+
+            if (tool === 'ball') {
+                if (sectionState.tokens.length >= 40) { setStatus('Token limit reached (40).'); return; }
+                sectionState.tokens.push({ id: nextId('token'), kind: 'ball', x: startPt.x, y: startPt.y, label: '', player_id: '' });
+                setActiveTool(null);
+                refresh();
+                onAutoSave(buildScenePayload(sectionState));
+                setStatus('Ball added.');
+                return;
+            }
+
+            if (tool === 'label') {
+                if (sectionState.shapes.length >= 40) { setStatus('Shape limit reached (40).'); return; }
+                const trimmed = (labelTextInput.value || '').trim().slice(0, 80);
+                if (!trimmed) {
+                    labelTextInput.focus();
+                    setStatus('Type label text in the Label text field, then click the pitch.');
+                    return;
+                }
+                sectionState.shapes.push({ id: nextId('shape'), kind: 'label', x: startPt.x, y: startPt.y, text: trimmed });
+                labelTextInput.value = '';
+                setActiveTool(null);
+                refresh();
+                onAutoSave(buildScenePayload(sectionState));
+                setStatus('Label added.');
+                return;
+            }
+
+            if (tool === 'arrow' || tool === 'line' || tool === 'zone' || tool === 'freehand') {
+                if (sectionState.shapes.length >= 40) { setStatus('Shape limit reached (40).'); return; }
+                downEvent.preventDefault();
+
+                if (tool === 'freehand') {
+                    const pts = [{ x: startPt.x, y: startPt.y }];
+                    dragPreview = { id: '_preview', kind: 'freehand', points: pts };
+                    refreshWithPreview();
+                    setStatus('Drawing freehand — release to finish.');
+
+                    const onMove = (ev) => {
+                        ev.preventDefault();
+                        const p = pitchPointFromEvent(ev.touches ? ev.touches[0] : ev);
+                        if (!p) return;
+                        const last = pts[pts.length - 1];
+                        if (Math.abs(p.x - last.x) + Math.abs(p.y - last.y) > 0.005) {
+                            if (pts.length < 800) pts.push({ x: p.x, y: p.y });
+                        }
+                        dragPreview = { id: '_preview', kind: 'freehand', points: pts };
+                        refreshWithPreview();
+                    };
+                    const onUp = () => {
+                        window.removeEventListener('mousemove', onMove);
+                        window.removeEventListener('mouseup', onUp);
+                        window.removeEventListener('touchmove', onMove);
+                        window.removeEventListener('touchend', onUp);
+                        dragPreview = null;
+                        if (pts.length >= 2) {
+                            sectionState.shapes.push({ id: nextId('shape'), kind: 'freehand', points: [...pts] });
+                            onAutoSave(buildScenePayload(sectionState));
+                            setStatus('Freehand drawn.');
+                        }
+                        refresh();
+                    };
+                    window.addEventListener('mousemove', onMove);
+                    window.addEventListener('mouseup', onUp);
+                    window.addEventListener('touchmove', onMove, { passive: false });
+                    window.addEventListener('touchend', onUp);
+                    return;
+                }
+
+                if (tool === 'arrow' || tool === 'line') {
+                    dragPreview = { id: '_preview', kind: tool, x1: startPt.x, y1: startPt.y, x2: startPt.x, y2: startPt.y };
+                    refreshWithPreview();
+                    setStatus('Drag to set the end point, release to commit.');
+
+                    const onMove = (ev) => {
+                        ev.preventDefault();
+                        const p = pitchPointFromEvent(ev.touches ? ev.touches[0] : ev);
+                        if (!p) return;
+                        dragPreview = { id: '_preview', kind: tool, x1: startPt.x, y1: startPt.y, x2: p.x, y2: p.y };
+                        refreshWithPreview();
+                    };
+                    const onUp = (ev) => {
+                        window.removeEventListener('mousemove', onMove);
+                        window.removeEventListener('mouseup', onUp);
+                        window.removeEventListener('touchmove', onMove);
+                        window.removeEventListener('touchend', onUp);
+                        const p = pitchPointFromEvent((ev.touches ? ev.changedTouches[0] : null) || ev) || { x: startPt.x, y: startPt.y };
+                        dragPreview = null;
+                        const dx = Math.abs(p.x - startPt.x), dy = Math.abs(p.y - startPt.y);
+                        if (dx + dy > 0.01) {
+                            sectionState.shapes.push({ id: nextId('shape'), kind: tool, x1: startPt.x, y1: startPt.y, x2: p.x, y2: p.y });
+                            onAutoSave(buildScenePayload(sectionState));
+                            setStatus(`${tool === 'arrow' ? 'Arrow' : 'Line'} added.`);
+                        }
+                        refresh();
+                    };
+                    window.addEventListener('mousemove', onMove);
+                    window.addEventListener('mouseup', onUp);
+                    window.addEventListener('touchmove', onMove, { passive: false });
+                    window.addEventListener('touchend', onUp);
+                    return;
+                }
+
+                if (tool === 'zone') {
+                    dragPreview = { id: '_preview', kind: 'zone', x: startPt.x, y: startPt.y, w: 0.001, h: 0.001 };
+                    refreshWithPreview();
+                    setStatus('Drag to define zone, release to commit.');
+
+                    const onMove = (ev) => {
+                        ev.preventDefault();
+                        const p = pitchPointFromEvent(ev.touches ? ev.touches[0] : ev);
+                        if (!p) return;
+                        const x = Math.min(startPt.x, p.x);
+                        const y = Math.min(startPt.y, p.y);
+                        const w = Math.max(0.005, Math.abs(p.x - startPt.x));
+                        const h = Math.max(0.005, Math.abs(p.y - startPt.y));
+                        dragPreview = { id: '_preview', kind: 'zone', x, y, w: Math.min(w, 1 - x), h: Math.min(h, 1 - y) };
+                        refreshWithPreview();
+                    };
+                    const onUp = (ev) => {
+                        window.removeEventListener('mousemove', onMove);
+                        window.removeEventListener('mouseup', onUp);
+                        window.removeEventListener('touchmove', onMove);
+                        window.removeEventListener('touchend', onUp);
+                        const p = pitchPointFromEvent((ev.touches ? ev.changedTouches[0] : null) || ev) || { x: startPt.x, y: startPt.y };
+                        dragPreview = null;
+                        const w = Math.abs(p.x - startPt.x);
+                        const h = Math.abs(p.y - startPt.y);
+                        if (w > 0.02 && h > 0.02) {
+                            const x = Math.min(startPt.x, p.x);
+                            const y = Math.min(startPt.y, p.y);
+                            sectionState.shapes.push({ id: nextId('shape'), kind: 'zone', x, y, w: Math.min(w, 1 - x), h: Math.min(h, 1 - y) });
+                            onAutoSave(buildScenePayload(sectionState));
+                            setStatus('Zone added.');
+                        }
+                        refresh();
+                    };
+                    window.addEventListener('mousemove', onMove);
+                    window.addEventListener('mouseup', onUp);
+                    window.addEventListener('touchmove', onMove, { passive: false });
+                    window.addEventListener('touchend', onUp);
+                    return;
+                }
+            }
+        };
+
+        const beginDrag = (downEvent, target) => {
+            const id = target.dataset.tokenId || target.dataset.shapeId;
+            const isToken = !!target.dataset.tokenId;
+            const item = isToken
+                ? sectionState.tokens.find((t) => t.id === id)
+                : sectionState.shapes.find((s) => s.id === id);
+            if (!item) return;
+            const startPt = pitchPointFromEvent(downEvent.touches ? downEvent.touches[0] : downEvent);
+            if (!startPt) return;
+            const original = JSON.parse(JSON.stringify(item));
+            let didMove = false;
+            const move = (event) => {
+                event.preventDefault();
+                const pt = pitchPointFromEvent(event.touches ? event.touches[0] : event);
+                if (!pt) return;
+                const dx = pt.x - startPt.x;
+                const dy = pt.y - startPt.y;
+                if (Math.abs(dx) + Math.abs(dy) > 0.005) didMove = true;
+                if (isToken) {
+                    item.x = clamp01(original.x + dx);
+                    item.y = clamp01(original.y + dy);
+                } else if (item.kind === 'arrow' || item.kind === 'line') {
+                    item.x1 = clamp01(original.x1 + dx);
+                    item.y1 = clamp01(original.y1 + dy);
+                    item.x2 = clamp01(original.x2 + dx);
+                    item.y2 = clamp01(original.y2 + dy);
+                } else if (item.kind === 'zone') {
+                    const nx = clamp01(original.x + dx);
+                    const ny = clamp01(original.y + dy);
+                    item.x = Math.min(nx, 1 - original.w);
+                    item.y = Math.min(ny, 1 - original.h);
+                } else if (item.kind === 'label') {
+                    item.x = clamp01(original.x + dx);
+                    item.y = clamp01(original.y + dy);
+                }
+                refresh();
+            };
+            const up = () => {
+                window.removeEventListener('mousemove', move);
+                window.removeEventListener('mouseup', up);
+                window.removeEventListener('touchmove', move);
+                window.removeEventListener('touchend', up);
+                if (didMove) {
+                    onAutoSave(buildScenePayload(sectionState));
+                    setStatus('Item moved.');
+                }
+            };
+            window.addEventListener('mousemove', move);
+            window.addEventListener('mouseup', up);
+            window.addEventListener('touchmove', move, { passive: false });
+            window.addEventListener('touchend', up);
+        };
+
+        refresh();
     },
 };

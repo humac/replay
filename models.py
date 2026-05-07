@@ -185,7 +185,7 @@ _MAX_TACTICAL_BOARD_JSON_BYTES = 100_000
 _VALID_PITCH_KINDS = {"soccer_full"}
 _VALID_BOARD_ORIENTATIONS = {"landscape"}
 _VALID_BOARD_TOKEN_KINDS = {"player", "ball"}
-_VALID_BOARD_SHAPE_KINDS = {"arrow", "line", "zone", "label"}
+_VALID_BOARD_SHAPE_KINDS = {"arrow", "line", "zone", "label", "freehand"}
 _MAX_BOARD_TOKENS = 40
 _MAX_BOARD_SHAPES = 40
 _MAX_BOARD_LABEL_LENGTH = 80
@@ -475,6 +475,18 @@ def _validate_board_shape(shape: Any, index: int) -> dict[str, Any]:
     elif kind == "label":
         out["x"] = _validate_board_unit(shape.get("x"), f"shapes[{index}].x")
         out["y"] = _validate_board_unit(shape.get("y"), f"shapes[{index}].y")
+    elif kind == "freehand":
+        pts = shape.get("points", [])
+        if not isinstance(pts, list) or len(pts) > 800:
+            raise ValueError(f"tactical_board shapes[{index}] freehand requires 800 or fewer points")
+        out["points"] = [
+            {
+                "x": _validate_board_unit(p.get("x"), f"shapes[{index}].points[*].x"),
+                "y": _validate_board_unit(p.get("y"), f"shapes[{index}].points[*].y"),
+            }
+            for p in pts
+            if isinstance(p, dict)
+        ]
     text = shape.get("text")
     if text is not None and text != "":
         out["text"] = _validate_board_label(text, f"shapes[{index}].text")

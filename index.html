@@ -601,29 +601,6 @@
                         </div>
                         <!-- Board half — replaces the video bar in Tactical Board mode -->
                         <div class="cr-board-bar" hidden>
-                            <div class="coach-review-picker-group">
-                                <label class="coach-review-picker-label" for="cr-obs-formation">Formation</label>
-                                <select id="cr-obs-formation" onchange="app.handleCrObsFormationChange()">
-                                    <option value="">— Blank —</option>
-                                    <optgroup label="11v11">
-                                        <option value="11-4-3-3">4-3-3</option>
-                                        <option value="11-4-4-2">4-4-2</option>
-                                        <option value="11-4-2-3-1">4-2-3-1</option>
-                                        <option value="11-3-5-2">3-5-2</option>
-                                        <option value="11-5-3-2">5-3-2</option>
-                                    </optgroup>
-                                    <optgroup label="9v9">
-                                        <option value="9-3-2-2">3-2-2</option>
-                                        <option value="9-2-3-2">2-3-2</option>
-                                        <option value="9-3-3-1">3-3-1</option>
-                                    </optgroup>
-                                    <optgroup label="7v7">
-                                        <option value="7-2-3-1">2-3-1</option>
-                                        <option value="7-3-2-1">3-2-1</option>
-                                        <option value="7-2-2-2">2-2-2</option>
-                                    </optgroup>
-                                </select>
-                            </div>
                             <div class="coach-review-picker-group cr-board-bar-event">
                                 <label class="coach-review-picker-label" for="cr-obs-event-title">Event</label>
                                 <input type="text" id="cr-obs-event-title" maxlength="200" placeholder="e.g. Tuesday practice — pressing shape">
@@ -673,10 +650,8 @@
                                 <h4>Save note at current time</h4>
                                 <div id="coach-review-form" class="coach-mini-form"></div>
                             </div>
-                            <!-- Board mode: board tools + observation form -->
+                            <!-- Board mode: observation form (board tools live in the inline pitch editor) -->
                             <div class="cr-board-side cr-board-only" hidden>
-                                <h4>Board tools</h4>
-                                <div id="cr-board-tools" class="coach-review-toolbar"></div>
                                 <h4>Observation</h4>
                                 <p class="coach-observation-helper">Practice, sideline, tactical, or meeting feedback without video.</p>
                                 <div class="cr-obs-fields">
