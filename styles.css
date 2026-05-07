@@ -6814,6 +6814,85 @@ details.diag-row-details[open] > summary::after {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%231565c0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
 }
 
+/* Phase 6d-1 — Tactical Board mode picker-bar text + date inputs.
+ * The picker bar previously only contained <select> elements, which
+ * `.coach-review-picker select` styles. Adding the unified Coach
+ * Review introduces <input type="text"> for Event title and
+ * <input type="date"> for Event date — these need the same dark
+ * tile background, accent focus, and dark-theme calendar-picker
+ * indicator the rest of the picker uses, so the bar reads as one
+ * surface and never exposes raw browser chrome. */
+.coach-review-picker input[type="text"],
+.coach-review-picker input[type="date"] {
+    /* `appearance: none` is required to suppress Safari/macOS Chrome's
+     * native input chrome (the inner white field that bleeds through
+     * the styled tile background). Without it the date picker
+     * specifically renders as raw OS chrome. */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding: 0.45rem 0.7rem;
+    background: rgba(0, 0, 0, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    line-height: 1.2;
+    min-height: 0;
+    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.coach-review-picker input[type="text"]::placeholder,
+.coach-review-picker input[type="date"]::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+}
+.coach-review-picker input[type="text"]:hover,
+.coach-review-picker input[type="date"]:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+}
+.coach-review-picker input[type="text"]:focus-visible,
+.coach-review-picker input[type="date"]:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    background-color: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
+}
+.coach-review-picker input[type="date"]::-webkit-calendar-picker-indicator {
+    /* Match the global indicator styling (styles.css:1530). The
+     * filter keeps the indicator readable on the dark tile in both
+     * Chrome and Safari. */
+    opacity: 0.75;
+    cursor: pointer;
+    filter: invert(1) saturate(0.3);
+}
+
+[data-theme="light"] .coach-review-picker input[type="text"],
+[data-theme="light"] .coach-review-picker input[type="date"] {
+    background-color: #ffffff;
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--text-main);
+}
+[data-theme="light"] .coach-review-picker input[type="text"]:hover,
+[data-theme="light"] .coach-review-picker input[type="date"]:hover {
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-review-picker input[type="text"]:focus-visible,
+[data-theme="light"] .coach-review-picker input[type="date"]:focus-visible {
+    background-color: #ffffff;
+    border-color: var(--accent, #1565c0);
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.18);
+}
+[data-theme="light"] .coach-review-picker input[type="date"]::-webkit-calendar-picker-indicator {
+    /* No invert in light theme — the calendar glyph is dark on white
+     * by default, which already matches the rest of the light-theme
+     * iconography. */
+    filter: none;
+}
+[data-theme="light"] .coach-review-picker input[type="text"]::placeholder,
+[data-theme="light"] .coach-review-picker input[type="date"]::placeholder {
+    color: rgba(15, 23, 42, 0.40);
+}
+
 /* Top-bar Save Note: compact variant of .btn-primary. The form's full-width
  * Save Note button stays as the secondary affordance for first-time users. */
 .coach-review-picker-save {
@@ -7361,6 +7440,20 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
 .coach-focus-backdrop[hidden] { display: none; }
 [data-theme="light"] .coach-focus-backdrop {
     background: rgba(0, 0, 0, 0.18);
+}
+
+/* Phase 6d-1 — in Tactical Board focus mode the backdrop dims the
+ * page (visual) but does NOT intercept clicks. The pitch needs to
+ * receive clicks so an armed tool can drop a token / start a drag in
+ * the same gesture that closes the drawer. The drawer itself stays
+ * `pointer-events: auto` (default) so its tool buttons remain
+ * clickable; only the backdrop is pass-through. The pitch's own
+ * mousedown handler closes the drawer (see openCoachFocusInspector
+ * `pitchSvg.addEventListener('mousedown', onceClose)`) and then the
+ * controller's handler armed by the previous tool click takes over. */
+body.coach-focus-drawer-tb-mode .coach-focus-backdrop {
+    pointer-events: none;
+    cursor: default;
 }
 
 @keyframes coachFocusDrawerSlide {
@@ -10555,3 +10648,388 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
         justify-content: flex-end;
     }
 }
+
+/* ============================================================
+ * Phase 6d-1 — Coach Review unified source modes
+ *
+ * The Review tab has a single shared workspace shell. A
+ * `data-source` attribute on `.coach-review-shell` toggles which
+ * picker controls, main canvas, and side-panel pane is visible.
+ * Elements with `data-source-only="video"` show only when the
+ * shell is in video mode; `data-source-only="tactical_board"`
+ * shows only in board mode. */
+
+.coach-review-shell .coach-review-source-toggle {
+    display: inline-flex;
+    gap: 0.4rem;
+    padding: 0.25rem;
+    border-radius: 999px;
+    background: var(--surface-1, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+    margin-bottom: 0.6rem;
+}
+
+.coach-review-source-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.32rem 0.85rem;
+    border-radius: 999px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.coach-review-source-btn:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.coach-review-source-btn:focus-visible {
+    outline: 2px solid var(--accent, #38bdf8);
+    outline-offset: 2px;
+}
+
+.coach-review-source-btn.is-active {
+    /* Match the rest of the app's primary-blue button family
+     * (.btn-primary, Save Note, Save Observation) — white text on
+     * the resolved --accent so the contrast holds on both the
+     * sky-blue (#38bdf8) and the deeper rgb(21,101,192) tone the
+     * accent token resolves to in the dark theme. The previous
+     * `color: #0b1220` was readable on bright cyan but became
+     * low-contrast on the darker accent. */
+    background: var(--accent, #38bdf8);
+    color: #ffffff;
+    border-color: var(--accent, #38bdf8);
+    font-weight: 600;
+}
+
+.coach-review-source-glyph {
+    font-size: 0.95rem;
+    line-height: 1;
+}
+
+[data-theme="light"] .coach-review-shell .coach-review-source-toggle {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .coach-review-source-btn {
+    color: #475569;
+}
+[data-theme="light"] .coach-review-source-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: #0f172a;
+}
+[data-theme="light"] .coach-review-source-btn.is-active {
+    /* Same white-on-blue treatment as dark theme — the light-theme
+     * .btn-primary equivalents also use white text on the accent. */
+    color: #ffffff;
+}
+
+/* Source-mode pane visibility. The shell's `data-source` attribute
+ * drives which children are visible. Hidden children are removed
+ * from the layout (display:none) so the grid doesn't reserve
+ * space. */
+.coach-review-shell[data-source="video"] [data-source-only="tactical_board"],
+.coach-review-shell[data-source="tactical_board"] [data-source-only="video"] {
+    display: none !important;
+}
+
+/* The stage wrapper centers either the video pane or the board pane
+ * in the same visual area. */
+.coach-review-stage {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.coach-review-stage-pane {
+    min-width: 0;
+}
+
+/* Tactical Board canvas — shares the video's visual real estate.
+ * The pitch SVG fills the wrapper at 16:9-ish ratio so the picker
+ * bar / side panel / timeline rail layout doesn't shift between
+ * modes. */
+.coach-review-board {
+    /* Grass-green frame around the pitch SVG so the canvas reads as a
+     * soccer pitch surface in BOTH dark and light themes (matches the
+     * default `.tb-svg-wrap` background `#168a3f`). The SVG itself
+     * paints its own gradient grass on top; this frame only shows
+     * through the 0.6rem padding ring around the SVG so the surface
+     * is uniformly green from edge to edge. */
+    background: #168a3f;
+    border-radius: 10px;
+    padding: 0.6rem;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .coach-review-board {
+    /* Same grass-green tile in light theme — keeping the surface
+     * green in both modes per the request. The deeper border stays
+     * visible against the light page background. */
+    background: #168a3f;
+    border-color: rgba(0, 0, 0, 0.18);
+}
+
+.coach-review-board-canvas {
+    width: 100%;
+    aspect-ratio: 1050 / 680;  /* matches PITCH_VIEWBOX */
+    overflow: hidden;
+}
+
+.coach-review-board-canvas .tb-svg-wrap,
+.coach-review-board-canvas .tb-svg-wrap--full,
+.coach-review-board-canvas .tb-svg-wrap--editor {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    /* Inherit the grass-green frame from `.coach-review-board` so a
+     * sliver of green shows through behind the SVG even before the
+     * `<rect fill="url(#tb-grass-grad)">` paints. */
+    background: #168a3f;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.coach-review-board-canvas svg.tb-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: crosshair;
+}
+
+/* Status text overlays the bottom-left of the green pitch as a
+ * high-contrast pill, so the active-tool prompt ("Click the pitch
+ * to drop a player token", "Drag to draw an arrow", …) reads
+ * clearly against the grass without competing with the pitch
+ * markings. Empty status collapses the pill to zero height. The
+ * .coach-review-board frame is `position: relative` so this
+ * absolute overlay anchors to the pitch surface.
+ *
+ * The same treatment works in both dark and light themes — the
+ * pill is opaque on its own dark base so the green pitch behind
+ * doesn't reduce contrast. */
+.coach-review-board {
+    position: relative;
+}
+.coach-review-board-status {
+    margin: 0;
+    min-height: 0;
+}
+.coach-review-board-status:empty {
+    display: none;
+}
+.coach-review-board-status:not(:empty) {
+    position: absolute;
+    left: 0.85rem;
+    bottom: 0.85rem;
+    padding: 0.35rem 0.7rem;
+    background: rgba(15, 23, 42, 0.85);
+    color: #ffffff;
+    font-size: 0.78rem;
+    font-weight: 500;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    max-width: calc(100% - 1.7rem);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+[data-theme="light"] .coach-review-board-status:not(:empty) {
+    background: rgba(15, 23, 42, 0.88);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Tactical board side-panel toolbar. Visually mirrors the video
+ * telestrator toolbar (.coach-tool-grid) so the side panel feels
+ * consistent across source modes. */
+.coach-tb-toolbar {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.coach-tb-tool-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
+}
+
+.coach-tb-tool-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.4rem 0.55rem;
+    text-align: left;
+    font-size: 0.85rem;
+}
+
+.coach-tb-tool-btn .coach-tb-tool-glyph {
+    font-size: 1.1rem;
+    line-height: 1;
+    width: 1.2em;
+    text-align: center;
+}
+
+.coach-tb-tool-btn .coach-tool-label {
+    /* Override the visually-hidden default so the tactical-mode
+     * tool grid shows labels (mirrors the video telestrator's
+     * touch-mode label visibility). */
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    margin: 0;
+    padding: 0;
+    color: inherit;
+}
+
+.coach-tb-tool-meta {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.coach-tb-input-wrap {
+    display: grid;
+    gap: 0.2rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+/* Tactical-board toolbar text inputs share the visual language of the
+ * existing `.coach-mini-form input` rule (rgba black tile, light-grey
+ * border, accent focus ring). Same dimensions / typography as the rest
+ * of the Coach side-panel inputs so the side panel reads as one
+ * surface across source modes. Light-theme override mirrors the
+ * `.coach-mini-form` rule above. */
+.coach-tb-input {
+    width: 100%;
+    padding: 0.55rem 0.65rem;
+    background: rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: var(--text-main);
+    font: inherit;
+    font-size: 0.85rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+.coach-tb-input:focus-visible {
+    outline: none;
+    border-color: var(--accent, #298bed);
+    background-color: rgba(0, 0, 0, 0.32);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
+}
+
+[data-theme="light"] .coach-tb-input {
+    background-color: #ffffff;
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--text-main);
+}
+[data-theme="light"] .coach-tb-input:hover {
+    border-color: rgba(0, 0, 0, 0.32);
+}
+[data-theme="light"] .coach-tb-input:focus-visible {
+    background-color: #ffffff;
+    border-color: var(--accent, #1565c0);
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.18);
+}
+
+.coach-tb-tool-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.coach-tb-form .coach-tb-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+}
+
+.coach-tb-section-label {
+    font-family: var(--font-heading);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+/* Side-pane visibility helpers — only one pane is visible at a time. */
+.coach-review-side .coach-review-side-pane[data-source-only] {
+    display: contents;
+}
+.coach-review-shell[data-source="video"] .coach-review-side-pane[data-source-only="tactical_board"],
+.coach-review-shell[data-source="tactical_board"] .coach-review-side-pane[data-source-only="video"] {
+    display: none !important;
+}
+
+/* Picker bar buttons need to stay visible & focusable in their mode. */
+.coach-review-shell[data-source="video"] [data-source-only="video"],
+.coach-review-shell[data-source="tactical_board"] [data-source-only="tactical_board"] {
+    /* default: each surface restores its native display via the rule above */
+}
+
+/* Make the Save Observation button visually match Save Note. */
+#coach-review-save-observation {
+    background: var(--accent, #38bdf8);
+}
+
+/* In Tactical Board mode, the Event Title group is the first visible
+ * picker group. Mirror the Video-mode Match select's grow-to-fill
+ * behavior so the trailing right-side buttons (Save Observation,
+ * Focus, Shortcuts) stay flush to the right edge instead of floating
+ * mid-bar. The selector targets the visible-source-only group whose
+ * input is the event title.
+ *
+ * `flex: 1 1 0` (NOT `1 1 280px`) is deliberate — the basis is 0 so
+ * the input shrinks gracefully when an extra picker control appears
+ * in focus mode (the Tools button is hidden by default and shown
+ * via `is-focus-mode`). With a 280-px basis the row would overflow
+ * and Shortcuts would wrap to the next line. The `min-width: 200px`
+ * on the input prevents shrinking past a usable width. */
+.coach-review-shell[data-source="tactical_board"] .coach-review-picker-group[data-source-only="tactical_board"]:has(#coach-tb-event-title) {
+    flex: 1 1 0;
+    min-width: 200px;
+}
+.coach-review-shell[data-source="tactical_board"] .coach-review-picker-group[data-source-only="tactical_board"]:has(#coach-tb-event-title) input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Phase 6d-1 — drawer (focus mode) source-mode pane visibility.
+ *
+ * The default `.coach-review-shell[data-source="X"] .coach-review-side-pane`
+ * rule does NOT match when focus-mode opens the drawer, because
+ * `openCoachFocusInspector()` re-parents `.coach-review-side` to
+ * <body> (so it shares the root stacking context with the backdrop —
+ * see js/coaching.js for the rationale). Once it's outside the shell,
+ * the in-shell selector no longer applies and BOTH panes (video
+ * telestrator + tactical board tools) would render in the drawer.
+ *
+ * Mirror the source mode onto <body> via `data-coach-review-source`
+ * (set by _applyCoachReviewSource in js/coaching.js) so a body-level
+ * rule still scopes the show/hide correctly when the drawer is open. */
+body[data-coach-review-source="video"] > .coach-review-side .coach-review-side-pane[data-source-only="tactical_board"],
+body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-review-side-pane[data-source-only="video"] {
+    display: none !important;
+}
+
+/* Mobile collapse: source toggle wraps and the picker bar stacks. */
+@media (max-width: 720px) {
+    .coach-tb-tool-grid {
+        grid-template-columns: 1fr;
+    }
+    .coach-tb-form .coach-tb-row {
+        grid-template-columns: 1fr;
+    }
+}
+

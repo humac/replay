@@ -185,10 +185,15 @@ _MAX_TACTICAL_BOARD_JSON_BYTES = 100_000
 _VALID_PITCH_KINDS = {"soccer_full"}
 _VALID_BOARD_ORIENTATIONS = {"landscape"}
 _VALID_BOARD_TOKEN_KINDS = {"player", "ball"}
-_VALID_BOARD_SHAPE_KINDS = {"arrow", "line", "zone", "label"}
+_VALID_BOARD_SHAPE_KINDS = {"arrow", "line", "zone", "label", "freehand"}
 _MAX_BOARD_TOKENS = 40
 _MAX_BOARD_SHAPES = 40
 _MAX_BOARD_LABEL_LENGTH = 80
+# Phase 6d-1 — freehand stroke point cap. Mirrors the JS `MAX_FREEHAND_POINTS`
+# in js/tactical-board.js. Higher than a typical drawn stroke needs but
+# bounded so a corrupted client cannot stuff thousands of points into a
+# single shape.
+_MAX_BOARD_FREEHAND_POINTS = 200
 # Observation notes still need *some* coaching content, otherwise the
 # row carries nothing useful. Any non-empty value in any of these fields
 # is enough — same spirit as the structured-fields list (Phase 1) but
@@ -475,6 +480,31 @@ def _validate_board_shape(shape: Any, index: int) -> dict[str, Any]:
     elif kind == "label":
         out["x"] = _validate_board_unit(shape.get("x"), f"shapes[{index}].x")
         out["y"] = _validate_board_unit(shape.get("y"), f"shapes[{index}].y")
+    elif kind == "freehand":
+        # Phase 6d-1 — freehand stroke. Stored as a list of points.
+        # Single-point and zero-point strokes don't render usefully so
+        # we reject them at the boundary; the editor's drag-to-draw
+        # short-circuit handles that path client-side too.
+        points_raw = shape.get("points", [])
+        if not isinstance(points_raw, list):
+            raise ValueError(f"tactical_board shapes[{index}] freehand points must be a list")
+        if len(points_raw) < 2:
+            raise ValueError(f"tactical_board shapes[{index}] freehand requires at least 2 points")
+        if len(points_raw) > _MAX_BOARD_FREEHAND_POINTS:
+            raise ValueError(
+                f"tactical_board shapes[{index}] freehand points exceed max ({_MAX_BOARD_FREEHAND_POINTS})"
+            )
+        clean_points: list[dict[str, float]] = []
+        for p_index, point in enumerate(points_raw):
+            if not isinstance(point, dict) or "x" not in point or "y" not in point:
+                raise ValueError(
+                    f"tactical_board shapes[{index}].points[{p_index}] must have x and y"
+                )
+            clean_points.append({
+                "x": _validate_board_unit(point["x"], f"shapes[{index}].points[{p_index}].x"),
+                "y": _validate_board_unit(point["y"], f"shapes[{index}].points[{p_index}].y"),
+            })
+        out["points"] = clean_points
     text = shape.get("text")
     if text is not None and text != "":
         out["text"] = _validate_board_label(text, f"shapes[{index}].text")

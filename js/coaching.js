@@ -78,6 +78,18 @@ export const coachingMixin = {
     _coachReview: null,
     _coachCanvasId: 'coach-drawing-canvas',
     _coachVideoId: 'coach-review-video',
+    // Phase 6d-1 — Coach Review source mode state. `_coachReviewSource`
+    // tracks which authoring surface (video / tactical_board) is on
+    // screen; `_coachReviewRequestedSource` is a one-shot intent set by
+    // routing entry points (e.g. Roster's "Add observation" button) so
+    // the next renderCoachReview() call applies the right mode.
+    // `_coachReviewIntent` carries player-id / mode hints from the
+    // routing call. `_coachReviewBoardCtrl` is the controller returned
+    // by mountTacticalBoardReviewCanvas; null when not in board mode.
+    _coachReviewSource: 'video',
+    _coachReviewRequestedSource: null,
+    _coachReviewIntent: null,
+    _coachReviewBoardCtrl: null,
     _feedbackPlayer: null,
     // Phase 4b: end-of-window watcher for clip playback. Holds a
     // reference to the timeupdate listener + the fallback interval
@@ -519,7 +531,7 @@ export const coachingMixin = {
                 <td class="roster-cell roster-col-status">${statusPill}</td>
                 <td class="roster-cell roster-col-actions">
                     <div class="roster-actions-row">
-                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Add observation note" aria-label="Add observation note" onclick="app.openCoachObservationModal(null, { playerId: ${playerIdJs} })">
+                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Add observation note" aria-label="Add observation note" onclick="app.routeNewObservation({ playerId: ${playerIdJs} })">
                             ${this._rosterIcon('observation')}
                         </button>
                         <button type="button" class="mini-action-btn mini-action-btn-icon" title="View development profile" aria-label="View development profile" onclick="app.openCoachPlayerDevelopmentModal(${playerIdJs})">
@@ -1969,6 +1981,16 @@ export const coachingMixin = {
         // rather than an inviting blue button that errors on click.
         this._refreshCoachReviewSaveClipState();
 
+        // Phase 6d-1 — apply the requested source mode (default: video).
+        // A pending intent flowing in from a list page (e.g. Roster's
+        // "Add observation" button) is honoured here; otherwise we
+        // re-apply the last-active mode so a coach who switched modes
+        // and navigated away returns to the same surface.
+        const requested = this._coachReviewRequestedSource;
+        const desired = requested || this._coachReviewSource || 'video';
+        this._coachReviewRequestedSource = null;
+        this._applyCoachReviewSource(desired);
+
         const pending = this._coachReviewPending || this._coachReview;
         if (pending?.matchId) {
             const matchSel = document.getElementById('coach-review-match');
@@ -1977,10 +1999,380 @@ export const coachingMixin = {
             if (slotSel) slotSel.value = pending.slot || 'full';
             await this.loadCoachReviewVideo(pending.matchId, pending.slot || 'full', pending.seekTo || 0, pending.drawing || null);
             this._coachReviewPending = null;
-        } else {
+        } else if (this._coachReviewSource === 'video') {
             const empty = document.getElementById('coach-review-empty');
             if (empty) empty.style.display = 'flex';
             await this.renderCoachReviewNotes(null);
+        }
+    },
+
+    // ===== Phase 6d-1 — list-page creation routing =====
+    //
+    // Coach > Notes / Clips / Roster are management surfaces. Their
+    // creation buttons route into Coach Review with an intent that
+    // selects the right source mode (and any preselection).
+
+    routeNewNote() {
+        this._coachReviewIntent = { mode: 'video', intent: 'note' };
+        this._coachReviewRequestedSource = 'video';
+        this.setCoachTab('review');
+    },
+
+    /** Routed from Coach > Clips "+ New clip". Lands the coach in Video
+     *  mode so they can scrub to the moment they want, then the existing
+     *  Save Clip action opens the clip composer. If a video is already
+     *  loaded in Review (from a prior session) we open the clip composer
+     *  immediately so the click maps straight to the action. */
+    routeNewClip() {
+        this._coachReviewIntent = { mode: 'video', intent: 'clip' };
+        this._coachReviewRequestedSource = 'video';
+        this.setCoachTab('review');
+        // If the Review tab already has a match loaded with metadata
+        // ready, jump straight into the clip composer — the routing
+        // intent is satisfied without another click.
+        const review = this._coachReview;
+        if (review?.matchId && review.metadataReady) {
+            this.openClipComposerFromReview();
+        }
+    },
+
+    /** Routed from Coach > Notes "+ New observation" and Coach > Roster
+     *  "Add observation". `playerId` (optional) preselects that player
+     *  in the side panel and defaults visibility to "player". */
+    routeNewObservation({ playerId = null } = {}) {
+        this._coachReviewIntent = { mode: 'tactical_board', intent: 'observation', playerId };
+        this._coachReviewRequestedSource = 'tactical_board';
+        this.setCoachTab('review');
+    },
+
+    // ===== Phase 6d-1 — Coach Review source modes =====
+    //
+    // The Review tab is the single creation workspace for video notes,
+    // video clips, and tactical-board observations. The source toggle
+    // swaps the picker bar's controls, the main canvas, and the side
+    // panel without unmounting the shared shell.
+
+    /** Phase 6d-1 — keyboard handler for the source-toggle tablist.
+     *  Implements the WAI-ARIA tablist pattern: ArrowLeft / ArrowRight
+     *  (and ArrowUp / ArrowDown for vertical-list parity) move focus
+     *  to the next / previous tab AND activate it (this is an
+     *  "automatic activation" tablist — switching modes has no save-
+     *  destroying side effect, so activating on focus matches the
+     *  click affordance). Home / End jump to first / last. Does NOT
+     *  intercept other keys; the inline `onclick` keeps mouse / touch
+     *  / Enter / Space activation working unchanged. */
+    handleCoachReviewSourceKeydown(event) {
+        const target = event.target;
+        if (!target?.dataset?.coachReviewSource) return;
+        const tablist = target.closest('[role="tablist"]');
+        if (!tablist) return;
+        const tabs = Array.from(tablist.querySelectorAll('[data-coach-review-source]'));
+        if (tabs.length < 2) return;
+        const currentIdx = tabs.indexOf(target);
+        let nextIdx = currentIdx;
+        switch (event.key) {
+            case 'ArrowRight':
+            case 'ArrowDown':
+                nextIdx = (currentIdx + 1) % tabs.length;
+                break;
+            case 'ArrowLeft':
+            case 'ArrowUp':
+                nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+                break;
+            case 'Home':
+                nextIdx = 0;
+                break;
+            case 'End':
+                nextIdx = tabs.length - 1;
+                break;
+            default:
+                return;
+        }
+        event.preventDefault();
+        const next = tabs[nextIdx];
+        if (!next) return;
+        // Activate the new mode (which also updates roving tabindex
+        // via _applyCoachReviewSource), then move focus to the now-
+        // active tab.
+        this.setCoachReviewSource(next.dataset.coachReviewSource);
+        try { next.focus(); } catch { /* ignore */ }
+    },
+
+    /** Public — change the Coach Review source mode. Wires up the
+     *  Save-Observation flow on the first tactical-board entry; tears
+     *  down the board controller when leaving tactical mode so a
+     *  re-entry starts from a clean state. */
+    setCoachReviewSource(source) {
+        if (source !== 'video' && source !== 'tactical_board') source = 'video';
+        // If we're already on this source AND fully mounted, no-op.
+        if (this._coachReviewSource === source && this._coachTab === 'review') return;
+        // Save the requested source so renderCoachReview picks it up
+        // when Review re-renders (covers the cross-tab routing case).
+        this._coachReviewRequestedSource = source;
+        if (this._coachTab !== 'review') {
+            this.setCoachTab('review');
+            return;
+        }
+        this._applyCoachReviewSource(source);
+    },
+
+    _applyCoachReviewSource(source) {
+        if (source !== 'video' && source !== 'tactical_board') source = 'video';
+        const shell = document.querySelector('#coach-tab-review .coach-review-shell');
+        if (!shell) return;
+        shell.dataset.source = source;
+        // Mirror the source mode onto <body> so source-only show/hide
+        // rules still scope correctly when openCoachFocusInspector
+        // re-parents `.coach-review-side` to <body> (which moves it
+        // out of the .coach-review-shell ancestry — see styles.css
+        // body[data-coach-review-source] rules). Cleared in
+        // tearDownCoachReview / setLoggedOut so it can't leak.
+        document.body.dataset.coachReviewSource = source;
+        // Toggle button states + roving tabindex (only the active
+        // tab is in the tab order; arrow keys move focus WITHIN the
+        // tablist via handleCoachReviewSourceKeydown). Mirrors the
+        // tone radiogroup pattern in `_syncToneRadiogroup`.
+        //
+        // The selector is scoped to `.coach-review-source-toggle
+        // [data-coach-review-source]` so it only matches the two
+        // tablist buttons. A bare `[data-coach-review-source]`
+        // selector would also match `<body
+        // data-coach-review-source>` (the body-level mirror used by
+        // the focus drawer's off-shell scoping rules) and bizarrely
+        // toggle `is-active` / `aria-selected` / `tabindex` on the
+        // <body> element.
+        document.querySelectorAll('.coach-review-source-toggle [data-coach-review-source]').forEach((btn) => {
+            const on = btn.dataset.coachReviewSource === source;
+            btn.classList.toggle('is-active', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+            btn.setAttribute('tabindex', on ? '0' : '-1');
+        });
+        // Defense-in-depth: clear any state we may have stamped onto
+        // <body> in earlier (pre-fix) calls. Idempotent — both
+        // `removeAttribute` calls are no-ops if the attribute is
+        // already absent.
+        if (document.body.dataset.coachReviewSource === source) {
+            document.body.classList.remove('is-active');
+            document.body.removeAttribute('aria-selected');
+            document.body.removeAttribute('tabindex');
+        }
+        // Refresh the keyboard-shortcuts help popover so its kbd list
+        // reflects the active source mode (video shortcuts vs tactical-
+        // board shortcuts). Idempotent — no-op if the popover element
+        // hasn't been rendered yet.
+        this._refreshCoachShortcutsHelpForSource?.(source);
+        const previous = this._coachReviewSource;
+        this._coachReviewSource = source;
+        if (source === 'tactical_board') {
+            // Tear down any video-mode state so a paused match in the
+            // background doesn't keep the heartbeat warm or steal
+            // the canvas.
+            this._stopFeedbackHeartbeat();
+            this.deactivateCoachCanvas?.();
+            this._mountCoachReviewBoard();
+        } else {
+            this._unmountCoachReviewBoard();
+            // Re-arm the empty placeholder if no video is loaded.
+            if (!this._coachReview) {
+                const empty = document.getElementById('coach-review-empty');
+                if (empty) empty.style.display = 'flex';
+            }
+        }
+        // If we switched modes, also reset focus mode so a focused video
+        // doesn't keep its drawer open over a board canvas.
+        if (previous && previous !== source) this.exitCoachFocusMode();
+    },
+
+    /** Mount the tactical-board authoring canvas + side panel for the
+     *  current Review session. Idempotent — a second call replaces the
+     *  initial board (used when routing in with a player_id intent). */
+    _mountCoachReviewBoard() {
+        const stageEl = document.getElementById('coach-review-board-canvas');
+        const toolbarEl = document.getElementById('coach-tb-toolbar');
+        const formEl = document.getElementById('coach-tb-form');
+        const statusEl = document.getElementById('coach-review-board-status');
+        if (!stageEl || !toolbarEl || !formEl) return;
+        // Re-render the form every mount so new bundle data (e.g. a
+        // newly-linked player) flows in.
+        this._renderCoachTacticalBoardForm(formEl);
+        // Mount the canvas + tools controller.
+        const initialBoard = this._coachReviewBoardCtrl
+            ? this._coachReviewBoardCtrl.scenePayload()
+            : null;
+        if (this._coachReviewBoardCtrl) this._coachReviewBoardCtrl.destroy();
+        this._coachReviewBoardCtrl = this.mountTacticalBoardReviewCanvas({
+            stageEl, toolbarEl, statusEl, initialBoard,
+        });
+        // Apply any pending player preselection from the routing intent.
+        const intent = this._coachReviewIntent;
+        if (intent?.playerId) {
+            const opt = formEl.querySelector(`[data-field="players"] .coach-check-option[data-value="${this.esc(intent.playerId)}"]`);
+            if (opt) {
+                opt.classList.add('is-selected');
+                opt.setAttribute('aria-pressed', 'true');
+            }
+            // Default visibility=player when launched from a roster entry.
+            const visEl = formEl.querySelector('[data-field="visibility"]');
+            if (visEl && !visEl.dataset.userTouched) visEl.value = 'player';
+        }
+        this._coachReviewIntent = null;
+    },
+
+    _unmountCoachReviewBoard() {
+        if (this._coachReviewBoardCtrl) {
+            this._coachReviewBoardCtrl.destroy();
+            this._coachReviewBoardCtrl = null;
+        }
+    },
+
+    /** Render the observation composer fields into the side panel for
+     *  Tactical Board mode. Mirrors the structured fields the modal
+     *  observation composer offers, but lives inline (no nested modal)
+     *  per the Phase 6d-1 UX rules. */
+    _renderCoachTacticalBoardForm(container) {
+        if (!container) return;
+        const players = this._coachBundle?.players || [];
+        container.innerHTML = `
+            <input type="text" id="coach-tb-title" maxlength="160" placeholder="Title (optional)" aria-label="Observation title">
+            <div class="coach-tb-row">
+                <select id="coach-tb-category" aria-label="Category">
+                    ${NOTE_CATEGORIES.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+                </select>
+                <select id="coach-tb-visibility" data-field="visibility" aria-label="Visibility">
+                    ${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}
+                </select>
+            </div>
+            <div id="coach-tb-tone" class="coach-review-tone" role="radiogroup" aria-label="Note tone">
+                ${NOTE_TYPES.map(([v, l, glyph]) => `
+                    <button type="button" class="coach-review-tone-btn${v === DEFAULT_NOTE_TYPE ? ' is-active' : ''}" role="radio" aria-checked="${v === DEFAULT_NOTE_TYPE}" tabindex="${v === DEFAULT_NOTE_TYPE ? '0' : '-1'}" data-note-type="${v}" title="${this.esc(l)}" onclick="app.setCoachTbNoteType('${v}')">
+                        <span class="coach-review-tone-glyph" aria-hidden="true">${glyph}</span>
+                        <span class="coach-review-tone-label">${this.esc(l)}</span>
+                    </button>
+                `).join('')}
+            </div>
+            <div class="coach-tb-section-label">Linked players</div>
+            <div data-field="players" class="coach-check-list compact" role="listbox" aria-label="Linked players">
+                ${this.coachCheckListHtml(players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet')}
+            </div>
+            <details class="coach-review-advanced">
+                <summary>More details</summary>
+                <div class="coach-review-advanced-body">
+                    <label class="coach-review-field-label">
+                        <span>Player summary <small>(visible to player/family)</small></span>
+                        <textarea id="coach-tb-player-summary" rows="2" maxlength="2000" placeholder="Short, age-appropriate version they'll read."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>What happened</span>
+                        <textarea id="coach-tb-what-happened" rows="2" maxlength="2000" placeholder="The observation."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Why it matters</span>
+                        <textarea id="coach-tb-why-it-matters" rows="2" maxlength="2000" placeholder="The coaching context."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>What to do next</span>
+                        <textarea id="coach-tb-what-to-do-next" rows="2" maxlength="2000" placeholder="The actionable next step."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Coach context (private)</span>
+                        <textarea id="coach-tb-coach-private-note" rows="2" maxlength="4000" placeholder="Internal — never sent to players or families."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Long notes</span>
+                        <textarea id="coach-tb-body" rows="3" maxlength="4000" placeholder="Anything that doesn't fit the structured fields above."></textarea>
+                    </label>
+                    <label class="coach-review-field-label">
+                        <span>Tags</span>
+                        <input type="text" id="coach-tb-tags" maxlength="300" placeholder="tags,comma,separated">
+                    </label>
+                </div>
+            </details>
+        `;
+        const toneEl = document.getElementById('coach-tb-tone');
+        if (toneEl) {
+            toneEl.dataset.value = DEFAULT_NOTE_TYPE;
+            this._setupToneRadiogroup(toneEl);
+        }
+        // Track when the coach manually changes visibility so a routed
+        // intent (from Roster) doesn't clobber their explicit choice.
+        const visEl = document.getElementById('coach-tb-visibility');
+        if (visEl) {
+            visEl.addEventListener('change', () => { visEl.dataset.userTouched = '1'; });
+        }
+    },
+
+    /** Tone-chip click target for the tactical-board side form. */
+    setCoachTbNoteType(value) {
+        const group = document.getElementById('coach-tb-tone');
+        if (!group) return;
+        this._syncToneRadiogroup(group, value);
+    },
+
+    /** Save Observation — Phase 6d-1 primary save action for Tactical
+     *  Board mode. Reads structured fields from the inline side panel,
+     *  pulls the current scene from the board controller, and POSTs to
+     *  the existing observation endpoint. */
+    async saveTacticalBoardObservation() {
+        const ctrl = this._coachReviewBoardCtrl;
+        if (!ctrl) { this.showError('Tactical board is not ready.'); return; }
+        const scene = ctrl.hasContent() ? ctrl.scenePayload() : null;
+        const title = (document.getElementById('coach-tb-title')?.value || '').trim();
+        const eventTitle = (document.getElementById('coach-tb-event-title')?.value || '').trim();
+        const eventDate = (document.getElementById('coach-tb-event-date')?.value || '').trim();
+        const eventType = (document.getElementById('coach-tb-event-type')?.value || '').trim();
+        const playerSummary = (document.getElementById('coach-tb-player-summary')?.value || '').trim();
+        const whatHappened = (document.getElementById('coach-tb-what-happened')?.value || '').trim();
+        const whyMatters = (document.getElementById('coach-tb-why-it-matters')?.value || '').trim();
+        const whatNext = (document.getElementById('coach-tb-what-to-do-next')?.value || '').trim();
+        const body = (document.getElementById('coach-tb-body')?.value || '').trim();
+        const meaningful = title || eventTitle || playerSummary || whatHappened
+            || whyMatters || whatNext || body || !!scene;
+        if (!meaningful) {
+            this.showError('Add a title, event title, some content, or a board sketch before saving.');
+            return;
+        }
+        const noteType = document.getElementById('coach-tb-tone')?.dataset.value || DEFAULT_NOTE_TYPE;
+        const playerIds = Array.from(document.querySelectorAll('#coach-tb-form [data-field="players"] .coach-check-option.is-selected'))
+            .map((b) => b.dataset.value);
+        const tags = ((document.getElementById('coach-tb-tags')?.value || '')
+            .split(',').map((s) => s.trim()).filter(Boolean));
+        const payload = {
+            note_context: 'observation',
+            title,
+            event_title: eventTitle,
+            event_date: eventDate,
+            event_type: eventType,
+            body,
+            category: document.getElementById('coach-tb-category')?.value || 'other',
+            visibility: document.getElementById('coach-tb-visibility')?.value || 'team',
+            player_ids: playerIds,
+            tags,
+            note_type: noteType,
+            player_summary: playerSummary,
+            what_happened: whatHappened,
+            why_it_matters: whyMatters,
+            what_to_do_next: whatNext,
+            coach_private_note: (document.getElementById('coach-tb-coach-private-note')?.value || '').trim(),
+            tactical_board_json: scene,
+        };
+        try {
+            await this.createCoachNote(payload);
+            this.showSuccess('Observation saved.');
+            // Reset per-moment fields. Keep visibility / category / tone /
+            // selected players so the coach can save a related observation
+            // with one more click.
+            const PER_MOMENT_IDS = [
+                'coach-tb-title', 'coach-tb-event-title', 'coach-tb-event-date',
+                'coach-tb-player-summary', 'coach-tb-what-happened',
+                'coach-tb-why-it-matters', 'coach-tb-what-to-do-next',
+                'coach-tb-body', 'coach-tb-tags', 'coach-tb-coach-private-note',
+            ];
+            PER_MOMENT_IDS.forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
+            // Clear the board so the next observation starts blank.
+            ctrl.loadScene(null);
+            this._coachBundle = await this.loadCoachBundle();
+        } catch (err) {
+            this.showError(err.message);
         }
     },
 
@@ -1995,6 +2387,13 @@ export const coachingMixin = {
         this.deactivateCoachCanvas();
         this.clearCoachDrawing();
         this._coachReview = null;
+        // Phase 6d-1 — tear down the tactical board controller so a
+        // re-entry into Review starts from a clean state.
+        this._unmountCoachReviewBoard();
+        // Phase 6d-1 — clear the body source-mode mirror so other
+        // surfaces don't accidentally inherit it. The data-attribute
+        // is recreated next time the user enters Coach Review.
+        delete document.body.dataset.coachReviewSource;
         // Phase 4c (issue #100): the Save-Clip button reads
         // `_coachReview.metadataReady`; with the session cleared the
         // refresh helper picks the disabled state, which is the
@@ -2367,8 +2766,24 @@ export const coachingMixin = {
         document.body.classList.add('coach-focus-drawer-open');
         const t = document.getElementById('coach-review-focus-inspector-toggle');
         if (t) t.setAttribute('aria-pressed', 'true');
-        // Mount a real backdrop element so clicking outside the drawer
-        // closes it. Pseudo-elements can't receive click events.
+        // Phase 6d-1 — in Tactical Board mode the pitch IS the work
+        // surface. We still want the click-outside-closes-drawer
+        // affordance, but a clicking the PITCH should ALSO be
+        // received by the pitch's mousedown handler so the armed
+        // tool drops a token / starts a drag in the same gesture.
+        // Achieved by:
+        //   * mounting the backdrop with `pointer-events: none` (CSS)
+        //     so the pitch and picker bar still receive clicks
+        //     (visual dim only), AND
+        //   * binding a click-on-pitch listener that closes the
+        //     drawer when a click lands on the pitch (mirroring the
+        //     "tap outside to close" affordance without stealing the
+        //     event from the pitch's own handlers).
+        //
+        // In Video mode the backdrop stays as the standard click-
+        // outside-to-close — the video itself doesn't accept primary
+        // clicks for note authoring (clicks go through the canvas
+        // overlay / picker bar).
         let backdrop = document.getElementById('coach-focus-backdrop');
         if (!backdrop) {
             backdrop = document.createElement('div');
@@ -2378,6 +2793,30 @@ export const coachingMixin = {
             document.body.appendChild(backdrop);
         }
         backdrop.hidden = false;
+        // TB-mode-only: bind a delegated mousedown listener to the
+        // STABLE board-canvas wrapper (not the SVG itself, which gets
+        // recreated on every controller refresh). When a click lands
+        // on the pitch the listener closes the drawer; the pitch's
+        // own controller handler runs in the same mousedown event
+        // dispatch so the tool drops / starts a drag in one gesture.
+        // The listener is stored so `closeCoachFocusInspector` can
+        // remove it cleanly.
+        if (this._coachReviewSource === 'tactical_board') {
+            const canvasHost = document.getElementById('coach-review-board-canvas');
+            if (canvasHost && !this._tbFocusCloseHandler) {
+                this._tbFocusCloseHandler = () => {
+                    if (this._coachFocusInspectorOpen) this.closeCoachFocusInspector();
+                };
+                canvasHost.addEventListener('mousedown', this._tbFocusCloseHandler, { passive: true });
+                canvasHost.addEventListener('touchstart', this._tbFocusCloseHandler, { passive: true });
+            }
+            // Toggle a body class so the CSS can switch the backdrop
+            // to `pointer-events: none` (keeps the dim overlay visual
+            // but lets clicks pass through to the pitch).
+            document.body.classList.add('coach-focus-drawer-tb-mode');
+        } else {
+            document.body.classList.remove('coach-focus-drawer-tb-mode');
+        }
         // Move the inspector to <body> so it shares the root stacking context
         // with the backdrop. Without this, an ancestor with animation /
         // transform / filter (e.g. .coach-tab-panel's coachTabFade animation)
@@ -2412,6 +2851,20 @@ export const coachingMixin = {
         this._coachFocusInspectorOpen = false;
         document.getElementById('coach-view')?.classList.remove('is-focus-drawer-open');
         document.body.classList.remove('coach-focus-drawer-open');
+        // Phase 6d-1 — clear the TB-mode pointer-events pass-through
+        // marker AND remove the canvas-host mousedown listener so
+        // the next open can re-bind cleanly. The handler is stored
+        // on `_tbFocusCloseHandler` so we can remove it without
+        // chasing element references through controller refreshes.
+        document.body.classList.remove('coach-focus-drawer-tb-mode');
+        if (this._tbFocusCloseHandler) {
+            const canvasHost = document.getElementById('coach-review-board-canvas');
+            if (canvasHost) {
+                canvasHost.removeEventListener('mousedown', this._tbFocusCloseHandler);
+                canvasHost.removeEventListener('touchstart', this._tbFocusCloseHandler);
+            }
+            this._tbFocusCloseHandler = null;
+        }
         const t = document.getElementById('coach-review-focus-inspector-toggle');
         if (t) t.setAttribute('aria-pressed', 'false');
         const backdrop = document.getElementById('coach-focus-backdrop');
@@ -2602,6 +3055,43 @@ export const coachingMixin = {
         // and is exercised by the Sprint 8 a11y audit.
         const toggle = document.getElementById('coach-review-shortcuts-toggle');
         if (toggle) toggle.setAttribute('aria-pressed', willOpen ? 'true' : 'false');
+        // Phase 6d-1 — refresh the kbd list to match the active source
+        // mode every time the popover opens, in case the source
+        // changed since last open without firing _applyCoachReviewSource.
+        if (willOpen) this._refreshCoachShortcutsHelpForSource(this._coachReviewSource);
+    },
+
+    /** Phase 6d-1 — populate the keyboard-shortcuts help popover with
+     *  shortcuts relevant to the active source mode. Video mode keeps
+     *  the existing video-scrubbing + telestrator shortcuts. Tactical
+     *  Board mode (no video, no telestrator tools yet — those bind to
+     *  the video keydown layer) shows only the universally-relevant
+     *  shortcuts (Esc, ?) plus a note that mode-specific shortcuts
+     *  arrive in Phase 6d-2. */
+    _refreshCoachShortcutsHelpForSource(source) {
+        const list = document.querySelector('#coach-shortcuts-help .coach-shortcuts-help-list');
+        if (!list) return;
+        const VIDEO_ITEMS = [
+            ['<kbd>Space</kbd> / <kbd>K</kbd>', 'Play / pause'],
+            ['<kbd>J</kbd> / <kbd>L</kbd>', 'Back / forward 5 s'],
+            ['<kbd>←</kbd> / <kbd>→</kbd>', 'Back / forward 1 s'],
+            ['<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>→</kbd>', 'Back / forward 10 s'],
+            ['<kbd>S</kbd>', 'Save note at current time'],
+            ['<kbd>A</kbd> <kbd>F</kbd> <kbd>Z</kbd> <kbd>C</kbd> <kbd>T</kbd> <kbd>D</kbd>', 'Arrow / Freehand / Zone / Circle / Label / Spotlight'],
+            ['<kbd>Esc</kbd>', 'Exit focus mode'],
+            ['<kbd>?</kbd>', 'Show / hide this help'],
+        ];
+        const TB_ITEMS = [
+            ['<kbd>Delete</kbd> / <kbd>Backspace</kbd>', 'Delete the selected token or shape'],
+            ['<kbd>Esc</kbd>', 'Exit focus mode'],
+            ['<kbd>?</kbd>', 'Show / hide this help'],
+            // Tactical-mode-specific tool shortcuts ship in Phase 6d-2.
+        ];
+        const items = source === 'tactical_board' ? TB_ITEMS : VIDEO_ITEMS;
+        const note = source === 'tactical_board'
+            ? '<li class="coach-shortcuts-help-note"><span>More tactical-board shortcuts arrive in Phase 6d-2.</span></li>'
+            : '';
+        list.innerHTML = items.map(([keys, label]) => `<li>${keys}<span>${this.esc(label)}</span></li>`).join('') + note;
     },
 
     renderCoachReviewForm() {

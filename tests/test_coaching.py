@@ -4301,3 +4301,111 @@ async def test_tactical_board_missing_tokens_defaults_to_empty(client, auth_head
     assert board["shapes"] == []
     assert board["version"] == 1
     assert board["orientation"] == "landscape"
+
+
+# ===== Phase 6d-1 — freehand tactical-board shape =====
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_accepts_freehand_shape(client, auth_headers):
+    """Phase 6d-1 — freehand strokes round-trip through validation
+    and persist on the observation note."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Freehand stroke", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{
+                "kind": "freehand",
+                "points": [
+                    {"x": 0.1, "y": 0.1},
+                    {"x": 0.2, "y": 0.15},
+                    {"x": 0.3, "y": 0.2},
+                ],
+            }],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    assert len(board["shapes"]) == 1
+    assert board["shapes"][0]["kind"] == "freehand"
+    assert len(board["shapes"][0]["points"]) == 3
+    # Points round-trip with the unit-coordinate values.
+    assert board["shapes"][0]["points"][0] == {"x": 0.1, "y": 0.1}
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_freehand_rejects_out_of_range_point(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad freehand", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{
+                "kind": "freehand",
+                "points": [
+                    {"x": 0.1, "y": 0.1},
+                    {"x": 1.5, "y": 0.5},  # outside 0..1
+                ],
+            }],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_freehand_rejects_too_many_points(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Endless stroke", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{
+                "kind": "freehand",
+                "points": [
+                    {"x": (i % 100) / 100.0, "y": (i % 100) / 100.0}
+                    for i in range(250)  # > _MAX_BOARD_FREEHAND_POINTS (200)
+                ],
+            }],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_freehand_rejects_too_few_points(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Single point", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{
+                "kind": "freehand",
+                "points": [{"x": 0.1, "y": 0.1}],  # only 1 point
+            }],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_legacy_payload_without_freehand_still_accepted(client, auth_headers):
+    """Existing boards saved before freehand was a valid kind must
+    keep loading. Mix of arrow + zone + label, no freehand."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Legacy mix", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "player", "x": 0.4, "y": 0.5, "label": "7"}],
+            "shapes": [
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5},
+                {"kind": "zone", "x": 0.6, "y": 0.6, "w": 0.2, "h": 0.2},
+                {"kind": "label", "x": 0.5, "y": 0.9, "text": "press"},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    kinds = sorted(s["kind"] for s in board["shapes"])
+    assert kinds == ["arrow", "label", "zone"]
