@@ -6882,6 +6882,95 @@ details.diag-row-details[open] > summary::after {
     .coach-review-mode-btn { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
 }
 
+/* Phase 6d-1: shared picker bar inner halves (video ↔ board) ============ */
+.cr-video-bar,
+.cr-board-bar {
+    display: contents; /* both halves are items in the shared flex picker bar */
+}
+/* When hidden, override display:contents so the element is truly invisible. */
+.cr-video-bar[hidden],
+.cr-board-bar[hidden] {
+    display: none !important;
+}
+
+/* Board bar: formation selector + event title input as flexible items */
+.cr-board-bar-event {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+.cr-board-bar-event input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0.3rem 0.6rem;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    color: #f1f5f9;
+    font-size: 0.8125rem;
+    font-family: inherit;
+}
+.cr-board-bar-event input:focus {
+    outline: 2px solid rgba(56, 189, 248, 0.6);
+    outline-offset: 1px;
+    border-color: transparent;
+}
+[data-theme="light"] .cr-board-bar-event input {
+    border-color: rgba(0, 0, 0, 0.15);
+    background: #fff;
+    color: #1e293b;
+}
+
+/* Phase 6d-1: shared main area — full width, houses video div OR board div */
+.coach-review-main {
+    min-width: 0;
+    position: relative;
+}
+.coach-review-board {
+    width: 100%;
+    min-height: 300px;
+}
+.cr-board-editor-mount {
+    width: 100%;
+}
+
+/* Side panel content slots */
+.cr-video-side {
+    display: contents;
+}
+.cr-video-side[hidden] {
+    display: none !important;
+}
+.cr-board-side {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+.cr-board-side h4 {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+.cr-board-side .coach-observation-helper {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+/* #cr-board-tools shares the same container styling as #coach-review-toolbar */
+#cr-board-tools .coach-telestrator {
+    /* inherits .coach-telestrator styles */
+}
+
+/* Timeline rail in shared grid: spans both columns */
+#coach-review-notes.cr-video-only {
+    grid-column: 1 / -1;
+}
+
 .coach-review-picker {
     margin-bottom: 1rem;
     padding-bottom: 1rem;

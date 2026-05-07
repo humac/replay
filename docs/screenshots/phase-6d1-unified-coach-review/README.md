@@ -3,14 +3,20 @@
 Screenshots captured via Playwright against a local dev server seeded with `docs/_seed/seed.py`.
 Accounts used: `coach1` / `Replay!Demo123` (coach role), `family1` / `Replay!Demo123` (viewer role).
 
+**Unified layout**: Video and Tactical Board share a single workspace — the same picker bar,
+main content area, and side panel. Switching mode swaps picker controls (Match/Slot/Time ↔
+Formation/Event), swaps the main area (video player ↔ pitch editor), and swaps the side panel
+content (Telestrator tools + note form ↔ Board quick-action tools + observation form). No stacked
+separate sections.
+
 ---
 
 ## Coach Review — mode toggle
 
 | File | What it shows |
 |------|---------------|
-| `01-video-mode-dark.png` | Coach > Review, dark theme, **Video mode active**. The Video / Tactical Board pill toggle is visible below the sub-tab bar; Video is the active (highlighted) button. The picker bar (Match / Slot / Time / Save Note / Save Clip / Focus / Shortcuts), video area, and the note-composer right panel are all visible. |
-| `02-tactical-board-mode-dark.png` | Coach > Review, dark theme, **Tactical Board mode active**. The Tactical Board button in the pill toggle is highlighted. The video area and picker bar are hidden; the observation fields and Save Observation button render in the right panel. The pitch board editor is below the fold at 900 px viewport height. |
+| `01-video-mode-dark.png` | Coach > Review, dark theme, **Video mode active**. The Video / Tactical Board pill toggle is visible below the sub-tab bar. The picker bar shows Match / Slot / Time / Save Note / Save Clip / Focus / Shortcuts. The main area has the video player (16:9 with "Pick a match" placeholder). The side panel shows the Telestrator toolbar and note composer. |
+| `02-tactical-board-mode-dark.png` | Coach > Review, dark theme, **Tactical Board mode active**. The Tactical Board button in the pill toggle is highlighted. The picker bar swaps to Formation select + Event title input + Save Observation button. The main area shows the inline pitch editor (mounted via `mountTacticalBoardSection`). The side panel shows Board quick-action tools (Player, Ball, Arrow, Zone, Label buttons + Edit board / Clear actions) and the Observation form fields below. The timeline rail and video player are absent. |
 | `12-video-mode-regression-check.png` | Coach > Review, dark theme — navigated to TB mode first, then switched back to **Video mode**. Confirms all video controls (picker bar, video area, telestrator, Save Note, Save Clip) are fully restored with no regression. |
 
 ---
@@ -28,8 +34,8 @@ Accounts used: `coach1` / `Replay!Demo123` (coach role), `family1` / `Replay!Dem
 
 | File | What it shows |
 |------|---------------|
-| `04-new-note-routed-review-video.png` | Coach > Review after clicking **+ New note** from the Notes tab. Video mode is active: picker bar, video area, note-composer panel with template selector and player list are all present. |
-| `05-new-obs-routed-review-board.png` | Coach > Review after clicking **+ New observation** from the Notes tab. Tactical Board mode is active: the picker bar/video area are hidden; the observation panel (observation-specific fields, Save Observation button) is visible in the right rail. |
+| `04-new-note-routed-review-video.png` | Coach > Review after clicking **+ New note** from the Notes tab. Video mode is active: picker bar (Match/Slot/Time/Save Note/Save Clip), video area, note-composer panel with template selector and player list are all present. |
+| `05-new-obs-routed-review-board.png` | Coach > Review after clicking **+ New observation** from the Notes tab. Tactical Board mode is active: picker bar shows Formation + Event title + Save Observation; the pitch editor is in the main area; the side panel shows Board tools + Observation form. |
 | `06-new-clip-routed-review-video.png` | Coach > Review after clicking **+ New clip** from the Clips tab. Video mode is active with Save Note and Save Clip CTAs in the picker bar, identical to `04`. |
 
 ---
@@ -51,11 +57,11 @@ Accounts used: `coach1` / `Replay!Demo123` (coach role), `family1` / `Replay!Dem
 
 ---
 
-## Observation form
+## Observation form + formation preset
 
 | File | What it shows |
 |------|---------------|
-| `09-obs-form-filled.png` | Coach > Review, Tactical Board mode, observation fields fully filled: Event title ("Tuesday training — pressing shape"), Date (2026-05-07), Type (Practice), Observation title ("Compact block out of possession"), category (Shape), visibility (Private), linked players (Maya Chen, Liam O'Connor, Theo Bauer checked), tone chip (Correction selected), Player summary text. The **Save Observation** button is visible at the bottom of the right panel. |
+| `09-obs-form-filled.png` | Coach > Review, Tactical Board mode, with a **4-4-2 formation preset** applied from the picker bar Formation selector (tokens appear on the pitch). Picker bar event title: "Tuesday training — pressing shape". Side panel observation fields filled: Date (2026-05-07), Type (Practice), Observation title ("Compact block out of possession"), category (Shape), player summary text. |
 
 ---
 
@@ -63,8 +69,8 @@ Accounts used: `coach1` / `Replay!Demo123` (coach role), `family1` / `Replay!Dem
 
 | File | What it shows |
 |------|---------------|
-| `13-tactical-board-light-mode.png` | Coach > Review, **Tactical Board mode**, light theme. The mode toggle shows "Tactical Board" highlighted in teal/blue. The observation right panel renders with correctly themed inputs and background. |
-| `14-video-mode-light-mode.png` | Coach > Review, **Video mode**, light theme. Picker bar, video area, telestrator toolbar and note-composer panel all render in light theme. |
+| `13-tactical-board-light-mode.png` | Coach > Review, **Tactical Board mode**, light theme. The mode toggle shows "Tactical Board" highlighted. The picker bar (Formation + Event + Save Observation) and the observation side panel render with correctly themed inputs and background. |
+| `14-video-mode-light-mode.png` | Coach > Review, **Video mode**, light theme. Picker bar (Match/Slot/Time/Save Note/Save Clip/Focus/Shortcuts), video area, telestrator toolbar and note-composer panel all render in light theme. |
 | `15-notes-routing-light-mode.png` | Coach > Notes tab, light theme. The **+ New observation** and **+ New note** routing buttons are visible and correctly themed. |
 
 ---
@@ -81,6 +87,6 @@ Accounts used: `coach1` / `Replay!Demo123` (coach role), `family1` / `Replay!Dem
 
 | File | What it shows |
 |------|---------------|
-| `17-mobile-video-mode.png` | Coach > Review at 390 px wide, **Video mode**. The sub-tab row (Roster · Notes · Playlists · Clips · Review) is visible. The Video / Tactical Board pill toggle stacks cleanly. Picker bar controls (Match, Slot, Time, Save Note, Save Clip, Focus, Shortcuts) are each full-width with no horizontal overflow. |
-| `18-mobile-tactical-board.png` | Coach > Review at 390 px wide, **Tactical Board mode**. The Tactical Board button in the pill is highlighted. Video controls are hidden. The mobile layout has no overflow. |
+| `17-mobile-video-mode.png` | Coach > Review at 390 px wide, **Video mode**. The sub-tab row (Roster · Notes · Playlists · Clips · Review) is visible. The Video / Tactical Board pill toggle stacks cleanly. Picker bar controls (Match, Slot, Time, Save Note, Save Clip, Focus, Shortcuts) stack full-width with no horizontal overflow. |
+| `18-mobile-tactical-board.png` | Coach > Review at 390 px wide, **Tactical Board mode**. The Tactical Board button in the pill is highlighted. The picker bar shows Formation + Event + Save Observation. The main area shows the pitch editor; the side panel shows Board tools and the observation form stacked below. No overflow. |
 | `19-mobile-notes-routing.png` | Coach > Notes at 390 px wide. The note list header shows **+ New observation** and **+ New note** routing buttons, both accessible and readable at narrow width. |

@@ -2096,13 +2096,24 @@ export const coachingMixin = {
         if (btnVideo) { btnVideo.classList.toggle('is-active', !isTB); btnVideo.setAttribute('aria-pressed', isTB ? 'false' : 'true'); }
         if (btnBoard) { btnBoard.classList.toggle('is-active', isTB); btnBoard.setAttribute('aria-pressed', isTB ? 'true' : 'false'); }
 
-        // Workspace visibility — show/hide via the `hidden` attribute on
-        // the board workspace, and via a class on video-only elements.
-        const boardWorkspace = document.querySelector('.coach-review-board-workspace');
-        if (boardWorkspace) boardWorkspace.hidden = !isTB;
-        document.querySelectorAll('.coach-review-video-only').forEach((el) => {
-            el.hidden = isTB;
-        });
+        // Shared layout: swap video ↔ board sections in the single grid.
+        // .cr-video-only  → hidden in TB mode (main video area, video side panel, timeline)
+        // .cr-board-only  → hidden in Video mode (board main area, board side panel)
+        // .cr-video-bar   → hidden in TB mode (match/slot/time/Save Note/Clip bar)
+        // .cr-board-bar   → hidden in Video mode (formation/event/Save Observation bar)
+        document.querySelectorAll('.cr-video-only').forEach((el) => { el.hidden = isTB; });
+        document.querySelectorAll('.cr-board-only').forEach((el) => { el.hidden = !isTB; });
+        const videoBar = document.querySelector('.cr-video-bar');
+        if (videoBar) videoBar.hidden = isTB;
+        const boardBar = document.querySelector('.cr-board-bar');
+        if (boardBar) boardBar.hidden = !isTB;
+
+        // In TB mode the side panel is not height-constrained by the video
+        // wrapper. Clear any JS-injected max-height so the observation form
+        // can show its full content. Video mode restores it via the next
+        // _syncCoachReviewSideHeight call on video load/resize.
+        const side = document.querySelector('#coach-tab-review .coach-review-side');
+        if (side && isTB) side.style.maxHeight = '';
 
         // Keyboard shortcuts are video-only.
         if (isTB) this.uninstallCoachReviewShortcuts();
@@ -2153,6 +2164,63 @@ export const coachingMixin = {
             setBoard: (scene) => { this._coachReviewBoardScene = scene; },
         });
 
+        // Render board quick-action shortcuts into the side panel tool slot.
+        // The full editor toolbar lives inside #cr-board-editor-mount; these
+        // buttons mirror the most-used actions so the coach's eye stays on
+        // the pitch without hunting for controls.
+        const boardTools = document.getElementById('cr-board-tools');
+        if (boardTools && !boardTools.querySelector('.coach-tool-btn')) {
+            boardTools.innerHTML = `
+                <div class="coach-telestrator" role="toolbar" aria-label="Board quick actions">
+                    <div class="coach-tool-grid" role="group" aria-label="Add to pitch">
+                        <button type="button" class="coach-tool-btn" title="Add player token" aria-label="Add player token"
+                                onclick="app._crBoardTriggerTool('player')">
+                            <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <circle cx="12" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                                <path d="M6 20c0-3.3 2.7-6 6-6s6 2.7 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                            </svg>
+                            <span class="coach-tool-label">Player</span>
+                        </button>
+                        <button type="button" class="coach-tool-btn" title="Add ball" aria-label="Add ball"
+                                onclick="app._crBoardTriggerTool('ball')">
+                            <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                                <path d="M12 4a8 8 0 010 16M8 4.9l4 7.1M16 4.9l-4 7.1M4.9 16h14.2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+                            </svg>
+                            <span class="coach-tool-label">Ball</span>
+                        </button>
+                        <button type="button" class="coach-tool-btn" title="Add arrow" aria-label="Add arrow"
+                                onclick="app._crBoardTriggerTool('arrow')">
+                            <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 12h13m-4-5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-tool-label">Arrow</span>
+                        </button>
+                        <button type="button" class="coach-tool-btn" title="Add zone" aria-label="Add zone"
+                                onclick="app._crBoardTriggerTool('zone')">
+                            <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 6h4M10 6h4M16 6h4M20 8v4M20 14v4M20 18h-4M14 18h-4M8 18H4M4 16v-4M4 10V6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-tool-label">Zone</span>
+                        </button>
+                        <button type="button" class="coach-tool-btn" title="Add text label" aria-label="Add text label"
+                                onclick="app._crBoardTriggerTool('label')">
+                            <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M6 6h12M12 6v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-tool-label">Label</span>
+                        </button>
+                    </div>
+                    <div class="coach-draw-actions" role="group" aria-label="Board actions">
+                        <button type="button" class="mini-action-btn" title="Enter / exit board editor"
+                                onclick="app._crBoardTriggerAction('edit')">Edit board</button>
+                        <button type="button" class="mini-action-btn btn-danger-soft" title="Clear all items"
+                                onclick="app._crBoardTriggerAction('clear')">Clear</button>
+                    </div>
+                </div>
+            `;
+        }
+
         // Tone group — render chips into #cr-obs-tone.
         const toneEl = document.getElementById('cr-obs-tone');
         if (toneEl && !toneEl.querySelector('.coach-review-tone-btn')) {
@@ -2191,6 +2259,79 @@ export const coachingMixin = {
         }
     },
 
+    /** Trigger a tool button click inside the mounted board editor.
+     *  The board section owns its own tool state; we delegate via the DOM
+     *  so we don't duplicate state management. */
+    _crBoardTriggerTool(tool) {
+        const mount = document.getElementById('cr-board-editor-mount');
+        if (!mount) return;
+        // First ensure the editor is in edit mode (click "Edit board" if preview is shown).
+        const addBtn = mount.querySelector('[data-tb-action="add"]');
+        const editBtn = mount.querySelector('[data-tb-action="edit"]');
+        if (addBtn) addBtn.click();
+        else if (editBtn) editBtn.click();
+        // Then activate the tool.
+        const toolBtn = mount.querySelector(`[data-tb-tool="${tool}"]`);
+        if (toolBtn) toolBtn.click();
+    },
+
+    /** Trigger an action button inside the mounted board editor. */
+    _crBoardTriggerAction(action) {
+        const mount = document.getElementById('cr-board-editor-mount');
+        if (!mount) return;
+        const btn = mount.querySelector(`[data-tb-action="${action}"]`);
+        if (btn) btn.click();
+    },
+
+    /** Handle formation preset selection from the board-mode picker bar.
+     *  Applies a formation preset to the board scene and re-mounts
+     *  the section so the pitch reflects the chosen shape. */
+    handleCrObsFormationChange() {
+        const sel = document.getElementById('cr-obs-formation');
+        const value = sel?.value || '';
+        if (!value) {
+            // "Blank" — clear the board scene.
+            this._coachReviewBoardScene = null;
+            const mount = document.getElementById('cr-board-editor-mount');
+            if (mount) {
+                this.mountTacticalBoardSection(mount, {
+                    initialBoard: null,
+                    getBoard: () => this._coachReviewBoardScene,
+                    setBoard: (scene) => { this._coachReviewBoardScene = scene; },
+                });
+            }
+            return;
+        }
+        // Parse "11-4-3-3" → { format: 11, lines: [4,3,3] }
+        const [formatStr, ...lineParts] = value.split('-');
+        const format = parseInt(formatStr, 10);
+        const lines = lineParts.map(Number);
+        // Build a basic formation scene with evenly spaced tokens.
+        // GK at x=0.07; each outfield line distributed along x axis.
+        const tokens = [];
+        // Goalkeeper.
+        tokens.push({ kind: 'player', x: 0.07, y: 0.5, label: 'GK' });
+        const outfieldLines = lines;
+        const xStep = 0.82 / (outfieldLines.length + 1);
+        outfieldLines.forEach((count, lineIdx) => {
+            const x = 0.07 + xStep * (lineIdx + 1);
+            for (let i = 0; i < count; i++) {
+                const y = count === 1 ? 0.5 : 0.1 + (0.8 / (count - 1)) * i;
+                tokens.push({ kind: 'player', x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 });
+            }
+        });
+        const scene = { version: 1, pitch_kind: 'soccer_full', orientation: 'landscape', tokens, shapes: [] };
+        this._coachReviewBoardScene = scene;
+        const mount = document.getElementById('cr-board-editor-mount');
+        if (mount) {
+            this.mountTacticalBoardSection(mount, {
+                initialBoard: scene,
+                getBoard: () => this._coachReviewBoardScene,
+                setBoard: (s) => { this._coachReviewBoardScene = s; },
+            });
+        }
+    },
+
     /** Tone chip click handler for the inline Coach Review TB observation form. */
     _syncCrObsTone(value) {
         const group = document.getElementById('cr-obs-tone');
@@ -2210,6 +2351,9 @@ export const coachingMixin = {
         if (dateEl) dateEl.value = '';
         const eventTypeSel = document.getElementById('cr-obs-event-type');
         if (eventTypeSel) eventTypeSel.value = '';
+        // Reset formation preset selector.
+        const formationSel = document.getElementById('cr-obs-formation');
+        if (formationSel) formationSel.value = '';
         // Reset tone to default.
         const toneEl = document.getElementById('cr-obs-tone');
         if (toneEl) this._syncToneRadiogroup(toneEl, DEFAULT_NOTE_TYPE);

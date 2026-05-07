@@ -522,92 +522,116 @@
                             Tactical Board
                         </button>
                     </div>
-                    <!-- Video mode: match/slot picker + save actions. Hidden in Tactical Board mode. -->
-                    <div class="coach-review-picker coach-review-video-only" role="toolbar" aria-label="Coach Review controls">
-                        <div class="coach-review-picker-group">
-                            <label class="coach-review-picker-label" for="coach-review-match">Match</label>
-                            <select id="coach-review-match" onchange="app.handleCoachReviewMatchChange()"></select>
+                    <!-- Shared picker bar — inner halves swap between modes.
+                         Video half: match/slot/time + Save Note/Clip/Focus/Shortcuts.
+                         Board half: formation select + event title + Save Observation. -->
+                    <div class="coach-review-picker" role="toolbar" aria-label="Coach Review controls">
+                        <!-- Video half -->
+                        <div class="cr-video-bar">
+                            <div class="coach-review-picker-group">
+                                <label class="coach-review-picker-label" for="coach-review-match">Match</label>
+                                <select id="coach-review-match" onchange="app.handleCoachReviewMatchChange()"></select>
+                            </div>
+                            <div class="coach-review-picker-group">
+                                <label class="coach-review-picker-label" for="coach-review-slot">Slot</label>
+                                <select id="coach-review-slot" onchange="app.handleCoachReviewSlotChange()">
+                                    <option value="full">Full</option>
+                                    <option value="first_half">1st Half</option>
+                                    <option value="second_half">2nd Half</option>
+                                </select>
+                            </div>
+                            <div class="coach-review-picker-group coach-review-picker-time" aria-live="off">
+                                <span class="coach-review-picker-label">Time</span>
+                                <span id="coach-review-time" class="coach-review-time-value" aria-label="Current video time">--:--</span>
+                            </div>
+                            <button type="button" id="coach-review-save-top" class="btn-primary coach-review-picker-save" onclick="app.saveReviewNote()">Save Note</button>
+                            <!-- Phase 4b: Save Clip -->
+                            <button type="button"
+                                    id="coach-review-save-clip"
+                                    class="btn-secondary coach-review-picker-save-clip"
+                                    title="Save a clip of the current moment"
+                                    aria-label="Save clip from current time"
+                                    onclick="app.openClipComposerFromReview()">Save Clip</button>
+                            <!-- Focus mode toggle -->
+                            <button type="button"
+                                    id="coach-review-focus-toggle"
+                                    class="coach-review-picker-focus"
+                                    aria-pressed="false"
+                                    title="Focus mode (Esc to exit)"
+                                    aria-label="Toggle focus mode"
+                                    onclick="app.toggleCoachFocusMode()">
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                                          fill="none" stroke="currentColor" stroke-width="1.8"
+                                          stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <span class="coach-review-picker-focus-label">Focus</span>
+                            </button>
+                            <!-- Drawer toggle (focus mode only) -->
+                            <button type="button"
+                                    id="coach-review-focus-inspector-toggle"
+                                    class="coach-review-picker-focus coach-review-picker-drawer"
+                                    aria-pressed="false"
+                                    title="Open tools and note composer"
+                                    aria-label="Open tools and note composer"
+                                    onclick="app.toggleCoachFocusInspector()">
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M4 6h16M4 12h16M4 18h10"
+                                          fill="none" stroke="currentColor" stroke-width="1.8"
+                                          stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <span class="coach-review-picker-focus-label">Tools</span>
+                            </button>
+                            <!-- Keyboard shortcuts help toggle -->
+                            <button type="button"
+                                    id="coach-review-shortcuts-toggle"
+                                    class="coach-review-picker-focus coach-review-picker-shortcuts"
+                                    aria-pressed="false"
+                                    aria-controls="coach-shortcuts-help"
+                                    title="Keyboard shortcuts (press ?)"
+                                    aria-label="Show keyboard shortcuts"
+                                    onclick="app.toggleCoachShortcutsHelp()">
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M12 18v.01M9 9a3 3 0 016 0c0 1.5-2 2-3 3.5"
+                                          fill="none" stroke="currentColor" stroke-width="1.8"
+                                          stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <span class="coach-review-picker-focus-label">Shortcuts</span>
+                            </button>
                         </div>
-                        <div class="coach-review-picker-group">
-                            <label class="coach-review-picker-label" for="coach-review-slot">Slot</label>
-                            <select id="coach-review-slot" onchange="app.handleCoachReviewSlotChange()">
-                                <option value="full">Full</option>
-                                <option value="first_half">1st Half</option>
-                                <option value="second_half">2nd Half</option>
-                            </select>
+                        <!-- Board half — replaces the video bar in Tactical Board mode -->
+                        <div class="cr-board-bar" hidden>
+                            <div class="coach-review-picker-group">
+                                <label class="coach-review-picker-label" for="cr-obs-formation">Formation</label>
+                                <select id="cr-obs-formation" onchange="app.handleCrObsFormationChange()">
+                                    <option value="">— Blank —</option>
+                                    <optgroup label="11v11">
+                                        <option value="11-4-3-3">4-3-3</option>
+                                        <option value="11-4-4-2">4-4-2</option>
+                                        <option value="11-4-2-3-1">4-2-3-1</option>
+                                        <option value="11-3-5-2">3-5-2</option>
+                                        <option value="11-5-3-2">5-3-2</option>
+                                    </optgroup>
+                                    <optgroup label="9v9">
+                                        <option value="9-3-2-2">3-2-2</option>
+                                        <option value="9-2-3-2">2-3-2</option>
+                                        <option value="9-3-3-1">3-3-1</option>
+                                    </optgroup>
+                                    <optgroup label="7v7">
+                                        <option value="7-2-3-1">2-3-1</option>
+                                        <option value="7-3-2-1">3-2-1</option>
+                                        <option value="7-2-2-2">2-2-2</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <div class="coach-review-picker-group cr-board-bar-event">
+                                <label class="coach-review-picker-label" for="cr-obs-event-title">Event</label>
+                                <input type="text" id="cr-obs-event-title" maxlength="200" placeholder="e.g. Tuesday practice — pressing shape">
+                            </div>
+                            <button type="button" class="btn-primary cr-obs-save-btn" onclick="app.saveObservationFromReview()">Save Observation</button>
                         </div>
-                        <div class="coach-review-picker-group coach-review-picker-time" aria-live="off">
-                            <span class="coach-review-picker-label">Time</span>
-                            <span id="coach-review-time" class="coach-review-time-value" aria-label="Current video time">--:--</span>
-                        </div>
-                        <button type="button" id="coach-review-save-top" class="btn-primary coach-review-picker-save" onclick="app.saveReviewNote()">Save Note</button>
-                        <!-- Phase 4b: Save Clip — opens the clip composer
-                             with start/end pre-filled from the current
-                             video time (currentTime − pre-roll, currentTime
-                             + post-roll). Defaults match the playlist
-                             pre/post-roll convention (5s / 8s). -->
-                        <button type="button"
-                                id="coach-review-save-clip"
-                                class="btn-secondary coach-review-picker-save-clip"
-                                title="Save a clip of the current moment"
-                                aria-label="Save clip from current time"
-                                onclick="app.openClipComposerFromReview()">Save Clip</button>
-                        <!-- Sprint 6: focus-mode toggle. Lives at the right of
-                             the top bar so it stays one click away whether
-                             the inspector is collapsed or visible. -->
-                        <button type="button"
-                                id="coach-review-focus-toggle"
-                                class="coach-review-picker-focus"
-                                aria-pressed="false"
-                                title="Focus mode (Esc to exit)"
-                                aria-label="Toggle focus mode"
-                                onclick="app.toggleCoachFocusMode()">
-                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
-                                      fill="none" stroke="currentColor" stroke-width="1.8"
-                                      stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                            <span class="coach-review-picker-focus-label">Focus</span>
-                        </button>
-                        <!-- Sprint 6: drawer toggle. Visible only in focus
-                             mode (CSS hides it otherwise). Opens the
-                             telestrator + composer as a slide-over. -->
-                        <button type="button"
-                                id="coach-review-focus-inspector-toggle"
-                                class="coach-review-picker-focus coach-review-picker-drawer"
-                                aria-pressed="false"
-                                title="Open tools and note composer"
-                                aria-label="Open tools and note composer"
-                                onclick="app.toggleCoachFocusInspector()">
-                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M4 6h16M4 12h16M4 18h10"
-                                      fill="none" stroke="currentColor" stroke-width="1.8"
-                                      stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                            <span class="coach-review-picker-focus-label">Tools</span>
-                        </button>
-                        <!-- Sprint 7: keyboard-shortcuts help toggle. The
-                             ?-key opens the same popover from anywhere in
-                             Coach Review. -->
-                        <button type="button"
-                                id="coach-review-shortcuts-toggle"
-                                class="coach-review-picker-focus coach-review-picker-shortcuts"
-                                aria-pressed="false"
-                                aria-controls="coach-shortcuts-help"
-                                title="Keyboard shortcuts (press ?)"
-                                aria-label="Show keyboard shortcuts"
-                                onclick="app.toggleCoachShortcutsHelp()">
-                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M12 18v.01M9 9a3 3 0 016 0c0 1.5-2 2-3 3.5"
-                                      fill="none" stroke="currentColor" stroke-width="1.8"
-                                      stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                            <span class="coach-review-picker-focus-label">Shortcuts</span>
-                        </button>
                     </div>
-                    <!-- Sprint 7: keyboard shortcuts help popover. Hidden by
-                         default; toggled by the picker bar's "?" button or by
-                         pressing "?" anywhere in Coach Review. -->
+                    <!-- Keyboard shortcuts help popover (video mode) -->
                     <div id="coach-shortcuts-help" class="coach-shortcuts-help" hidden role="dialog" aria-label="Keyboard shortcuts" aria-modal="false">
                         <div class="coach-shortcuts-help-head">
                             <h4>Keyboard shortcuts</h4>
@@ -624,55 +648,45 @@
                             <li><kbd>?</kbd><span>Show / hide this help</span></li>
                         </ul>
                     </div>
-                    <!-- Video mode grid: video player + telestrator + note form + timeline rail. -->
-                    <div class="coach-review-grid coach-review-video-only">
-                        <div class="coach-review-video">
-                            <div class="player-wrapper coach-review-wrapper">
-                                <!-- allow-native-controls: Coach > Review authoring player; native HLS chrome is the canonical UX -->
-                                <video id="coach-review-video" controls playsinline preload="metadata" class="main-video"></video>
-                                <canvas id="coach-drawing-canvas" class="coach-drawing-canvas" style="display:none;"></canvas>
-                                <div class="coach-review-empty" id="coach-review-empty">Pick a match above to start authoring notes.</div>
+                    <!-- Single shared grid — main area and side panel swap content per mode. -->
+                    <div class="coach-review-grid">
+                        <!-- Main area: video player (video mode) or pitch editor (board mode) -->
+                        <div class="coach-review-main">
+                            <div class="coach-review-video cr-video-only">
+                                <div class="player-wrapper coach-review-wrapper">
+                                    <!-- allow-native-controls: Coach > Review authoring player; native HLS chrome is the canonical UX -->
+                                    <video id="coach-review-video" controls playsinline preload="metadata" class="main-video"></video>
+                                    <canvas id="coach-drawing-canvas" class="coach-drawing-canvas" style="display:none;"></canvas>
+                                    <div class="coach-review-empty" id="coach-review-empty">Pick a match above to start authoring notes.</div>
+                                </div>
                             </div>
-                        </div>
-                        <aside class="coach-review-side">
-                            <h4>Telestrator</h4>
-                            <div id="coach-review-toolbar"></div>
-                            <h4>Save note at current time</h4>
-                            <div id="coach-review-form" class="coach-mini-form"></div>
-                        </aside>
-                        <!-- Sprint 5: timeline rail spans the full grid width below
-                             the video + inspector. Notes for the current match
-                             render as horizontally-scrollable timestamp chips. -->
-                        <div id="coach-review-notes" class="coach-timeline-rail" role="toolbar" aria-label="Notes for this match"></div>
-                    </div>
-                    <!-- Phase 6d-1: Tactical Board mode workspace.
-                         Hidden in Video mode. The board editor mounts into
-                         #cr-board-editor-mount via mountTacticalBoardSection().
-                         The observation fields mirror the existing observation
-                         composer (coach-observation-form-template) but are
-                         rendered inline so the coach never opens a modal. -->
-                    <div class="coach-review-board-workspace coach-review-board-only" hidden>
-                        <div class="coach-review-board-layout">
-                            <!-- Left column: pitch + board editor controls -->
-                            <div class="coach-review-board-left">
+                            <div class="coach-review-board cr-board-only" hidden>
                                 <div id="cr-board-editor-mount" class="cr-board-editor-mount"></div>
                             </div>
-                            <!-- Right column: observation fields + Save -->
-                            <div class="coach-review-board-right">
-                                <h4 class="coach-review-board-form-title">Save Observation</h4>
-                                <p class="coach-observation-helper">Use this for practice, sideline, tactical, or meeting feedback without video.</p>
+                        </div>
+                        <!-- Shared side panel — tools + form swap per mode -->
+                        <aside class="coach-review-side">
+                            <!-- Video mode: telestrator toolbar + note form -->
+                            <div class="cr-video-side cr-video-only">
+                                <h4>Telestrator</h4>
+                                <div id="coach-review-toolbar"></div>
+                                <h4>Save note at current time</h4>
+                                <div id="coach-review-form" class="coach-mini-form"></div>
+                            </div>
+                            <!-- Board mode: board tools + observation form -->
+                            <div class="cr-board-side cr-board-only" hidden>
+                                <h4>Board tools</h4>
+                                <div id="cr-board-tools" class="coach-review-toolbar"></div>
+                                <h4>Observation</h4>
+                                <p class="coach-observation-helper">Practice, sideline, tactical, or meeting feedback without video.</p>
                                 <div class="cr-obs-fields">
-                                    <div class="cr-obs-row">
-                                        <label class="cr-obs-label" for="cr-obs-event-title">Event title</label>
-                                        <input type="text" id="cr-obs-event-title" maxlength="200" placeholder="e.g. Tuesday practice — scanning">
-                                    </div>
                                     <div class="cr-obs-row cr-obs-row--split">
                                         <div class="cr-obs-group">
-                                            <label class="cr-obs-label" for="cr-obs-event-date">Event date</label>
+                                            <label class="cr-obs-label" for="cr-obs-event-date">Date</label>
                                             <input type="date" id="cr-obs-event-date">
                                         </div>
                                         <div class="cr-obs-group">
-                                            <label class="cr-obs-label" for="cr-obs-event-type">Event type</label>
+                                            <label class="cr-obs-label" for="cr-obs-event-type">Type</label>
                                             <select id="cr-obs-event-type">
                                                 <option value="">— Select —</option>
                                                 <option value="practice">Practice</option>
@@ -685,7 +699,7 @@
                                     </div>
                                     <div class="cr-obs-row">
                                         <label class="cr-obs-label" for="cr-obs-title">Title <span class="form-label-hint">(optional)</span></label>
-                                        <input type="text" id="cr-obs-title" maxlength="160" placeholder="e.g. Recognising the press trigger">
+                                        <input type="text" id="cr-obs-title" maxlength="160" placeholder="e.g. Compact block out of possession">
                                     </div>
                                     <div class="cr-obs-row cr-obs-row--split">
                                         <div class="cr-obs-group">
@@ -755,10 +769,11 @@
                                             </label>
                                         </div>
                                     </details>
-                                    <button type="button" class="btn-primary cr-obs-save-btn" onclick="app.saveObservationFromReview()">Save Observation</button>
                                 </div>
                             </div>
-                        </div>
+                        </aside>
+                        <!-- Timeline rail: video only, spans full grid width below main + side -->
+                        <div id="coach-review-notes" class="coach-timeline-rail cr-video-only" role="toolbar" aria-label="Notes for this match"></div>
                     </div>
                 </div>
             </div>
