@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "install-browsers": "playwright install chromium"
+    "install-browsers": "playwright install chromium",
+    "capture-phase-6d1": "playwright test phase-6d1-capture.spec.js --project=chromium --workers=2"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1"

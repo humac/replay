@@ -443,8 +443,12 @@
                             <p class="admin-card-sub">Timestamped teaching points with optional drawings. Click <strong>Open in Review</strong> on any note to jump straight to the moment in the Review tab.</p>
                         </div>
                         <div class="admin-panel-actions">
-                            <button type="button" class="btn-head" onclick="app.openCoachObservationModal()">+ New observation</button>
-                            <button type="button" class="btn-head" onclick="app.openCoachNoteModal()">+ New note</button>
+                            <!-- Phase 6d-1 — list-page actions route into
+                                 Coach Review. Coach > Notes is now a
+                                 management surface; creation happens in
+                                 the unified Review workspace. -->
+                            <button type="button" class="btn-head" onclick="app.routeNewObservation()">+ New observation</button>
+                            <button type="button" class="btn-head" onclick="app.routeNewNote()">+ New note</button>
                         </div>
                     </div>
                     <div id="coach-notes-list" class="coach-list mt-4"></div>
@@ -476,7 +480,11 @@
                             <p class="admin-card-sub">Saved <code>[start, end]</code> moments coaches can share with players. Clips don't generate MP4s — they seek-play the source match. Create one from the <strong>Review</strong> tab's <em>Save clip</em> button or click <em>+ New clip</em> below.</p>
                         </div>
                         <div class="admin-panel-actions">
-                            <button type="button" class="btn-head" onclick="app.openCoachClipModal()">+ New clip</button>
+                            <!-- Phase 6d-1 — clip creation routes through
+                                 Coach Review (Video mode) so a coach can
+                                 scrub to the moment before opening the
+                                 clip composer. -->
+                            <button type="button" class="btn-head" onclick="app.routeNewClip()">+ New clip</button>
                         </div>
                     </div>
                     <div id="coach-clips-list" class="coach-list mt-4"></div>
@@ -485,13 +493,40 @@
 
             <!-- Review sub-tab -->
             <div id="coach-tab-review" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-review" hidden>
-                <div class="options-card coach-review-shell">
+                <div class="options-card coach-review-shell" data-source="video">
+                    <!-- Phase 6d-1 — Source mode toggle. Swaps the
+                         picker controls, main canvas, and side tools
+                         between Video and Tactical Board authoring. -->
+                    <div class="coach-review-source-toggle" role="tablist" aria-label="Coach Review source"
+                         onkeydown="app.handleCoachReviewSourceKeydown(event)">
+                        <button type="button"
+                                class="coach-review-source-btn is-active"
+                                role="tab"
+                                aria-selected="true"
+                                tabindex="0"
+                                data-coach-review-source="video"
+                                onclick="app.setCoachReviewSource('video')">
+                            <span class="coach-review-source-glyph" aria-hidden="true">▶</span>
+                            <span class="coach-review-source-label">Video</span>
+                        </button>
+                        <button type="button"
+                                class="coach-review-source-btn"
+                                role="tab"
+                                aria-selected="false"
+                                tabindex="-1"
+                                data-coach-review-source="tactical_board"
+                                onclick="app.setCoachReviewSource('tactical_board')">
+                            <span class="coach-review-source-glyph" aria-hidden="true">⌬</span>
+                            <span class="coach-review-source-label">Tactical Board</span>
+                        </button>
+                    </div>
                     <div class="coach-review-picker" role="toolbar" aria-label="Coach Review controls">
-                        <div class="coach-review-picker-group">
+                        <!-- Video-mode controls -->
+                        <div class="coach-review-picker-group" data-source-only="video">
                             <label class="coach-review-picker-label" for="coach-review-match">Match</label>
                             <select id="coach-review-match" onchange="app.handleCoachReviewMatchChange()"></select>
                         </div>
-                        <div class="coach-review-picker-group">
+                        <div class="coach-review-picker-group" data-source-only="video">
                             <label class="coach-review-picker-label" for="coach-review-slot">Slot</label>
                             <select id="coach-review-slot" onchange="app.handleCoachReviewSlotChange()">
                                 <option value="full">Full</option>
@@ -499,11 +534,31 @@
                                 <option value="second_half">2nd Half</option>
                             </select>
                         </div>
-                        <div class="coach-review-picker-group coach-review-picker-time" aria-live="off">
+                        <div class="coach-review-picker-group coach-review-picker-time" data-source-only="video" aria-live="off">
                             <span class="coach-review-picker-label">Time</span>
                             <span id="coach-review-time" class="coach-review-time-value" aria-label="Current video time">--:--</span>
                         </div>
-                        <button type="button" id="coach-review-save-top" class="btn-primary coach-review-picker-save" onclick="app.saveReviewNote()">Save Note</button>
+                        <!-- Tactical-board-mode context controls -->
+                        <div class="coach-review-picker-group" data-source-only="tactical_board">
+                            <label class="coach-review-picker-label" for="coach-tb-event-title">Event title</label>
+                            <input type="text" id="coach-tb-event-title" maxlength="200" placeholder="e.g. Tuesday practice — scanning">
+                        </div>
+                        <div class="coach-review-picker-group" data-source-only="tactical_board">
+                            <label class="coach-review-picker-label" for="coach-tb-event-date">Date</label>
+                            <input type="date" id="coach-tb-event-date">
+                        </div>
+                        <div class="coach-review-picker-group" data-source-only="tactical_board">
+                            <label class="coach-review-picker-label" for="coach-tb-event-type">Type</label>
+                            <select id="coach-tb-event-type">
+                                <option value="">— Select —</option>
+                                <option value="practice">Practice</option>
+                                <option value="game">Game</option>
+                                <option value="meeting">Meeting</option>
+                                <option value="tactical">Tactical</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <button type="button" id="coach-review-save-top" class="btn-primary coach-review-picker-save" data-source-only="video" onclick="app.saveReviewNote()">Save Note</button>
                         <!-- Phase 4b: Save Clip — opens the clip composer
                              with start/end pre-filled from the current
                              video time (currentTime − pre-roll, currentTime
@@ -512,9 +567,21 @@
                         <button type="button"
                                 id="coach-review-save-clip"
                                 class="btn-secondary coach-review-picker-save-clip"
+                                data-source-only="video"
                                 title="Save a clip of the current moment"
                                 aria-label="Save clip from current time"
                                 onclick="app.openClipComposerFromReview()">Save Clip</button>
+                        <!-- Phase 6d-1: Save Observation — Tactical Board
+                             mode's primary save action. Lives in the same
+                             slot as Save Note / Save Clip so the visual
+                             scale and position match. -->
+                        <button type="button"
+                                id="coach-review-save-observation"
+                                class="btn-primary coach-review-picker-save"
+                                data-source-only="tactical_board"
+                                title="Save observation from the tactical board"
+                                aria-label="Save observation"
+                                onclick="app.saveTacticalBoardObservation()">Save Observation</button>
                         <!-- Sprint 6: focus-mode toggle. Lives at the right of
                              the top bar so it stays one click away whether
                              the inspector is collapsed or visible. -->
@@ -588,24 +655,52 @@
                         </ul>
                     </div>
                     <div class="coach-review-grid">
-                        <div class="coach-review-video">
-                            <div class="player-wrapper coach-review-wrapper">
-                                <!-- allow-native-controls: Coach > Review authoring player; native HLS chrome is the canonical UX -->
-                                <video id="coach-review-video" controls playsinline preload="metadata" class="main-video"></video>
-                                <canvas id="coach-drawing-canvas" class="coach-drawing-canvas" style="display:none;"></canvas>
-                                <div class="coach-review-empty" id="coach-review-empty">Pick a match above to start authoring notes.</div>
+                        <div class="coach-review-stage">
+                            <!-- Video sub-stage. Hidden in tactical_board source mode. -->
+                            <div class="coach-review-video coach-review-stage-pane" data-source-only="video">
+                                <div class="player-wrapper coach-review-wrapper">
+                                    <!-- allow-native-controls: Coach > Review authoring player; native HLS chrome is the canonical UX -->
+                                    <video id="coach-review-video" controls playsinline preload="metadata" class="main-video"></video>
+                                    <canvas id="coach-drawing-canvas" class="coach-drawing-canvas" style="display:none;"></canvas>
+                                    <div class="coach-review-empty" id="coach-review-empty">Pick a match above to start authoring notes.</div>
+                                </div>
+                            </div>
+                            <!-- Phase 6d-1: Tactical Board sub-stage. The
+                                 pitch occupies the same visual area as the
+                                 video player. There is NO nested editor
+                                 header / Done / Cancel / inner toolbar — the
+                                 picker bar above and the side panel below
+                                 own all controls. -->
+                            <div class="coach-review-board coach-review-stage-pane" data-source-only="tactical_board">
+                                <div id="coach-review-board-canvas" class="coach-review-board-canvas"
+                                     role="img" aria-label="Tactical board canvas"></div>
+                                <p class="coach-review-board-status" id="coach-review-board-status" aria-live="polite"></p>
                             </div>
                         </div>
                         <aside class="coach-review-side">
-                            <h4>Telestrator</h4>
-                            <div id="coach-review-toolbar"></div>
-                            <h4>Save note at current time</h4>
-                            <div id="coach-review-form" class="coach-mini-form"></div>
+                            <!-- Video-mode side panel: telestrator + note composer -->
+                            <div class="coach-review-side-pane" data-source-only="video">
+                                <h4>Telestrator</h4>
+                                <div id="coach-review-toolbar"></div>
+                                <h4>Save note at current time</h4>
+                                <div id="coach-review-form" class="coach-mini-form"></div>
+                            </div>
+                            <!-- Tactical-board-mode side panel: board tools +
+                                 observation composer. The tools list visually
+                                 mirrors the video telestrator's icon-first
+                                 grid. Observation fields are collapsible so
+                                 the tools stay above the fold. -->
+                            <div class="coach-review-side-pane" data-source-only="tactical_board">
+                                <h4>Board tools</h4>
+                                <div id="coach-tb-toolbar" class="coach-tb-toolbar" role="toolbar" aria-label="Tactical board tools"></div>
+                                <h4>Observation</h4>
+                                <div id="coach-tb-form" class="coach-mini-form coach-tb-form"></div>
+                            </div>
                         </aside>
                         <!-- Sprint 5: timeline rail spans the full grid width below
                              the video + inspector. Notes for the current match
                              render as horizontally-scrollable timestamp chips. -->
-                        <div id="coach-review-notes" class="coach-timeline-rail" role="toolbar" aria-label="Notes for this match"></div>
+                        <div id="coach-review-notes" class="coach-timeline-rail" data-source-only="video" role="toolbar" aria-label="Notes for this match"></div>
                     </div>
                 </div>
             </div>
