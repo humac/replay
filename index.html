@@ -443,8 +443,10 @@
                             <p class="admin-card-sub">Timestamped teaching points with optional drawings. Click <strong>Open in Review</strong> on any note to jump straight to the moment in the Review tab.</p>
                         </div>
                         <div class="admin-panel-actions">
-                            <button type="button" class="btn-head" onclick="app.openCoachObservationModal()">+ New observation</button>
-                            <button type="button" class="btn-head" onclick="app.openCoachNoteModal()">+ New note</button>
+                            <!-- Phase 6d-1: routes to Coach Review Tactical Board mode -->
+                            <button type="button" class="btn-head" onclick="app.goToCoachReviewWithIntent({ mode: 'tactical_board', intent: 'observation' })">+ New observation</button>
+                            <!-- Phase 6d-1: routes to Coach Review Video mode -->
+                            <button type="button" class="btn-head" onclick="app.goToCoachReviewWithIntent({ mode: 'video', intent: 'note' })">+ New note</button>
                         </div>
                     </div>
                     <div id="coach-notes-list" class="coach-list mt-4"></div>
@@ -476,7 +478,8 @@
                             <p class="admin-card-sub">Saved <code>[start, end]</code> moments coaches can share with players. Clips don't generate MP4s — they seek-play the source match. Create one from the <strong>Review</strong> tab's <em>Save clip</em> button or click <em>+ New clip</em> below.</p>
                         </div>
                         <div class="admin-panel-actions">
-                            <button type="button" class="btn-head" onclick="app.openCoachClipModal()">+ New clip</button>
+                            <!-- Phase 6d-1: routes to Coach Review Video mode -->
+                            <button type="button" class="btn-head" onclick="app.goToCoachReviewWithIntent({ mode: 'video', intent: 'clip' })">+ New clip</button>
                         </div>
                     </div>
                     <div id="coach-clips-list" class="coach-list mt-4"></div>
@@ -486,7 +489,41 @@
             <!-- Review sub-tab -->
             <div id="coach-tab-review" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-review" hidden>
                 <div class="options-card coach-review-shell">
-                    <div class="coach-review-picker" role="toolbar" aria-label="Coach Review controls">
+                    <!-- Phase 6d-1: source/mode toggle — Video vs. Tactical Board.
+                         Rendered before the picker bar so it sits at the very top
+                         of the Review workspace. JS class `is-tb-mode` on
+                         `#coach-tab-review` hides video-only elements and reveals
+                         the tactical-board workspace. -->
+                    <div class="coach-review-mode-toggle" role="group" aria-label="Review source mode">
+                        <button type="button"
+                                id="coach-review-mode-video"
+                                class="coach-review-mode-btn is-active"
+                                aria-pressed="true"
+                                title="Video — review match footage and save notes/clips"
+                                onclick="app.switchCoachReviewMode('video')">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"
+                                      fill="none" stroke="currentColor" stroke-width="1.8"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            Video
+                        </button>
+                        <button type="button"
+                                id="coach-review-mode-board"
+                                class="coach-review-mode-btn"
+                                aria-pressed="false"
+                                title="Tactical Board — sketch practice or meeting observations without video"
+                                onclick="app.switchCoachReviewMode('tactical_board')">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm4 4h10M7 12h6M7 16h4"
+                                      fill="none" stroke="currentColor" stroke-width="1.8"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            Tactical Board
+                        </button>
+                    </div>
+                    <!-- Video mode: match/slot picker + save actions. Hidden in Tactical Board mode. -->
+                    <div class="coach-review-picker coach-review-video-only" role="toolbar" aria-label="Coach Review controls">
                         <div class="coach-review-picker-group">
                             <label class="coach-review-picker-label" for="coach-review-match">Match</label>
                             <select id="coach-review-match" onchange="app.handleCoachReviewMatchChange()"></select>
@@ -587,7 +624,8 @@
                             <li><kbd>?</kbd><span>Show / hide this help</span></li>
                         </ul>
                     </div>
-                    <div class="coach-review-grid">
+                    <!-- Video mode grid: video player + telestrator + note form + timeline rail. -->
+                    <div class="coach-review-grid coach-review-video-only">
                         <div class="coach-review-video">
                             <div class="player-wrapper coach-review-wrapper">
                                 <!-- allow-native-controls: Coach > Review authoring player; native HLS chrome is the canonical UX -->
@@ -606,6 +644,121 @@
                              the video + inspector. Notes for the current match
                              render as horizontally-scrollable timestamp chips. -->
                         <div id="coach-review-notes" class="coach-timeline-rail" role="toolbar" aria-label="Notes for this match"></div>
+                    </div>
+                    <!-- Phase 6d-1: Tactical Board mode workspace.
+                         Hidden in Video mode. The board editor mounts into
+                         #cr-board-editor-mount via mountTacticalBoardSection().
+                         The observation fields mirror the existing observation
+                         composer (coach-observation-form-template) but are
+                         rendered inline so the coach never opens a modal. -->
+                    <div class="coach-review-board-workspace coach-review-board-only" hidden>
+                        <div class="coach-review-board-layout">
+                            <!-- Left column: pitch + board editor controls -->
+                            <div class="coach-review-board-left">
+                                <div id="cr-board-editor-mount" class="cr-board-editor-mount"></div>
+                            </div>
+                            <!-- Right column: observation fields + Save -->
+                            <div class="coach-review-board-right">
+                                <h4 class="coach-review-board-form-title">Save Observation</h4>
+                                <p class="coach-observation-helper">Use this for practice, sideline, tactical, or meeting feedback without video.</p>
+                                <div class="cr-obs-fields">
+                                    <div class="cr-obs-row">
+                                        <label class="cr-obs-label" for="cr-obs-event-title">Event title</label>
+                                        <input type="text" id="cr-obs-event-title" maxlength="200" placeholder="e.g. Tuesday practice — scanning">
+                                    </div>
+                                    <div class="cr-obs-row cr-obs-row--split">
+                                        <div class="cr-obs-group">
+                                            <label class="cr-obs-label" for="cr-obs-event-date">Event date</label>
+                                            <input type="date" id="cr-obs-event-date">
+                                        </div>
+                                        <div class="cr-obs-group">
+                                            <label class="cr-obs-label" for="cr-obs-event-type">Event type</label>
+                                            <select id="cr-obs-event-type">
+                                                <option value="">— Select —</option>
+                                                <option value="practice">Practice</option>
+                                                <option value="game">Game</option>
+                                                <option value="meeting">Meeting</option>
+                                                <option value="tactical">Tactical</option>
+                                                <option value="other">Other</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="cr-obs-row">
+                                        <label class="cr-obs-label" for="cr-obs-title">Title <span class="form-label-hint">(optional)</span></label>
+                                        <input type="text" id="cr-obs-title" maxlength="160" placeholder="e.g. Recognising the press trigger">
+                                    </div>
+                                    <div class="cr-obs-row cr-obs-row--split">
+                                        <div class="cr-obs-group">
+                                            <label class="cr-obs-label" for="cr-obs-category">Category</label>
+                                            <select id="cr-obs-category">
+                                                <option value="shape">Shape</option>
+                                                <option value="pressing">Pressing</option>
+                                                <option value="transition">Transition</option>
+                                                <option value="set_piece">Set piece</option>
+                                                <option value="build_up">Build-up</option>
+                                                <option value="finishing">Finishing</option>
+                                                <option value="defending">Defending</option>
+                                                <option value="goalkeeper">Goalkeeper</option>
+                                                <option value="effort">Effort</option>
+                                                <option value="decision">Decision</option>
+                                                <option value="other">Other</option>
+                                            </select>
+                                        </div>
+                                        <div class="cr-obs-group">
+                                            <label class="cr-obs-label" for="cr-obs-visibility">Visibility</label>
+                                            <select id="cr-obs-visibility">
+                                                <option value="private">Private</option>
+                                                <option value="team">Team-visible</option>
+                                                <option value="player">Player/family</option>
+                                                <option value="unlisted">Unlisted link</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="cr-obs-row">
+                                        <label class="cr-obs-label">Players</label>
+                                        <div id="cr-obs-players" class="coach-check-list compact" role="listbox" aria-label="Linked players"></div>
+                                    </div>
+                                    <div class="cr-obs-row">
+                                        <label class="cr-obs-label">Tone</label>
+                                        <div id="cr-obs-tone" class="coach-review-tone" role="radiogroup" aria-label="Note tone"></div>
+                                    </div>
+                                    <div class="cr-obs-row">
+                                        <label class="cr-obs-label" for="cr-obs-player-summary">Player summary <span class="form-label-hint">(visible to player/family)</span></label>
+                                        <textarea id="cr-obs-player-summary" rows="2" maxlength="2000" placeholder="Short, age-appropriate version they'll read."></textarea>
+                                    </div>
+                                    <details class="coach-review-advanced cr-obs-advanced">
+                                        <summary>More details</summary>
+                                        <div class="coach-review-advanced-body">
+                                            <label class="coach-review-field-label">
+                                                <span>What happened</span>
+                                                <textarea id="cr-obs-what-happened" rows="2" maxlength="2000" placeholder="The observation."></textarea>
+                                            </label>
+                                            <label class="coach-review-field-label">
+                                                <span>Why it matters</span>
+                                                <textarea id="cr-obs-why-it-matters" rows="2" maxlength="2000" placeholder="The coaching context."></textarea>
+                                            </label>
+                                            <label class="coach-review-field-label">
+                                                <span>What to do next</span>
+                                                <textarea id="cr-obs-what-to-do-next" rows="2" maxlength="2000" placeholder="The actionable next step."></textarea>
+                                            </label>
+                                            <label class="coach-review-field-label">
+                                                <span>Long notes</span>
+                                                <textarea id="cr-obs-body" rows="3" maxlength="4000" placeholder="Anything that doesn't fit the structured fields above."></textarea>
+                                            </label>
+                                            <label class="coach-review-field-label">
+                                                <span>Coach context (private)</span>
+                                                <textarea id="cr-obs-coach-private-note" rows="2" maxlength="4000" placeholder="Internal — never sent to players or families."></textarea>
+                                            </label>
+                                            <label class="coach-review-field-label">
+                                                <span>Tags</span>
+                                                <input type="text" id="cr-obs-tags" maxlength="300" placeholder="tags,comma,separated">
+                                            </label>
+                                        </div>
+                                    </details>
+                                    <button type="button" class="btn-primary cr-obs-save-btn" onclick="app.saveObservationFromReview()">Save Observation</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -118,6 +118,21 @@ export const coachingMixin = {
     // Review is the active sub-tab; uninstalled on tab change / teardown.
     _coachShortcutsHandler: null,
 
+    // Phase 6d-1: which workspace is active inside Coach Review.
+    // 'video' = existing video player + telestrator + note/clip form.
+    // 'tactical_board' = pitch editor + observation fields + Save Observation.
+    _coachReviewMode: 'video',
+
+    // Phase 6d-1: carries creation-routing intent from list pages into
+    // Coach Review. Shape: { mode, intent, playerId?, defaultVisibility? }
+    // Consumed once by renderCoachReview() / switchCoachReviewMode().
+    _coachReviewPendingIntent: null,
+
+    // Phase 6d-1: live tactical board scene for the Tactical Board
+    // workspace. Managed by mountTacticalBoardSection() via get/set
+    // closures; persisted to null on teardown.
+    _coachReviewBoardScene: null,
+
     // ===== top-level view entry points =====
 
     async showCoachView({ pushHistory = true, replaceHistory = false, scrollTop = true, tab = null, matchId = null, slot = null } = {}) {
@@ -519,7 +534,7 @@ export const coachingMixin = {
                 <td class="roster-cell roster-col-status">${statusPill}</td>
                 <td class="roster-cell roster-col-actions">
                     <div class="roster-actions-row">
-                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Add observation note" aria-label="Add observation note" onclick="app.openCoachObservationModal(null, { playerId: ${playerIdJs} })">
+                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Add observation note" aria-label="Add observation note" onclick="app.goToCoachReviewWithIntent({ mode: 'tactical_board', intent: 'observation', playerId: ${playerIdJs}, defaultVisibility: 'player' })">
                             ${this._rosterIcon('observation')}
                         </button>
                         <button type="button" class="mini-action-btn mini-action-btn-icon" title="View development profile" aria-label="View development profile" onclick="app.openCoachPlayerDevelopmentModal(${playerIdJs})">
@@ -1959,6 +1974,28 @@ export const coachingMixin = {
     },
 
     async renderCoachReview() {
+        // Phase 6d-1: apply any pending intent BEFORE rendering so the
+        // correct mode (video vs. tactical_board) is set first.
+        if (this._coachReviewPendingIntent) {
+            const intent = this._coachReviewPendingIntent;
+            this._coachReviewPendingIntent = null;
+            // Apply mode toggle visually + switch workspace visibility.
+            this._applyCoachReviewMode(intent.mode || 'video');
+            if (intent.mode === 'tactical_board') {
+                this.renderCoachReviewTacticalBoard(intent);
+                return;
+            }
+            // Video mode — fall through to normal picker/form render below.
+        } else {
+            // No pending intent: apply the current mode to DOM.
+            this._applyCoachReviewMode(this._coachReviewMode);
+            if (this._coachReviewMode === 'tactical_board') {
+                this.renderCoachReviewTacticalBoard(null);
+                return;
+            }
+        }
+
+        // Video mode render.
         this.renderCoachReviewPicker();
         const toolbar = document.getElementById('coach-review-toolbar');
         if (toolbar) toolbar.innerHTML = this.renderCoachTelestratorToolbar();
@@ -2030,6 +2067,219 @@ export const coachingMixin = {
         // uninstall in lockstep), make sure the global keydown listener is
         // also removed. Safe to call when no handler is installed.
         this.uninstallCoachReviewShortcuts();
+        // Phase 6d-1: clear board scene so next entry starts fresh.
+        this._coachReviewBoardScene = null;
+    },
+
+    // ===== Phase 6d-1: Coach Review source mode (Video / Tactical Board) =====
+
+    /** Navigate to Coach Review with a creation intent.
+     *  Intent shape: { mode: 'video'|'tactical_board', intent: 'note'|'clip'|'observation',
+     *                  playerId?: id, defaultVisibility?: string }
+     *  Saves the intent on `_coachReviewPendingIntent` so renderCoachReview()
+     *  picks it up and applies the correct mode before rendering. */
+    goToCoachReviewWithIntent(intent) {
+        this._coachReviewPendingIntent = intent || null;
+        this.setCoachTab('review');
+    },
+
+    /** Apply the mode toggle visual state and show/hide the two
+     *  workspace sections without re-rendering the full tab. */
+    _applyCoachReviewMode(mode) {
+        const validMode = mode === 'tactical_board' ? 'tactical_board' : 'video';
+        this._coachReviewMode = validMode;
+        const isTB = validMode === 'tactical_board';
+
+        // Mode toggle buttons.
+        const btnVideo = document.getElementById('coach-review-mode-video');
+        const btnBoard = document.getElementById('coach-review-mode-board');
+        if (btnVideo) { btnVideo.classList.toggle('is-active', !isTB); btnVideo.setAttribute('aria-pressed', isTB ? 'false' : 'true'); }
+        if (btnBoard) { btnBoard.classList.toggle('is-active', isTB); btnBoard.setAttribute('aria-pressed', isTB ? 'true' : 'false'); }
+
+        // Workspace visibility — show/hide via the `hidden` attribute on
+        // the board workspace, and via a class on video-only elements.
+        const boardWorkspace = document.querySelector('.coach-review-board-workspace');
+        if (boardWorkspace) boardWorkspace.hidden = !isTB;
+        document.querySelectorAll('.coach-review-video-only').forEach((el) => {
+            el.hidden = isTB;
+        });
+
+        // Keyboard shortcuts are video-only.
+        if (isTB) this.uninstallCoachReviewShortcuts();
+        else if (this._coachTab === 'review') this.installCoachReviewShortcuts();
+    },
+
+    /** Switch the Coach Review workspace between Video and Tactical Board.
+     *  Called by the mode toggle buttons in the picker bar.
+     *  When switching TO video, re-runs the normal video render path.
+     *  When switching TO tactical_board, mounts the board workspace. */
+    switchCoachReviewMode(mode) {
+        const validMode = mode === 'tactical_board' ? 'tactical_board' : 'video';
+        if (this._coachReviewMode === validMode) return;
+        this._applyCoachReviewMode(validMode);
+        if (validMode === 'tactical_board') {
+            this.renderCoachReviewTacticalBoard(null);
+        } else {
+            // Re-enter video mode: re-render picker + form, re-attach video
+            // if a match was previously loaded.
+            this.renderCoachReviewPicker();
+            const toolbar = document.getElementById('coach-review-toolbar');
+            if (toolbar) toolbar.innerHTML = this.renderCoachTelestratorToolbar();
+            this.renderCoachReviewForm();
+            this._refreshCoachReviewSaveClipState();
+            if (this._coachReview?.matchId) {
+                // Video was already loaded — just rebind canvas.
+                this.setupCoachCanvas();
+            } else {
+                const empty = document.getElementById('coach-review-empty');
+                if (empty) empty.style.display = 'flex';
+            }
+            this.renderCoachReviewNotes(this._coachReview?.matchId || null);
+        }
+    },
+
+    /** Mount the Tactical Board workspace. Called when entering TB mode.
+     *  If `intent` carries a playerId / defaultVisibility, pre-populate
+     *  the observation fields accordingly. */
+    renderCoachReviewTacticalBoard(intent) {
+        const mount = document.getElementById('cr-board-editor-mount');
+        if (!mount) return;
+
+        // Wire up the board scene through a closure so mountTacticalBoardSection
+        // can read/write it without losing reference across re-renders.
+        this.mountTacticalBoardSection(mount, {
+            initialBoard: this._coachReviewBoardScene || null,
+            getBoard: () => this._coachReviewBoardScene,
+            setBoard: (scene) => { this._coachReviewBoardScene = scene; },
+        });
+
+        // Tone group — render chips into #cr-obs-tone.
+        const toneEl = document.getElementById('cr-obs-tone');
+        if (toneEl && !toneEl.querySelector('.coach-review-tone-btn')) {
+            toneEl.innerHTML = NOTE_TYPES.map(([v, l, glyph]) => `
+                <button type="button" class="coach-review-tone-btn${v === DEFAULT_NOTE_TYPE ? ' is-active' : ''}" role="radio" aria-checked="${v === DEFAULT_NOTE_TYPE}" tabindex="${v === DEFAULT_NOTE_TYPE ? '0' : '-1'}" data-note-type="${v}" title="${this.esc(l)}" onclick="app._syncCrObsTone('${v}')">
+                    <span class="coach-review-tone-glyph" aria-hidden="true">${glyph}</span>
+                    <span class="coach-review-tone-label">${this.esc(l)}</span>
+                </button>
+            `).join('');
+            toneEl.dataset.value = DEFAULT_NOTE_TYPE;
+            this._setupToneRadiogroup(toneEl);
+        }
+
+        // Players checklist.
+        const playersEl = document.getElementById('cr-obs-players');
+        if (playersEl) {
+            const players = this._coachBundle?.players || [];
+            this.renderCoachCheckList(playersEl, players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet');
+        }
+
+        // Apply intent preselections.
+        if (intent) {
+            // Visibility default.
+            const visSel = document.getElementById('cr-obs-visibility');
+            if (visSel && intent.defaultVisibility) visSel.value = intent.defaultVisibility;
+
+            // Preselect player.
+            if (intent.playerId && playersEl) {
+                playersEl.querySelectorAll('.coach-check-option').forEach((btn) => {
+                    if (String(btn.dataset.value) === String(intent.playerId)) {
+                        btn.classList.add('is-selected');
+                        btn.setAttribute('aria-pressed', 'true');
+                    }
+                });
+            }
+        }
+    },
+
+    /** Tone chip click handler for the inline Coach Review TB observation form. */
+    _syncCrObsTone(value) {
+        const group = document.getElementById('cr-obs-tone');
+        if (group) this._syncToneRadiogroup(group, value);
+    },
+
+    /** Reset all observation fields in the Tactical Board workspace to
+     *  their blank/default state. Called after a successful save. */
+    _resetCrObsFields() {
+        ['cr-obs-event-title', 'cr-obs-title', 'cr-obs-player-summary',
+         'cr-obs-what-happened', 'cr-obs-why-it-matters', 'cr-obs-what-to-do-next',
+         'cr-obs-body', 'cr-obs-coach-private-note', 'cr-obs-tags'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        const dateEl = document.getElementById('cr-obs-event-date');
+        if (dateEl) dateEl.value = '';
+        const eventTypeSel = document.getElementById('cr-obs-event-type');
+        if (eventTypeSel) eventTypeSel.value = '';
+        // Reset tone to default.
+        const toneEl = document.getElementById('cr-obs-tone');
+        if (toneEl) this._syncToneRadiogroup(toneEl, DEFAULT_NOTE_TYPE);
+        // Deselect all players.
+        const playersEl = document.getElementById('cr-obs-players');
+        if (playersEl) {
+            playersEl.querySelectorAll('.coach-check-option.is-selected').forEach((btn) => {
+                btn.classList.remove('is-selected');
+                btn.setAttribute('aria-pressed', 'false');
+            });
+        }
+        // Clear the board scene and re-mount the section so the preview shows "no board".
+        this._coachReviewBoardScene = null;
+        const mount = document.getElementById('cr-board-editor-mount');
+        if (mount) {
+            this.mountTacticalBoardSection(mount, {
+                initialBoard: null,
+                getBoard: () => this._coachReviewBoardScene,
+                setBoard: (scene) => { this._coachReviewBoardScene = scene; },
+            });
+        }
+    },
+
+    /** Save observation from the Tactical Board workspace in Coach Review.
+     *  POSTs to /api/coach/notes with note_context="observation". */
+    async saveObservationFromReview() {
+        const eventTitle = document.getElementById('cr-obs-event-title')?.value.trim() || '';
+        const title = document.getElementById('cr-obs-title')?.value.trim() || '';
+        const playerSummary = document.getElementById('cr-obs-player-summary')?.value.trim() || '';
+        const whatHappened = document.getElementById('cr-obs-what-happened')?.value.trim() || '';
+        const whyMatters = document.getElementById('cr-obs-why-it-matters')?.value.trim() || '';
+        const whatToDo = document.getElementById('cr-obs-what-to-do-next')?.value.trim() || '';
+        const body = document.getElementById('cr-obs-body')?.value.trim() || '';
+        const hasBoardNow = this.tacticalBoardHasContent(this._coachReviewBoardScene);
+
+        // Mirror backend meaningful-content rule.
+        const meaningful = title || eventTitle || playerSummary || whatHappened
+            || whyMatters || whatToDo || body || hasBoardNow;
+        if (!meaningful) {
+            this.showError('Observation needs at least a title, event title, or some content (including a tactical board).');
+            return;
+        }
+
+        const noteType = document.getElementById('cr-obs-tone')?.dataset.value || DEFAULT_NOTE_TYPE;
+        const payload = {
+            note_context: 'observation',
+            title,
+            event_title: eventTitle,
+            event_date: document.getElementById('cr-obs-event-date')?.value || '',
+            event_type: document.getElementById('cr-obs-event-type')?.value || '',
+            body,
+            category: document.getElementById('cr-obs-category')?.value || 'other',
+            visibility: document.getElementById('cr-obs-visibility')?.value || 'team',
+            player_ids: Array.from(document.querySelectorAll('#cr-obs-players .coach-check-option.is-selected')).map((b) => b.dataset.value),
+            tags: (document.getElementById('cr-obs-tags')?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
+            note_type: noteType,
+            player_summary: playerSummary,
+            what_happened: whatHappened,
+            why_it_matters: whyMatters,
+            what_to_do_next: whatToDo,
+            coach_private_note: document.getElementById('cr-obs-coach-private-note')?.value.trim() || '',
+            tactical_board_json: this._coachReviewBoardScene || null,
+        };
+
+        try {
+            await this.createCoachNote(payload);
+            this.showSuccess('Observation saved.');
+            this._resetCrObsFields();
+            this._coachBundle = await this.loadCoachBundle();
+        } catch (err) { this.showError(err.message); }
     },
 
     _renderCoachReviewTime(video) {

@@ -6704,6 +6704,184 @@ details.diag-row-details[open] > summary::after {
 /* Coach > Review shell ============================ */
 .coach-review-shell { padding: 1rem 1.25rem; }
 
+/* Phase 6d-1: source/mode toggle (Video | Tactical Board) */
+.coach-review-mode-toggle {
+    display: flex;
+    gap: 0.375rem;
+    margin-bottom: 0.875rem;
+    padding-bottom: 0.875rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.coach-review-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+.coach-review-mode-btn svg {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+.coach-review-mode-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: rgba(255, 255, 255, 0.8);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+.coach-review-mode-btn.is-active {
+    background: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.35);
+}
+.coach-review-mode-btn.is-active svg { opacity: 1; }
+.coach-review-mode-btn:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 2px;
+}
+[data-theme="light"] .coach-review-mode-toggle {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .coach-review-mode-btn {
+    border-color: rgba(0, 0, 0, 0.15);
+    color: rgba(0, 0, 0, 0.5);
+}
+[data-theme="light"] .coach-review-mode-btn:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.75);
+    border-color: rgba(0, 0, 0, 0.22);
+}
+[data-theme="light"] .coach-review-mode-btn.is-active {
+    background: rgba(14, 116, 144, 0.08);
+    color: #0e7490;
+    border-color: rgba(14, 116, 144, 0.3);
+}
+
+/* Phase 6d-1: Tactical Board workspace */
+.coach-review-board-workspace {
+    margin-top: 0.5rem;
+}
+.coach-review-board-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 1.25rem;
+    align-items: start;
+}
+@media (max-width: 900px) {
+    .coach-review-board-layout {
+        grid-template-columns: 1fr;
+    }
+}
+.coach-review-board-left {
+    min-width: 0;
+}
+.cr-board-editor-mount {
+    width: 100%;
+}
+.coach-review-board-right {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-width: 0;
+}
+.coach-review-board-form-title {
+    margin: 0 0 0.25rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+}
+[data-theme="light"] .coach-review-board-form-title {
+    color: rgba(0, 0, 0, 0.8);
+}
+.cr-obs-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    margin-top: 0.5rem;
+}
+.cr-obs-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.cr-obs-row--split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+@media (max-width: 500px) {
+    .cr-obs-row--split { grid-template-columns: 1fr; }
+}
+.cr-obs-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.cr-obs-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+[data-theme="light"] .cr-obs-label { color: rgba(0, 0, 0, 0.5); }
+.cr-obs-fields input[type="text"],
+.cr-obs-fields input[type="date"],
+.cr-obs-fields select,
+.cr-obs-fields textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.375rem 0.6rem;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    color: #f1f5f9;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    resize: vertical;
+}
+.cr-obs-fields input[type="text"]:focus,
+.cr-obs-fields input[type="date"]:focus,
+.cr-obs-fields select:focus,
+.cr-obs-fields textarea:focus {
+    outline: 2px solid rgba(56, 189, 248, 0.6);
+    outline-offset: 1px;
+    border-color: transparent;
+}
+[data-theme="light"] .cr-obs-fields input[type="text"],
+[data-theme="light"] .cr-obs-fields input[type="date"],
+[data-theme="light"] .cr-obs-fields select,
+[data-theme="light"] .cr-obs-fields textarea {
+    border-color: rgba(0, 0, 0, 0.15);
+    background: #fff;
+    color: #1e293b;
+}
+[data-theme="light"] .cr-obs-fields input:focus,
+[data-theme="light"] .cr-obs-fields select:focus,
+[data-theme="light"] .cr-obs-fields textarea:focus {
+    outline-color: rgba(14, 116, 144, 0.6);
+}
+.cr-obs-advanced {
+    margin-top: 0.25rem;
+}
+.cr-obs-save-btn {
+    margin-top: 0.5rem;
+    width: 100%;
+}
+@media (max-width: 500px) {
+    .coach-review-mode-btn { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+}
+
 .coach-review-picker {
     margin-bottom: 1rem;
     padding-bottom: 1rem;
