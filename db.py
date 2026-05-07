@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import log as _log
 
@@ -1112,7 +1113,11 @@ def _row_to_note(row: sqlite3.Row, player_ids: list[str] | None = None, tags: li
     # that haven't migrated yet) still get a sane default instead of a
     # KeyError. sqlite3.Row supports `keys()`; mappings support `in`.
     keys = set(row.keys()) if hasattr(row, "keys") else set()
-    def _opt(key: str, default: str = "") -> str:
+    # Phase 6b (#116) — return type widened to `Any`. `_opt` is used for
+    # both string fields and the JSON-encoded `tactical_board_json`
+    # blob, so claiming `str` is misleading and a static checker would
+    # complain about the JSON callsite.
+    def _opt(key: str, default: Any = "") -> Any:
         return row[key] if key in keys else default
     # Phase 6a — observation notes. `tactical_board_json` is stored as
     # text JSON (or NULL); decode defensively so a corrupted blob

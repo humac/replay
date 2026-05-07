@@ -519,6 +519,9 @@ export const coachingMixin = {
                 <td class="roster-cell roster-col-status">${statusPill}</td>
                 <td class="roster-cell roster-col-actions">
                     <div class="roster-actions-row">
+                        <button type="button" class="mini-action-btn mini-action-btn-icon" title="Add observation note" aria-label="Add observation note" onclick="app.openCoachObservationModal(null, { playerId: ${playerIdJs} })">
+                            ${this._rosterIcon('observation')}
+                        </button>
                         <button type="button" class="mini-action-btn mini-action-btn-icon" title="View development profile" aria-label="View development profile" onclick="app.openCoachPlayerDevelopmentModal(${playerIdJs})">
                             ${this._rosterIcon('chart')}
                         </button>
@@ -581,6 +584,16 @@ export const coachingMixin = {
                 'M7 14v4',
                 'M12 9v9',
                 'M17 5v13',
+            ]);
+        }
+        if (name === 'observation') {
+            // Phase 6b — clipboard glyph for the "Add observation" action.
+            // Clipboard hints "written observation, no video required".
+            return SVG([
+                'M9 4h6a1 1 0 011 1v2H8V5a1 1 0 011-1z',
+                'M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V9a2 2 0 00-2-2h-2',
+                'M9 13h6',
+                'M9 17h4',
             ]);
         }
         return '';
@@ -757,28 +770,81 @@ export const coachingMixin = {
         if (!container) return;
         const notes = this._coachBundle?.notes || [];
         if (!notes.length) {
-            container.innerHTML = '<div class="session-empty">No coaching notes yet. Click <strong>+ New note</strong> to add the first one.</div>';
+            container.innerHTML = '<div class="session-empty">No coaching notes yet. Click <strong>+ New note</strong> or <strong>+ New observation</strong> to add the first one.</div>';
             return;
         }
-        container.innerHTML = notes.map((n) => `
-            <article class="coach-row coach-row-with-thumb">
-                ${this._coachNoteThumbHtml(n, { size: 'list' })}
-                <div class="coach-row-body">
-                    <strong>${this.esc(n.title)}</strong>
-                    <span>${this.esc(this.matchLabel(n.match_id))} · ${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${this.esc(n.category)} · ${this.esc(n.visibility)}</span>
-                    ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
-                </div>
-                <div class="coach-row-actions">
+        container.innerHTML = notes.map((n) => {
+            const isObservation = (n.note_context || 'video') === 'observation';
+            const titleText = (n.title || '').trim() || (isObservation
+                ? ((n.event_title || '').trim() || 'Observation note')
+                : '(untitled)');
+            const contextPill = isObservation
+                ? '<span class="coach-row-context-pill" data-context="observation">Observation</span>'
+                : '<span class="coach-row-context-pill" data-context="video">Video</span>';
+            // Meta line — observation notes show event metadata
+            // (event type / event title / event date) instead of
+            // match/timestamp/slot, so the row never shows
+            // "undefined" / "0:00" / "Full" for fields that don't apply.
+            const metaParts = [];
+            if (isObservation) {
+                if (n.event_type) {
+                    const typeLabel = `${n.event_type[0].toUpperCase()}${n.event_type.slice(1)}`;
+                    metaParts.push(`${typeLabel} observation`);
+                } else {
+                    metaParts.push('Observation');
+                }
+                if (n.event_title && n.event_title !== titleText) metaParts.push(n.event_title);
+                if (n.event_date) metaParts.push(n.event_date);
+            } else {
+                metaParts.push(this.matchLabel(n.match_id));
+                metaParts.push(this.formatClock(n.timestamp_seconds));
+                metaParts.push(this.slotLabel(n.slot));
+            }
+            if (n.category) metaParts.push(n.category);
+            if (n.visibility) metaParts.push(n.visibility);
+            const metaLine = metaParts.filter(Boolean).map((p) => this.esc(p)).join(' · ');
+            // Observation notes have no video frame to seek into,
+            // so the "Open in Review" + "Regenerate thumbnail"
+            // actions are suppressed. Edit + Delete still apply.
+            const actions = isObservation
+                ? `
+                    <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openCoachObservationModal(${n.id})">Edit</button>
+                    <button type="button" class="mini-action-btn" onclick="app.handleCoachDeleteNote(${n.id})">Delete</button>
+                `
+                : `
                     <button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openNoteInReview(${n.id})">Open in Review</button>
                     <button type="button" class="mini-action-btn" onclick="app.openCoachNoteModal(${n.id})">Edit</button>
                     <button type="button" class="mini-action-btn" onclick="app.handleRegenCoachThumb(${n.id})" title="Regenerate thumbnail" aria-label="Regenerate thumbnail">↻</button>
                     <button type="button" class="mini-action-btn" onclick="app.handleCoachDeleteNote(${n.id})">Delete</button>
+                `;
+            // Observation notes get a film-strip placeholder tile so
+            // the row stays visually aligned without firing a 404
+            // network request — `_coachNoteThumbHtml` is video-only.
+            const thumb = isObservation
+                ? '<div class="coach-thumb coach-thumb--list coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>'
+                : this._coachNoteThumbHtml(n, { size: 'list' });
+            return `
+            <article class="coach-row coach-row-with-thumb" data-note-context="${isObservation ? 'observation' : 'video'}">
+                ${thumb}
+                <div class="coach-row-body">
+                    <div class="coach-row-head">
+                        ${contextPill}
+                        <strong>${this.esc(titleText)}</strong>
+                    </div>
+                    <span>${metaLine}</span>
+                    ${n.body ? `<p>${this.esc(n.body)}</p>` : ''}
+                </div>
+                <div class="coach-row-actions">
+                    ${actions}
                 </div>
             </article>
-        `).join('');
+        `;
+        }).join('');
         // Phase 3b: kick off a single batch of authenticated thumbnail
         // fetches now that the placeholders are in the DOM. Failures are
-        // silent — placeholder stays visible.
+        // silent — placeholder stays visible. Observation rows skip
+        // this entirely (they use a static placeholder, no
+        // `data-coach-note-thumb` attribute).
         this.mountCoachNoteThumbnailsIn(container);
     },
 
@@ -909,6 +975,13 @@ export const coachingMixin = {
 
     async openCoachNoteModal(noteId = null) {
         const note = noteId ? (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId)) : null;
+        // Phase 6b — dispatch observation notes to the dedicated
+        // observation editor. Editing an observation through the
+        // video-shaped modal would force a match select that doesn't
+        // belong on a text-only note.
+        if (note && (note.note_context || 'video') === 'observation') {
+            return this.openCoachObservationModal(noteId);
+        }
         const tpl = document.getElementById('coach-note-form-template');
         if (!tpl) { this.showError('Note form template missing.'); return; }
         const body = tpl.content.firstElementChild.cloneNode(true);
@@ -1043,6 +1116,176 @@ export const coachingMixin = {
         if (!ok) return;
         try {
             await this.deleteCoachNote(noteId);
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    /** Phase 6b — observation note composer.
+     *
+     *  Opens a text-only note editor. Reuses every structured field
+     *  from the video-note modal but swaps the match/slot/time row
+     *  for `event_title` / `event_date` / `event_type` and drops the
+     *  hard "title required" check — observation notes can be saved
+     *  with just `event_title` + structured fields when no overall
+     *  title makes sense (Phase 6b #113).
+     *
+     *  Two entry points:
+     *    Coach > Roster icon button → `openCoachObservationModal(null,
+     *      { playerId })` preselects the player and defaults
+     *      visibility to "player".
+     *    Coach > Notes "+ New observation" → `openCoachObservationModal()`
+     *      with no preselection; visibility defaults to "team".
+     *
+     *  Edit path: `openCoachObservationModal(noteId)` reuses the same
+     *  modal so a coach can iterate on an existing observation.
+     *  `openCoachNoteModal` dispatches to this when called with an
+     *  observation note id so the video-shaped modal isn't forced on
+     *  a text-only row.
+     */
+    async openCoachObservationModal(noteId = null, { playerId = null } = {}) {
+        const note = noteId
+            ? (this._coachBundle?.notes || []).find((n) => Number(n.id) === Number(noteId))
+            : null;
+        if (noteId && !note) {
+            this.showError('Observation note not found.');
+            return;
+        }
+        const tpl = document.getElementById('coach-observation-form-template');
+        if (!tpl) { this.showError('Observation form template missing.'); return; }
+        const body = tpl.content.firstElementChild.cloneNode(true);
+
+        // Event metadata.
+        body.querySelector('[data-field="event_title"]').value = note?.event_title || '';
+        body.querySelector('[data-field="event_date"]').value = note?.event_date || '';
+        const eventTypeSel = body.querySelector('[data-field="event_type"]');
+        eventTypeSel.value = note?.event_type || '';
+
+        // Shared structured-note fields.
+        body.querySelector('[data-field="title"]').value = note?.title || '';
+        body.querySelector('[data-field="category"]').value = note?.category || 'other';
+        // Visibility default — preselected-player flow leans toward
+        // "player" (the coach is writing FOR that player); the Notes-
+        // tab "+ New observation" flow has no player context so
+        // default to "team".
+        const defaultVisibility = note?.visibility
+            || (playerId ? 'player' : 'team');
+        body.querySelector('[data-field="visibility"]').value = defaultVisibility;
+        body.querySelector('[data-field="body"]').value = note?.body || '';
+        body.querySelector('[data-field="tags"]').value = (note?.tags || []).join(',');
+
+        // Tone radiogroup — same chip set + a11y wiring as the video
+        // note modal so keyboard navigation feels consistent.
+        const initialNoteType = note?.note_type || DEFAULT_NOTE_TYPE;
+        const toneBox = body.querySelector('[data-field="note_type"]');
+        toneBox.dataset.value = initialNoteType;
+        toneBox.innerHTML = NOTE_TYPES.map(([v, l, glyph]) => `
+            <button type="button" class="coach-review-tone-btn${v === initialNoteType ? ' is-active' : ''}" role="radio" aria-checked="${v === initialNoteType}" tabindex="${v === initialNoteType ? '0' : '-1'}" data-note-type="${v}" title="${this.esc(l)}">
+                <span class="coach-review-tone-glyph" aria-hidden="true">${glyph}</span>
+                <span class="coach-review-tone-label">${this.esc(l)}</span>
+            </button>
+        `).join('');
+        toneBox.addEventListener('click', (event) => {
+            const btn = event.target.closest('.coach-review-tone-btn');
+            if (!btn || !toneBox.contains(btn)) return;
+            this._syncToneRadiogroup(toneBox, btn.dataset.noteType);
+        });
+        this._setupToneRadiogroup(toneBox);
+
+        body.querySelector('[data-field="player_summary"]').value = note?.player_summary || '';
+        body.querySelector('[data-field="what_happened"]').value = note?.what_happened || '';
+        body.querySelector('[data-field="why_it_matters"]').value = note?.why_it_matters || '';
+        body.querySelector('[data-field="what_to_do_next"]').value = note?.what_to_do_next || '';
+        body.querySelector('[data-field="coach_private_note"]').value = note?.coach_private_note || '';
+
+        // Players: render the same checklist as the video note modal.
+        // Preselect via three sources, in priority order:
+        //   1. existing note's player_ids (edit path)
+        //   2. explicit playerId arg (Roster entry point)
+        //   3. nothing (Notes-tab "New observation" entry point)
+        const playersBox = body.querySelector('[data-field="players"]');
+        const players = this._coachBundle?.players || [];
+        this.renderCoachCheckList(playersBox, players.map((p) => ({ value: p.id, label: this.playerLabel(p) })), 'No players yet');
+        const preselected = new Set();
+        if (note?.player_ids?.length) {
+            note.player_ids.forEach((id) => preselected.add(String(id)));
+        } else if (playerId) {
+            preselected.add(String(playerId));
+        }
+        if (preselected.size) {
+            playersBox.querySelectorAll('.coach-check-option').forEach((btn) => {
+                if (preselected.has(btn.dataset.value)) {
+                    btn.classList.add('is-selected');
+                    btn.setAttribute('aria-pressed', 'true');
+                }
+            });
+        }
+
+        // Phase 6b — surface a neutral "Tactical board attached"
+        // indicator when an existing note carries one. The editor
+        // itself ships in Phase 6c; here we just preserve the JSON
+        // round-trip so an edit doesn't blow it away.
+        const hasBoard = note?.tactical_board_json && typeof note.tactical_board_json === 'object';
+        if (hasBoard) {
+            const indicator = body.querySelector('[data-field="tactical_board_indicator"]');
+            if (indicator) indicator.hidden = false;
+        }
+
+        const result = await this.formModal({
+            title: note ? 'Edit Observation' : 'New Observation',
+            kicker: 'Coach observation',
+            body,
+            confirmLabel: note ? 'Save changes' : 'Save observation',
+            onSubmit: (close) => {
+                const root = body;
+                const titleVal = root.querySelector('[data-field="title"]').value.trim();
+                const eventTitleVal = root.querySelector('[data-field="event_title"]').value.trim();
+                const playerSummaryVal = root.querySelector('[data-field="player_summary"]').value.trim();
+                const whatHappenedVal = root.querySelector('[data-field="what_happened"]').value.trim();
+                const whyMattersVal = root.querySelector('[data-field="why_it_matters"]').value.trim();
+                const whatToDoVal = root.querySelector('[data-field="what_to_do_next"]').value.trim();
+                const bodyVal = root.querySelector('[data-field="body"]').value.trim();
+                // Mirror the backend's meaningful-content rule so the
+                // coach gets a clear inline message instead of a 422.
+                const meaningful = titleVal || eventTitleVal || playerSummaryVal
+                    || whatHappenedVal || whyMattersVal || whatToDoVal || bodyVal
+                    || hasBoard;
+                if (!meaningful) {
+                    this.showError('Observation needs at least a title, event title, or some content.');
+                    return;
+                }
+                close({
+                    note_context: 'observation',
+                    title: titleVal,
+                    event_title: eventTitleVal,
+                    event_date: root.querySelector('[data-field="event_date"]').value || '',
+                    event_type: root.querySelector('[data-field="event_type"]').value || '',
+                    body: bodyVal,
+                    category: root.querySelector('[data-field="category"]').value || 'other',
+                    visibility: root.querySelector('[data-field="visibility"]').value || 'team',
+                    player_ids: Array.from(root.querySelector('[data-field="players"]').querySelectorAll('.coach-check-option.is-selected')).map((b) => b.dataset.value),
+                    tags: (root.querySelector('[data-field="tags"]').value || '').split(',').map((s) => s.trim()).filter(Boolean),
+                    note_type: root.querySelector('[data-field="note_type"]').dataset.value || DEFAULT_NOTE_TYPE,
+                    player_summary: playerSummaryVal,
+                    what_happened: whatHappenedVal,
+                    why_it_matters: whyMattersVal,
+                    what_to_do_next: whatToDoVal,
+                    coach_private_note: root.querySelector('[data-field="coach_private_note"]').value.trim(),
+                });
+            },
+        });
+        if (!result) return;
+        try {
+            if (note) {
+                // Edit path. `UpdateCoachingNoteRequest` is `extra="forbid"`
+                // so we send only fields that exist on it. `note_context`
+                // stays so a future flip back to video can be initiated
+                // explicitly elsewhere; for now Phase 6b only supports
+                // editing observations as observations.
+                await this.updateCoachNote(note.id, result);
+            } else {
+                await this.createCoachNote(result);
+            }
+            this.showSuccess(note ? 'Observation updated.' : 'Observation saved.');
             await this.renderCoachWorkspace();
         } catch (err) { this.showError(err.message); }
     },
@@ -3897,23 +4140,61 @@ export const coachingMixin = {
         // video + drawing context to anchor them.
         container.innerHTML = notes.map((n) => {
             const isReviewed = reviewed.has(Number(n.id));
+            const isObservation = (n.note_context || 'video') === 'observation';
             const tonePill = this._feedbackTonePillHtml(n.note_type);
             const { primary } = this._feedbackNoteSummary(n);
-            const meta = `${this.esc(this.matchLabel(n.match_id))} · ${this.esc(this.formatClock(n.timestamp_seconds))} · ${this.esc(this.slotLabel(n.slot))} · ${isReviewed ? 'Reviewed' : 'New'}`;
+            // Phase 6b — observation notes have no match/slot/
+            // timestamp anchor. Use event metadata when available so
+            // the meta line never shows "null · 0:00 · Full". Video
+            // notes keep the existing meta exactly as before.
+            const metaParts = [];
+            if (isObservation) {
+                if (n.event_type) {
+                    const typeLabel = `${n.event_type[0].toUpperCase()}${n.event_type.slice(1)}`;
+                    metaParts.push(`${typeLabel} observation`);
+                } else {
+                    metaParts.push('Observation');
+                }
+                if (n.event_title) metaParts.push(n.event_title);
+                if (n.event_date) metaParts.push(n.event_date);
+            } else {
+                metaParts.push(this.matchLabel(n.match_id));
+                metaParts.push(this.formatClock(n.timestamp_seconds));
+                metaParts.push(this.slotLabel(n.slot));
+            }
+            metaParts.push(isReviewed ? 'Reviewed' : 'New');
+            const meta = metaParts.filter(Boolean).map((p) => this.esc(p)).join(' · ');
+            const titleText = (n.title || '').trim()
+                || (isObservation ? ((n.event_title || '').trim() || 'Observation note') : '(untitled)');
+            // Observation notes have no playable video. Phase 6b
+            // ships the read-only viewer experience without an
+            // additional modal — show the note inline only via the
+            // structured fields. The Watch button is suppressed and
+            // the focused-feedback player is not opened. A static
+            // placeholder tile keeps the layout aligned without
+            // firing a 404 thumbnail request.
+            const thumb = isObservation
+                ? '<div class="coach-thumb coach-thumb--card coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>'
+                : this._coachNoteThumbHtml(n, { size: 'card' });
+            const actions = isObservation
+                ? `<button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>`
+                : `
+                    <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">▶ Watch</button>
+                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
+                `;
             return `
-            <article class="feedback-card feedback-note-card feedback-card--with-thumb">
-                ${this._coachNoteThumbHtml(n, { size: 'card' })}
+            <article class="feedback-card feedback-note-card feedback-card--with-thumb" data-note-context="${isObservation ? 'observation' : 'video'}">
+                ${thumb}
                 <div class="feedback-card-body">
                     <div class="feedback-card-head">
                         ${tonePill}
                         ${isReviewed ? '<span class="feedback-card-status">Reviewed ✓</span>' : ''}
                     </div>
-                    <h3 class="feedback-card-title">${this.esc(n.title)}</h3>
+                    <h3 class="feedback-card-title">${this.esc(titleText)}</h3>
                     <div class="feedback-card-meta">${meta}</div>
                     ${primary ? `<p class="feedback-card-summary">${this.esc(primary)}</p>` : ''}
                     <div class="feedback-card-actions">
-                        <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">▶ Watch</button>
-                        <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
+                        ${actions}
                     </div>
                 </div>
             </article>`;
@@ -4976,18 +5257,40 @@ export const coachingMixin = {
      *  keep the surface consistent — Phase 6 may add an explicit
      *  coach-only block). */
     _renderDevNoteItem(note, { viewer, emphasizeNext = false } = {}) {
+        const isObservation = (note.note_context || 'video') === 'observation';
         const summary = (note.player_summary || '').trim() || (note.body || '').trim();
-        const title = (note.title || '').trim();
+        const title = (note.title || '').trim() || (isObservation ? (note.event_title || '').trim() : '');
         const next = (note.what_to_do_next || '').trim();
-        const matchPart = note.match_id ? this.esc(this.matchLabel(note.match_id)) : '';
-        const slotPart = note.slot ? this.esc(this.slotLabel(note.slot)) : '';
-        const tsPart = Number.isFinite(Number(note.timestamp_seconds))
-            ? this.esc(this.formatClock(note.timestamp_seconds)) : '';
-        const meta = [matchPart, slotPart, tsPart].filter(Boolean).join(' · ');
+        // Phase 6b — observation notes have no match/slot/timestamp.
+        // Build the meta line from event metadata when available so
+        // a profile that mixes video + observation notes never shows
+        // "null" or "0:00" for fields that don't apply.
+        let meta = '';
+        if (isObservation) {
+            const parts = [];
+            if (note.event_type) {
+                const typeLabel = `${note.event_type[0].toUpperCase()}${note.event_type.slice(1)}`;
+                parts.push(`${typeLabel} observation`);
+            } else {
+                parts.push('Observation');
+            }
+            if (note.event_title && note.event_title !== title) parts.push(note.event_title);
+            if (note.event_date) parts.push(note.event_date);
+            meta = parts.filter(Boolean).map((p) => this.esc(p)).join(' · ');
+        } else {
+            const matchPart = note.match_id ? this.esc(this.matchLabel(note.match_id)) : '';
+            const slotPart = note.slot ? this.esc(this.slotLabel(note.slot)) : '';
+            const tsPart = Number.isFinite(Number(note.timestamp_seconds))
+                ? this.esc(this.formatClock(note.timestamp_seconds)) : '';
+            meta = [matchPart, slotPart, tsPart].filter(Boolean).join(' · ');
+        }
         const tonePill = this._feedbackTonePillHtml(note.note_type);
+        const thumb = isObservation
+            ? '<div class="coach-thumb coach-thumb--list coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>'
+            : this._coachNoteThumbHtml(note, { size: 'list' });
         return `
-            <li class="player-dev-note-item">
-                ${this._coachNoteThumbHtml(note, { size: 'list' })}
+            <li class="player-dev-note-item" data-note-context="${isObservation ? 'observation' : 'video'}">
+                ${thumb}
                 <div class="player-dev-note-body">
                     <div class="player-dev-note-head">
                         ${tonePill}
