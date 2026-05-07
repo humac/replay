@@ -55,7 +55,7 @@ Reference docs (load before non-trivial changes):
 
 - `AGENTS.md` — repo source of truth: stack, conventions, key files, editing guidance.
 - `CLAUDE.md` — Claude-specific guidance, validation commands.
-- `docs/coach-review-ui-ux-implementation-plan.md` — Coach Review redesign plan.
+- `docs/archive/coach-review-ui-ux-implementation-plan.md` — Coach Review redesign plan.
 - `docs/coaching-analysis-feature-roadmap.md` — coaching-platform feature roadmap.
 - `docs/design/design-report.md` — UX restructure rationale.
 - `specs/coaching-platform-design.md` — coaching scope, data model, privacy.

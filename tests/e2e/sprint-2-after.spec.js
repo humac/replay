@@ -1,7 +1,7 @@
 // Sprint 2 "after" capture for the Coach Review redesign.
 // Verifies the compact match/slot/time/save-note top bar replaces the old
 // form-style picker, captures screenshots, and exercises the Sprint 2
-// acceptance criteria from docs/coach-review-ui-ux-implementation-plan.md.
+// acceptance criteria from docs/archive/coach-review-ui-ux-implementation-plan.md.
 //
 // Run from this folder once the app is up at PLAYWRIGHT_BASE_URL with the
 // canonical seed (docs/_seed/seed.py from main):

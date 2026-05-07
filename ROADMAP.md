@@ -956,11 +956,11 @@ Next: PR 1b (Coach UI for note tone + structured fields, hidden behind the exist
 
 ## Coach Review UX Cockpit — Sprint 0 (audit) ✅ COMPLETE (2026-05-02)
 
-**Goal:** establish a measured before-state for [`docs/coach-review-ui-ux-implementation-plan.md`](docs/coach-review-ui-ux-implementation-plan.md). Audit only — no source code changed (PR #56).
+**Goal:** establish a measured before-state for [`docs/archive/coach-review-ui-ux-implementation-plan.md`](docs/archive/coach-review-ui-ux-implementation-plan.md). Audit only — no source code changed (PR #56).
 
 - **`.agent-skills/`** — portable, repo-local skill pack (8 skills + README) so any coding agent loads the redesign guardrails, search recipes, and QA gates before editing. Travels with the repo.
 - **`tests/e2e/`** — Playwright scaffold scoped under its own `package.json` (no root build step). Includes a reproducible Sprint 0 baseline-capture spec.
-- **`docs/coach-review-sprint-0-baseline-audit.md`** — full report with measured dimensions (chrome above video 498 px at 1440, video 65% of grid), selector / method inventory, gap analysis vs. Sprint 1–9 target, and a Sprint 1 starting recipe.
+- **`docs/archive/coach-review-sprint-0-baseline-audit.md`** — full report with measured dimensions (chrome above video 498 px at 1440, video 65% of grid), selector / method inventory, gap analysis vs. Sprint 1–9 target, and a Sprint 1 starting recipe.
 - **`docs/screenshots/sprint-0-baseline/`** — 16 PNGs capturing Coach Review at 1920 / 1440 / 1024 / 768 / 390 px plus adjacent surfaces (Roster / Notes / Playlists / Feedback / public season) at 1440 px for regression reference.
 
 ---
@@ -980,7 +980,7 @@ Next: PR 1b (Coach UI for note tone + structured fields, hidden behind the exist
 - **Measured deltas vs Sprint 0 baseline (1440 px):** video % of grid 65 → 74 (+9 pts); side panel 373 → 340 px; chrome above video 498 → 344 px (-154); picker 118 → 47 px (-71). At 1920 px video width 743 → 1466 px (+97%).
 - **Validation**: `pytest tests/ -v --cov` 265/265 pass, coverage 65.03%. Playwright `sprint-1-after.spec.js` 11/11, `sprint-2-after.spec.js` 7/7.
 
-Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail, focus mode, keyboard shortcuts, responsive/a11y polish, QA + docs) tracked in [`docs/coach-review-ui-ux-implementation-plan.md`](docs/coach-review-ui-ux-implementation-plan.md).
+Sprints 3–9 (icon-first telestrator toolbar, fast note composer, timeline rail, focus mode, keyboard shortcuts, responsive/a11y polish, QA + docs) tracked in [`docs/archive/coach-review-ui-ux-implementation-plan.md`](docs/archive/coach-review-ui-ux-implementation-plan.md).
 
 ---
 
@@ -1205,6 +1205,6 @@ The original C1–C7 outline (coach workspace, roster + player-user links, times
 **Forward-looking coaching work** has moved into two dedicated planning docs (kept separate from this roadmap so each can iterate without churning the milestone log):
 
 - [`docs/coaching-analysis-feature-roadmap.md`](docs/coaching-analysis-feature-roadmap.md) — feature backlog (Phases 1–11): structured note quality, review templates, per-note thumbnails, first-class clip builder, player development profiles, action items, match summaries, engagement dashboards, analytics, AI-assisted workflow, CV-assisted clip discovery.
-- [`docs/coach-review-ui-ux-implementation-plan.md`](docs/coach-review-ui-ux-implementation-plan.md) — Coach > Review UX cockpit redesign in 10 sprints (S0–S9): video-first layout, compact match/slot bar, icon-first telestrator toolbar, fast note composer, timeline rail, focus mode, keyboard shortcuts, responsive/a11y polish, QA + docs.
+- [`docs/archive/coach-review-ui-ux-implementation-plan.md`](docs/archive/coach-review-ui-ux-implementation-plan.md) — Coach > Review UX cockpit redesign in 10 sprints (S0–S9): video-first layout, compact match/slot bar, icon-first telestrator toolbar, fast note composer, timeline rail, focus mode, keyboard shortcuts, responsive/a11y polish, QA + docs.
 
 The Telestrator follow-on phases (connectors, animated keyframes v3 schema, server-side player tracking) remain in [Coaching Telestrator — Future Phases](#coaching-telestrator--future-phases-designed-not-shipped) above because they extend a shipped object schema rather than the broader feature/UX backlog.

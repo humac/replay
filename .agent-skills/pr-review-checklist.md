@@ -16,7 +16,7 @@ re-running the work.
 
 ```markdown
 ## Sprint
-Sprint <N> of `docs/coach-review-ui-ux-implementation-plan.md`
+Sprint <N> of `docs/archive/coach-review-ui-ux-implementation-plan.md`
 Bundled into PR<X> per the plan's PR breakdown (PR1 = S1+S2, PR2 = S3+S4, PR3 = S5+S6,
 PR4 = S7+S8+S9).
 

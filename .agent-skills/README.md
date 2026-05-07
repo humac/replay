@@ -4,7 +4,7 @@ Portable, repo-local skill pack for any coding agent (Claude Code, Codex, Cursor
 works on the Replay codebase, especially the multi-sprint Coach Review UI/UX redesign.
 
 The single source of truth for the redesign target is
-[`docs/coach-review-ui-ux-implementation-plan.md`](../docs/coach-review-ui-ux-implementation-plan.md).
+[`docs/archive/coach-review-ui-ux-implementation-plan.md`](../docs/archive/coach-review-ui-ux-implementation-plan.md).
 This pack does not duplicate that document — it complements it with safety rails, search
 recipes, and validation gates an agent should load before editing.
 

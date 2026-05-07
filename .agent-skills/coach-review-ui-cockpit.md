@@ -6,7 +6,7 @@ Single source of truth for the Coach Review redesign target. Replay's `/coach?ta
 the only authoring surface for coaching notes and telestrator drawings. The redesign turns it
 from a generic admin-style form into a compact, video-first analysis cockpit.
 
-The canonical plan is [`docs/coach-review-ui-ux-implementation-plan.md`](../docs/coach-review-ui-ux-implementation-plan.md).
+The canonical plan is [`docs/archive/coach-review-ui-ux-implementation-plan.md`](../docs/archive/coach-review-ui-ux-implementation-plan.md).
 This skill restates the target and the invariants so any sprint agent can load it quickly.
 
 ## When to use it
