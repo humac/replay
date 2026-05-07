@@ -576,7 +576,12 @@ class UpdateCoachingNoteRequest(BaseModel):
     match_id: Optional[str] = Field(None, min_length=1, max_length=120)
     slot: Optional[str] = Field(None)
     timestamp_seconds: Optional[float] = Field(None, ge=0)
-    title: Optional[str] = Field(None, min_length=1, max_length=160)
+    # Phase 6b (#113) — `min_length` removed so observation notes can
+    # PATCH `title: ""` to clear it. The route handler revalidates the
+    # merged state and still rejects an empty title for video notes
+    # (and rejects observation notes that end up with no meaningful
+    # content), so this is purely a model-shape relaxation.
+    title: Optional[str] = Field(None, max_length=160)
     body: Optional[str] = Field(None, max_length=4000)
     category: Optional[str] = None
     visibility: Optional[str] = None

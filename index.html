@@ -443,6 +443,7 @@
                             <p class="admin-card-sub">Timestamped teaching points with optional drawings. Click <strong>Open in Review</strong> on any note to jump straight to the moment in the Review tab.</p>
                         </div>
                         <div class="admin-panel-actions">
+                            <button type="button" class="btn-head" onclick="app.openCoachObservationModal()">+ New observation</button>
                             <button type="button" class="btn-head" onclick="app.openCoachNoteModal()">+ New note</button>
                         </div>
                     </div>
@@ -701,6 +702,119 @@
                 <div class="form-group">
                     <label>Coach context (private)</label>
                     <textarea data-field="coach_private_note" rows="2" maxlength="4000" placeholder="Internal — never sent to players or families."></textarea>
+                </div>
+            </div>
+        </template>
+
+        <!-- Phase 6b — observation note composer. Reuses every structured
+             field from the video-note form but swaps the match/slot/time
+             row for event metadata (event_title / event_date / event_type)
+             and drops the Title's "required" affordance — observation
+             notes can be saved with just `event_title` + structured fields
+             when no overall title makes sense. -->
+        <template id="coach-observation-form-template">
+            <div class="coach-mini-form coach-observation-form">
+                <p class="coach-observation-helper">
+                    Use this for practice, sideline, tactical, or meeting feedback when no video is available. Match, slot, and timestamp are not required.
+                </p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Event title <span class="form-label-hint">(optional)</span></label>
+                        <input type="text" data-field="event_title" maxlength="200" placeholder="e.g. Tuesday practice — scanning">
+                    </div>
+                    <div class="form-group">
+                        <label>Event date <span class="form-label-hint">(optional)</span></label>
+                        <input type="date" data-field="event_date">
+                    </div>
+                    <div class="form-group">
+                        <label>Event type</label>
+                        <select data-field="event_type">
+                            <option value="">— Select —</option>
+                            <option value="practice">Practice</option>
+                            <option value="game">Game</option>
+                            <option value="meeting">Meeting</option>
+                            <option value="tactical">Tactical</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Title <span class="form-label-hint">(optional)</span></label>
+                        <input type="text" data-field="title" maxlength="160" placeholder="e.g. Recognising the press trigger">
+                    </div>
+                    <div class="form-group">
+                        <label>Category</label>
+                        <select data-field="category">
+                            <option value="shape">Shape</option>
+                            <option value="pressing">Pressing</option>
+                            <option value="transition">Transition</option>
+                            <option value="set_piece">Set piece</option>
+                            <option value="build_up">Build-up</option>
+                            <option value="finishing">Finishing</option>
+                            <option value="defending">Defending</option>
+                            <option value="goalkeeper">Goalkeeper</option>
+                            <option value="effort">Effort</option>
+                            <option value="decision">Decision</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Visibility</label>
+                        <select data-field="visibility">
+                            <option value="private">Private</option>
+                            <option value="team">Team-visible</option>
+                            <option value="player">Player/family</option>
+                            <option value="unlisted">Unlisted link</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Linked Players</label>
+                        <div data-field="players" class="coach-check-list" role="listbox" aria-label="Linked players"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Tags</label>
+                        <input type="text" data-field="tags" maxlength="300" placeholder="comma,separated,tags">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Tone</label>
+                    <div data-field="note_type" class="coach-review-tone coach-review-tone-modal" role="radiogroup" aria-label="Note tone"></div>
+                </div>
+                <div class="form-group">
+                    <label>Player summary <span class="form-label-hint">(visible to player/family)</span></label>
+                    <textarea data-field="player_summary" rows="2" maxlength="2000" placeholder="Short, age-appropriate version they'll read."></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>What happened</label>
+                        <textarea data-field="what_happened" rows="2" maxlength="2000" placeholder="The observation."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Why it matters</label>
+                        <textarea data-field="why_it_matters" rows="2" maxlength="2000" placeholder="The coaching context."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>What to do next</label>
+                        <textarea data-field="what_to_do_next" rows="2" maxlength="2000" placeholder="The actionable next step."></textarea>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Long notes</label>
+                    <textarea data-field="body" rows="3" maxlength="4000" placeholder="Anything that doesn't fit the structured fields above."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Coach context (private)</label>
+                    <textarea data-field="coach_private_note" rows="2" maxlength="4000" placeholder="Internal — never sent to players or families."></textarea>
+                </div>
+                <!-- Phase 6b shows a neutral indicator for an attached
+                     tactical board; the editor itself ships in Phase 6c.
+                     Hidden by default; revealed by JS when present. -->
+                <div class="form-group coach-observation-board-indicator" data-field="tactical_board_indicator" hidden>
+                    <span class="coach-observation-board-pill">⌬ Tactical board attached</span>
+                    <span class="form-label-hint">The board sketch is preserved and can be edited in a later release.</span>
                 </div>
             </div>
         </template>

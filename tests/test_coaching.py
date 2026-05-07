@@ -3676,3 +3676,189 @@ async def test_observation_in_player_development_profile(client, auth_headers):
     titles = [n["title"] for n in viewer_profile.json()["profile"]["recent_notes"]]
     assert "Practice observation" in titles
     assert "Private observation" not in titles
+
+
+# ---------------------------------------------------------------------------
+# Phase 6b — observation note backend follow-ups (issues #112, #113, #114).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_observation_titleless_activity_log_has_meaningful_label(client, auth_headers):
+    """Phase 6b (#112) — observation notes can legitimately have no
+    `title`. The activity-log message must fall back through
+    event_title / player_summary so the admin feed never shows
+    "Coaching note created: " with a trailing space."""
+    import db as _db
+    note = await client.post("/api/coach/notes", json={
+        "title": "",
+        "note_context": "observation",
+        "category": "decision", "visibility": "team",
+        "event_title": "Tuesday practice — scanning",
+        "event_type": "practice",
+    }, headers=auth_headers)
+    assert note.status_code == 200, note.text
+    events = _db.get_activity_events(limit=20, max_age_hours=None)
+    creates = [e for e in events if e["event_type"] == "coach.note_created"]
+    assert creates, "Expected a coach.note_created activity event"
+    msg = creates[0]["message"]
+    assert msg.endswith("Tuesday practice — scanning"), msg
+    assert msg.strip() != "Coaching note created:"
+
+
+@pytest.mark.asyncio
+async def test_observation_activity_log_falls_back_to_player_summary(client, auth_headers):
+    """If neither title nor event_title exist, fall back to player_summary."""
+    import db as _db
+    note = await client.post("/api/coach/notes", json={
+        "title": "",
+        "note_context": "observation",
+        "category": "decision", "visibility": "team",
+        "player_summary": "Watch the back-line spacing.",
+    }, headers=auth_headers)
+    assert note.status_code == 200, note.text
+    events = _db.get_activity_events(limit=20, max_age_hours=None)
+    creates = [e for e in events if e["event_type"] == "coach.note_created"]
+    assert creates
+    assert creates[0]["message"].endswith("Watch the back-line spacing.")
+
+
+@pytest.mark.asyncio
+async def test_observation_activity_log_final_fallback_label(client, auth_headers):
+    """If only structured fields are filled (no title, event_title, or
+    player_summary), the activity log must still produce a non-empty
+    label — `Observation note` is the safe default."""
+    import db as _db
+    note = await client.post("/api/coach/notes", json={
+        "title": "",
+        "note_context": "observation",
+        "category": "decision", "visibility": "team",
+        "what_happened": "Rondo drill notes.",
+    }, headers=auth_headers)
+    assert note.status_code == 200, note.text
+    events = _db.get_activity_events(limit=20, max_age_hours=None)
+    creates = [e for e in events if e["event_type"] == "coach.note_created"]
+    assert creates
+    assert creates[0]["message"].endswith("Observation note")
+
+
+@pytest.mark.asyncio
+async def test_observation_patch_can_clear_title(client, auth_headers):
+    """Phase 6b (#113) — observation notes accept PATCH `title: ""`.
+    The merged-state validator allows it as long as some other
+    meaningful content remains on the row."""
+    note = await client.post("/api/coach/notes", json={
+        "title": "Initial title",
+        "note_context": "observation",
+        "category": "decision", "visibility": "team",
+        "event_title": "Practice",
+        "event_type": "practice",
+    }, headers=auth_headers)
+    note_id = note.json()["note"]["id"]
+    resp = await client.patch(
+        f"/api/coach/notes/{note_id}",
+        json={"title": ""},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["note"]["title"] == ""
+    # event_title is the meaningful content carrier here, so the
+    # merged-state validator is satisfied.
+    assert resp.json()["note"]["event_title"] == "Practice"
+
+
+@pytest.mark.asyncio
+async def test_observation_patch_clearing_title_with_no_other_content_rejected(client, auth_headers):
+    """Phase 6b (#113) — clearing the title is fine, but only if the
+    row keeps at least one other meaningful field. Strip-everything
+    PATCH should 422."""
+    note = await client.post("/api/coach/notes", json={
+        "title": "Only content",
+        "note_context": "observation",
+        "category": "decision", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note.json()["note"]["id"]
+    resp = await client.patch(
+        f"/api/coach/notes/{note_id}",
+        json={"title": ""},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_video_note_patch_cannot_clear_title(client, auth_headers):
+    """Video notes still require a title — PATCH `title: ""` rejected."""
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Phase6b FC", "date": "2026-05-12",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    note = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 4,
+        "title": "Important moment", "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note.json()["note"]["id"]
+    resp = await client.patch(
+        f"/api/coach/notes/{note_id}",
+        json={"title": ""},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_video_to_observation_flip_unlinks_thumbnail(client, auth_headers, data_dir, monkeypatch):
+    """Phase 6b (#114) — flipping a video note to observation removes
+    the orphaned JPEG. The serving endpoint already returns 404 for
+    observation notes, but leaving the file on disk wastes space and
+    the delete handler skips it because the row no longer carries a
+    match_id-shaped video context."""
+    await _install_thumbnail_stub(monkeypatch)
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Cleanup FC", "date": "2026-05-13",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    note = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5,
+        "title": "Will become observation",
+        "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note.json()["note"]["id"]
+    await _drain_background_tasks()
+    thumb = _coach_thumb_path(data_dir, match_id, note_id)
+    assert thumb.exists(), "Thumbnail should exist after video-note create"
+    # Flip to observation. The route handler must unlink the JPEG.
+    resp = await client.patch(
+        f"/api/coach/notes/{note_id}",
+        json={"note_context": "observation"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert not thumb.exists(), "Thumbnail must be unlinked after flip to observation"
+
+
+@pytest.mark.asyncio
+async def test_video_to_observation_flip_succeeds_when_thumb_missing(client, auth_headers, data_dir, monkeypatch):
+    """Phase 6b (#114) — the unlink is best-effort. If the JPEG was
+    never generated (or already removed), the flip still succeeds."""
+    # No stub installed → the spawn helper sees no source video and
+    # returns False, so no JPEG is written.
+    match = await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Best Effort FC", "date": "2026-05-14",
+    }, headers=auth_headers)
+    match_id = match.json()["id"]
+    note = await client.post("/api/coach/notes", json={
+        "match_id": match_id, "slot": "full", "timestamp_seconds": 5,
+        "title": "No thumb yet",
+        "category": "shape", "visibility": "team",
+    }, headers=auth_headers)
+    note_id = note.json()["note"]["id"]
+    await _drain_background_tasks()
+    thumb = _coach_thumb_path(data_dir, match_id, note_id)
+    assert not thumb.exists()
+    resp = await client.patch(
+        f"/api/coach/notes/{note_id}",
+        json={"note_context": "observation"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text

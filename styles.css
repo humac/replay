@@ -9213,6 +9213,129 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
     min-width: 0;
 }
 
+/* Phase 6b — observation-note thumbnail placeholder. Observation
+ * notes have no video frame, so we render a static "no video" tile
+ * with a clipboard glyph instead of firing a network request that
+ * would 404. The base `.coach-thumb` rules give it the same border
+ * + radius as the video tile; we just hide the film-strip
+ * placeholder ::after pattern (set in `.coach-thumb[data-thumb-state="placeholder"]`)
+ * by re-painting it with a clipboard glyph. */
+.coach-thumb--observation {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(56, 189, 248, 0.08);
+    border-color: rgba(56, 189, 248, 0.3);
+}
+[data-theme="light"] .coach-thumb--observation {
+    background: rgba(2, 132, 199, 0.08);
+    border-color: rgba(2, 132, 199, 0.3);
+}
+.coach-thumb--observation::after {
+    /* Suppress the inherited film-strip glyph — observation tiles
+     * use the inline clipboard span below instead. */
+    display: none;
+}
+.coach-thumb-observation-glyph {
+    font-size: 1.4rem;
+    line-height: 1;
+    opacity: 0.8;
+    pointer-events: none;
+}
+
+/* Phase 6b — context pill on coach-notes / feedback-notes rows.
+ * Surfaces the video / observation context with an accent colour so
+ * the row's meta line doesn't have to spell it out. */
+.coach-row-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.coach-row-context-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border: 1px solid transparent;
+    line-height: 1.4;
+}
+.coach-row-context-pill[data-context="observation"] {
+    background: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.35);
+}
+.coach-row-context-pill[data-context="video"] {
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text-muted);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+[data-theme="light"] .coach-row-context-pill[data-context="observation"] {
+    background: rgba(2, 132, 199, 0.1);
+    color: #0369a1;
+    border-color: rgba(2, 132, 199, 0.35);
+}
+[data-theme="light"] .coach-row-context-pill[data-context="video"] {
+    background: rgba(71, 85, 105, 0.08);
+    color: #475569;
+    border-color: rgba(71, 85, 105, 0.3);
+}
+
+/* Phase 6b — observation composer styling. The helper paragraph at
+ * the top of the modal explains the surface; the tactical-board
+ * indicator (Phase 6c will edit; 6b only previews) renders a small
+ * pill so the field doesn't feel orphaned. Mobile drops the form-row
+ * grid to a single column for the event metadata so the date input
+ * doesn't compress to an unusable width. */
+.coach-observation-helper {
+    margin: 0 0 0.75rem 0;
+    padding: 0.55rem 0.75rem;
+    border-radius: 6px;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+[data-theme="light"] .coach-observation-helper {
+    background: rgba(2, 132, 199, 0.08);
+    border-color: rgba(2, 132, 199, 0.3);
+}
+.coach-observation-board-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px dashed rgba(148, 163, 184, 0.35);
+}
+.coach-observation-board-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border: 1px solid rgba(56, 189, 248, 0.35);
+}
+[data-theme="light"] .coach-observation-board-pill {
+    background: rgba(2, 132, 199, 0.1);
+    color: #0369a1;
+    border-color: rgba(2, 132, 199, 0.35);
+}
+@media (max-width: 720px) {
+    .coach-observation-form .form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Coach Review timeline chip with a thumbnail. The chip is a
  * horizontal pill with a tiny tile on the left and a stacked meta
  * column on the right. We override flex-direction (existing chip is a

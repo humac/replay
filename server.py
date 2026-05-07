@@ -1619,6 +1619,31 @@ async def coach_list_notes(request: Request, match_id: str | None = None):
     return {"notes": _db.list_coaching_notes(match_id=match_id)}
 
 
+def _coach_note_activity_label(note: dict | None) -> str:
+    """Pick a human-readable label for the activity log message.
+
+    Phase 6b (#112) — observation notes can legitimately have no
+    `title` (Phase 6b allows clearing it via PATCH for observations
+    when other content is meaningful). Falling back through the most
+    user-visible fields keeps the activity feed scannable instead of
+    showing `Coaching note created: ` with a trailing space.
+
+    `coach_private_note` is intentionally NEVER used here — the
+    activity log is read by every admin/uploader, not just the note's
+    coach. Use only the fields that are already visible to a viewer
+    (or, for video notes, that match the existing behavior).
+    """
+    if not note:
+        return ""
+    for key in ("title", "event_title", "player_summary"):
+        value = (note.get(key) or "").strip()
+        if value:
+            return value
+    if (note.get("note_context") or "video") == "observation":
+        return "Observation note"
+    return ""
+
+
 @app.post("/api/coach/notes")
 async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
     user = _require_coach(request)
@@ -1636,7 +1661,7 @@ async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
     _log_activity(
         "coach.note_created",
         severity="info",
-        message=f"Coaching note created: {note.get('title')}",
+        message=f"Coaching note created: {_coach_note_activity_label(note)}",
         match_id=note.get("match_id"),
         slot=note.get("slot"),
         actor=user["username"],
@@ -1699,11 +1724,39 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
         if merged.get("match_id") != existing.get("match_id"):
             if not _db.get_match_by_id(merged["match_id"]):
                 raise HTTPException(404, "Match not found")
+    else:
+        # Phase 6b (#113) — observation notes do not require a title.
+        # `_OBSERVATION_CONTENT_FIELDS` (in models.py) already enforces
+        # that at least one of title / body / player_summary /
+        # what_happened / why_it_matters / what_to_do_next /
+        # event_title is present (or `tactical_board_json`). Mirror
+        # that here on the merged state so a PATCH that clears the
+        # title cannot leave the row with no meaningful content.
+        # `tactical_board_json` is an explicit `None` sentinel for
+        # "clear the board" so we keep the truthy check on the merged
+        # value (a cleared board doesn't count as content).
+        meaningful = (
+            (merged.get("tactical_board_json") is not None)
+            or any(
+                (merged.get(name) or "").strip()
+                for name in (
+                    "title", "body", "player_summary", "what_happened",
+                    "why_it_matters", "what_to_do_next", "event_title",
+                )
+            )
+        )
+        if not meaningful:
+            raise HTTPException(
+                422,
+                "observation notes require at least one of: title, body, "
+                "player_summary, what_happened, why_it_matters, "
+                "what_to_do_next, event_title, or tactical_board_json",
+            )
     note = _db.update_coaching_note(note_id, updates) or existing
     _log_activity(
         "coach.note_updated",
         severity="info",
-        message=f"Coaching note updated: {note.get('title')}",
+        message=f"Coaching note updated: {_coach_note_activity_label(note)}",
         match_id=note.get("match_id"),
         slot=note.get("slot"),
         actor=user["username"],
@@ -1722,14 +1775,35 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
     #
     # Phase 6a: observation notes never have a video frame to capture,
     # so we suppress regeneration whenever the (post-update) note is
-    # an observation. A flip from video→observation also intentionally
-    # skips regen — the existing thumbnail stays on disk until the
-    # note is deleted. (We could unlink it here, but observation notes
-    # are cheap to leave alone; if a future iteration wants to clean
-    # them up it can do so without changing the public API.)
+    # an observation.
     moment_fields = {"match_id", "slot", "timestamp_seconds"}
-    if note.get("note_context") == "video" and moment_fields.intersection(updates.keys()):
+    new_context = note.get("note_context") or "video"
+    old_context = existing.get("note_context") or "video"
+    if new_context == "video" and moment_fields.intersection(updates.keys()):
         _spawn_task(_spawn_coach_note_thumbnail(note))
+    elif old_context == "video" and new_context == "observation":
+        # Phase 6b (#114) — flipping a video note to an observation
+        # leaves the original JPEG orphaned on disk; nothing serves
+        # it (`GET /api/coach/notes/{id}/thumbnail` short-circuits to
+        # 404 for observation notes) and `delete_coaching_note` would
+        # skip the unlink because the row no longer has a match_id /
+        # video context. Clean it up best-effort using the existing
+        # `_thumb_path_within_videos_dir` containment guard so a
+        # corrupted DB row can't escape `VIDEOS_DIR`. The PATCH
+        # response is unaffected if the unlink fails.
+        prior_match_id = existing.get("match_id")
+        if prior_match_id:
+            try:
+                thumb = _media.coach_note_thumbnail_path(
+                    VIDEOS_DIR, prior_match_id, note_id
+                )
+                if _thumb_path_within_videos_dir(thumb):
+                    thumb.unlink(missing_ok=True)
+            except OSError as exc:
+                _log.setup("replay").warning(
+                    "Could not unlink stale coach note thumbnail for note %s: %s",
+                    note_id, exc,
+                )
     return {"ok": True, "note": note}
 
 
@@ -1739,10 +1813,11 @@ async def coach_delete_note(note_id: int, request: Request):
     note = _db.get_coaching_note(note_id)
     if not _db.delete_coaching_note(note_id):
         raise HTTPException(404, "Note not found")
+    label = _coach_note_activity_label(note) if note else ""
     _log_activity(
         "coach.note_deleted",
         severity="warning",
-        message=f"Coaching note deleted: {note.get('title', note_id) if note else note_id}",
+        message=f"Coaching note deleted: {label or note_id}",
         match_id=note.get("match_id") if note else None,
         slot=note.get("slot") if note else None,
         actor=user["username"],
