@@ -1257,7 +1257,11 @@ export const coachingMixin = {
             kicker: 'Coach observation',
             body,
             confirmLabel: note ? 'Save changes' : 'Save observation',
-            size: 'wide',
+            // Phase 6c — `wide-board` is a scoped wider variant for
+            // the observation composer that hosts the tactical board
+            // editor. The shared `wide` size stays 720 px so Player
+            // Development + focused Feedback player don't get widened.
+            size: 'wide-board',
             onSubmit: (close) => {
                 const root = body;
                 const titleVal = root.querySelector('[data-field="title"]').value.trim();
@@ -4212,8 +4216,14 @@ export const coachingMixin = {
                     <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
                 `;
             // Phase 6c — read-only board preview rendered inline below
-            // the summary. Layout stays consistent for observation
-            // notes that don't carry a board.
+            // the summary. The note `n` came from `/api/my-feedback`,
+            // which already routes every viewer-visible note through
+            // `_filter_notes_for_user` → `_strip_private_fields` on the
+            // server. `tactical_board_json` follows the parent note's
+            // visibility, so a board on the page implies the viewer is
+            // authorized to see it. NO client-side authorization is
+            // introduced here — parent-note visibility remains the
+            // source of truth.
             const boardPreview = hasBoard
                 ? `<div class="feedback-card-board">${this.tacticalBoardSvg(n.tactical_board_json, { size: 'preview' })}</div>`
                 : '';

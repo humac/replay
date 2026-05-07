@@ -37,6 +37,37 @@ function escAttr(s) {
         .replace(/"/g, '&quot;');
 }
 
+/** Local in-section confirmation. Renders into a host <div> already
+ *  present in the section markup; resolves true on Confirm, false on
+ *  Cancel. Does NOT use openAppModal — the tactical-board section is
+ *  always mounted inside the observation composer's formModal, and
+ *  openAppModal would close the parent modal, losing every coach-
+ *  typed field. The host element is hidden when the promise settles
+ *  so the section returns to its normal layout. */
+function runLocalConfirm(host, { message, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
+    return new Promise((resolve) => {
+        if (!host) { resolve(false); return; }
+        host.hidden = false;
+        host.innerHTML = `
+            <p class="tb-confirm-bar-msg">${escAttr(message || 'Are you sure?')}</p>
+            <div class="tb-confirm-bar-actions">
+                <button type="button" class="tb-section-btn" data-tb-confirm-cancel>${escAttr(cancelLabel)}</button>
+                <button type="button" class="tb-section-btn tb-section-btn--danger" data-tb-confirm-ok>${escAttr(confirmLabel)}</button>
+            </div>
+        `;
+        const close = (value) => {
+            host.hidden = true;
+            host.innerHTML = '';
+            resolve(value);
+        };
+        host.querySelector('[data-tb-confirm-cancel]').addEventListener('click', (e) => { e.preventDefault(); close(false); });
+        host.querySelector('[data-tb-confirm-ok]').addEventListener('click', (e) => { e.preventDefault(); close(true); });
+        // Focus the destructive button only after a tick so the
+        // alertdialog announcement fires before the focus shift.
+        setTimeout(() => host.querySelector('[data-tb-confirm-ok]')?.focus(), 0);
+    });
+}
+
 /** Defensive read — accept anything the Phase 6a loose JSON column may
  * have stored. Returns either a normalized scene or null. Never throws. */
 export function normalizeBoardForRender(board) {
@@ -72,10 +103,14 @@ export function normalizeBoardForRender(board) {
             }
             return { ...base, x: clamp01(s.x), y: clamp01(s.y), text: typeof s.text === 'string' ? s.text.slice(0, 80) : '' };
         });
+    // MVP only ships landscape soccer pitches; the backend
+    // _VALID_BOARD_ORIENTATIONS gates anything else. When a future
+    // sport adds a new orientation, branch on it here AND add a
+    // matching renderer to PITCH_RENDERERS.
     return {
         version: 1,
         pitch_kind: 'soccer_full',
-        orientation: board.orientation === 'landscape' ? 'landscape' : 'landscape',
+        orientation: 'landscape',
         tokens: cleanTokens,
         shapes: cleanShapes,
     };
@@ -311,10 +346,16 @@ export const tacticalBoardMixin = {
                 </div>
                 <div class="tb-section-actions">
                     ${has
-                        ? `<button type="button" class="btn-secondary tb-section-btn" data-tb-action="edit">Edit board</button>
-                           <button type="button" class="btn-secondary tb-section-btn tb-section-btn--danger" data-tb-action="remove">Remove board</button>`
-                        : `<button type="button" class="btn-secondary tb-section-btn" data-tb-action="add">+ Add tactical board</button>`}
+                        ? `<button type="button" class="tb-section-btn" data-tb-action="edit">Edit board</button>
+                           <button type="button" class="tb-section-btn tb-section-btn--danger" data-tb-action="remove">Remove board</button>`
+                        : `<button type="button" class="tb-section-btn" data-tb-action="add">+ Add tactical board</button>`}
                 </div>
+                <!-- Local confirm bar: NOT a global app modal. The
+                     observation composer is itself a formModal and
+                     openAppModal is single-active — opening a nested
+                     confirm modal would close the parent and lose
+                     every coach-typed field. -->
+                <div class="tb-confirm-bar" data-tb-confirm hidden role="alertdialog" aria-live="polite"></div>
             `;
             container.appendChild(head);
             if (has) {
@@ -331,11 +372,9 @@ export const tacticalBoardMixin = {
             head.querySelector('[data-tb-action="add"]')?.addEventListener('click', () => enterEditor());
             head.querySelector('[data-tb-action="edit"]')?.addEventListener('click', () => enterEditor());
             head.querySelector('[data-tb-action="remove"]')?.addEventListener('click', async () => {
-                const confirmed = await this.confirmAction({
-                    title: 'Remove tactical board?',
-                    message: 'The board sketch is removed from this observation. The note itself stays.',
+                const confirmed = await runLocalConfirm(head.querySelector('[data-tb-confirm]'), {
+                    message: 'Remove the tactical board from this observation? The note itself stays.',
                     confirmLabel: 'Remove board',
-                    danger: true,
                 });
                 if (!confirmed) return;
                 sectionState.tokens = [];
@@ -390,35 +429,41 @@ export const tacticalBoardMixin = {
                     <span class="tb-section-hint">Soccer · landscape</span>
                 </div>
                 <div class="tb-section-actions">
-                    <button type="button" class="btn-secondary tb-section-btn" data-tb-action="cancel">Cancel</button>
-                    <button type="button" class="btn-primary tb-section-btn" data-tb-action="done">Done</button>
+                    <button type="button" class="tb-section-btn" data-tb-action="cancel">Cancel</button>
+                    <button type="button" class="tb-section-btn tb-section-btn--primary" data-tb-action="done">Done</button>
                 </div>
+                <!-- Local confirm bar (see preview mode for rationale). -->
+                <div class="tb-confirm-bar" data-tb-confirm hidden role="alertdialog" aria-live="polite"></div>
             `;
             container.appendChild(head);
             const editorRoot = document.createElement('div');
             editorRoot.className = 'tb-editor';
             editorRoot.innerHTML = `
                 <div class="tb-toolbar" role="toolbar" aria-label="Tactical board tools">
-                    <div class="tb-tool-group" role="group" aria-label="Add">
-                        <button type="button" class="tb-tool-btn" data-tb-tool="player" aria-pressed="false">+ Player</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="ball" aria-pressed="false">+ Ball</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="arrow" aria-pressed="false">+ Arrow</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="zone" aria-pressed="false">+ Zone</button>
-                        <button type="button" class="tb-tool-btn" data-tb-tool="label" aria-pressed="false">+ Label</button>
+                    <div class="tb-tool-group" role="group" aria-label="Add to pitch">
+                        <button type="button" class="tb-tool-btn" data-tb-tool="player" aria-pressed="false" aria-label="Add player token" title="Add player token">+ Player</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="ball" aria-pressed="false" aria-label="Add ball" title="Add ball">+ Ball</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="arrow" aria-pressed="false" aria-label="Add arrow" title="Add arrow">+ Arrow</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="zone" aria-pressed="false" aria-label="Add zone" title="Add zone">+ Zone</button>
+                        <button type="button" class="tb-tool-btn" data-tb-tool="label" aria-pressed="false" aria-label="Add text label" title="Add text label using the Label text field">+ Label</button>
                     </div>
-                    <div class="tb-tool-group">
+                    <div class="tb-tool-group" role="group" aria-label="Text inputs">
                         <label class="tb-token-label-wrap">
-                            <span class="tb-token-label-text">Next player # / label</span>
-                            <input type="text" class="tb-token-label-input" maxlength="24" placeholder="e.g. 7" aria-label="Label for next player token">
+                            <span class="tb-token-label-text">Next player #</span>
+                            <input type="text" class="tb-token-label-input" data-tb-input="player-label" maxlength="24" placeholder="e.g. 7" aria-label="Label for next player token">
+                        </label>
+                        <label class="tb-token-label-wrap">
+                            <span class="tb-token-label-text">Label text</span>
+                            <input type="text" class="tb-token-label-input" data-tb-input="label-text" maxlength="80" placeholder="e.g. press here" aria-label="Text for the next label">
                         </label>
                     </div>
-                    <div class="tb-tool-group tb-tool-group--right">
-                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="delete" disabled>Delete selected</button>
-                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="clear">Clear board</button>
+                    <div class="tb-tool-group tb-tool-group--right" role="group" aria-label="Edit selection">
+                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="delete" disabled aria-label="Delete selected item">Delete selected</button>
+                        <button type="button" class="tb-tool-btn tb-tool-btn--danger" data-tb-action="clear" aria-label="Clear all items from the board">Clear board</button>
                     </div>
                 </div>
                 <p class="tb-helper">
-                    Tap a tool, then tap the pitch to add. Arrows and zones use two clicks (start, then end). Drag tokens or shapes to reposition. Click an item to select it, then press Delete or use the toolbar.
+                    Tap a tool, then tap the pitch to add. Arrows and zones use two clicks (start, then end). Drag tokens or shapes to reposition. Click an item to select it, then press Delete or use the toolbar. For labels, type into the <strong>Label text</strong> field first, then click the pitch.
                 </p>
                 <div class="tb-stage" data-tb-stage></div>
                 <p class="tb-status" data-tb-status aria-live="polite"></p>
@@ -427,9 +472,11 @@ export const tacticalBoardMixin = {
 
             const stage = editorRoot.querySelector('[data-tb-stage]');
             const statusEl = editorRoot.querySelector('[data-tb-status]');
-            const labelInput = editorRoot.querySelector('.tb-token-label-input');
+            const playerLabelInput = editorRoot.querySelector('[data-tb-input="player-label"]');
+            const labelTextInput = editorRoot.querySelector('[data-tb-input="label-text"]');
             const deleteBtn = editorRoot.querySelector('[data-tb-action="delete"]');
             const toolButtons = Array.from(editorRoot.querySelectorAll('.tb-tool-btn[data-tb-tool]'));
+            const confirmBar = head.querySelector('[data-tb-confirm]');
             const setStatus = (msg) => { statusEl.textContent = msg || ''; };
 
             const refresh = () => {
@@ -478,11 +525,9 @@ export const tacticalBoardMixin = {
             editorRoot.querySelector('[data-tb-action="clear"]').addEventListener('click', async (event) => {
                 event.preventDefault();
                 if (!sectionState.tokens.length && !sectionState.shapes.length) return;
-                const confirmed = await this.confirmAction({
-                    title: 'Clear tactical board?',
-                    message: 'This removes every token and shape from the editor. Save to apply or Cancel to discard.',
+                const confirmed = await runLocalConfirm(confirmBar, {
+                    message: 'Clear every token and shape from the editor? You can still Cancel to discard, or Done to save.',
                     confirmLabel: 'Clear board',
-                    danger: true,
                 });
                 if (!confirmed) return;
                 sectionState.tokens = [];
@@ -494,7 +539,8 @@ export const tacticalBoardMixin = {
 
             editorRoot.addEventListener('keydown', (event) => {
                 if ((event.key === 'Delete' || event.key === 'Backspace') && sectionState.selectedId) {
-                    if (event.target === labelInput) return;
+                    // Don't intercept while typing in either text input.
+                    if (event.target === playerLabelInput || event.target === labelTextInput) return;
                     event.preventDefault();
                     deleteBtn.click();
                 }
@@ -515,6 +561,13 @@ export const tacticalBoardMixin = {
             const attachStageHandlers = () => {
                 const svg = stage.querySelector('svg.tb-svg');
                 if (!svg) return;
+                // Idempotency guard — refresh() rebuilds the SVG via
+                // innerHTML which discards the previous element AND
+                // its listeners, but mark the new one anyway so a
+                // future caller that bypasses refresh() can't double-
+                // bind on the same SVG.
+                if (svg.dataset.tbStageBound === '1') return;
+                svg.dataset.tbStageBound = '1';
                 svg.addEventListener('mousedown', onPointerDown);
                 svg.addEventListener('touchstart', onPointerDown, { passive: false });
             };
@@ -545,9 +598,9 @@ export const tacticalBoardMixin = {
                 const tool = sectionState.activeTool;
                 if (tool === 'player') {
                     if (sectionState.tokens.length >= 40) { setStatus('Player limit reached (40 tokens).'); return; }
-                    const label = (labelInput.value || '').trim().slice(0, 24);
+                    const label = (playerLabelInput.value || '').trim().slice(0, 24);
                     sectionState.tokens.push({ id: nextId('token'), kind: 'player', x: pt.x, y: pt.y, label, player_id: '' });
-                    if (label) labelInput.value = '';
+                    if (label) playerLabelInput.value = '';
                     refresh();
                     setStatus('Player added.');
                 } else if (tool === 'ball') {
@@ -593,11 +646,18 @@ export const tacticalBoardMixin = {
                     }
                 } else if (tool === 'label') {
                     if (sectionState.shapes.length >= 40) { setStatus('Shape limit reached (40).'); return; }
-                    const text = window.prompt('Label text (max 80 chars):', '');
-                    if (text == null) { setStatus(''); return; }
-                    const trimmed = text.trim().slice(0, 80);
-                    if (!trimmed) { setStatus('Label cancelled — empty text.'); return; }
+                    // Read label text from the inline toolbar input
+                    // instead of window.prompt (per project policy: no
+                    // raw browser dialogs / chrome). When empty, focus
+                    // the input and prompt the user inline.
+                    const trimmed = (labelTextInput.value || '').trim().slice(0, 80);
+                    if (!trimmed) {
+                        labelTextInput.focus();
+                        setStatus('Type label text in the Label text field, then click the pitch.');
+                        return;
+                    }
                     sectionState.shapes.push({ id: nextId('shape'), kind: 'label', x: pt.x, y: pt.y, text: trimmed });
+                    labelTextInput.value = '';
                     setActiveTool(null);
                     refresh();
                     setStatus('Label added.');

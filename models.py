@@ -512,6 +512,12 @@ def validate_tactical_board_payload(value: dict[str, Any] | None) -> dict[str, A
         raise ValueError("tactical_board_json must be an object")
     if not value:
         return None
+    # Cheap raw-input size guard BEFORE per-item validation so a
+    # corrupted client cannot force us to walk a multi-megabyte
+    # tokens array. Normalization only ever shrinks or near-equals
+    # the input (defaults filled, unknown keys dropped, no
+    # synthesis of large fields), so the persisted row is bounded
+    # too. Keep this BEFORE the structural pass.
     if len(json.dumps(value, separators=(",", ":"))) > _MAX_TACTICAL_BOARD_JSON_BYTES:
         raise ValueError("tactical_board_json payload is too large")
 
@@ -526,17 +532,27 @@ def validate_tactical_board_payload(value: dict[str, Any] | None) -> dict[str, A
             f"tactical_board_json orientation must be one of {sorted(_VALID_BOARD_ORIENTATIONS)}"
         )
     version = value.get("version", 1)
-    if not isinstance(version, int) or version != 1:
+    # Reject booleans explicitly — Python's `isinstance(True, int)`
+    # is True and `True == 1`, so without this guard `{"version":
+    # true}` would silently normalize to `version: 1`. Mirrors the
+    # bool guard in `_validate_board_unit`.
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
         raise ValueError("tactical_board_json version must be 1")
 
-    tokens_raw = value.get("tokens", []) or []
+    # `tokens` / `shapes` may be absent (defaults to []) but if the
+    # client sends an explicit non-list value (null, scalar, dict)
+    # that's a malformed payload — reject with 422 instead of
+    # silently coercing to []. `value.get("tokens", [])` returns
+    # the explicit value when present, so a JSON `null` becomes
+    # Python `None` and the isinstance check catches it.
+    tokens_raw = value["tokens"] if "tokens" in value else []
     if not isinstance(tokens_raw, list):
         raise ValueError("tactical_board_json tokens must be an array")
     if len(tokens_raw) > _MAX_BOARD_TOKENS:
         raise ValueError(f"tactical_board_json tokens exceed max ({_MAX_BOARD_TOKENS})")
     tokens = [_validate_board_token(t, i) for i, t in enumerate(tokens_raw)]
 
-    shapes_raw = value.get("shapes", []) or []
+    shapes_raw = value["shapes"] if "shapes" in value else []
     if not isinstance(shapes_raw, list):
         raise ValueError("tactical_board_json shapes must be an array")
     if len(shapes_raw) > _MAX_BOARD_SHAPES:

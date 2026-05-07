@@ -3268,7 +3268,18 @@ async def test_observation_note_only_tactical_board_is_meaningful(client, auth_h
         },
     }, headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["note"]["tactical_board_json"]["pitch_kind"] == "soccer_full"
+    # Phase 6c — assert the FULL normalized shape so a regression in
+    # the validator (e.g., dropped `version`, missing `shapes` key,
+    # forgotten orientation default) surfaces here rather than in the
+    # downstream renderer.
+    board = resp.json()["note"]["tactical_board_json"]
+    assert board == {
+        "version": 1,
+        "pitch_kind": "soccer_full",
+        "orientation": "landscape",
+        "tokens": [{"kind": "ball", "x": 0.5, "y": 0.5}],
+        "shapes": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -4208,3 +4219,85 @@ async def test_tactical_board_rejects_invalid_version(client, auth_headers):
         "tactical_board_json": {"pitch_kind": "soccer_full", "version": 2, "tokens": []},
     }, headers=auth_headers)
     assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_boolean_version(client, auth_headers):
+    """Phase 6c review fix-up — Python's `isinstance(True, int)` is True
+    and `True == 1`, so without an explicit bool guard `{"version":
+    true}` would silently normalize to `version: 1`. Mirrors the bool
+    guard already in `_validate_board_unit`."""
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Boolean version", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "version": True,
+            "tokens": [],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+    assert "version" in bad.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_null_tokens(client, auth_headers):
+    """Phase 6c review fix-up — explicit `tokens: null` is malformed
+    (the field is supposed to be an array). Previously coerced to []
+    by `value.get('tokens', []) or []`. Now rejected with 422."""
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Null tokens", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": None,
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+    assert "tokens" in bad.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_null_shapes(client, auth_headers):
+    """Same as the tokens case — explicit null is malformed."""
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Null shapes", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ball", "x": 0.5, "y": 0.5}],
+            "shapes": None,
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+    assert "shapes" in bad.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_missing_tokens_defaults_to_empty(client, auth_headers):
+    """Distinct from the explicit-null case: omitting `tokens`
+    entirely keeps working and defaults to `[]`. Same for shapes."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "No arrays at all", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {"pitch_kind": "soccer_full"},
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    # An empty board with no tokens/shapes normalizes to None per the
+    # earlier "empty dict is unset" rule. The validator only returns a
+    # non-None payload when the structured scene carries content. To
+    # avoid that path here, add a token so the board survives.
+    resp2 = await client.post("/api/coach/notes", json={
+        "title": "Default arrays", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ball", "x": 0.5, "y": 0.5}],
+        },
+    }, headers=auth_headers)
+    assert resp2.status_code == 200, resp2.text
+    board = resp2.json()["note"]["tactical_board_json"]
+    assert board["tokens"] == [{"kind": "ball", "x": 0.5, "y": 0.5}]
+    assert board["shapes"] == []
+    assert board["version"] == 1
+    assert board["orientation"] == "landscape"
