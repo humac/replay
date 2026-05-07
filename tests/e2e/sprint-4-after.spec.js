@@ -3,7 +3,7 @@
 // Save-at-MM:SS as the default state, with visibility / body / tags collapsed
 // behind a <details> disclosure. Captures screenshots in collapsed and
 // expanded states, and exercises the Sprint 4 acceptance criteria from
-// docs/coach-review-ui-ux-implementation-plan.md.
+// docs/archive/coach-review-ui-ux-implementation-plan.md.
 //
 // Run from this folder once the app is up at PLAYWRIGHT_BASE_URL with the
 // canonical seed (docs/_seed/seed.py from main):

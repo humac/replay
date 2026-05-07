@@ -3,7 +3,7 @@
 // `.mini-action-btn` grid, asserts every tool button carries title + aria-label
 // + aria-pressed, captures pointer-fine and pointer-coarse screenshots, and
 // exercises the Sprint 3 acceptance criteria from
-// docs/coach-review-ui-ux-implementation-plan.md.
+// docs/archive/coach-review-ui-ux-implementation-plan.md.
 //
 // Run from this folder once the app is up at PLAYWRIGHT_BASE_URL with the
 // canonical seed (docs/_seed/seed.py from main):

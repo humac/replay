@@ -1,6 +1,6 @@
 # Coach Review — Sprint 0 Baseline Audit
 
-**Sprint:** 0 of [`docs/coach-review-ui-ux-implementation-plan.md`](coach-review-ui-ux-implementation-plan.md)
+**Sprint:** 0 of [`docs/archive/coach-review-ui-ux-implementation-plan.md`](coach-review-ui-ux-implementation-plan.md)
 **Status:** audit only — no product behavior changed
 **Captured:** 2026-05-02 against branch `claude/fervent-mcclintock-ed40c1`
 **Tools:** Playwright (`tests/e2e/sprint-0-baseline.spec.js`), Chromium 1217, seeded

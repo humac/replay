@@ -15,11 +15,11 @@ Coach > Review evolved from a generic admin-style form (PR #56 audit) into a **v
 
 No backend changes, no schema migrations, no public-match-page or My Feedback regressions. Implementation lives in `js/coaching.js`, `styles.css`, and `index.html`.
 
-This report consolidates the design decisions, measured deltas, and acceptance evidence. The full sprint-by-sprint history is in [`ROADMAP.md`](../../ROADMAP.md); the implementation plan is in [`docs/coach-review-ui-ux-implementation-plan.md`](../coach-review-ui-ux-implementation-plan.md).
+This report consolidates the design decisions, measured deltas, and acceptance evidence. The full sprint-by-sprint history is in [`ROADMAP.md`](../../ROADMAP.md); the implementation plan is in [`docs/archive/coach-review-ui-ux-implementation-plan.md`](../archive/coach-review-ui-ux-implementation-plan.md).
 
 ## Goals
 
-The Sprint 0 audit ([`docs/coach-review-sprint-0-baseline-audit.md`](../coach-review-sprint-0-baseline-audit.md)) measured the legacy state and set the targets:
+The Sprint 0 audit ([`docs/archive/coach-review-sprint-0-baseline-audit.md`](../archive/coach-review-sprint-0-baseline-audit.md)) measured the legacy state and set the targets:
 
 | Target | Sprint 0 baseline | Goal |
 |---|---|---|
@@ -60,7 +60,7 @@ The Sprint 0 audit ([`docs/coach-review-sprint-0-baseline-audit.md`](../coach-re
 - **ARIA + focus rings**: every tool button, color swatch, timeline chip, focus toggle, drawer toggle, shortcuts toggle has `aria-label` + `title` + `aria-pressed` + visible `:focus-visible` ring
 - **Canvas alignment**: verified across 1024 / 1440 / 1920 px, plus through focus-mode toggle (canvas dimensions track video wrapper within ±2 px)
 - **Tab order**: match → slot → save → focus → tools → shortcuts → drawing canvas → composer → timeline rail
-- **Documentation**: this report + `docs/coach-review-sprint-0-baseline-audit.md` + sprint completion entries in `ROADMAP.md`
+- **Documentation**: this report + `docs/archive/coach-review-sprint-0-baseline-audit.md` + sprint completion entries in `ROADMAP.md`
 
 ## Architecture
 

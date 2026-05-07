@@ -4,7 +4,7 @@ This roadmap extends `docs/coaching-analysis-feature-roadmap.md` with a practica
 
 The goal is not to replace the coach. The goal is to help the coach find useful moments faster, visualize player/team behavior, and eventually produce player-specific review clips and performance summaries.
 
-This roadmap should start after the Coach Review cockpit work in `docs/coach-review-ui-ux-implementation-plan.md` is complete and after the manual coaching workflow in `docs/coaching-analysis-feature-roadmap.md` has at least structured notes, templates, thumbnails, clips, and player profiles.
+This roadmap should start after the Coach Review cockpit work in `docs/archive/coach-review-ui-ux-implementation-plan.md` is complete and after the manual coaching workflow in `docs/coaching-analysis-feature-roadmap.md` has at least structured notes, templates, thumbnails, clips, and player profiles.
 
 ## Candidate model
 

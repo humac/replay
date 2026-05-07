@@ -2,7 +2,7 @@
 
 This roadmap covers the product features needed to evolve Replay from a strong match replay and annotation tool into a practical player-development coaching platform.
 
-This is separate from `docs/coach-review-ui-ux-implementation-plan.md`, which focuses on Coach Review layout, compact controls, telestration workspace design, keyboard shortcuts, and responsive UI polish.
+This is separate from `docs/archive/coach-review-ui-ux-implementation-plan.md`, which focuses on Coach Review layout, compact controls, telestration workspace design, keyboard shortcuts, and responsive UI polish.
 
 Related roadmap:
 
