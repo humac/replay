@@ -809,13 +809,11 @@
                     <label>Coach context (private)</label>
                     <textarea data-field="coach_private_note" rows="2" maxlength="4000" placeholder="Internal — never sent to players or families."></textarea>
                 </div>
-                <!-- Phase 6b shows a neutral indicator for an attached
-                     tactical board; the editor itself ships in Phase 6c.
-                     Hidden by default; revealed by JS when present. -->
-                <div class="form-group coach-observation-board-indicator" data-field="tactical_board_indicator" hidden>
-                    <span class="coach-observation-board-pill">⌬ Tactical board attached</span>
-                    <span class="form-label-hint">The board sketch is preserved and can be edited in a later release.</span>
-                </div>
+                <!-- Phase 6c — tactical board section. The composer JS
+                     mounts the inline editor / preview here via
+                     mountTacticalBoardSection(); the section is
+                     self-contained and does not require nested modals. -->
+                <div class="form-group" data-field="tactical_board_section"></div>
             </div>
         </template>
 

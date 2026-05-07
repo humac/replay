@@ -176,6 +176,19 @@ _VALID_EVENT_TYPES = {"practice", "game", "meeting", "tactical", "other"}
 # editor); the backend just stores whatever shape the editor saves
 # alongside a `pitch_kind` discriminator.
 _MAX_TACTICAL_BOARD_JSON_BYTES = 100_000
+# Phase 6c — tactical board scene schema. The board surface is a
+# structured scene (NOT a raster image). The MVP only ships soccer
+# full-pitch, but every callsite that special-cases pitch_kind goes
+# through `_VALID_PITCH_KINDS` so a future sport (futsal, 7-a-side,
+# basketball, hockey) can be added by extending the set + the SVG
+# pitch renderer — no schema migration needed.
+_VALID_PITCH_KINDS = {"soccer_full"}
+_VALID_BOARD_ORIENTATIONS = {"landscape"}
+_VALID_BOARD_TOKEN_KINDS = {"player", "ball"}
+_VALID_BOARD_SHAPE_KINDS = {"arrow", "line", "zone", "label"}
+_MAX_BOARD_TOKENS = 40
+_MAX_BOARD_SHAPES = 40
+_MAX_BOARD_LABEL_LENGTH = 80
 # Observation notes still need *some* coaching content, otherwise the
 # row carries nothing useful. Any non-empty value in any of these fields
 # is enough — same spirit as the structured-fields list (Phase 1) but
@@ -376,29 +389,183 @@ def _validate_event_date(v: str) -> str:
     return v
 
 
-def validate_tactical_board_payload(value: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Phase 6a — `tactical_board_json` is JSON-compatible metadata
-    that the Phase 6c tactical board editor will read and write. The
-    backend doesn't enforce a board schema yet (the editor will firm it
-    up); we just guard against obviously malformed input:
+def _validate_board_unit(value: Any, field_name: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"tactical_board {field_name} must be a number")
+    f = float(value)
+    if f < 0 or f > 1:
+        raise ValueError(f"tactical_board {field_name} must be between 0 and 1")
+    return f
 
+
+def _validate_board_label(value: Any, field_name: str, *, max_length: int = _MAX_BOARD_LABEL_LENGTH) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"tactical_board {field_name} must be a string")
+    s = value.strip()
+    if len(s) > max_length:
+        raise ValueError(f"tactical_board {field_name} too long (max {max_length})")
+    return s
+
+
+def _validate_board_token(token: Any, index: int) -> dict[str, Any]:
+    if not isinstance(token, dict):
+        raise ValueError(f"tactical_board tokens[{index}] must be an object")
+    kind = token.get("kind")
+    if kind not in _VALID_BOARD_TOKEN_KINDS:
+        raise ValueError(
+            f"tactical_board tokens[{index}].kind must be one of {sorted(_VALID_BOARD_TOKEN_KINDS)}"
+        )
+    out: dict[str, Any] = {
+        "kind": kind,
+        "x": _validate_board_unit(token.get("x"), f"tokens[{index}].x"),
+        "y": _validate_board_unit(token.get("y"), f"tokens[{index}].y"),
+    }
+    tid = token.get("id")
+    if tid is not None:
+        if not isinstance(tid, str) or not tid.strip():
+            raise ValueError(f"tactical_board tokens[{index}].id must be a non-empty string")
+        if len(tid) > 64:
+            raise ValueError(f"tactical_board tokens[{index}].id too long (max 64)")
+        out["id"] = tid
+    label = token.get("label")
+    if label is not None and label != "":
+        out["label"] = _validate_board_label(label, f"tokens[{index}].label", max_length=24)
+    pid = token.get("player_id")
+    if pid is not None:
+        if not isinstance(pid, (str, int)) or isinstance(pid, bool):
+            raise ValueError(f"tactical_board tokens[{index}].player_id must be a string or integer")
+        out["player_id"] = str(pid)[:64]
+    return out
+
+
+def _validate_board_shape(shape: Any, index: int) -> dict[str, Any]:
+    if not isinstance(shape, dict):
+        raise ValueError(f"tactical_board shapes[{index}] must be an object")
+    kind = shape.get("kind")
+    if kind not in _VALID_BOARD_SHAPE_KINDS:
+        raise ValueError(
+            f"tactical_board shapes[{index}].kind must be one of {sorted(_VALID_BOARD_SHAPE_KINDS)}"
+        )
+    out: dict[str, Any] = {"kind": kind}
+    sid = shape.get("id")
+    if sid is not None:
+        if not isinstance(sid, str) or not sid.strip():
+            raise ValueError(f"tactical_board shapes[{index}].id must be a non-empty string")
+        if len(sid) > 64:
+            raise ValueError(f"tactical_board shapes[{index}].id too long (max 64)")
+        out["id"] = sid
+    if kind in ("arrow", "line"):
+        out["x1"] = _validate_board_unit(shape.get("x1"), f"shapes[{index}].x1")
+        out["y1"] = _validate_board_unit(shape.get("y1"), f"shapes[{index}].y1")
+        out["x2"] = _validate_board_unit(shape.get("x2"), f"shapes[{index}].x2")
+        out["y2"] = _validate_board_unit(shape.get("y2"), f"shapes[{index}].y2")
+    elif kind == "zone":
+        out["x"] = _validate_board_unit(shape.get("x"), f"shapes[{index}].x")
+        out["y"] = _validate_board_unit(shape.get("y"), f"shapes[{index}].y")
+        w = _validate_board_unit(shape.get("w"), f"shapes[{index}].w")
+        h = _validate_board_unit(shape.get("h"), f"shapes[{index}].h")
+        if w <= 0 or h <= 0:
+            raise ValueError(f"tactical_board shapes[{index}] zone width/height must be > 0")
+        if out["x"] + w > 1.0001 or out["y"] + h > 1.0001:
+            raise ValueError(f"tactical_board shapes[{index}] zone extends past pitch bounds")
+        out["w"] = w
+        out["h"] = h
+    elif kind == "label":
+        out["x"] = _validate_board_unit(shape.get("x"), f"shapes[{index}].x")
+        out["y"] = _validate_board_unit(shape.get("y"), f"shapes[{index}].y")
+    text = shape.get("text")
+    if text is not None and text != "":
+        out["text"] = _validate_board_label(text, f"shapes[{index}].text")
+    elif kind == "label":
+        # Label shapes need text — otherwise nothing renders.
+        raise ValueError(f"tactical_board shapes[{index}] label requires text")
+    return out
+
+
+def validate_tactical_board_payload(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Phase 6c — `tactical_board_json` is a structured soccer-pitch
+    scene (NOT a raster image). The MVP only accepts `pitch_kind:
+    "soccer_full"` but the validator goes through `_VALID_PITCH_KINDS`
+    so future sports can be added without a schema migration.
+
+    Validation behavior:
     - None / missing → stored as NULL.
-    - Non-dict (list, string, number) → 422. The board surface is an
-      object with `pitch_kind` + tokens / shapes / labels.
-    - Oversized blob (> ~100 KB) → 422 so a corrupted client can't
-      stuff arbitrarily large payloads into the row.
+    - Empty dict → normalized to NULL.
+    - Non-dict (list, string, number) → 422.
+    - Unknown `pitch_kind` / `orientation` / token-kind / shape-kind → 422.
+    - Coordinates outside [0, 1] → 422.
+    - Too many tokens / shapes (each capped at 40) → 422.
+    - Oversized serialized blob (> ~100 KB) → 422.
+
+    Returns a normalized dict so the on-disk shape is consistent: all
+    coordinates float, only known fields preserved per token/shape,
+    `version` defaults to 1, `orientation` defaults to 'landscape'.
+    Unknown top-level keys are dropped (forward-compat: a future
+    client field can land in a later release without crashing on
+    older clients reading newer rows).
     """
     if value is None:
         return None
     if not isinstance(value, dict):
         raise ValueError("tactical_board_json must be an object")
     if not value:
-        # Empty dict is allowed but normalized to None so the row
-        # mapper distinguishes "explicit empty" the same as "unset".
         return None
+    # Cheap raw-input size guard BEFORE per-item validation so a
+    # corrupted client cannot force us to walk a multi-megabyte
+    # tokens array. Normalization only ever shrinks or near-equals
+    # the input (defaults filled, unknown keys dropped, no
+    # synthesis of large fields), so the persisted row is bounded
+    # too. Keep this BEFORE the structural pass.
     if len(json.dumps(value, separators=(",", ":"))) > _MAX_TACTICAL_BOARD_JSON_BYTES:
         raise ValueError("tactical_board_json payload is too large")
-    return value
+
+    pitch_kind = value.get("pitch_kind", "soccer_full")
+    if pitch_kind not in _VALID_PITCH_KINDS:
+        raise ValueError(
+            f"tactical_board_json pitch_kind must be one of {sorted(_VALID_PITCH_KINDS)}"
+        )
+    orientation = value.get("orientation", "landscape") or "landscape"
+    if orientation not in _VALID_BOARD_ORIENTATIONS:
+        raise ValueError(
+            f"tactical_board_json orientation must be one of {sorted(_VALID_BOARD_ORIENTATIONS)}"
+        )
+    version = value.get("version", 1)
+    # Reject booleans explicitly — Python's `isinstance(True, int)`
+    # is True and `True == 1`, so without this guard `{"version":
+    # true}` would silently normalize to `version: 1`. Mirrors the
+    # bool guard in `_validate_board_unit`.
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
+        raise ValueError("tactical_board_json version must be 1")
+
+    # `tokens` / `shapes` may be absent (defaults to []) but if the
+    # client sends an explicit non-list value (null, scalar, dict)
+    # that's a malformed payload — reject with 422 instead of
+    # silently coercing to []. `value.get("tokens", [])` returns
+    # the explicit value when present, so a JSON `null` becomes
+    # Python `None` and the isinstance check catches it.
+    tokens_raw = value["tokens"] if "tokens" in value else []
+    if not isinstance(tokens_raw, list):
+        raise ValueError("tactical_board_json tokens must be an array")
+    if len(tokens_raw) > _MAX_BOARD_TOKENS:
+        raise ValueError(f"tactical_board_json tokens exceed max ({_MAX_BOARD_TOKENS})")
+    tokens = [_validate_board_token(t, i) for i, t in enumerate(tokens_raw)]
+
+    shapes_raw = value["shapes"] if "shapes" in value else []
+    if not isinstance(shapes_raw, list):
+        raise ValueError("tactical_board_json shapes must be an array")
+    if len(shapes_raw) > _MAX_BOARD_SHAPES:
+        raise ValueError(f"tactical_board_json shapes exceed max ({_MAX_BOARD_SHAPES})")
+    shapes = [_validate_board_shape(s, i) for i, s in enumerate(shapes_raw)]
+
+    return {
+        "version": 1,
+        "pitch_kind": pitch_kind,
+        "orientation": orientation,
+        "tokens": tokens,
+        "shapes": shapes,
+    }
 
 
 class CreateCoachingNoteRequest(BaseModel):

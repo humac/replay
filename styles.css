@@ -10090,3 +10090,468 @@ body.coach-focus-drawer-open > .coach-review-side::-webkit-scrollbar-thumb {
         text-align: center;
     }
 }
+
+/* =====================================================================
+   Phase 6c — tactical board
+   ===================================================================== */
+
+.tb-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.75rem;
+    border-radius: 8px;
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px dashed rgba(148, 163, 184, 0.32);
+}
+[data-theme="light"] .tb-section {
+    background: rgba(15, 23, 42, 0.04);
+    border-color: rgba(15, 23, 42, 0.18);
+}
+.tb-section--editor {
+    background: rgba(56, 189, 248, 0.05);
+    border-style: solid;
+    border-color: rgba(56, 189, 248, 0.3);
+}
+[data-theme="light"] .tb-section--editor {
+    background: rgba(2, 132, 199, 0.05);
+    border-color: rgba(2, 132, 199, 0.3);
+}
+
+.tb-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.tb-section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-main);
+    font-size: 0.92rem;
+}
+.tb-section-glyph {
+    color: #38bdf8;
+    font-size: 1.1rem;
+}
+.tb-section-hint {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+.tb-section-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+/* Self-contained section-head button. NOT a global .btn-secondary —
+ * the section header sits inside a form modal, so we don't want the
+ * generic primary/secondary palette competing with the modal's own
+ * Save/Cancel footer. Mirrors .tb-tool-btn's surface so the editor
+ * and section header read as one component. */
+.tb-section-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.35rem 0.8rem;
+    border-radius: 5px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main);
+    font-size: 0.85rem;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.tb-section-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(56, 189, 248, 0.4);
+}
+.tb-section-btn:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 1px;
+}
+[data-theme="light"] .tb-section-btn {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.18);
+    color: var(--text-main);
+}
+[data-theme="light"] .tb-section-btn:hover {
+    background: rgba(15, 23, 42, 0.04);
+    border-color: rgba(2, 132, 199, 0.4);
+}
+.tb-section-btn--primary {
+    background: rgba(23, 113, 201, 0.28);
+    border-color: rgba(23, 113, 201, 0.55);
+    color: #ffffff;
+}
+.tb-section-btn--primary:hover {
+    background: rgba(23, 113, 201, 0.42);
+    border-color: rgba(23, 113, 201, 0.7);
+}
+[data-theme="light"] .tb-section-btn--primary {
+    background: #1771c9;
+    border-color: #1771c9;
+    color: #ffffff;
+}
+[data-theme="light"] .tb-section-btn--primary:hover {
+    background: #1361b0;
+    border-color: #1361b0;
+}
+.tb-section-btn--danger {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.35);
+}
+.tb-section-btn--danger:hover {
+    background: rgba(248, 113, 113, 0.18);
+    color: #fecaca;
+}
+[data-theme="light"] .tb-section-btn--danger {
+    color: #b91c1c;
+    border-color: rgba(185, 28, 28, 0.35);
+    background: #ffffff;
+}
+[data-theme="light"] .tb-section-btn--danger:hover {
+    background: rgba(185, 28, 28, 0.08);
+    color: #991b1b;
+}
+
+/* Local in-section confirm bar (replaces global confirmAction inside
+ * the tactical-board section because the section is mounted inside
+ * the observation formModal — opening another app modal would close
+ * the parent and lose every coach-typed field). */
+.tb-confirm-bar {
+    flex: 1 0 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.5rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: 6px;
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+}
+/* `display: flex` above overrides the [hidden] attribute's default
+ * `display: none`. Restore the hide behavior explicitly. */
+.tb-confirm-bar[hidden] {
+    display: none;
+}
+[data-theme="light"] .tb-confirm-bar {
+    background: rgba(185, 28, 28, 0.08);
+    border-color: rgba(185, 28, 28, 0.32);
+}
+.tb-confirm-bar-msg {
+    flex: 1 1 auto;
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+.tb-confirm-bar-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+@media (pointer: coarse), (max-width: 720px) {
+    .tb-section-btn {
+        min-height: 44px;
+    }
+}
+.tb-section-helper {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+.tb-section-preview {
+    display: flex;
+    justify-content: center;
+}
+
+/* SVG wrapper sizes — preview (in composer + viewer cards),
+ * chip (thumbnail tile), full (editor stage). All maintain
+ * the soccer pitch's natural aspect ratio. */
+.tb-svg-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1050 / 680;
+    overflow: hidden;
+    border-radius: 6px;
+    background: #168a3f;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) inset;
+}
+.tb-svg-wrap--preview {
+    max-width: 540px;
+}
+.tb-svg-wrap--chip {
+    max-width: 100%;
+    border-radius: 4px;
+}
+.tb-svg-wrap--full {
+    max-width: 100%;
+}
+.tb-svg-wrap--editor .tb-svg {
+    cursor: crosshair;
+}
+.tb-svg-wrap--editor .tb-token,
+.tb-svg-wrap--editor .tb-shape {
+    cursor: grab;
+}
+.tb-svg-wrap--editor .tb-token.is-selected,
+.tb-svg-wrap--editor .tb-shape.is-selected {
+    filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.55));
+}
+.tb-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.tb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1050 / 680;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* Editor toolbar */
+.tb-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+.tb-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+}
+[data-theme="light"] .tb-toolbar {
+    background: rgba(241, 245, 249, 0.85);
+    border-color: rgba(15, 23, 42, 0.18);
+}
+.tb-tool-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+.tb-tool-group--right {
+    margin-left: auto;
+}
+.tb-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.32rem 0.7rem;
+    border-radius: 5px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main);
+    font-size: 0.82rem;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.tb-tool-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(56, 189, 248, 0.35);
+}
+.tb-tool-btn:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 1px;
+}
+.tb-tool-btn.is-active {
+    background: rgba(23, 113, 201, 0.28);
+    border-color: rgba(23, 113, 201, 0.55);
+    color: var(--text-main);
+}
+.tb-tool-btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+/* Light-mode palette — without these the rgba(255,255,255,0.04) base
+ * is invisible against a near-white card background. Border carries
+ * the affordance until hover/focus surface. */
+[data-theme="light"] .tb-tool-btn {
+    background: #ffffff;
+    border-color: rgba(15, 23, 42, 0.18);
+    color: var(--text-main);
+}
+[data-theme="light"] .tb-tool-btn:hover {
+    background: rgba(15, 23, 42, 0.04);
+    border-color: rgba(2, 132, 199, 0.45);
+}
+[data-theme="light"] .tb-tool-btn.is-active {
+    background: rgba(2, 132, 199, 0.12);
+    border-color: rgba(2, 132, 199, 0.55);
+    color: #0c4a6e;
+}
+.tb-tool-btn--danger {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.35);
+}
+[data-theme="light"] .tb-tool-btn--danger {
+    color: #b91c1c;
+    border-color: rgba(185, 28, 28, 0.35);
+    background: #ffffff;
+}
+.tb-tool-btn--danger:hover:not([disabled]) {
+    background: rgba(248, 113, 113, 0.18);
+}
+[data-theme="light"] .tb-tool-btn--danger:hover:not([disabled]) {
+    background: rgba(185, 28, 28, 0.08);
+}
+/* 44 px touch target on mobile / coarse pointer — matches the
+ * Sprint 8 (PR #60) a11y convention applied to .coach-tool-btn. */
+@media (pointer: coarse), (max-width: 720px) {
+    .tb-tool-btn {
+        min-height: 44px;
+    }
+}
+.tb-token-label-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+.tb-token-label-input {
+    width: 110px;
+    padding: 0.28rem 0.5rem;
+    border-radius: 5px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: rgba(15, 23, 42, 0.4);
+    color: var(--text-main);
+    font-size: 0.85rem;
+}
+[data-theme="light"] .tb-token-label-input {
+    background: #ffffff;
+    color: var(--text-main);
+    border-color: rgba(15, 23, 42, 0.18);
+}
+.tb-token-label-input:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 1px;
+    border-color: #38bdf8;
+}
+.tb-helper {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+.tb-stage {
+    display: block;
+    width: 100%;
+    background: transparent;
+}
+.tb-status {
+    margin: 0;
+    min-height: 1.1rem;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+/* Compact-thumb variant: when an observation row carries a board,
+ * we render the SVG into the thumbnail slot. The slot has a fixed
+ * aspect from `.coach-thumb` — tighten the SVG wrap to fill it. */
+.coach-thumb--board {
+    background: #168a3f;
+    overflow: hidden;
+    padding: 0;
+}
+.coach-thumb--board .tb-svg-wrap {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.coach-thumb--board .tb-svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Inline board pill in the row head — mirrors the observation
+ * context pill so they sit next to each other consistently. */
+.coach-row-board-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid rgba(56, 189, 248, 0.32);
+}
+[data-theme="light"] .coach-row-board-pill {
+    background: rgba(2, 132, 199, 0.1);
+    color: #0369a1;
+    border-color: rgba(2, 132, 199, 0.3);
+}
+
+/* Read-only board preview inside My Feedback note cards. */
+.feedback-card-board {
+    margin-top: 0.5rem;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #168a3f;
+}
+.feedback-card-board .tb-svg-wrap {
+    border-radius: 0;
+    box-shadow: none;
+    max-width: 100%;
+}
+
+/* Tactical-board observation composer needs more horizontal room than
+ * the standard wide modal (720 px) for the editor. This is a SCOPED
+ * variant — the existing `.is-wide` rule (used by Player Development
+ * and the focused My Feedback player) keeps its 720 px max-width.
+ * Apply with `app.formModal({ size: 'wide-board' })`. */
+.app-modal-card.is-wide-board {
+    max-width: 1080px;
+    width: calc(100vw - 32px);
+}
+
+/* Mobile collapse — stack toolbar groups, shrink label input, keep
+ * the SVG full-width. */
+@media (max-width: 720px) {
+    .tb-toolbar {
+        gap: 0.35rem;
+    }
+    .tb-tool-group--right {
+        margin-left: 0;
+        width: 100%;
+        justify-content: flex-end;
+    }
+    .tb-token-label-wrap {
+        flex: 1 1 100%;
+    }
+    .tb-token-label-input {
+        width: 100%;
+    }
+    .tb-svg-wrap--preview {
+        max-width: 100%;
+    }
+    .tb-section-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .tb-section-actions {
+        justify-content: flex-end;
+    }
+}

@@ -820,15 +820,28 @@ export const coachingMixin = {
             // Observation notes get a film-strip placeholder tile so
             // the row stays visually aligned without firing a 404
             // network request — `_coachNoteThumbHtml` is video-only.
+            // Phase 6c: when an observation carries a tactical board
+            // we render a compact SVG preview tile instead of the
+            // clipboard glyph so the coach sees the sketch at-a-glance.
+            const hasBoard = isObservation && this.tacticalBoardHasContent(n.tactical_board_json);
             const thumb = isObservation
-                ? '<div class="coach-thumb coach-thumb--list coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>'
+                ? (hasBoard
+                    ? `<div class="coach-thumb coach-thumb--list coach-thumb--board" aria-hidden="false">${this.tacticalBoardSvg(n.tactical_board_json, { size: 'chip' })}</div>`
+                    : '<div class="coach-thumb coach-thumb--list coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>')
                 : this._coachNoteThumbHtml(n, { size: 'list' });
+            // Board indicator pill in the header so the row reads
+            // "Observation · ⌬ Tactical board" even when the
+            // thumbnail tile is visible.
+            const boardPill = hasBoard
+                ? '<span class="coach-row-board-pill" title="Tactical board attached">⌬ Board</span>'
+                : '';
             return `
             <article class="coach-row coach-row-with-thumb" data-note-context="${isObservation ? 'observation' : 'video'}">
                 ${thumb}
                 <div class="coach-row-body">
                     <div class="coach-row-head">
                         ${contextPill}
+                        ${boardPill}
                         <strong>${this.esc(titleText)}</strong>
                     </div>
                     <span>${metaLine}</span>
@@ -1220,14 +1233,23 @@ export const coachingMixin = {
             });
         }
 
-        // Phase 6b — surface a neutral "Tactical board attached"
-        // indicator when an existing note carries one. The editor
-        // itself ships in Phase 6c; here we just preserve the JSON
-        // round-trip so an edit doesn't blow it away.
-        const hasBoard = note?.tactical_board_json && typeof note.tactical_board_json === 'object';
-        if (hasBoard) {
-            const indicator = body.querySelector('[data-field="tactical_board_indicator"]');
-            if (indicator) indicator.hidden = false;
+        // Phase 6c — tactical board section. The composer carries the
+        // current board JSON in a closure variable; the inline editor
+        // mounted into [data-field="tactical_board_section"] reads /
+        // writes through getBoard / setBoard. On submit we send the
+        // latest value so the editor's saved scene round-trips on
+        // create AND on edit (and a removed board sends `null` so the
+        // backend clears the column).
+        let currentBoard = (note?.tactical_board_json && typeof note.tactical_board_json === 'object')
+            ? note.tactical_board_json
+            : null;
+        const boardContainer = body.querySelector('[data-field="tactical_board_section"]');
+        if (boardContainer) {
+            this.mountTacticalBoardSection(boardContainer, {
+                initialBoard: currentBoard,
+                getBoard: () => currentBoard,
+                setBoard: (next) => { currentBoard = next; },
+            });
         }
 
         const result = await this.formModal({
@@ -1235,6 +1257,11 @@ export const coachingMixin = {
             kicker: 'Coach observation',
             body,
             confirmLabel: note ? 'Save changes' : 'Save observation',
+            // Phase 6c — `wide-board` is a scoped wider variant for
+            // the observation composer that hosts the tactical board
+            // editor. The shared `wide` size stays 720 px so Player
+            // Development + focused Feedback player don't get widened.
+            size: 'wide-board',
             onSubmit: (close) => {
                 const root = body;
                 const titleVal = root.querySelector('[data-field="title"]').value.trim();
@@ -1244,11 +1271,12 @@ export const coachingMixin = {
                 const whyMattersVal = root.querySelector('[data-field="why_it_matters"]').value.trim();
                 const whatToDoVal = root.querySelector('[data-field="what_to_do_next"]').value.trim();
                 const bodyVal = root.querySelector('[data-field="body"]').value.trim();
+                const hasBoardNow = this.tacticalBoardHasContent(currentBoard);
                 // Mirror the backend's meaningful-content rule so the
                 // coach gets a clear inline message instead of a 422.
                 const meaningful = titleVal || eventTitleVal || playerSummaryVal
                     || whatHappenedVal || whyMattersVal || whatToDoVal || bodyVal
-                    || hasBoard;
+                    || hasBoardNow;
                 if (!meaningful) {
                     this.showError('Observation needs at least a title, event title, or some content.');
                     return;
@@ -1270,6 +1298,7 @@ export const coachingMixin = {
                     why_it_matters: whyMattersVal,
                     what_to_do_next: whatToDoVal,
                     coach_private_note: root.querySelector('[data-field="coach_private_note"]').value.trim(),
+                    tactical_board_json: currentBoard,
                 });
             },
         });
@@ -4170,11 +4199,15 @@ export const coachingMixin = {
             // ships the read-only viewer experience without an
             // additional modal — show the note inline only via the
             // structured fields. The Watch button is suppressed and
-            // the focused-feedback player is not opened. A static
-            // placeholder tile keeps the layout aligned without
-            // firing a 404 thumbnail request.
+            // the focused-feedback player is not opened. Phase 6c:
+            // when an observation carries a tactical board, show a
+            // compact SVG preview tile instead of the clipboard
+            // glyph so the viewer immediately sees the sketch.
+            const hasBoard = isObservation && this.tacticalBoardHasContent(n.tactical_board_json);
             const thumb = isObservation
-                ? '<div class="coach-thumb coach-thumb--card coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>'
+                ? (hasBoard
+                    ? `<div class="coach-thumb coach-thumb--card coach-thumb--board" aria-hidden="false">${this.tacticalBoardSvg(n.tactical_board_json, { size: 'chip' })}</div>`
+                    : '<div class="coach-thumb coach-thumb--card coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>')
                 : this._coachNoteThumbHtml(n, { size: 'card' });
             const actions = isObservation
                 ? `<button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>`
@@ -4182,6 +4215,18 @@ export const coachingMixin = {
                     <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">▶ Watch</button>
                     <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
                 `;
+            // Phase 6c — read-only board preview rendered inline below
+            // the summary. The note `n` came from `/api/my-feedback`,
+            // which already routes every viewer-visible note through
+            // `_filter_notes_for_user` → `_strip_private_fields` on the
+            // server. `tactical_board_json` follows the parent note's
+            // visibility, so a board on the page implies the viewer is
+            // authorized to see it. NO client-side authorization is
+            // introduced here — parent-note visibility remains the
+            // source of truth.
+            const boardPreview = hasBoard
+                ? `<div class="feedback-card-board">${this.tacticalBoardSvg(n.tactical_board_json, { size: 'preview' })}</div>`
+                : '';
             return `
             <article class="feedback-card feedback-note-card feedback-card--with-thumb" data-note-context="${isObservation ? 'observation' : 'video'}">
                 ${thumb}
@@ -4193,6 +4238,7 @@ export const coachingMixin = {
                     <h3 class="feedback-card-title">${this.esc(titleText)}</h3>
                     <div class="feedback-card-meta">${meta}</div>
                     ${primary ? `<p class="feedback-card-summary">${this.esc(primary)}</p>` : ''}
+                    ${boardPreview}
                     <div class="feedback-card-actions">
                         ${actions}
                     </div>
@@ -5285,15 +5331,26 @@ export const coachingMixin = {
             meta = [matchPart, slotPart, tsPart].filter(Boolean).join(' · ');
         }
         const tonePill = this._feedbackTonePillHtml(note.note_type);
+        // Phase 6c — observation notes with a tactical board show a
+        // compact SVG preview tile in place of the clipboard glyph
+        // so the development profile surfaces the sketch at-a-glance
+        // without breaking layout.
+        const hasBoard = isObservation && this.tacticalBoardHasContent(note.tactical_board_json);
         const thumb = isObservation
-            ? '<div class="coach-thumb coach-thumb--list coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>'
+            ? (hasBoard
+                ? `<div class="coach-thumb coach-thumb--list coach-thumb--board" aria-hidden="false">${this.tacticalBoardSvg(note.tactical_board_json, { size: 'chip' })}</div>`
+                : '<div class="coach-thumb coach-thumb--list coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>')
             : this._coachNoteThumbHtml(note, { size: 'list' });
+        const boardPill = hasBoard
+            ? '<span class="coach-row-board-pill" title="Tactical board attached">⌬ Board</span>'
+            : '';
         return `
             <li class="player-dev-note-item" data-note-context="${isObservation ? 'observation' : 'video'}">
                 ${thumb}
                 <div class="player-dev-note-body">
                     <div class="player-dev-note-head">
                         ${tonePill}
+                        ${boardPill}
                         ${title ? `<strong class="player-dev-note-title">${this.esc(title)}</strong>` : ''}
                     </div>
                     ${meta ? `<div class="player-dev-note-meta">${meta}</div>` : ''}
