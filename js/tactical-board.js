@@ -355,7 +355,7 @@ export const tacticalBoardMixin = {
                      openAppModal is single-active — opening a nested
                      confirm modal would close the parent and lose
                      every coach-typed field. -->
-                <div class="tb-confirm-bar" data-tb-confirm hidden role="alertdialog" aria-live="polite"></div>
+                <div class="tb-confirm-bar" data-tb-confirm hidden role="alertdialog" aria-label="Confirm action"></div>
             `;
             container.appendChild(head);
             if (has) {
@@ -433,7 +433,7 @@ export const tacticalBoardMixin = {
                     <button type="button" class="tb-section-btn tb-section-btn--primary" data-tb-action="done">Done</button>
                 </div>
                 <!-- Local confirm bar (see preview mode for rationale). -->
-                <div class="tb-confirm-bar" data-tb-confirm hidden role="alertdialog" aria-live="polite"></div>
+                <div class="tb-confirm-bar" data-tb-confirm hidden role="alertdialog" aria-label="Confirm action"></div>
             `;
             container.appendChild(head);
             const editorRoot = document.createElement('div');
@@ -447,14 +447,14 @@ export const tacticalBoardMixin = {
                         <button type="button" class="tb-tool-btn" data-tb-tool="zone" aria-pressed="false" aria-label="Add zone" title="Add zone">+ Zone</button>
                         <button type="button" class="tb-tool-btn" data-tb-tool="label" aria-pressed="false" aria-label="Add text label" title="Add text label using the Label text field">+ Label</button>
                     </div>
-                    <div class="tb-tool-group" role="group" aria-label="Text inputs">
+                    <div class="tb-tool-group" role="group" aria-label="Token and label text">
                         <label class="tb-token-label-wrap">
                             <span class="tb-token-label-text">Next player #</span>
-                            <input type="text" class="tb-token-label-input" data-tb-input="player-label" maxlength="24" placeholder="e.g. 7" aria-label="Label for next player token">
+                            <input type="text" class="tb-token-label-input" data-tb-input="player-label" maxlength="24" placeholder="e.g. 7">
                         </label>
                         <label class="tb-token-label-wrap">
                             <span class="tb-token-label-text">Label text</span>
-                            <input type="text" class="tb-token-label-input" data-tb-input="label-text" maxlength="80" placeholder="e.g. press here" aria-label="Text for the next label">
+                            <input type="text" class="tb-token-label-input" data-tb-input="label-text" maxlength="80" placeholder="e.g. press here">
                         </label>
                     </div>
                     <div class="tb-tool-group tb-tool-group--right" role="group" aria-label="Edit selection">
