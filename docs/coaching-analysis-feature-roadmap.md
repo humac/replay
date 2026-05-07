@@ -64,7 +64,12 @@ Computer vision can later help Replay find candidate moments, player tracks, tac
 - ✅ Phase 3 — Per-note thumbnails and clip scanability — **complete**
 - ✅ Phase 4 — First-class clip builder (incl. per-clip thumbnails) — **complete**
 - ✅ Phase 5 — Player development profiles — **complete**
-- ⏭️ Phase 6 — Coach observations and tactical board — **next**
+- 🟢 Phase 6 — Coach observations and tactical board — **in progress**
+  - ✅ 6a — Observation note backend
+  - ✅ 6b — Coach observation composer
+  - ✅ 6c — Tactical board MVP
+  - ⏭️ 6d — Unified Coach Review Authoring Workspace — **next**
+  - ⏳ 6e — Observation rendering polish in My Feedback and Player Development
 - ⏳ Phases 7–17 — not started
 
 See `ROADMAP.md` for the per-PR completion log and exact dates.
@@ -448,7 +453,7 @@ Extend `coaching_notes` (or a companion table) with:
 
 Video notes still require `match_id`, `slot`, `timestamp_seconds`. Observation notes do not. Existing video-note payloads should continue to work without requiring `tactical_board_json` or event fields.
 
-### Subphase 6a — Observation note backend
+### Subphase 6a — Observation note backend ✅ COMPLETE
 
 - Add support for non-video coaching notes through the schema changes above.
 - Validation: `note_context = video` requires `match_id` + `slot` + `timestamp_seconds`; `note_context = observation` does not.
@@ -456,7 +461,7 @@ Video notes still require `match_id`, `slot`, `timestamp_seconds`. Observation n
 - `coach_private_note` remains coach/admin-only on both contexts.
 - No UI in this subphase.
 
-### Subphase 6b — Coach observation composer
+### Subphase 6b — Coach observation composer ✅ COMPLETE
 
 - Add a Coach UI for creating observation notes without video.
 - Entry points from Coach > Roster (per-player "Add observation") and Coach > Notes ("New observation").
@@ -473,7 +478,7 @@ Video notes still require `match_id`, `slot`, `timestamp_seconds`. Observation n
   - `player_ids`
 - Add the new event title / event date / event type fields.
 
-### Subphase 6c — Tactical board MVP
+### Subphase 6c — Tactical board MVP ✅ COMPLETE
 
 - Add a simple tactical sketch component attached to observation notes.
 - The board background is sport-specific, not a blank canvas. The MVP ships a **soccer pitch** background drawn to scale with standard markings:
@@ -496,15 +501,122 @@ Video notes still require `match_id`, `slot`, `timestamp_seconds`. Observation n
 - The MVP does not include drill libraries, multi-frame animations, PDF export, kit-color theming, or AI tactical analysis.
 - A board preview/thumbnail can be generated later for scanability in Coach Notes, My Feedback, and Player Development Profiles. The MVP only requires editable coach rendering and read-only viewer rendering; thumbnail generation can be deferred.
 
-### Subphase 6d — My Feedback and Development Profile integration
+### Subphase 6d — Unified Coach Review Authoring Workspace ⏭️ NEXT
 
-- Show observation notes in My Feedback > Notes.
-- Include observation notes in Player Development Profiles alongside video notes.
-- Label observation notes clearly:
+> **Why this subphase exists.** UX testing of 6a/6b/6c surfaced a creation-flow problem: New Note, New Observation, and New Clip all open list-management modals, and the tactical board editor inside the observation modal is cramped and disconnected from the existing Coach Review telestration mental model. The product correction is to make Coach Review the single creation workspace (video notes, video clips, tactical-board observations) and reduce the Coach > Notes / Clips / Playlists / Roster pages to **management surfaces** (view / edit / delete / route to Review). The Phase 6a backend, the Phase 6b composer-side fields, and the Phase 6c board schema + SVG renderer are all retained — 6d is a workflow correction, not a rewrite.
+
+#### Goal
+
+Make Coach Review the single creation workspace for **video notes**, **video clips**, and **tactical-board observations**. Coach > Notes / Clips / Playlists / Roster become management surfaces.
+
+#### Coach Review source/mode toggle
+
+A new top-of-Review toggle picks the authoring source:
+
+1. **Video** mode
+   - Keeps the existing match/video selection workflow.
+   - Keeps the existing video telestration tools.
+   - Supports **Save Note** (existing) and **Save Clip** (existing).
+   - Receives the rerouted `+ New Note` / `+ New Clip` actions from Coach > Notes / Clips.
+
+2. **Tactical Board** mode
+   - Loads the soccer tactical board surface (Phase 6c renderer) instead of a video.
+   - Uses the structured `tactical_board_json` scene (Phase 6c schema).
+   - Supports **Save Observation**.
+   - Receives the rerouted `+ New observation` (Coach > Notes) and `Add observation` (Coach > Roster) actions.
+   - When entered from a roster player, **preselect that player** in the observation form.
+   - Includes a **game-format selector** so youth teams can sketch 7v7, 9v9, or 11v11 shapes.
+   - Formation preset options change with the selected game format.
+
+#### Tactical board tools (evolve toward video-telestration parity)
+
+The board editor should expose the same mental model as video telestration where it makes sense:
+
+- Select / move
+- Arrow drawn by drag from start to end (replacing the drop-arrowhead-then-set-endpoint two-click affordance)
+- Line
+- Freehand drawing
+- Resizeable zone box
+- Text label
+- Player token
+- Ball token
+- Delete / erase
+- Clear board
+- Basic formation layer / presets (see below)
+
+#### Formation MVP
+
+- Add a **game-format selector** before or alongside formation presets:
+  - 7v7
+  - 9v9
+  - 11v11
+- Formation preset options depend on the selected format:
+  - **7v7**: 2-3-1, 3-2-1, 2-1-2-1
+  - **9v9**: 3-2-3, 3-3-2, 2-3-3, 4-3-1
+  - **11v11**: 4-3-3, 4-2-3-1, 4-4-2, 3-5-2, custom
+- Formation presets place player tokens in normalized pitch-space positions.
+- When practical, persist the selected format + formation name as `tactical_board_json` metadata, e.g.:
+  - `game_format`: `"7v7"` | `"9v9"` | `"11v11"`
+  - `formation`: `"2-3-1"`
+- Out of scope for 6d: full roster assignment, kit-color theming, animation, drill library, PDF export.
+
+#### Button reroutes
+
+| Existing action | New behavior |
+| --- | --- |
+| Coach > Notes > **+ New note** | Route to Coach Review, **Video** mode |
+| Coach > Notes > **+ New observation** | Route to Coach Review, **Tactical Board** mode |
+| Coach > Clips > **+ New clip** | Route to Coach Review, **Video** mode |
+| Coach > Roster > **Add observation** (clipboard icon) | Route to Coach Review, **Tactical Board** mode, with player preselected |
+| Coach > Roster > **Add note** (future) | Route to Coach Review, **Video** mode, with player preselected |
+
+#### Modal policy
+
+- **Edit** modals stay where appropriate for structured text + metadata edits on existing objects.
+- **Creation** moves to Coach Review.
+- Tactical board **editing** should preferably happen in Coach Review's Tactical Board mode (full-width, video-telestration parity) rather than inside the cramped observation modal.
+
+#### Reuse from prior subphases (do not throw away)
+
+- Phase 6a backend fields and validation (`note_context`, `event_*`, `tactical_board_json`).
+- Phase 6c board schema (`pitch_kind` / `tokens` / `shapes` / normalized 0..1 coordinates) and SVG renderer.
+- Phase 6c read-only board renderer (shared with viewer surfaces).
+- Existing note / clip save APIs (`POST /api/coach/notes`, `PATCH /api/coach/notes/{id}`, `POST /api/coach/clips`, etc.).
+- Existing video telestration mental model and toolset.
+
+#### Product boundaries for 6d
+
+- No My Feedback redesign.
+- No Player Development redesign.
+- No goals / action plans.
+- No AI / CV.
+- No drill library.
+- No multi-frame animation.
+- No PDF export.
+- No kit-color theming.
+- No full roster-assignment system for formations.
+- No new public board endpoint.
+- Privacy rules unchanged.
+
+### Subphase 6e — Observation rendering polish in My Feedback and Player Development
+
+> Originally numbered 6d before the 6d workflow correction was inserted. Same scope, deferred until after the unified authoring workspace lands so polish targets the corrected creation flow.
+
+#### Goal
+
+Polish how observation notes and tactical boards appear to **players / families** and in **player development profiles** after the authoring workflow has been corrected.
+
+#### Scope
+
+- Show observation notes in My Feedback > Notes with clear context labels:
   - "Practice observation"
   - "Tactical note"
   - "Coach observation"
-- Tactical board sketches follow the parent note's visibility rules.
+- Read-only tactical board display polish (sizing, mobile layout, light/dark theme parity for any new states).
+- Player Development Profile integration polish (already present from Phase 5 + Phase 6c; this is a follow-up polish pass against the corrected authoring workflow).
+- Tactical board sketches continue to follow the parent note's visibility rules.
+- No major My Feedback redesign — that remains separate from the [#82 look-and-feel redesign](https://github.com/humac/replay/issues/82) planning.
+- No changes to creation workflow; creation belongs to Coach Review after 6d.
 
 ### Privacy rules
 
@@ -533,12 +645,13 @@ Video notes still require `match_id`, `slot`, `timestamp_seconds`. Observation n
 
 Implement the subphases in order; each one is a self-contained ship-target:
 
-- **6a**: backend model + API support for observation notes, no board UI yet.
-- **6b**: Coach observation composer, text-only observation notes (no tactical board yet).
-- **6c**: tactical board editor and read-only viewer.
-- **6d**: My Feedback + Player Development Profile integration polish.
+- **6a** ✅ — backend model + API support for observation notes, no board UI yet.
+- **6b** ✅ — Coach observation composer, text-only observation notes (no tactical board yet).
+- **6c** ✅ — tactical board editor and read-only viewer.
+- **6d** ⏭️ — **next** — Unified Coach Review Authoring Workspace (creation moves to Coach Review for video notes, video clips, and tactical-board observations; Coach > Notes / Clips / Playlists / Roster become management surfaces; adds game-format selector + formation presets).
+- **6e** — Observation rendering polish in My Feedback and Player Development Profile (deferred until after 6d so polish targets the corrected creation flow).
 
-The coding-agent prompt below describes the full Phase 6 target. Individual implementation PRs should remain split by subphase, starting with 6a backend-only. Do not attempt to ship the backend, composer, tactical board editor, and viewer integration in one PR.
+The coding-agent prompt below describes the original Phase 6 target. Implementation after 6c should now proceed with: (1) the **unified authoring workspace** (6d), then (2) **viewer / profile rendering polish** (6e). Individual implementation PRs should remain split by subphase. Do not bundle them.
 
 ### Coding agent prompt
 
@@ -1207,9 +1320,9 @@ Includes:
 - privacy filtering for `coach_private_note`
 - tests
 
-Phase 6 ships across four PRs, one per subphase, in 6a → 6b → 6c → 6d order. Do not bundle them.
+Phase 6 ships across **five** PRs, one per subphase, in 6a → 6b → 6c → 6d → 6e order. Do not bundle them. (The original plan was four PRs ending at "observation notes in My Feedback and Development Profiles"; UX testing of 6a/6b/6c surfaced a creation-flow correction that became the new 6d, pushing the viewer-side polish to 6e.)
 
-## PR 5: Observation note backend
+## PR 5: Observation note backend ✅ COMPLETE
 
 Includes:
 
@@ -1222,7 +1335,7 @@ Includes:
 - no UI
 - tests
 
-## PR 6: Coach observation composer
+## PR 6: Coach observation composer ✅ COMPLETE
 
 Includes:
 
@@ -1235,7 +1348,7 @@ Includes:
 - no tactical board yet
 - tests / Playwright screenshots where applicable
 
-## PR 7: Tactical board MVP
+## PR 7: Tactical board MVP ✅ COMPLETE
 
 Includes:
 
@@ -1252,21 +1365,43 @@ Includes:
 - no drill libraries, animations, PDF export, or AI tactical analysis
 - tests / Playwright screenshots where applicable
 
-## PR 8: Observation notes in My Feedback and Development Profiles
+## PR 8: Unified Coach Review Authoring Workspace
 
 Includes:
 
 - Phase 6d
-- My Feedback > Notes rendering for observation notes
-- Player Development Profile integration
+- Coach Review source/mode toggle (Video / Tactical Board)
+- New Note / New Clip from Coach > Notes / Clips reroute to Coach Review (Video mode)
+- New Observation from Coach > Notes + Add Observation from Coach > Roster reroute to Coach Review (Tactical Board mode), preselecting the player when launched from Roster
+- Tactical Board mode loads the Phase 6c renderer + structured `tactical_board_json` scene
+- Tactical board tools evolve toward video-telestration parity (select / move, drag-arrow, line, freehand, resizeable zone, text label, player token, ball token, delete / erase, clear)
+- Game-format selector (7v7 / 9v9 / 11v11) gates which formation presets show
+- Formation presets place player tokens in normalized pitch-space positions (7v7: 2-3-1, 3-2-1, 2-1-2-1; 9v9: 3-2-3, 3-3-2, 2-3-3, 4-3-1; 11v11: 4-3-3, 4-2-3-1, 4-4-2, 3-5-2, custom)
+- Persist `game_format` + `formation` in `tactical_board_json` metadata when practical
+- Coach > Notes / Clips / Playlists / Roster become management surfaces (view / edit / delete / route to Review). Edit modals stay where appropriate.
+- No new endpoints; reuses Phase 6a backend + Phase 6c board schema + existing note / clip save APIs
+- No My Feedback / Player Development redesign; no goals / AI / drill library / animation / PDF export / kit-color theming / full roster assignment
+- Privacy rules unchanged
+- tests / Playwright screenshots where applicable
+
+## PR 9: Observation rendering polish in My Feedback and Development Profiles
+
+Includes:
+
+- Phase 6e
+- My Feedback > Notes rendering polish for observation notes
+- Read-only tactical board display polish
+- Player Development Profile integration polish
 - clear observation labels:
   - "Practice observation"
   - "Tactical note"
   - "Coach observation"
 - tactical board sketches follow parent note visibility rules
 - privacy tests / browser QA
+- No major My Feedback redesign (separate from issue #82 look-and-feel planning)
+- No changes to creation workflow
 
-## PR 9: Goals / action plans
+## PR 10: Goals / action plans
 
 Includes:
 
@@ -1277,7 +1412,7 @@ Includes:
 - coach controls for achieved / needs follow-up / archived
 - tests
 
-## PR 10: Match summaries and engagement dashboard
+## PR 11: Match summaries and engagement dashboard
 
 Includes:
 
@@ -1287,7 +1422,7 @@ Includes:
 - review completion dashboard
 - tests
 
-## PR 11: Analytics dashboard
+## PR 12: Analytics dashboard
 
 Includes:
 
@@ -1297,7 +1432,7 @@ Includes:
 - drill-down links
 - tests where practical
 
-## PR 12: Optional text AI assistance
+## PR 13: Optional text AI assistance
 
 Includes:
 
@@ -1309,7 +1444,7 @@ Includes:
 - playlist suggestions
 - no-auto-publish guardrails
 
-## PR 13: Computer-vision analysis foundation
+## PR 14: Computer-vision analysis foundation
 
 Includes:
 
@@ -1319,7 +1454,7 @@ Includes:
 - mock provider
 - coach/admin-only APIs
 
-## PR 14: Offline detection provider and job runner
+## PR 15: Offline detection provider and job runner
 
 Includes:
 
@@ -1329,7 +1464,7 @@ Includes:
 - job status UI
 - tests with mock provider
 
-## PR 15: Detection overlays and detected moments
+## PR 16: Detection overlays and detected moments
 
 Includes:
 
@@ -1338,7 +1473,7 @@ Includes:
 - detected moments queue
 - convert to note/clip actions
 
-## PR 16: Tracking, tactical snapshots, player identification
+## PR 17: Tracking, tactical snapshots, player identification
 
 Includes:
 
@@ -1347,7 +1482,7 @@ Includes:
 - shape snapshots
 - manual track-to-player assignment
 
-## PR 17: Heatmaps, metrics, and broadcast overlays
+## PR 18: Heatmaps, metrics, and broadcast overlays
 
 Includes:
 
