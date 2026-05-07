@@ -676,20 +676,113 @@ Implement the subphases in order; each one is a self-contained ship-target:
 - **6d-2** — Tactical board authoring improvements and formations (drag-to-draw arrows, freehand, resizeable zone box; 7v7 / 9v9 / 11v11 game-format selector + per-format formation presets; persists `game_format` + `formation` in `tactical_board_json` metadata).
 - **6e** — Observation rendering polish in My Feedback and Player Development Profile (deferred until after 6d-1 + 6d-2 so polish targets the corrected creation flow + final tool set).
 
-The original full-Phase-6 coding-agent prompt below is **legacy** — it predates the 6d split and conflates routing + tool-parity + formations into one work item. Use the per-subphase prompts (each subphase carries its own scope notes; PR #119 introduced the split) when launching 6d-1 / 6d-2 / 6e implementation. Individual implementation PRs should remain split by subphase. Do not bundle them.
+Phase 6a, 6b, and 6c have already shipped (see ROADMAP.md for completion entries). Use only the per-subphase prompts below when launching 6d-1 / 6d-2 / 6e — there is no longer a single all-in-one Phase 6 prompt because following one would re-implement work that's already merged. Individual implementation PRs should remain split by subphase. Do not bundle them.
 
-### Coding agent prompt — Phase 6 (legacy, do not use)
+### Phase 6d-1 coding agent prompt — Unified Coach Review source modes and creation routing
 
-> **Status: legacy.** This prompt was written before the Phase 6 plan was split into 6a → 6e. It conflates routing, tactical-board tool parity, formations, and viewer polish into one work item. **Do not hand this prompt to a coding agent.** Use the per-subphase prompts below instead. Kept here for historical context only.
+> **Status: NEXT.** This is the only Phase 6 coding-agent prompt that should be handed off right now. 6a / 6b / 6c are merged. 6d-2 and 6e prompts below are FUTURE — do not start them yet.
 
 ```text
-Add coach observation notes and a tactical board MVP. Extend coaching notes with a note_context field (video | observation), nullable match_id/slot/timestamp_seconds for observation notes, and event_title/event_date/event_type/tactical_board_json fields. Video notes must still require match/slot/timestamp; observation notes must not. Reuse the existing structured note fields and visibility ladder. Add Coach UI entry points from roster and notes to create observation notes without video. Add a sport-specific tactical board: the MVP ships a soccer pitch background drawn to scale (touchlines, goal lines, halfway line, centre circle and spot, both penalty and goal areas, both penalty spots and arcs, corner arcs, goals) rendered as resolution-independent vector graphics. Drawing tools: draggable player tokens with optional jersey number / roster label, ball token, arrows / lines / zones, text labels. Store tactical_board_json with a pitch_kind discriminator (start with soccer_full) and normalized pitch-space coordinates so future sports can be added without a migration. Provide read-only viewer rendering that paints the same pitch background plus saved tokens and shapes. Surface observation notes in My Feedback and Player Development Profiles with a clear context label. Preserve existing privacy rules: coach_private_note never reaches viewers, private observation notes stay hidden, tactical_board_json follows the parent note's visibility.
+- Start from latest main.
+- This PR is only 6d-1. Do not bundle 6d-2 or 6e work.
+- Goal: make Coach Review the single creation workspace for video notes, video clips, and tactical-board observations.
+- Add a Coach Review source/mode toggle:
+  - Video
+  - Tactical Board
+- Video mode:
+  - Keep the existing match / video selection workflow.
+  - Keep the existing video telestration tools.
+  - Keep Save Note (existing flow).
+  - Keep Save Clip (existing flow).
+  - Receives the routed New Note and New Clip actions from Coach > Notes / Clips.
+- Tactical Board mode:
+  - Load the existing Phase 6c tactical board surface (the SVG soccer pitch + the Phase 6c board tools).
+  - Reuse the existing Phase 6c board tools mostly as-is. Do not redesign arrow / line / zone interactions, do not add freehand, do not add resizeable zones.
+  - Support Save Observation.
+  - Save via the existing POST /api/coach/notes with note_context="observation".
+  - Include the current board state as tactical_board_json on the request body.
+  - If launched from Coach > Roster, preselect that player in the observation form and default visibility to "player".
+- Creation routing (replace today's modal openers with navigation into Coach Review):
+  - Coach > Notes > New note → Coach Review, Video mode.
+  - Coach > Notes > New observation → Coach Review, Tactical Board mode.
+  - Coach > Clips > New clip → Coach Review, Video mode.
+  - Coach > Roster > Add observation → Coach Review, Tactical Board mode, with the player preselected.
+- Keep edit modals for existing objects (Notes / Clips / Playlists / observation notes). Only creation moves.
+- Coach > Notes / Clips / Playlists / Roster remain management surfaces (view / edit / delete / route to Review).
+- Out of scope for this PR (do not implement here):
+  - No tactical board tool parity work (drag-to-draw arrows, freehand, resizeable zones). Those are 6d-2.
+  - No formation layer / presets. That is 6d-2.
+  - No 7v7 / 9v9 / 11v11 game-format selector. That is 6d-2.
+  - No My Feedback redesign. That is 6e.
+  - No Player Development redesign. That is 6e.
+  - No goals / action plans (that is Phase 7).
+  - No AI / CV. No drill library. No animation. No PDF export. No kit-color theming. No full roster assignment.
+- No new public endpoints.
+- No schema migration.
+- Privacy rules unchanged. tactical_board_json continues to follow its parent note's visibility via the existing _filter_notes_for_user chain. coach_private_note remains coach/admin-only.
+- Tests should cover: each rerouted entry point lands in the correct Coach Review mode; Tactical Board mode correctly seeds player preselection from Roster; edit modals still work for existing objects; no regression to My Feedback / Player Development surfaces; no regression to Phase 6c board persistence or read-only viewer rendering.
+- Browser QA (Playwright): walk through each rerouted entry point + a coach + linked-viewer smoke against the seeded dev users.
 ```
 
-### Coding agent prompt — Subphase 6d-1 (Unified Coach Review source modes and creation routing)
+### Phase 6d-2 coding agent prompt — Tactical board authoring improvements and formations
+
+> **Status: FUTURE — do not start yet.** Wait until Phase 6d-1 is merged. Hand this prompt to a coding agent only after 6d-1 lands on main.
 
 ```text
-Make Coach Review the single creation workspace for video notes, video clips, and tactical-board observations. Add a top-of-Review source/mode toggle with two modes: Video and Tactical Board. Video mode keeps the existing match/video selection workflow, the existing video telestration tools, and the existing Save Note + Save Clip behavior. Tactical Board mode loads the existing Phase 6c soccer-pitch tactical board surface inside Coach Review (full-width, video-telestration-adjacent layout), uses the structured tactical_board_json scene from Phase 6c, and supports Save Observation. Reroute every creation entry point to Coach Review: Coach > Notes > New note → Coach Review Video mode; Coach > Notes > New observation → Coach Review Tactical Board mode; Coach > Clips > New clip → Coach Review Video mode; Coach > Roster > Add observation → Coach Review Tactical Board mode with the player preselected in the observation form. Coach > Notes / Clips / Roster remain management surfaces (view / edit / delete). Edit modals for existing objects can stay; only creation moves. Reuse the existing Phase 6c board tools mostly as-is — do not add a formation selector, do not redesign arrow / line / zone behavior, and do not add freehand or resizeable zones. Those land in Subphase 6d-2. Do not change My Feedback or Player Development rendering — that is Subphase 6e. No new endpoints. No schema migration. No changes to privacy rules: tactical_board_json continues to follow its parent note's visibility via the existing _filter_notes_for_user chain. Reuse Phase 6a backend (note_context / event_* / tactical_board_json), Phase 6b composer-side structured fields, the Phase 6c board schema and SVG renderer, and the existing note / clip save APIs. Tests should cover: each rerouted entry point lands in the correct Coach Review mode, the Tactical Board mode correctly seeds player preselection from Roster, edit modals still work for existing objects, no regression to My Feedback / Player Development surfaces, no regression to Phase 6c board persistence and read-only rendering. Browser QA: Playwright walk-through of each entry point and the parent observation modal vs the new Coach Review Tactical Board mode.
+- Do not start until 6d-1 is merged. Start from latest main with the 6d-1 routing model already in place.
+- Goal: improve the tactical board authoring tools inside Coach Review's Tactical Board mode, and ship game-format-specific formation presets.
+- Add tool-parity improvements (these replace / augment the Phase 6c basics — keep 6d-1 routing untouched):
+  - drag-to-draw arrows (replace the two-click drop-then-set-endpoint affordance with a single drag from start to end)
+  - improved general line / arrow behavior (snap to angle, length readout, etc., as practical)
+  - freehand drawing (continuous-stroke pencil tool, persisted as a `freehand` shape kind in tactical_board_json)
+  - resizeable zone box (resize handles on the existing `zone` shape after placement, in addition to the existing two-click corner placement)
+  - formation layer / presets (see below)
+  - game-format selector: 7v7, 9v9, 11v11
+- Formation presets (place player tokens in normalized pitch-space positions; presets shown depend on the selected game format):
+  - 7v7: 2-3-1, 3-2-1, 2-1-2-1
+  - 9v9: 3-2-3, 3-3-2, 2-3-3, 4-3-1
+  - 11v11: 4-3-3, 4-2-3-1, 4-4-2, 3-5-2, custom
+- When practical, persist the selection inside tactical_board_json as metadata so the editor can re-hydrate it on edit:
+  - game_format: "7v7" | "9v9" | "11v11"
+  - formation: e.g. "2-3-1"
+- Backwards-compat: 6c / 6d-1-era boards (no new shape kinds, no game_format / formation metadata) must still load and render correctly. The board schema may add new optional shape kinds (e.g. `freehand`) and optional metadata keys, but must not change the meaning of existing fields.
+- Do not change the 6d-1 routing model.
+- Out of scope (do not implement here):
+  - No drill library.
+  - No animation / multi-frame.
+  - No PDF export.
+  - No kit-color theming.
+  - No full roster-assignment system (per-token player_id binding beyond the existing optional `player_id` field that already lives on player tokens since 6c).
+  - No AI / CV.
+  - No goals / action plans (Phase 7).
+  - No My Feedback / Player Development polish (6e).
+- No new public endpoints. No schema migration; the new metadata persists inside the existing tactical_board_json TEXT JSON column.
+- Privacy rules unchanged.
+```
+
+### Phase 6e coding agent prompt — Observation rendering polish in My Feedback and Player Development
+
+> **Status: FUTURE — do not start yet.** Wait until both Phase 6d-1 and Phase 6d-2 are merged. Polishing viewer surfaces before the corrected creation flow + final tool set lands would mean re-doing the polish.
+
+```text
+- Do not start until 6d-1 and 6d-2 are both merged. Start from latest main.
+- Goal: polish player- and family-facing rendering of observation notes and tactical boards now that the corrected creation flow + final 6d-2 tool set are in place.
+- Improve:
+  - My Feedback > Notes observation card layout (sizing, spacing, structured-fields stack, mobile breakpoint, light/dark theme parity).
+  - Read-only tactical board sizing and mobile behavior (no horizontal overflow at ~390 px; aspect-ratio preservation; sensible thumbnail sizing in card / chip / preview variants).
+  - Player Development Profile observation/board rendering (already present from Phase 5 + Phase 6c — this is a polish pass against the corrected creation flow).
+  - Clear context labels on every observation surface:
+    - "Practice observation"
+    - "Tactical note"
+    - "Coach observation"
+- Out of scope (do not implement here):
+  - No creation workflow changes (creation belongs to Coach Review after 6d-1).
+  - No major My Feedback redesign (issue #82 remains separate look-and-feel planning).
+  - No Coach Notes / Clips / Roster redesign beyond the polish that touches observation card rendering.
+  - No goals / action plans (Phase 7).
+  - No AI / CV / drill library / animation / PDF export.
+- Privacy rules unchanged. tactical_board_json continues to follow its parent note's visibility; coach_private_note remains scrubbed for viewers.
+- No new public endpoints. No schema migration.
 ```
 
 ---
