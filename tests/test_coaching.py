@@ -3185,7 +3185,12 @@ async def test_observation_note_can_be_created_without_match(client, auth_header
     assert note["event_title"] == "Tuesday practice — scanning"
     assert note["event_date"] == "2026-05-07"
     assert note["event_type"] == "practice"
-    assert note["tactical_board_json"] == {"pitch_kind": "soccer_full", "tokens": []}
+    # Phase 6c — board payloads are normalized to the structured-scene
+    # shape: version + orientation + tokens + shapes (defaults filled).
+    assert note["tactical_board_json"] == {
+        "version": 1, "pitch_kind": "soccer_full", "orientation": "landscape",
+        "tokens": [], "shapes": [],
+    }
     # Structured fields still flow through.
     assert note["what_happened"].startswith("Walked through")
 
@@ -3257,7 +3262,10 @@ async def test_observation_note_only_tactical_board_is_meaningful(client, auth_h
     resp = await client.post("/api/coach/notes", json={
         "note_context": "observation",
         "category": "set_piece", "visibility": "team",
-        "tactical_board_json": {"pitch_kind": "soccer_full", "tokens": [{"x": 0.5, "y": 0.5}]},
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ball", "x": 0.5, "y": 0.5}],
+        },
     }, headers=auth_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["note"]["tactical_board_json"]["pitch_kind"] == "soccer_full"
@@ -3285,7 +3293,11 @@ async def test_observation_note_patch_event_fields(client, auth_headers):
     assert note["event_title"] == "Updated"
     assert note["event_date"] == "2026-05-11"
     assert note["event_type"] == "meeting"
-    assert note["tactical_board_json"] == {"pitch_kind": "soccer_full", "tokens": []}
+    # Phase 6c — board normalized to the structured-scene shape.
+    assert note["tactical_board_json"] == {
+        "version": 1, "pitch_kind": "soccer_full", "orientation": "landscape",
+        "tokens": [], "shapes": [],
+    }
     # Untouched fields keep their original values.
     assert note["title"] == "Initial observation"
     assert note["note_context"] == "observation"
@@ -3862,3 +3874,337 @@ async def test_video_to_observation_flip_succeeds_when_thumb_missing(client, aut
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Phase 6c — tactical board structured-scene schema validation.
+#
+# Pin the contract for `tactical_board_json` after the Phase 6c
+# tactical board editor lands. The validator normalizes valid input
+# (tokens / shapes arrays, defaulted version + orientation) and
+# rejects payloads the editor should never produce: unknown
+# pitch_kind, unknown token / shape kinds, out-of-range coordinates,
+# overflow on tokens / shapes / label length.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_normalizes_full_scene(client, auth_headers):
+    """A complete scene round-trips with all fields preserved and
+    defaults filled (version=1, orientation=landscape)."""
+    scene = {
+        "pitch_kind": "soccer_full",
+        "tokens": [
+            {"kind": "player", "x": 0.25, "y": 0.5, "label": "7"},
+            {"kind": "ball", "x": 0.5, "y": 0.5},
+        ],
+        "shapes": [
+            {"kind": "arrow", "x1": 0.25, "y1": 0.5, "x2": 0.6, "y2": 0.4},
+            {"kind": "zone", "x": 0.7, "y": 0.3, "w": 0.2, "h": 0.4},
+            {"kind": "label", "x": 0.5, "y": 0.1, "text": "press here"},
+        ],
+    }
+    resp = await client.post("/api/coach/notes", json={
+        "note_context": "observation",
+        "category": "set_piece", "visibility": "team",
+        "event_title": "Scene smoke test",
+        "tactical_board_json": scene,
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    assert board["version"] == 1
+    assert board["pitch_kind"] == "soccer_full"
+    assert board["orientation"] == "landscape"
+    assert len(board["tokens"]) == 2
+    assert board["tokens"][0]["kind"] == "player"
+    assert board["tokens"][0]["label"] == "7"
+    assert board["tokens"][1]["kind"] == "ball"
+    assert len(board["shapes"]) == 3
+    assert board["shapes"][0]["kind"] == "arrow"
+    assert board["shapes"][1]["kind"] == "zone"
+    assert board["shapes"][1]["w"] == 0.2
+    assert board["shapes"][2]["kind"] == "label"
+    assert board["shapes"][2]["text"] == "press here"
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_null_accepted(client, auth_headers):
+    """Existing null tactical_board_json keeps working — no migration."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "No board observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": None,
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["note"]["tactical_board_json"] is None
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_empty_dict_normalized_to_null(client, auth_headers):
+    """Empty dict normalizes to None so 'unset' and 'explicit empty'
+    behave the same way for downstream renderers."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Empty board observation",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {},
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["note"]["tactical_board_json"] is None
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_unknown_pitch_kind(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad pitch", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {"pitch_kind": "basketball_full", "tokens": []},
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+    assert "pitch_kind" in bad.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_unknown_token_kind(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad token", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ufo", "x": 0.5, "y": 0.5}],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_unknown_shape_kind(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad shape", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{"kind": "spiral", "x1": 0.1, "y1": 0.1, "x2": 0.2, "y2": 0.2}],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_out_of_range_coordinates(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad coord", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "player", "x": 1.5, "y": 0.5}],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+    bad2 = await client.post("/api/coach/notes", json={
+        "title": "Bad coord 2", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ball", "x": 0.5, "y": -0.1}],
+        },
+    }, headers=auth_headers)
+    assert bad2.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_too_many_tokens(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Crowded", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [
+                {"kind": "player", "x": 0.5, "y": 0.5} for _ in range(50)
+            ],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_too_many_shapes(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Too many shapes", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "arrow", "x1": 0.0, "y1": 0.0, "x2": 0.1, "y2": 0.1}
+                for _ in range(50)
+            ],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_oversized_label(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Long label", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{"kind": "label", "x": 0.5, "y": 0.5, "text": "x" * 200}],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_label_shape_requires_text(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Empty label", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{"kind": "label", "x": 0.5, "y": 0.5}],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_zone_extending_past_pitch_rejected(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad zone", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [{"kind": "zone", "x": 0.8, "y": 0.8, "w": 0.5, "h": 0.5}],
+        },
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_patch_can_clear(client, auth_headers):
+    """Coaches can clear the saved board by PATCH-ing tactical_board_json: null."""
+    create = await client.post("/api/coach/notes", json={
+        "title": "With board",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ball", "x": 0.5, "y": 0.5}],
+        },
+    }, headers=auth_headers)
+    note_id = create.json()["note"]["id"]
+    assert create.json()["note"]["tactical_board_json"] is not None
+    patch = await client.patch(f"/api/coach/notes/{note_id}", json={
+        "tactical_board_json": None,
+    }, headers=auth_headers)
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["note"]["tactical_board_json"] is None
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_visible_only_when_parent_note_visible(client, auth_headers):
+    """tactical_board_json follows the parent note's visibility. A
+    private observation board never reaches a viewer; a team-visible
+    one does."""
+    await client.post("/api/users", json={
+        "username": "board_viewer", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer = await _login(client, "board_viewer")
+    # Private board — must not surface for the viewer.
+    await client.post("/api/coach/notes", json={
+        "title": "Private board",
+        "note_context": "observation",
+        "category": "other", "visibility": "private",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "player", "x": 0.5, "y": 0.5}],
+        },
+    }, headers=auth_headers)
+    # Team-visible board — viewer should see it.
+    visible = await client.post("/api/coach/notes", json={
+        "title": "Team board",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ball", "x": 0.5, "y": 0.5}],
+        },
+        "coach_private_note": "scrub me",
+    }, headers=auth_headers)
+    visible_id = visible.json()["note"]["id"]
+    feedback = await client.get("/api/my-feedback", headers=viewer)
+    payload = feedback.json()
+    visible_notes = [n for n in payload["notes"] if n["id"] == visible_id]
+    assert visible_notes, "team-visible board note should appear"
+    assert visible_notes[0]["tactical_board_json"]["pitch_kind"] == "soccer_full"
+    # Defense-in-depth: coach_private_note still scrubbed.
+    assert visible_notes[0]["coach_private_note"] == ""
+    # No private board leaked.
+    private_titles = {n.get("title") for n in payload["notes"]}
+    assert "Private board" not in private_titles, "private observation board must not reach viewer"
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_non_dict(client, auth_headers):
+    """Non-dict (list, string, number) is rejected — same as Phase 6a."""
+    bad = await client.post("/api/coach/notes", json={
+        "title": "List board", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": [1, 2, 3],
+    }, headers=auth_headers)
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_unknown_top_level_keys_dropped(client, auth_headers):
+    """Forward-compat: unknown top-level keys are silently dropped on
+    write so an older server reading a newer client's payload doesn't
+    crash. Only the known schema fields round-trip."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Future field",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "ball", "x": 0.5, "y": 0.5}],
+            "future_anim": {"frames": []},
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    assert "future_anim" not in board
+    assert board["tokens"][0]["kind"] == "ball"
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_player_id_round_trips(client, auth_headers):
+    """Player tokens may carry an optional player_id (forward-compat
+    hook for future animated/tracked boards)."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Tagged token",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [
+                {"kind": "player", "x": 0.5, "y": 0.5, "label": "10", "player_id": "abc-123"}
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    token = resp.json()["note"]["tactical_board_json"]["tokens"][0]
+    assert token["player_id"] == "abc-123"
+    assert token["label"] == "10"
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_invalid_version(client, auth_headers):
+    bad = await client.post("/api/coach/notes", json={
+        "title": "Bad version", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {"pitch_kind": "soccer_full", "version": 2, "tokens": []},
+    }, headers=auth_headers)
+    assert bad.status_code == 422
