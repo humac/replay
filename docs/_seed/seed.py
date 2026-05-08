@@ -910,6 +910,85 @@ def _seed_mock_video(
     return f"  seeded mock {MOCK_VIDEO_SLOT} for {MOCK_VIDEO_TARGET[0]} vs {MOCK_VIDEO_TARGET[1]}"
 
 
+def _seed_coach_note_and_clip_thumbnails(data_dir: Path) -> str:
+    """Phase 3a / 4e — generate per-note + per-clip thumbnails for any
+    seeded coaching note or clip whose match slot now has a real source
+    MP4 on disk. The runtime equivalent runs as a background task on
+    POST /api/coach/notes / /api/coach/clips, but the seed writes
+    directly to SQLite and bypasses that flow — without this pass, every
+    seeded note/clip card on My Feedback would render the placeholder
+    tile because GET /api/coach/notes/{id}/thumbnail 404s.
+
+    Best-effort: notes whose source video isn't on disk yet (or whose
+    match was created without a mock video) are silently skipped. The
+    seed never fails because a thumbnail couldn't be generated.
+
+    Path-containment is enforced inside `_media.coach_note_thumbnail_path`
+    / `_media.clip_thumbnail_path` (purely deterministic from
+    match_id + note_id / match_id + clip_id), so the same `match_id`
+    that produced the source MP4 is the only one we read."""
+    videos_dir = data_dir / "videos"
+    originals_dir = data_dir / "videos"  # un-tiered single-volume layout
+
+    note_count = 0
+    clip_count = 0
+    skipped = 0
+
+    async def _run() -> None:
+        nonlocal note_count, clip_count, skipped
+        with _db.connect() as conn:
+            note_rows = conn.execute(
+                "SELECT id, match_id, slot, timestamp_seconds, note_context "
+                "FROM coaching_notes "
+                "WHERE COALESCE(note_context, 'video') = 'video' "
+                "  AND match_id IS NOT NULL AND slot IS NOT NULL"
+            ).fetchall()
+            clip_rows = conn.execute(
+                "SELECT id, match_id, slot, start_seconds FROM coaching_clips"
+            ).fetchall()
+
+        for row in note_rows:
+            src = _media.find_slot_raw_path(originals_dir, row["match_id"], row["slot"])
+            if src is None:
+                src = originals_dir / row["match_id"] / f"{row['slot']}.mp4"
+            if not src.is_file():
+                skipped += 1
+                continue
+            dest = _media.coach_note_thumbnail_path(
+                videos_dir, row["match_id"], row["id"]
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            ok = await _media.generate_thumbnail_at_timestamp(
+                src, dest, timestamp_s=row["timestamp_seconds"] or 0.0,
+            )
+            if ok:
+                note_count += 1
+            else:
+                skipped += 1
+
+        for row in clip_rows:
+            src = _media.find_slot_raw_path(originals_dir, row["match_id"], row["slot"])
+            if src is None:
+                src = originals_dir / row["match_id"] / f"{row['slot']}.mp4"
+            if not src.is_file():
+                skipped += 1
+                continue
+            dest = _media.clip_thumbnail_path(
+                videos_dir, row["match_id"], row["id"]
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            ok = await _media.generate_thumbnail_at_timestamp(
+                src, dest, timestamp_s=row["start_seconds"] or 0.0,
+            )
+            if ok:
+                clip_count += 1
+            else:
+                skipped += 1
+
+    asyncio.run(_run())
+    return f"  generated {note_count} note + {clip_count} clip thumbnails (skipped {skipped} without source video)"
+
+
 def main() -> None:
     data_dir = _resolve_data_dir()
     db_file = data_dir / "replay.db"
@@ -931,6 +1010,14 @@ def main() -> None:
     clip_count = _seed_clips(matches_by_key, roster, note_ids_by_key)
     playlists = _seed_playlists(note_ids_by_key, roster)
     mock_video_status = _seed_mock_video(data_dir, matches_by_key)
+    # Phase 3a / 4e seed parity: the runtime path (POST /api/coach/notes
+    # and /api/coach/clips) spawns a background thumbnail-generation
+    # task. The seed bypasses those endpoints and writes straight to
+    # SQLite, so without this pass every seeded note/clip card on My
+    # Feedback would render the placeholder. Run AFTER `_seed_mock_video`
+    # so the source MP4 + HLS are already on disk for any note that
+    # targets the mock video's match+slot.
+    coach_thumb_status = _seed_coach_note_and_clip_thumbnails(data_dir)
 
     print()
     print("=" * 60)
@@ -944,6 +1031,8 @@ def main() -> None:
     print(f"  Links:      {links} player ↔ user")
     print(f"  Mock video:")
     print(mock_video_status)
+    print(f"  Coach thumbs:")
+    print(coach_thumb_status)
     print()
     print("  Demo accounts (password: %s):" % DEMO_PASSWORD)
     print("    uploader1  — uploader        (admin → matches only)")
