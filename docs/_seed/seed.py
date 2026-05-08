@@ -537,6 +537,194 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
     return note_ids
 
 
+def _seed_observation_notes(
+    matches: dict[tuple[str, str, str], str],
+    roster: dict[str, str],
+) -> list[int]:
+    """Phase 6e — at least one observation note (text-only, no video) and
+    one tactical-board observation visible to family1 (player #7) so the
+    My Feedback detail surfaces have something realistic to render. Both
+    are `note_context = 'observation'` and carry event_title / event_date /
+    event_type instead of match/slot/timestamp.
+
+    The tactical-board observation uses a simple 4-token formation snippet
+    that survives `validate_tactical_board_payload` (normalized 0..1
+    coordinates, soccer_full pitch).
+    """
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    note_ids: list[int] = []
+
+    # Text-only observation, visible to player #7 (family1).
+    text_obs = {
+        "note_context": "observation",
+        "match_id": None,
+        "slot": None,
+        "timestamp_seconds": None,
+        "title": "Tuesday practice — 1v1 defending",
+        "body": "Three reps of close-down work in the small-sided game. Focus on body shape, not the lunge.",
+        "category": "defending",
+        "visibility": "player",
+        "drawing_json": "{}",
+        "tactical_board_json": None,
+        "event_title": "Tuesday practice — 1v1 defending",
+        "event_date": "2026-05-05",
+        "event_type": "practice",
+        "note_type": "correction",
+        "player_summary": "Get small and patient on the ball-carrier — let them choose the touch, then commit when their head goes down.",
+        "what_happened": "In the 1v1 channel today, you were lunging in early on each rep. The forward feinted once and you opened your hips.",
+        "why_it_matters": "Patient defenders win the second touch. Lunging gives away the duel before the forward has even committed.",
+        "what_to_do_next": "Sit lower, half-step closer, and keep both feet active. Wait for their head to drop before stepping in.",
+        "coach_private_note": "Pulled #7 aside after rep 3 — she nodded but is still over-aggressive when tired. Re-rep on Thursday.",
+        "tags": ["defending", "1v1", "practice"],
+        "jerseys": ["7"],
+    }
+
+    # Tactical board observation visible to player #7 (family1).
+    formation_board = {
+        "version": 1,
+        "pitch_kind": "soccer_full",
+        "orientation": "landscape",
+        "game_format": "11v11",
+        "formation": "4-3-3",
+        "tokens": [
+            {"kind": "player", "x": 0.10, "y": 0.50, "label": "GK"},
+            {"kind": "player", "x": 0.22, "y": 0.20, "label": "RB"},
+            {"kind": "player", "x": 0.22, "y": 0.40, "label": "CB"},
+            {"kind": "player", "x": 0.22, "y": 0.60, "label": "CB"},
+            {"kind": "player", "x": 0.22, "y": 0.80, "label": "LB"},
+            {"kind": "player", "x": 0.42, "y": 0.30, "label": "CM"},
+            {"kind": "player", "x": 0.42, "y": 0.50, "label": "CM"},
+            {"kind": "player", "x": 0.42, "y": 0.70, "label": "CM"},
+            {"kind": "player", "x": 0.62, "y": 0.20, "label": "RW"},
+            {"kind": "player", "x": 0.62, "y": 0.50, "label": "ST"},
+            {"kind": "player", "x": 0.62, "y": 0.80, "label": "LW"},
+            {"kind": "ball", "x": 0.60, "y": 0.50},
+        ],
+        "shapes": [
+            {
+                "kind": "zone",
+                "x": 0.40, "y": 0.18, "w": 0.25, "h": 0.64,
+                "color": "#facc15",
+                "stroke_width": 3,
+            },
+            {
+                "kind": "label",
+                "x": 0.52, "y": 0.10,
+                "text": "Compact mid third",
+                "color": "#ffffff",
+            },
+            {
+                "kind": "arrow",
+                "x1": 0.62, "y1": 0.20, "x2": 0.78, "y2": 0.30,
+                "color": "#22c55e",
+                "stroke_width": 4,
+            },
+        ],
+    }
+    board_obs = {
+        "note_context": "observation",
+        "match_id": None,
+        "slot": None,
+        "timestamp_seconds": None,
+        "title": "Team shape — compact 4-3-3 mid block",
+        "body": "Reference sketch for Saturday's match. Stay compact through the middle, force play wide.",
+        "category": "shape",
+        "visibility": "player",
+        "drawing_json": "{}",
+        "tactical_board_json": json.dumps(formation_board),
+        "event_title": "Saturday match prep — Pinehurst",
+        "event_date": "2026-05-09",
+        "event_type": "tactical",
+        "note_type": "team_concept",
+        "player_summary": "Stay compact through the middle. Push wingers wide, deny the central pass, then rotate to win the duel on the wing.",
+        "what_happened": "Last Saturday the centre channel was 8 yards too wide and Pinehurst played through us four times.",
+        "why_it_matters": "If our 4-3-3 stays compact, their forwards have to drop deep to get the ball — exactly where our midfield can win it.",
+        "what_to_do_next": "When the ball goes wide, the ball-side winger pinches in. The far-side full-back tucks. The 6 covers behind the line.",
+        "coach_private_note": "Family1 should see this — #7 plays right-back and we're asking her to tuck on weak-side switches.",
+        "tags": ["shape", "build_up"],
+        "jerseys": ["7"],
+    }
+
+    with _db.connect() as conn:
+        for spec in (text_obs, board_obs):
+            cur = conn.execute(
+                """
+                INSERT INTO coaching_notes (
+                    match_id, slot, timestamp_seconds, title, body, category, visibility,
+                    drawing_json, created_by, created_at, updated_at,
+                    note_type, player_summary, what_happened, why_it_matters,
+                    what_to_do_next, coach_private_note,
+                    note_context, event_title, event_date, event_type, tactical_board_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    spec["match_id"], spec["slot"], spec["timestamp_seconds"],
+                    spec["title"], spec["body"], spec["category"], spec["visibility"],
+                    spec["drawing_json"], "coach1", now, now,
+                    spec["note_type"], spec["player_summary"], spec["what_happened"],
+                    spec["why_it_matters"], spec["what_to_do_next"], spec["coach_private_note"],
+                    spec["note_context"], spec["event_title"], spec["event_date"],
+                    spec["event_type"], spec["tactical_board_json"],
+                ),
+            )
+            note_id = cur.lastrowid
+            note_ids.append(note_id)
+            for jersey in spec["jerseys"]:
+                conn.execute(
+                    "INSERT INTO coaching_note_players (note_id, player_id) VALUES (?, ?)",
+                    (note_id, roster[jersey]),
+                )
+            for tag in spec["tags"]:
+                conn.execute(
+                    "INSERT INTO coaching_note_tags (note_id, tag) VALUES (?, ?)",
+                    (note_id, tag),
+                )
+        conn.commit()
+    return note_ids
+
+
+def _seed_clips(
+    matches: dict[tuple[str, str, str], str],
+    roster: dict[str, str],
+    note_ids: list[int],
+) -> int:
+    """Phase 6e — at least one viewer-visible clip so the My Feedback Clips
+    tab has content. Anchored to the same match the mock video covers
+    (Riverside FC vs Northgate United, first_half), referencing note #4
+    (Player #7 — defensive recovery) so the clip thumbnail can fall through
+    to the source note's JPEG.
+    """
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    m1 = matches[("Riverside FC", "Northgate United", "2025-09-14")]
+    # note4 is the Player #7 defensive recovery note (positive). Tying the
+    # clip to it gives the viewer a co-located thumbnail fallback.
+    note_player7 = note_ids[3]
+    with _db.connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO coaching_clips (
+                match_id, slot, start_seconds, end_seconds, title, description,
+                category, visibility, source_note_id, drawing_json,
+                created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                m1, "first_half", 4.0, 18.0,
+                "Player #7 — defensive recovery (clip)",
+                "Short clip from the Northgate match showing the recovery angle. Watch how she cuts the passing lane instead of chasing the ball.",
+                "defending", "player", note_player7, "{}",
+                "coach1", now, now,
+            ),
+        )
+        clip_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO coaching_clip_players (clip_id, player_id) VALUES (?, ?)",
+            (clip_id, roster["7"]),
+        )
+        conn.commit()
+    return 1
+
+
 def _seed_playlists(note_ids: list[int], roster: dict[str, str]) -> int:
     """Two playlists. A is team-visible (notes 1+3); B is player-visible and
     scoped to player #7 via coaching_playlist_players."""
@@ -690,6 +878,8 @@ def main() -> None:
     roster = _seed_roster()
     links = _seed_player_user_links(roster, users)
     note_ids = _seed_coaching_notes(matches_by_key, roster)
+    obs_note_ids = _seed_observation_notes(matches_by_key, roster)
+    clip_count = _seed_clips(matches_by_key, roster, note_ids)
     playlists = _seed_playlists(note_ids, roster)
     mock_video_status = _seed_mock_video(data_dir, matches_by_key)
 
@@ -699,7 +889,8 @@ def main() -> None:
     print("=" * 60)
     print(f"  Matches:    {len(matches_by_key)}")
     print(f"  Roster:     {len(roster)} players")
-    print(f"  Notes:      {len(note_ids)}")
+    print(f"  Notes:      {len(note_ids)} video + {len(obs_note_ids)} observation")
+    print(f"  Clips:      {clip_count}")
     print(f"  Playlists:  {playlists}")
     print(f"  Links:      {links} player ↔ user")
     print(f"  Mock video:")

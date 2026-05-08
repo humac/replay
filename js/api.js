@@ -101,6 +101,9 @@ export const apiMixin = {
         // catch a mismatch, but resetting here keeps the cleanup
         // pattern consistent with the coaching state above.
         this._feedbackDevPlayerId = null;
+        // Phase 6e: drop the cached per-player development payloads so a
+        // viewer detail click can't replay user A's notes for user B.
+        this._feedbackDevCache = null;
         const navAdmin = document.getElementById('nav-admin');
         if (navAdmin) navAdmin.style.display = 'none';
         const navCoach = document.getElementById('nav-coach');

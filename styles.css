@@ -10597,18 +10597,11 @@ body.coach-focus-drawer-tb-mode .coach-focus-backdrop {
     border-color: rgba(2, 132, 199, 0.3);
 }
 
-/* Read-only board preview inside My Feedback note cards. */
-.feedback-card-board {
-    margin-top: 0.5rem;
-    border-radius: 6px;
-    overflow: hidden;
-    background: #168a3f;
-}
-.feedback-card-board .tb-svg-wrap {
-    border-radius: 0;
-    box-shadow: none;
-    max-width: 100%;
-}
+/* Phase 6e — observation-card thumbnail tile uses the existing
+ * .coach-thumb--board / .coach-thumb--card sizing; the inline
+ * board preview that previously rendered below the card was
+ * removed so the cards stay compact. The full read-only board now
+ * lives inside the unified review modal. */
 
 /* Tactical-board observation composer needs more horizontal room than
  * the standard wide modal (720 px) for the editor. This is a SCOPED
@@ -11115,5 +11108,249 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     .coach-tb-formation-apply {
         width: 100%;
     }
+}
+
+/* ============================================================
+ * Phase 6e — unified viewer review modal
+ * ============================================================
+ * One modal handles every review type. The focused-feedback player
+ * template (`#feedback-player-template`) carries the visual on top
+ * (video for notes/clips, tactical board for observations) and the
+ * `[data-field="body"]` slot below it gets the structured fields
+ * via `_renderUnifiedFeedbackBody`. Cards that route into this modal
+ * are intentionally compact (no inline summary, no inline board) so
+ * the detail experience always lives inside the playback modal. */
+
+.feedback-player-board {
+    /* Read-only tactical board mounted where the <video> would be
+     * for observation notes. Uses the same rounded shell as
+     * `.feedback-player-wrapper` so the modal layout doesn't shift. */
+    margin-top: 0.25rem;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #168a3f;
+}
+.feedback-player-board .tb-svg-wrap {
+    border-radius: 0;
+    box-shadow: none;
+    max-width: 100%;
+}
+
+.feedback-card--clickable {
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.feedback-card--clickable:hover {
+    border-color: var(--accent, rgba(56, 189, 248, 0.55));
+    transform: translateY(-1px);
+}
+.feedback-card--clickable:focus-visible {
+    outline: 2px solid var(--accent, #38bdf8);
+    outline-offset: 2px;
+}
+[data-theme="light"] .feedback-card--clickable:hover {
+    border-color: rgba(23, 113, 201, 0.4);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.feedback-detail-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    color: var(--text-main);
+    font-size: 0.95rem;
+    line-height: 1.55;
+}
+
+.feedback-detail-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.feedback-detail-head-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.feedback-detail-context-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.16);
+    color: rgba(125, 211, 252, 0.95);
+    font-family: var(--font-heading);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+.feedback-detail-context-pill[data-context="observation"] {
+    background: rgba(168, 85, 247, 0.18);
+    color: rgba(216, 180, 254, 0.95);
+}
+.feedback-detail-context-pill[data-context="clip"] {
+    background: rgba(34, 197, 94, 0.18);
+    color: rgba(134, 239, 172, 0.95);
+}
+[data-theme="light"] .feedback-detail-context-pill {
+    background: rgba(23, 113, 201, 0.12);
+    color: rgba(23, 113, 201, 0.95);
+}
+[data-theme="light"] .feedback-detail-context-pill[data-context="observation"] {
+    background: rgba(126, 34, 206, 0.12);
+    color: rgba(107, 33, 168, 0.98);
+}
+[data-theme="light"] .feedback-detail-context-pill[data-context="clip"] {
+    background: rgba(22, 163, 74, 0.12);
+    color: rgba(21, 128, 61, 0.98);
+}
+
+.feedback-detail-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-light);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 500;
+}
+.feedback-detail-chip--tag {
+    color: var(--text-main);
+}
+.feedback-detail-chip--reviewed {
+    color: rgba(134, 239, 172, 0.95);
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.1);
+}
+[data-theme="light"] .feedback-detail-chip {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .feedback-detail-chip--reviewed {
+    color: rgba(21, 128, 61, 0.95);
+    border-color: rgba(34, 197, 94, 0.4);
+    background: rgba(34, 197, 94, 0.12);
+}
+
+.feedback-detail-title {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 1.35rem;
+    line-height: 1.25;
+    color: var(--text-main);
+    overflow-wrap: anywhere;
+}
+
+.feedback-detail-meta {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.feedback-detail-linked {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+}
+.feedback-detail-linked-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 0.25rem;
+}
+
+.feedback-detail-summary p,
+.feedback-detail-section-body {
+    margin: 0;
+    color: var(--text-main);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.feedback-detail-summary {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+}
+[data-theme="light"] .feedback-detail-summary {
+    background: rgba(0, 0, 0, 0.025);
+}
+
+.feedback-detail-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+}
+.feedback-detail-section:last-of-type {
+    border-bottom: 0;
+}
+[data-theme="light"] .feedback-detail-section {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.feedback-detail-section-title {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-heading);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.feedback-detail-additional {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--border-light);
+}
+[data-theme="light"] .feedback-detail-additional {
+    background: rgba(0, 0, 0, 0.015);
+}
+
+.feedback-detail-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding-top: 0.25rem;
+}
+
+@media (pointer: coarse), (max-width: 720px) {
+    .feedback-detail-title {
+        font-size: 1.15rem;
+    }
+}
+
+/* Player Development row — viewer-side rows become clickable in
+ * Phase 6e. The hover/focus affordance mirrors `.feedback-card--clickable`. */
+.player-dev-note-item--clickable {
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.15s ease;
+}
+.player-dev-note-item--clickable:hover {
+    background: rgba(56, 189, 248, 0.05);
+}
+.player-dev-note-item--clickable:focus-visible {
+    outline: 2px solid var(--accent, #38bdf8);
+    outline-offset: -2px;
+}
+[data-theme="light"] .player-dev-note-item--clickable:hover {
+    background: rgba(23, 113, 201, 0.06);
 }
 

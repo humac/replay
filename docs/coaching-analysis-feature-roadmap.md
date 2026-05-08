@@ -760,30 +760,25 @@ Phase 6a, 6b, and 6c have already shipped (see ROADMAP.md for completion entries
 - Privacy rules unchanged.
 ```
 
-### Phase 6e coding agent prompt — Observation rendering polish in My Feedback and Player Development
+### Phase 6e — Unified Viewer Review Modal ✅ COMPLETE (2026-05-08)
 
-> **Status: FUTURE — do not start yet.** Wait until both Phase 6d-1 and Phase 6d-2 are merged. Polishing viewer surfaces before the corrected creation flow + final tool set lands would mean re-doing the polish.
+> **Scope correction**: Phase 6e was originally framed as "observation rendering polish" then reframed to "viewer detail experience" with separate per-kind detail modals. The final design is **one unified review modal**: the existing focused-feedback player IS the single review surface for video notes, observation notes, tactical-board observations, and clips. Cards stay compact (no inline detail) so the reading experience is consistent across all four review types.
 
-```text
-- Do not start until 6d-1 and 6d-2 are both merged. Start from latest main.
-- Goal: polish player- and family-facing rendering of observation notes and tactical boards now that the corrected creation flow + final 6d-2 tool set are in place.
-- Improve:
-  - My Feedback > Notes observation card layout (sizing, spacing, structured-fields stack, mobile breakpoint, light/dark theme parity).
-  - Read-only tactical board sizing and mobile behavior (no horizontal overflow at ~390 px; aspect-ratio preservation; sensible thumbnail sizing in card / chip / preview variants).
-  - Player Development Profile observation/board rendering (already present from Phase 5 + Phase 6c — this is a polish pass against the corrected creation flow).
-  - Clear context labels on every observation surface:
-    - "Practice observation"
-    - "Tactical note"
-    - "Coach observation"
-- Out of scope (do not implement here):
-  - No creation workflow changes (creation belongs to Coach Review after 6d-1).
-  - No major My Feedback redesign (issue #82 remains separate look-and-feel planning).
-  - No Coach Notes / Clips / Roster redesign beyond the polish that touches observation card rendering.
-  - No goals / action plans (Phase 7).
-  - No AI / CV / drill library / animation / PDF export.
-- Privacy rules unchanged. tactical_board_json continues to follow its parent note's visibility; coach_private_note remains scrubbed for viewers.
-- No new public endpoints. No schema migration.
-```
+**Shipped**:
+- `_renderUnifiedFeedbackBody(target, { kind, note?, clip? })` in `js/coaching.js` — the single body composer that fills the focused-feedback player's `[data-field="body"]` slot with a shared structured layout (context pill + tone + category + linked players + Summary + What happened / Why / Next + Additional detail + tags) for every review type.
+- `index.html` `feedback-player-template` gained a `[data-field="board-wrapper"]` sibling to the video wrapper. `openFeedbackPlayer`'s `onMount` shows `<video>` for video notes / clips, or the read-only tactical board for observations, and hides the other.
+- Cards on My Feedback Notes / Clips are compact (thumb + tone + title + meta only). The previous inline summary, inline tactical board, and per-card "Watch" / "Mark reviewed" / "View details" buttons were removed. The card body opens the unified modal on click / Enter / Space.
+- Player Development viewer-side rows route into the SAME modal via `openFeedbackNoteDetailFromDev` / `openFeedbackClipDetailFromDev`; the per-player `_feedbackDevCache` (cleared on `setLoggedOut()`) lets the click hydrate when the dev row's note isn't in `_feedbackData.notes[]`. The "View details" mini-action on the dev clip row was removed; the Watch button alone now opens the unified modal.
+- Modal title reflects kind: "Coaching Note" for video notes, an observation-context label ("Practice observation" / "Tactical observation" / etc.) for observations, "Coaching Clip" for clips, "Review Session" for playlists.
+- The previous Phase 6e detail-modal path (`_renderFeedbackNoteDetailModal` / `_renderFeedbackClipDetailModal`) was removed; their helpers (`_resolveLinkedPlayerChips`, `_detailStructuredHtml`, `_categoryLabel`, `_observationContextLabel`) are now consumed by the unified body composer.
+
+**Privacy invariant** (unchanged): no new endpoints, no schema migration, no client-side authorization. `_renderUnifiedFeedbackBody` NEVER references `coach_private_note` regardless of payload; the server scrubs it via `_strip_private_fields`. `tactical_board_json` follows the parent note's visibility via `_filter_notes_for_user`.
+
+**Tests**: zero new backend tests (no API change). Existing `pytest tests/` 414/414 unchanged. The Playwright capture spec `tests/e2e/phase-6e-capture.spec.js` (run via `npm run capture-phase-6e`) exercises the unified-modal flow for video / observation / tactical-board / clip + a `coach_private_note` privacy assertion at both the API and DOM layer.
+
+**Future surfaces**: route into `openFeedbackPlayer({ mode, note? clip? })` — do NOT build a parallel detail-modal path. Keeping one composer is part of the privacy story (one place where `coach_private_note` is policed).
+
+**Phase 7 (Goals / Action Plans) is next.**
 
 ---
 
