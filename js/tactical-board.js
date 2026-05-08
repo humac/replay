@@ -538,9 +538,34 @@ function renderTokenSvg(token, opts = {}) {
         ? `data-token-id="${escAttr(token.id)}" class="tb-token${sel ? ' is-selected' : ''}"`
         : `class="tb-token"`;
     if (token.kind === 'ball') {
+        // Phase 6d-2 follow-up #2 — render the ball as a classic
+        // black-and-white soccer ball, not a circle with a dot. The
+        // pattern is a 5-vertex pentagon centred on the ball with
+        // short black panel edges from each pentagon vertex out to
+        // the rim — the canonical 2-D representation of a Truncated
+        // icosahedron. Computed at draw time so changes to ball
+        // radius (e.g. selection bump) keep the pattern proportional.
+        const r = sel ? 18 : 15;
+        const innerR = r * 0.42;       // pentagon circumradius
+        const stripeStart = innerR;     // black panel edge starts at pentagon vertex
+        const stripeEnd = r * 0.92;     // ends just inside the rim
+        const verts = [];
+        for (let i = 0; i < 5; i++) {
+            // -90° start so the pentagon points upward
+            const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+            verts.push({ x: x + innerR * Math.cos(a), y: y + innerR * Math.sin(a) });
+        }
+        const pentPoints = verts.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
+        const stripes = verts.map((v, i) => {
+            const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+            const ex = x + stripeEnd * Math.cos(a);
+            const ey = y + stripeEnd * Math.sin(a);
+            return `<line x1="${v.x.toFixed(2)}" y1="${v.y.toFixed(2)}" x2="${ex.toFixed(2)}" y2="${ey.toFixed(2)}" stroke="#0f172a" stroke-width="${(r * 0.16).toFixed(2)}" stroke-linecap="round"/>`;
+        }).join('');
         return `<g ${dataAttr}>
-            <circle cx="${x}" cy="${y}" r="${sel ? 18 : 15}" fill="#f8fafc" stroke="#0f172a" stroke-width="${sel ? 4 : 2}"/>
-            <circle cx="${x}" cy="${y}" r="6" fill="#0f172a"/>
+            <circle cx="${x}" cy="${y}" r="${r}" fill="#f8fafc" stroke="#0f172a" stroke-width="${sel ? 3 : 2}"/>
+            ${stripes}
+            <polygon points="${pentPoints}" fill="#0f172a"/>
         </g>`;
     }
     const r = sel ? 26 : 22;
@@ -1293,7 +1318,11 @@ export const tacticalBoardMixin = {
             { id: 'player',   label: 'Player',   tip: 'Add player token (P)',
               path: 'M12 5a4 4 0 100 8 4 4 0 000-8zM5 21c0-3.5 3-6 7-6s7 2.5 7 6' },
             { id: 'ball',     label: 'Ball',     tip: 'Add ball (B)',
-              path: 'M12 4a8 8 0 100 16 8 8 0 000-16zM12 4l3 4-3 4-3-4zM12 12l3 4M12 12l-3 4' },
+              // Soccer ball: outer circle + central pentagon + five
+              // short radial lines from each pentagon vertex out to
+              // the rim, so the icon reads as a panelled ball rather
+              // than a circle with an X.
+              path: 'M12 4a8 8 0 100 16 8 8 0 000-16zM12 8.4l3.04 2.21-1.16 3.57h-3.76l-1.16-3.57zM12 8.4V5M15.04 10.61l3.23-1.05M13.88 14.18l1.99 2.74M10.12 14.18l-1.99 2.74M8.96 10.61L5.73 9.56' },
             { id: 'arrow',    label: 'Arrow',    tip: 'Drag to draw an arrow (A)',
               path: 'M4 12h13m-4-5l5 5-5 5' },
             { id: 'line',     label: 'Line',     tip: 'Drag to draw a line (L)',

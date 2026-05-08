@@ -11018,6 +11018,51 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     cursor: not-allowed;
 }
 
+/* Phase 6d-2 follow-up #2 — fill the dead space below Board Tools when
+ * the pitch is taller than the side panel content. The default
+ * `.coach-review-side` packs children at the top with `align-content:
+ * start`, leaving a vertical gap at the bottom that visually divorces
+ * the right column from the board. In tactical board mode, the inner
+ * side pane is the column we want to flex: the toolbar grows to take
+ * extra vertical space (its `coach-telestrator` sub-grid stretches its
+ * tool grid + swatch row + meta inputs + actions to share the slack
+ * vertically), and the observation form keeps natural height. The
+ * source-mode mirror lives on <body> as well as the shell, so the rule
+ * is scoped via the visible source.
+ *
+ * Selectors target both the in-shell case AND the focus-mode drawer
+ * case (where `.coach-review-side` is re-parented to <body>). */
+.coach-review-shell[data-source="tactical_board"] .coach-review-side .coach-review-side-pane[data-source-only="tactical_board"],
+body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-review-side-pane[data-source-only="tactical_board"] {
+    display: flex !important;
+    flex-direction: column;
+    gap: 0.6rem;
+    min-height: 0;
+    height: 100%;
+}
+.coach-review-shell[data-source="tactical_board"] .coach-review-side {
+    align-content: stretch;
+}
+.coach-review-shell[data-source="tactical_board"] #coach-tb-toolbar,
+body[data-coach-review-source="tactical_board"] #coach-tb-toolbar {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+/* The toolbar itself is a grid; spread its children so the icon grid
+ * + swatch row + inputs + actions distribute evenly when there's slack. */
+.coach-review-shell[data-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator,
+body[data-coach-review-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    height: 100%;
+}
+.coach-review-shell[data-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator > .coach-tool-grid,
+body[data-coach-review-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator > .coach-tool-grid {
+    flex: 1 1 auto;
+    align-content: start;
+}
+
 /* Phase 6d-2 follow-up — formation selectors styled like other Coach
  * <select>s (no native OS chrome). Mirrors `.coach-mini-form select`
  * (appearance:none + custom chevron) but scoped to the tactical board
