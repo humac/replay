@@ -2216,9 +2216,43 @@ export const coachingMixin = {
             if (visEl && !visEl.dataset.userTouched) visEl.value = 'player';
         }
         this._coachReviewIntent = null;
+        // Phase 6d-2 follow-up — match the side panel height to the
+        // pitch's rendered height so the inspector column equals the
+        // board column (the video-mode counterpart to this lives in
+        // `_syncCoachReviewSideHeight`). Initial sync runs after the
+        // board has been mounted; a ResizeObserver keeps it accurate
+        // when the viewport changes. The observer is torn down in
+        // `_unmountCoachReviewBoard` so it doesn't leak between
+        // source-mode toggles.
+        this._syncCoachReviewSideHeightFromBoard();
+        if (this._coachBoardSizeObserver) {
+            this._coachBoardSizeObserver.disconnect();
+        }
+        if (typeof ResizeObserver !== 'undefined') {
+            // Observe the outer .coach-review-stage column so the sync
+            // tracks the visible left-column height (pitch + status
+            // row). Watching the inner board canvas would miss the
+            // stage's intrinsic padding / status pill row and leave a
+            // small gap below the inspector.
+            const stageColumn = document.querySelector('#coach-tab-review .coach-review-stage');
+            this._coachBoardSizeObserver = new ResizeObserver(() => {
+                this._syncCoachReviewSideHeightFromBoard();
+            });
+            if (stageColumn) this._coachBoardSizeObserver.observe(stageColumn);
+        }
     },
 
     _unmountCoachReviewBoard() {
+        if (this._coachBoardSizeObserver) {
+            this._coachBoardSizeObserver.disconnect();
+            this._coachBoardSizeObserver = null;
+        }
+        // Clear the inline max-height we stamped on the aside so the
+        // video-mode height sync starts from a clean slate when the
+        // coach toggles back. (`_syncCoachReviewSideHeight` will set
+        // it again from the video wrapper's rendered height.)
+        const side = document.querySelector('#coach-tab-review .coach-review-side');
+        if (side) side.style.maxHeight = '';
         if (this._coachReviewBoardCtrl) {
             this._coachReviewBoardCtrl.destroy();
             this._coachReviewBoardCtrl = null;
@@ -2965,6 +2999,14 @@ export const coachingMixin = {
         // Only intercept when the Review tab is actually showing.
         const reviewPanel = document.getElementById('coach-tab-review');
         if (!reviewPanel || reviewPanel.hidden) return;
+        // Phase 6d-2 — tactical_board source mode owns its own keydown
+        // handler (mountTacticalBoardReviewCanvas), which uses the SAME
+        // letter shortcuts where they overlap (A / F / Z / T) plus the
+        // tactical-only V / P / B / L. Returning early here keeps the
+        // two handlers from double-firing AND prevents this handler
+        // from hitting the video setCoachDrawingTool path (which would
+        // try to paint on a non-existent video canvas in tactical mode).
+        if (this._coachReviewSource === 'tactical_board' && event.key !== '?') return;
         const video = document.getElementById(this._coachVideoId);
 
         switch (event.key) {
@@ -3081,16 +3123,27 @@ export const coachingMixin = {
             ['<kbd>Esc</kbd>', 'Exit focus mode'],
             ['<kbd>?</kbd>', 'Show / hide this help'],
         ];
+        // Phase 6d-2 — tactical-board keyboard shortcuts. Shortcut
+        // letters mirror the video telestrator's conventions where the
+        // tools overlap (A / F / Z / T / V); tactical-only tools take
+        // P (Player) / B (Ball) / L (Line). Bound in
+        // mountTacticalBoardReviewCanvas's keydown handler, gated on
+        // `body[data-coach-review-source="tactical_board"]`.
         const TB_ITEMS = [
+            ['<kbd>V</kbd>', 'Select / move'],
+            ['<kbd>P</kbd>', 'Player token'],
+            ['<kbd>B</kbd>', 'Ball'],
+            ['<kbd>A</kbd> / <kbd>1</kbd>', 'Arrow'],
+            ['<kbd>L</kbd>', 'Line'],
+            ['<kbd>Z</kbd>', 'Zone'],
+            ['<kbd>F</kbd>', 'Pen / freehand'],
+            ['<kbd>T</kbd>', 'Label / text'],
             ['<kbd>Delete</kbd> / <kbd>Backspace</kbd>', 'Delete the selected token or shape'],
-            ['<kbd>Esc</kbd>', 'Exit focus mode'],
+            ['<kbd>Esc</kbd>', 'Clear selection or exit drawing tool'],
             ['<kbd>?</kbd>', 'Show / hide this help'],
-            // Tactical-mode-specific tool shortcuts ship in Phase 6d-2.
         ];
         const items = source === 'tactical_board' ? TB_ITEMS : VIDEO_ITEMS;
-        const note = source === 'tactical_board'
-            ? '<li class="coach-shortcuts-help-note"><span>More tactical-board shortcuts arrive in Phase 6d-2.</span></li>'
-            : '';
+        const note = '';
         list.innerHTML = items.map(([keys, label]) => `<li>${keys}<span>${this.esc(label)}</span></li>`).join('') + note;
     },
 
@@ -3781,6 +3834,40 @@ export const coachingMixin = {
         const side = document.querySelector('#coach-tab-review .coach-review-side');
         if (!wrapper || !side) return;
         const h = Math.round(wrapper.getBoundingClientRect().height);
+        if (h > 0) side.style.maxHeight = `${h}px`;
+    },
+
+    /** Phase 6d-2 follow-up — tactical-mode counterpart to
+     *  `_syncCoachReviewSideHeight`. The `.coach-review-stage` column
+     *  (which contains the pitch + status row) takes the same role
+     *  the video wrapper plays in video mode: the right inspector's
+     *  max-height is set to match the stage's current rendered height
+     *  so the two columns are equal-height on every viewport, with no
+     *  dead space at the bottom of either side.
+     *
+     *  We sync from the stage (`.coach-review-stage`) rather than the
+     *  inner board canvas because the stage carries the pitch + the
+     *  tiny status pill below it, and the user's expectation is that
+     *  the inspector matches the visible LEFT column edge-to-edge.
+     *
+     *  Wired up at mount time via a ResizeObserver on the stage; the
+     *  observer is cleaned up in `_unmountCoachReviewBoard`. */
+    _syncCoachReviewSideHeightFromBoard() {
+        if (this._coachTab !== 'review') return;
+        if (this._coachReviewSource !== 'tactical_board') return;
+        const side = document.querySelector('#coach-tab-review .coach-review-side');
+        if (!side) return;
+        // On narrow viewports the layout is single-column and there's
+        // no separate side rail to clamp; clear any stale max-height
+        // from a prior wide-viewport sync so the column stays its
+        // natural size when the viewport is resized down.
+        if (window.innerWidth < 1024) {
+            if (side.style.maxHeight) side.style.maxHeight = '';
+            return;
+        }
+        const stage = document.querySelector('#coach-tab-review .coach-review-stage');
+        if (!stage) return;
+        const h = Math.round(stage.getBoundingClientRect().height);
         if (h > 0) side.style.maxHeight = `${h}px`;
     },
 

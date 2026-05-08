@@ -18,6 +18,63 @@ const SOCCER_LINE = '#f8fafc';
 const SOCCER_GRASS = '#1e9d4a';
 const SOCCER_GRASS_DARK = '#168a3f';
 
+// Phase 6d-2 color parity follow-up — palette mirrors the video
+// telestrator (`renderCoachTelestratorToolbar` in coaching.js). Same
+// six hex strings, same display names, so coaches who learned the
+// video palette recognize every swatch in tactical mode. The default
+// keeps the original tactical yellow (`#fde047`) so old boards saved
+// before this PR render unchanged.
+const BOARD_COLOR_PALETTE = ['#38bdf8', '#f97316', '#22c55e', '#facc15', '#f43f5e', '#ffffff'];
+const BOARD_COLOR_NAMES = {
+    '#38bdf8': 'Sky blue',
+    '#f97316': 'Orange',
+    '#22c55e': 'Green',
+    '#facc15': 'Yellow',
+    '#f43f5e': 'Red',
+    '#ffffff': 'White',
+};
+const DEFAULT_BOARD_COLOR = '#fde047'; // legacy default for boards saved without metadata
+// The selected-shape highlight stays a single high-contrast color so
+// selection is visually obvious regardless of the shape's stored color.
+// Mirrors the original 6c value.
+const BOARD_SELECTION_COLOR = '#fbbf24';
+
+function isValidBoardColor(value) {
+    if (typeof value !== 'string') return false;
+    // Accept the closed palette + the legacy default. Lowercase for the
+    // comparison so user-typed uppercase still matches.
+    const v = value.toLowerCase();
+    return v === DEFAULT_BOARD_COLOR || BOARD_COLOR_PALETTE.includes(v);
+}
+
+// Phase 6d-2 thickness parity follow-up — bounded stroke-width range
+// mirrors the video telestrator slider (`<input type="range" min="2"
+// max="10" value="3">` in `renderCoachTelestratorToolbar`). Keeping the
+// same bounds means a coach who learned the video slider sees identical
+// behavior in tactical mode. The default `3` matches `_coachDrawingWidth`
+// initial state so old boards saved without `stroke_width` and new
+// shapes drawn at the slider's default render at the same width — no
+// visual regression.
+const BOARD_STROKE_WIDTH_MIN = 2;
+const BOARD_STROKE_WIDTH_MAX = 10;
+const DEFAULT_BOARD_STROKE_WIDTH = 3;
+
+function normalizeBoardStrokeWidth(value) {
+    if (value === null || value === undefined) return undefined;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return undefined;
+    if (n < BOARD_STROKE_WIDTH_MIN || n > BOARD_STROKE_WIDTH_MAX) return undefined;
+    // Round so e.g. `3.49999` saves as `3` and a future numeric drift
+    // can't snowball into an out-of-bounds value.
+    return Math.round(n);
+}
+
+function normalizeBoardColor(value) {
+    if (!value) return undefined;
+    const lower = String(value).toLowerCase();
+    return isValidBoardColor(lower) ? lower : undefined;
+}
+
 function nextId(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -73,6 +130,177 @@ function runLocalConfirm(host, { message, confirmLabel = 'Confirm', cancelLabel 
 // validation. Backend cap lives in models.py `_MAX_BOARD_FREEHAND_POINTS`.
 const MAX_FREEHAND_POINTS = 200;
 
+// Phase 6d-2 — game format + formation registry. The backend accepts a
+// closed game_format set + a free-form formation label (capped at 32
+// chars). The registry below is the source of truth for the UI; the
+// "custom" 11v11 entry has no preset placement and exists so a coach
+// who hand-built a formation can still tag the board with formation:
+// "custom" without us synthesizing token positions for them.
+const VALID_GAME_FORMATS = ['7v7', '9v9', '11v11'];
+const GAME_FORMAT_LABELS = { '7v7': '7v7', '9v9': '9v9', '11v11': '11v11' };
+
+// Each preset's positions are normalized 0..1 across pitch length (x)
+// and width (y). Layouts assume the team attacks LEFT-TO-RIGHT (the
+// canonical landscape orientation) — the keeper sits near x=0.07,
+// strikers near x=0.85. Labels match the formation shape (e.g. "2-3-1"
+// is 2 backs, 3 mids, 1 forward + GK = 7 outfield slots ignoring GK).
+const FORMATION_PRESETS = {
+    '7v7': [
+        { id: '2-3-1', label: '2-3-1', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.25, y: 0.32, label: '2' },
+            { x: 0.25, y: 0.68, label: '3' },
+            { x: 0.50, y: 0.25, label: '7' },
+            { x: 0.50, y: 0.50, label: '6' },
+            { x: 0.50, y: 0.75, label: '11' },
+            { x: 0.75, y: 0.50, label: '9' },
+        ] },
+        { id: '3-2-1', label: '3-2-1', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.25, y: 0.25, label: '2' },
+            { x: 0.25, y: 0.50, label: '4' },
+            { x: 0.25, y: 0.75, label: '3' },
+            { x: 0.50, y: 0.35, label: '8' },
+            { x: 0.50, y: 0.65, label: '6' },
+            { x: 0.75, y: 0.50, label: '9' },
+        ] },
+        { id: '2-1-2-1', label: '2-1-2-1', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.22, y: 0.35, label: '2' },
+            { x: 0.22, y: 0.65, label: '3' },
+            { x: 0.40, y: 0.50, label: '6' },
+            { x: 0.60, y: 0.30, label: '7' },
+            { x: 0.60, y: 0.70, label: '11' },
+            { x: 0.78, y: 0.50, label: '9' },
+        ] },
+    ],
+    '9v9': [
+        { id: '3-2-3', label: '3-2-3', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.22, y: 0.25, label: '2' },
+            { x: 0.22, y: 0.50, label: '4' },
+            { x: 0.22, y: 0.75, label: '3' },
+            { x: 0.45, y: 0.35, label: '8' },
+            { x: 0.45, y: 0.65, label: '6' },
+            { x: 0.72, y: 0.22, label: '7' },
+            { x: 0.72, y: 0.50, label: '9' },
+            { x: 0.72, y: 0.78, label: '11' },
+        ] },
+        { id: '3-3-2', label: '3-3-2', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.22, y: 0.25, label: '2' },
+            { x: 0.22, y: 0.50, label: '4' },
+            { x: 0.22, y: 0.75, label: '3' },
+            { x: 0.48, y: 0.25, label: '7' },
+            { x: 0.48, y: 0.50, label: '8' },
+            { x: 0.48, y: 0.75, label: '11' },
+            { x: 0.74, y: 0.40, label: '9' },
+            { x: 0.74, y: 0.60, label: '10' },
+        ] },
+        { id: '2-3-3', label: '2-3-3', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.22, y: 0.35, label: '2' },
+            { x: 0.22, y: 0.65, label: '3' },
+            { x: 0.45, y: 0.25, label: '6' },
+            { x: 0.45, y: 0.50, label: '8' },
+            { x: 0.45, y: 0.75, label: '10' },
+            { x: 0.72, y: 0.22, label: '7' },
+            { x: 0.72, y: 0.50, label: '9' },
+            { x: 0.72, y: 0.78, label: '11' },
+        ] },
+        { id: '4-3-1', label: '4-3-1', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.22, y: 0.20, label: '2' },
+            { x: 0.22, y: 0.40, label: '4' },
+            { x: 0.22, y: 0.60, label: '5' },
+            { x: 0.22, y: 0.80, label: '3' },
+            { x: 0.50, y: 0.30, label: '7' },
+            { x: 0.50, y: 0.50, label: '8' },
+            { x: 0.50, y: 0.70, label: '11' },
+            { x: 0.75, y: 0.50, label: '9' },
+        ] },
+    ],
+    '11v11': [
+        { id: '4-3-3', label: '4-3-3', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.20, y: 0.18, label: '2' },
+            { x: 0.20, y: 0.38, label: '4' },
+            { x: 0.20, y: 0.62, label: '5' },
+            { x: 0.20, y: 0.82, label: '3' },
+            { x: 0.45, y: 0.30, label: '8' },
+            { x: 0.45, y: 0.50, label: '6' },
+            { x: 0.45, y: 0.70, label: '10' },
+            { x: 0.72, y: 0.20, label: '7' },
+            { x: 0.72, y: 0.50, label: '9' },
+            { x: 0.72, y: 0.80, label: '11' },
+        ] },
+        { id: '4-2-3-1', label: '4-2-3-1', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.20, y: 0.18, label: '2' },
+            { x: 0.20, y: 0.38, label: '4' },
+            { x: 0.20, y: 0.62, label: '5' },
+            { x: 0.20, y: 0.82, label: '3' },
+            { x: 0.40, y: 0.40, label: '6' },
+            { x: 0.40, y: 0.60, label: '8' },
+            { x: 0.60, y: 0.22, label: '7' },
+            { x: 0.60, y: 0.50, label: '10' },
+            { x: 0.60, y: 0.78, label: '11' },
+            { x: 0.78, y: 0.50, label: '9' },
+        ] },
+        { id: '4-4-2', label: '4-4-2', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            { x: 0.20, y: 0.18, label: '2' },
+            { x: 0.20, y: 0.38, label: '4' },
+            { x: 0.20, y: 0.62, label: '5' },
+            { x: 0.20, y: 0.82, label: '3' },
+            { x: 0.45, y: 0.18, label: '7' },
+            { x: 0.45, y: 0.38, label: '6' },
+            { x: 0.45, y: 0.62, label: '8' },
+            { x: 0.45, y: 0.82, label: '11' },
+            { x: 0.72, y: 0.40, label: '9' },
+            { x: 0.72, y: 0.60, label: '10' },
+        ] },
+        { id: '3-5-2', label: '3-5-2', positions: [
+            { x: 0.07, y: 0.50, label: 'GK' },
+            // Back three: 4 / 5 / 6 (centre-backs).
+            { x: 0.20, y: 0.30, label: '4' },
+            { x: 0.20, y: 0.50, label: '5' },
+            { x: 0.20, y: 0.70, label: '6' },
+            // Midfield five: 2 (right-wing-back), 8 / 10 (centre-mids),
+            // 7 (right-side mid), 3 (left-wing-back). Earlier label
+            // sets carried duplicate '6' on the right-side mid; the
+            // canonical 3-5-2 number is '7' there.
+            { x: 0.42, y: 0.12, label: '2' },
+            { x: 0.42, y: 0.35, label: '8' },
+            { x: 0.42, y: 0.50, label: '10' },
+            { x: 0.42, y: 0.65, label: '7' },
+            { x: 0.42, y: 0.88, label: '3' },
+            // Front two.
+            { x: 0.72, y: 0.40, label: '9' },
+            { x: 0.72, y: 0.60, label: '11' },
+        ] },
+        // "custom" — sentinel for boards the coach built by hand. The
+        // UI flow saves whatever tokens are already on the pitch with
+        // formation: "custom" so the coach's choice is preserved in the
+        // metadata. No preset positions are applied.
+        { id: 'custom', label: 'Custom (keep current tokens)', positions: null },
+    ],
+};
+
+/** Public — list available formations for a given game format. */
+export function formationsForGameFormat(gameFormat) {
+    if (!VALID_GAME_FORMATS.includes(gameFormat)) return [];
+    return (FORMATION_PRESETS[gameFormat] || []).map((f) => ({ id: f.id, label: f.label }));
+}
+
+/** Public — look up a formation preset's positions. Returns null for
+ * unknown / custom formations (custom intentionally has no preset). */
+export function formationPositions(gameFormat, formationId) {
+    const list = FORMATION_PRESETS[gameFormat] || [];
+    const preset = list.find((f) => f.id === formationId);
+    return preset?.positions || null;
+}
+
 /** Defensive read — accept anything the Phase 6a loose JSON column may
  * have stored. Returns either a normalized scene or null. Never throws. */
 export function normalizeBoardForRender(board) {
@@ -100,6 +328,19 @@ export function normalizeBoardForRender(board) {
         .filter((s) => s && typeof s === 'object' && validShapeKinds.has(s.kind))
         .map((s) => {
             const base = { id: typeof s.id === 'string' ? s.id : nextId('shape'), kind: s.kind };
+            // Phase 6d-2 color parity follow-up — accept an optional
+            // `color` per shape; unknown values fall through to undefined
+            // so the renderer applies the legacy default. Old boards
+            // without a `color` field round-trip unchanged.
+            const color = normalizeBoardColor(s.color);
+            if (color) base.color = color;
+            // Phase 6d-2 thickness parity follow-up — accept an optional
+            // `stroke_width` per shape; out-of-range / non-numeric values
+            // fall through to undefined so the renderer uses the legacy
+            // default. Old boards without `stroke_width` round-trip
+            // unchanged.
+            const strokeWidth = normalizeBoardStrokeWidth(s.stroke_width);
+            if (strokeWidth !== undefined) base.stroke_width = strokeWidth;
             if (s.kind === 'arrow' || s.kind === 'line') {
                 return { ...base, x1: clamp01(s.x1), y1: clamp01(s.y1), x2: clamp01(s.x2), y2: clamp01(s.y2) };
             }
@@ -127,13 +368,25 @@ export function normalizeBoardForRender(board) {
     // _VALID_BOARD_ORIENTATIONS gates anything else. When a future
     // sport adds a new orientation, branch on it here AND add a
     // matching renderer to PITCH_RENDERERS.
-    return {
+    const out = {
         version: 1,
         pitch_kind: 'soccer_full',
         orientation: 'landscape',
         tokens: cleanTokens,
         shapes: cleanShapes,
     };
+    // Phase 6d-2 — optional game_format / formation metadata. Old
+    // boards saved without these still load; unknown values fall
+    // through to undefined (the read paths render the board fine
+    // with no badge). Backend validates strictly on write.
+    if (typeof board.game_format === 'string' && VALID_GAME_FORMATS.includes(board.game_format)) {
+        out.game_format = board.game_format;
+    }
+    if (typeof board.formation === 'string') {
+        const fm = board.formation.trim().slice(0, 32);
+        if (fm) out.formation = fm;
+    }
+    return out;
 }
 
 /** True if a board has anything renderable. */
@@ -182,22 +435,112 @@ const PITCH_RENDERERS = {
     soccer_full: renderSoccerPitchSvgMarkings,
 };
 
+function arrowMarkerIdForColor(color) {
+    // Marker ids must be CSS-safe; encode the palette by stripping the
+    // `#` and lowercasing. The default marker keeps id `tb-arrow` for
+    // backwards compatibility (old SVG references continue to work).
+    if (!color || color === DEFAULT_BOARD_COLOR) return 'tb-arrow';
+    if (color === BOARD_SELECTION_COLOR) return 'tb-arrow-selected';
+    return `tb-arrow-${color.replace(/[^a-z0-9]/gi, '').toLowerCase()}`;
+}
+
+function zoneFillForStroke(stroke) {
+    // Translate a hex stroke into a translucent fill so the zone's
+    // interior reads against the green pitch without overpowering it.
+    // Same alpha (~0.18) the default tactical yellow used.
+    if (!stroke || stroke === DEFAULT_BOARD_COLOR) return 'rgba(253, 224, 71, 0.18)';
+    const m = /^#([0-9a-f]{6})$/i.exec(stroke);
+    if (!m) return 'rgba(253, 224, 71, 0.18)';
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
+    return `rgba(${r}, ${g}, ${b}, 0.18)`;
+}
+
 function renderShapeSvg(shape, opts = {}) {
     const W = PITCH_VIEWBOX.w, H = PITCH_VIEWBOX.h;
     const sel = opts.selectedId === shape.id;
-    const stroke = sel ? '#fbbf24' : '#fde047';
-    const strokeAttr = sel ? '4.5' : '3';
+    // Per-shape color falls through to the legacy default so old boards
+    // without color metadata render unchanged. Selection always wins so
+    // a selected shape stays visually obvious regardless of its color.
+    const baseColor = (shape.color && isValidBoardColor(shape.color)) ? shape.color : DEFAULT_BOARD_COLOR;
+    const stroke = sel ? BOARD_SELECTION_COLOR : baseColor;
+    // Phase 6d-2 thickness parity follow-up — per-shape stroke width
+    // falls through to the legacy default `3`. Selection bumps the
+    // visual width by 1.5 (the original 6c behavior) so a selected
+    // shape stays visually obvious even at the slider's max.
+    const baseWidth = normalizeBoardStrokeWidth(shape.stroke_width) ?? DEFAULT_BOARD_STROKE_WIDTH;
+    const strokeAttr = sel ? String(baseWidth + 1.5) : String(baseWidth);
     const dataAttr = opts.editor
         ? `data-shape-id="${escAttr(shape.id)}" class="tb-shape${sel ? ' is-selected' : ''}"`
         : `class="tb-shape"`;
     if (shape.kind === 'arrow' || shape.kind === 'line') {
         const x1 = shape.x1 * W, y1 = shape.y1 * H, x2 = shape.x2 * W, y2 = shape.y2 * H;
-        const marker = shape.kind === 'arrow' ? ' marker-end="url(#tb-arrow)"' : '';
-        return `<line ${dataAttr} x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-linecap="round"${marker}/>`;
+        if (shape.kind === 'line') {
+            return `<line ${dataAttr} x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-linecap="round"/>`;
+        }
+        // Phase 6d-2 follow-up #3 — render the arrowhead as an inline
+        // <polygon> sibling instead of an SVG `<marker>` element. SVG
+        // markers were not rendering reliably in preview (Chrome
+        // appears to drop them when the marker definition is rebuilt
+        // each refresh), so we draw the head explicitly to match the
+        // video telestrator's filled-triangle approach (`head = 14 +
+        // width`, ±π/6 angle from the tail). Geometry computed in
+        // viewBox units so the head scales with the SVG.
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.hypot(dx, dy) || 1;
+        const angle = Math.atan2(dy, dx);
+        // Head size in viewBox units; matches the video canvas
+        // `head = 14 + width`. Selection bumps it slightly.
+        const headLen = (sel ? 22 : 18) + baseWidth * 1.2;
+        // Pull the line short of the tip by half the head length so
+        // the round-cap end doesn't poke through the triangle. Cap
+        // adjustment respects the original direction.
+        const lineEndX = x2 - Math.cos(angle) * (headLen * 0.45);
+        const lineEndY = y2 - Math.sin(angle) * (headLen * 0.45);
+        const tipX = x2;
+        const tipY = y2;
+        const baseLeftX = x2 - headLen * Math.cos(angle - Math.PI / 6);
+        const baseLeftY = y2 - headLen * Math.sin(angle - Math.PI / 6);
+        const baseRightX = x2 - headLen * Math.cos(angle + Math.PI / 6);
+        const baseRightY = y2 - headLen * Math.sin(angle + Math.PI / 6);
+        // Wrap line + polygon in a <g> so the data-shape-id stays on
+        // a single hit target for select / drag / delete.
+        return `<g ${dataAttr}>
+            <line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${lineEndX.toFixed(2)}" y2="${lineEndY.toFixed(2)}" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-linecap="round"/>
+            <polygon points="${tipX.toFixed(2)},${tipY.toFixed(2)} ${baseLeftX.toFixed(2)},${baseLeftY.toFixed(2)} ${baseRightX.toFixed(2)},${baseRightY.toFixed(2)}" fill="${stroke}"/>
+        </g>`;
     }
     if (shape.kind === 'zone') {
         const x = shape.x * W, y = shape.y * H, w = shape.w * W, h = shape.h * H;
-        return `<rect ${dataAttr} x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(253, 224, 71, 0.18)" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-dasharray="8 6" rx="4"/>`;
+        const fill = zoneFillForStroke(baseColor);
+        const rectMarkup = `<rect ${dataAttr} x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-dasharray="8 6" rx="4"/>`;
+        // Phase 6d-2 — when this zone is selected in editor mode,
+        // render eight resize handles (4 corners + 4 edge midpoints).
+        // Each handle carries data-zone-resize so the controller's
+        // pointer-down dispatch routes a drag through resizeZone()
+        // instead of the regular drag-to-move path. Hit area is a
+        // 22x22 px square centred on each anchor (oversized vs the
+        // visible 11x11 dot so coarse pointers still grab cleanly).
+        if (sel && opts.editor) {
+            const anchors = [
+                { h: 'nw', cx: x,         cy: y         },
+                { h: 'n',  cx: x + w / 2, cy: y         },
+                { h: 'ne', cx: x + w,     cy: y         },
+                { h: 'e',  cx: x + w,     cy: y + h / 2 },
+                { h: 'se', cx: x + w,     cy: y + h     },
+                { h: 's',  cx: x + w / 2, cy: y + h     },
+                { h: 'sw', cx: x,         cy: y + h     },
+                { h: 'w',  cx: x,         cy: y + h / 2 },
+            ];
+            const handleMarkup = anchors.map((a) => `
+                <g class="tb-zone-handle" data-zone-resize="${a.h}" data-shape-id="${escAttr(shape.id)}" pointer-events="all">
+                    <rect x="${a.cx - 11}" y="${a.cy - 11}" width="22" height="22" fill="transparent"/>
+                    <rect x="${a.cx - 6}" y="${a.cy - 6}" width="12" height="12" rx="2" fill="#fde047" stroke="#0f172a" stroke-width="1.5"/>
+                </g>
+            `).join('');
+            return rectMarkup + handleMarkup;
+        }
+        return rectMarkup;
     }
     if (shape.kind === 'freehand') {
         const pts = Array.isArray(shape.points) ? shape.points : [];
@@ -209,9 +552,14 @@ function renderShapeSvg(shape, opts = {}) {
         const x = shape.x * W, y = shape.y * H;
         const text = escAttr(shape.text || '');
         const approxW = Math.min(420, Math.max(60, (shape.text || '').length * 14 + 24));
+        // Label text uses the per-shape color so a coach picks the
+        // accent and the pill stays a dark background. Selection
+        // recolors the border but keeps the text legible on its dark
+        // pill background.
+        const textFill = baseColor;
         return `<g ${dataAttr}>
             <rect x="${x - approxW / 2}" y="${y - 22}" width="${approxW}" height="44" rx="22" fill="rgba(15, 23, 42, 0.78)" stroke="${stroke}" stroke-width="${strokeAttr}"/>
-            <text x="${x}" y="${y + 7}" text-anchor="middle" fill="#fde047" font-size="22" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${text}</text>
+            <text x="${x}" y="${y + 7}" text-anchor="middle" fill="${textFill}" font-size="22" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${text}</text>
         </g>`;
     }
     return '';
@@ -225,9 +573,34 @@ function renderTokenSvg(token, opts = {}) {
         ? `data-token-id="${escAttr(token.id)}" class="tb-token${sel ? ' is-selected' : ''}"`
         : `class="tb-token"`;
     if (token.kind === 'ball') {
+        // Phase 6d-2 follow-up #2 — render the ball as a classic
+        // black-and-white soccer ball, not a circle with a dot. The
+        // pattern is a 5-vertex pentagon centred on the ball with
+        // short black panel edges from each pentagon vertex out to
+        // the rim — the canonical 2-D representation of a Truncated
+        // icosahedron. Computed at draw time so changes to ball
+        // radius (e.g. selection bump) keep the pattern proportional.
+        const r = sel ? 18 : 15;
+        const innerR = r * 0.42;       // pentagon circumradius
+        const stripeStart = innerR;     // black panel edge starts at pentagon vertex
+        const stripeEnd = r * 0.92;     // ends just inside the rim
+        const verts = [];
+        for (let i = 0; i < 5; i++) {
+            // -90° start so the pentagon points upward
+            const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+            verts.push({ x: x + innerR * Math.cos(a), y: y + innerR * Math.sin(a) });
+        }
+        const pentPoints = verts.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
+        const stripes = verts.map((v, i) => {
+            const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+            const ex = x + stripeEnd * Math.cos(a);
+            const ey = y + stripeEnd * Math.sin(a);
+            return `<line x1="${v.x.toFixed(2)}" y1="${v.y.toFixed(2)}" x2="${ex.toFixed(2)}" y2="${ey.toFixed(2)}" stroke="#0f172a" stroke-width="${(r * 0.16).toFixed(2)}" stroke-linecap="round"/>`;
+        }).join('');
         return `<g ${dataAttr}>
-            <circle cx="${x}" cy="${y}" r="${sel ? 18 : 15}" fill="#f8fafc" stroke="#0f172a" stroke-width="${sel ? 4 : 2}"/>
-            <circle cx="${x}" cy="${y}" r="6" fill="#0f172a"/>
+            <circle cx="${x}" cy="${y}" r="${r}" fill="#f8fafc" stroke="#0f172a" stroke-width="${sel ? 3 : 2}"/>
+            ${stripes}
+            <polygon points="${pentPoints}" fill="#0f172a"/>
         </g>`;
     }
     const r = sel ? 26 : 22;
@@ -241,20 +614,81 @@ function renderTokenSvg(token, opts = {}) {
 }
 
 function renderDefs() {
+    // Phase 6d-2 follow-up #3 — arrowheads are rendered as inline
+    // <polygon> elements inside each arrow's <g>, NOT as SVG `<marker>`
+    // elements referenced via `marker-end`. The marker-based approach
+    // proved unreliable in Chrome when the marker definitions were
+    // rebuilt every refresh — the head silently vanished. Defs now
+    // only carry the pitch grass gradient.
     return `<defs>
         <linearGradient id="tb-grass-grad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stop-color="${SOCCER_GRASS}"/>
             <stop offset="1" stop-color="${SOCCER_GRASS_DARK}"/>
         </linearGradient>
-        <marker id="tb-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#fde047"/>
-        </marker>
     </defs>`;
 }
 
 /** Public — render a board as an SVG string. opts.editor adds per-item
  * data attributes used by the editor click/drag handlers. opts.size
  * controls the wrapper class for sizing (preview / chip / full). */
+/** Phase 6d-2 follow-up — compute the bounding box (in normalized 0..1
+ * coords) of any token/shape, mirroring `coachObjectBounds` in
+ * `js/coaching.js`. The selected item gets a dashed-rect overlay
+ * drawn around this box so the coach has the same selection
+ * affordance as the video telestrator. */
+function boardItemBounds(item) {
+    if (!item) return null;
+    if (item.kind === 'arrow' || item.kind === 'line') {
+        const x = Math.min(item.x1, item.x2);
+        const y = Math.min(item.y1, item.y2);
+        const w = Math.max(0.02, Math.abs(item.x2 - item.x1));
+        const h = Math.max(0.02, Math.abs(item.y2 - item.y1));
+        return { x, y, w, h };
+    }
+    if (item.kind === 'zone') return { x: item.x, y: item.y, w: item.w, h: item.h };
+    if (item.kind === 'freehand') {
+        const pts = item.points || [];
+        if (!pts.length) return null;
+        const xs = pts.map((p) => p.x);
+        const ys = pts.map((p) => p.y);
+        const x = Math.min(...xs), y = Math.min(...ys);
+        return { x, y, w: Math.max(0.02, Math.max(...xs) - x), h: Math.max(0.02, Math.max(...ys) - y) };
+    }
+    if (item.kind === 'label') {
+        // Label is a pill ~280 viewBox-units wide × 44 tall, centered on
+        // (item.x, item.y). Bounds reflect the visible pill.
+        return { x: Math.max(0, item.x - 0.14), y: Math.max(0, item.y - 0.04), w: 0.28, h: 0.08 };
+    }
+    if (item.kind === 'player' || item.kind === 'ball') {
+        // Tokens are circular; pick a square bounds matching the
+        // selection-bumped radius (26 vb-units for player, 18 for ball)
+        // expressed in normalized coords (PITCH_VIEWBOX.w = 1050).
+        const r = item.kind === 'player' ? 26 : 18;
+        const dx = (r + 4) / PITCH_VIEWBOX.w;
+        const dy = (r + 4) / PITCH_VIEWBOX.h;
+        return { x: Math.max(0, item.x - dx), y: Math.max(0, item.y - dy), w: dx * 2, h: dy * 2 };
+    }
+    return null;
+}
+
+function renderSelectionBoundsSvg(selectedItem) {
+    if (!selectedItem) return '';
+    const b = boardItemBounds(selectedItem);
+    if (!b) return '';
+    const W = PITCH_VIEWBOX.w, H = PITCH_VIEWBOX.h;
+    // Pad the box so the dashed rect doesn't touch the shape outline.
+    const pad = 6;
+    const x = b.x * W - pad;
+    const y = b.y * H - pad;
+    const w = b.w * W + pad * 2;
+    const h = b.h * H + pad * 2;
+    // Match the video selection rect: white stroke, dashed [5, 4],
+    // 1.5 stroke-width. `pointer-events="none"` so the rect doesn't
+    // intercept clicks on the underlying shape (which still owns the
+    // hit target via data-shape-id / data-token-id).
+    return `<rect class="tb-selection-rect" pointer-events="none" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+}
+
 export function renderTacticalBoardSvg(board, opts = {}) {
     const normalized = normalizeBoardForRender(board);
     if (!normalized) {
@@ -270,12 +704,24 @@ export function renderTacticalBoardSvg(board, opts = {}) {
     if (normalized.tokens.length) summaryParts.push(`${normalized.tokens.length} token${normalized.tokens.length === 1 ? '' : 's'}`);
     if (normalized.shapes.length) summaryParts.push(`${normalized.shapes.length} shape${normalized.shapes.length === 1 ? '' : 's'}`);
     const summary = summaryParts.length ? `Tactical board — ${summaryParts.join(', ')}` : 'Tactical board (empty)';
+    // Phase 6d-2 follow-up — selection affordance parity with the video
+    // telestrator. When an item is selected in editor mode, draw a
+    // dashed white bounding rect over it (same `5 4` dash pattern + 1.5
+    // stroke width as `paintCoachSelection` in js/coaching.js). The
+    // rect is rendered AFTER shapes/tokens so it sits on top.
+    let selectedItem = null;
+    if (opts.editor && opts.selectedId) {
+        selectedItem = normalized.shapes.find((s) => s.id === opts.selectedId)
+            || normalized.tokens.find((t) => t.id === opts.selectedId)
+            || null;
+    }
     return `<div class="tb-svg-wrap${sizeClass}${editorClass}" role="img" aria-label="${escAttr(summary)}">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PITCH_VIEWBOX.w} ${PITCH_VIEWBOX.h}" preserveAspectRatio="xMidYMid meet" class="tb-svg">
             ${renderDefs()}
             ${renderer()}
             <g class="tb-shapes">${normalized.shapes.map((s) => renderShapeSvg(s, opts)).join('')}</g>
             <g class="tb-tokens">${normalized.tokens.map((t) => renderTokenSvg(t, opts)).join('')}</g>
+            ${selectedItem ? renderSelectionBoundsSvg(selectedItem) : ''}
         </svg>
     </div>`;
 }
@@ -284,10 +730,22 @@ export function renderTacticalBoardSvg(board, opts = {}) {
  * Strips the client-side-generated `id` if it's not a meaningful
  * persistence value, but keeping ids is harmless and helps with re-edit. */
 function buildScenePayload(state) {
-    return {
+    const payload = {
         version: 1,
         pitch_kind: 'soccer_full',
         orientation: 'landscape',
+    };
+    // Phase 6d-2 — round-trip optional metadata when the controller
+    // has it. Both fields are validated server-side; we just pass
+    // through the values so old boards that load without metadata
+    // save back without metadata.
+    if (typeof state.gameFormat === 'string' && VALID_GAME_FORMATS.includes(state.gameFormat)) {
+        payload.game_format = state.gameFormat;
+    }
+    if (typeof state.formation === 'string' && state.formation) {
+        payload.formation = state.formation.slice(0, 32);
+    }
+    return Object.assign(payload, {
         tokens: state.tokens.map((t) => {
             const out = { id: t.id, kind: t.kind, x: t.x, y: t.y };
             if (t.label) out.label = t.label;
@@ -296,6 +754,9 @@ function buildScenePayload(state) {
         }),
         shapes: state.shapes.map((s) => {
             const out = { id: s.id, kind: s.kind };
+            if (s.color && isValidBoardColor(s.color)) out.color = s.color;
+            const sw = normalizeBoardStrokeWidth(s.stroke_width);
+            if (sw !== undefined) out.stroke_width = sw;
             if (s.kind === 'arrow' || s.kind === 'line') {
                 out.x1 = s.x1; out.y1 = s.y1; out.x2 = s.x2; out.y2 = s.y2;
             } else if (s.kind === 'zone') {
@@ -308,7 +769,7 @@ function buildScenePayload(state) {
             }
             return out;
         }),
-    };
+    });
 }
 
 // ===== Phase 6d-1 — shared editor primitives =====
@@ -359,6 +820,26 @@ function buildBoardEditorController({
 }) {
     const setStatus = (msg) => { if (statusEl) statusEl.textContent = msg || ''; };
 
+    // Phase 6d-2 color parity follow-up — every newly created shape
+    // carries the controller's active color (default DEFAULT_BOARD_COLOR
+    // when the coach hasn't picked one). The legacy default is omitted
+    // from the saved payload so old boards round-trip byte-for-byte.
+    // Phase 6d-2 thickness parity follow-up — `stroke_width` rides
+    // alongside; the legacy default `3` is similarly omitted so new
+    // boards drawn at the slider default are byte-identical to legacy.
+    const withActiveColor = (shape) => {
+        let out = shape;
+        const c = state.activeColor;
+        if (c && isValidBoardColor(c) && c !== DEFAULT_BOARD_COLOR) {
+            out = { ...out, color: c };
+        }
+        const sw = normalizeBoardStrokeWidth(state.activeStrokeWidth);
+        if (sw !== undefined && sw !== DEFAULT_BOARD_STROKE_WIDTH) {
+            out = { ...out, stroke_width: sw };
+        }
+        return out;
+    };
+
     const refresh = () => {
         stage.innerHTML = renderTacticalBoardSvg(
             { pitch_kind: 'soccer_full', tokens: state.tokens, shapes: state.shapes },
@@ -378,18 +859,41 @@ function buildBoardEditorController({
         const g = document.createElementNS(ns, 'g');
         g.setAttribute('class', 'tb-drag-preview');
         g.setAttribute('pointer-events', 'none');
+        // Live drag preview uses the controller's active color + stroke
+        // width so the coach sees the chosen settings while drawing —
+        // both are committed on mouseup. Falls back to legacy defaults
+        // when nothing is armed yet.
+        const previewColor = (state.activeColor && isValidBoardColor(state.activeColor)) ? state.activeColor : DEFAULT_BOARD_COLOR;
+        const previewWidth = String(normalizeBoardStrokeWidth(state.activeStrokeWidth) ?? DEFAULT_BOARD_STROKE_WIDTH);
         if (preview.kind === 'arrow' || preview.kind === 'line') {
             const line = document.createElementNS(ns, 'line');
             line.setAttribute('x1', String(preview.x1 * W));
             line.setAttribute('y1', String(preview.y1 * H));
             line.setAttribute('x2', String(preview.x2 * W));
             line.setAttribute('y2', String(preview.y2 * H));
-            line.setAttribute('stroke', '#fde047');
-            line.setAttribute('stroke-width', '3');
+            line.setAttribute('stroke', previewColor);
+            line.setAttribute('stroke-width', previewWidth);
             line.setAttribute('stroke-dasharray', '6 4');
             line.setAttribute('stroke-linecap', 'round');
-            if (preview.kind === 'arrow') line.setAttribute('marker-end', 'url(#tb-arrow)');
             g.appendChild(line);
+            // Live preview arrowhead — same inline-polygon approach as
+            // the committed render so the coach sees the head while
+            // dragging.
+            if (preview.kind === 'arrow') {
+                const x2v = preview.x2 * W, y2v = preview.y2 * H;
+                const dx = x2v - preview.x1 * W;
+                const dy = y2v - preview.y1 * H;
+                const angle = Math.atan2(dy, dx);
+                const headLen = 18 + Number(previewWidth) * 1.2;
+                const polygon = document.createElementNS(ns, 'polygon');
+                polygon.setAttribute('points',
+                    `${x2v.toFixed(2)},${y2v.toFixed(2)} ` +
+                    `${(x2v - headLen * Math.cos(angle - Math.PI / 6)).toFixed(2)},${(y2v - headLen * Math.sin(angle - Math.PI / 6)).toFixed(2)} ` +
+                    `${(x2v - headLen * Math.cos(angle + Math.PI / 6)).toFixed(2)},${(y2v - headLen * Math.sin(angle + Math.PI / 6)).toFixed(2)}`
+                );
+                polygon.setAttribute('fill', previewColor);
+                g.appendChild(polygon);
+            }
         } else if (preview.kind === 'zone') {
             const x = Math.min(preview.x1, preview.x2);
             const y = Math.min(preview.y1, preview.y2);
@@ -400,9 +904,9 @@ function buildBoardEditorController({
             rect.setAttribute('y', String(y * H));
             rect.setAttribute('width', String(w * W));
             rect.setAttribute('height', String(h * H));
-            rect.setAttribute('fill', 'rgba(253, 224, 71, 0.12)');
-            rect.setAttribute('stroke', '#fde047');
-            rect.setAttribute('stroke-width', '3');
+            rect.setAttribute('fill', zoneFillForStroke(previewColor));
+            rect.setAttribute('stroke', previewColor);
+            rect.setAttribute('stroke-width', previewWidth);
             rect.setAttribute('stroke-dasharray', '8 6');
             rect.setAttribute('rx', '4');
             g.appendChild(rect);
@@ -411,8 +915,8 @@ function buildBoardEditorController({
             const d = preview.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${(p.x * W).toFixed(2)} ${(p.y * H).toFixed(2)}`).join(' ');
             path.setAttribute('d', d);
             path.setAttribute('fill', 'none');
-            path.setAttribute('stroke', '#fde047');
-            path.setAttribute('stroke-width', '3');
+            path.setAttribute('stroke', previewColor);
+            path.setAttribute('stroke-width', previewWidth);
             path.setAttribute('stroke-linecap', 'round');
             path.setAttribute('stroke-linejoin', 'round');
             g.appendChild(path);
@@ -476,7 +980,7 @@ function buildBoardEditorController({
             setStatus('Type label text in the Label text field, then click the pitch.');
             return;
         }
-        state.shapes.push({ id: nextId('shape'), kind: 'label', x: pt.x, y: pt.y, text: trimmed });
+        state.shapes.push(withActiveColor({ id: nextId('shape'), kind: 'label', x: pt.x, y: pt.y, text: trimmed }));
         if (labelTextInput) labelTextInput.value = '';
         state.activeTool = null;
         refresh();
@@ -484,6 +988,21 @@ function buildBoardEditorController({
     };
 
     const onPointerDown = (event) => {
+        // Phase 6d-2 — zone resize handle. Handles render only when a
+        // zone is selected in editor mode; a press on one routes a drag
+        // through resizeZone() rather than the regular drag-to-move
+        // path. The handle target is checked BEFORE the generic
+        // shape target so a press on a handle does not also trigger
+        // re-selection / drag-move of the underlying rect.
+        const handleTarget = event.target.closest('[data-zone-resize]');
+        if (handleTarget && state.selectedId) {
+            const zone = state.shapes.find((s) => s.id === state.selectedId && s.kind === 'zone');
+            if (zone) {
+                event.preventDefault();
+                beginZoneResize(event, zone, handleTarget.dataset.zoneResize);
+                return;
+            }
+        }
         // First check: did the coach press on an existing token / shape?
         const target = event.target.closest('[data-token-id], [data-shape-id]');
         if (target) {
@@ -534,11 +1053,19 @@ function buildBoardEditorController({
         }
     };
 
+    // Phase 6d-2 follow-up — `stage` is stable across renders but each
+    // `refresh()` replaces the inner SVG via innerHTML, which detaches
+    // any previously-captured `svg` reference. Re-query inside every
+    // pointer handler so getBoundingClientRect() reads from the live
+    // node. (The earlier code captured svg once per drag and watched
+    // every mousemove resolve to {0,0,0,0} after the first move
+    // triggered refresh().)
+    const liveSvg = () => stage.querySelector('svg.tb-svg');
+
     const beginDragDraw = (downEvent, kind) => {
-        const svg = stage.querySelector('svg.tb-svg');
         const move = (event) => {
             event.preventDefault();
-            const pt = pitchPointFromEvent(svg, event);
+            const pt = pitchPointFromEvent(liveSvg(), event);
             if (!pt || !state.dragPreview) return;
             state.dragPreview.x2 = pt.x;
             state.dragPreview.y2 = pt.y;
@@ -549,7 +1076,7 @@ function buildBoardEditorController({
             window.removeEventListener('mouseup', up);
             window.removeEventListener('touchmove', move);
             window.removeEventListener('touchend', up);
-            const pt = pitchPointFromEvent(svg, event) || (state.dragPreview ? { x: state.dragPreview.x2, y: state.dragPreview.y2 } : null);
+            const pt = pitchPointFromEvent(liveSvg(), event) || (state.dragPreview ? { x: state.dragPreview.x2, y: state.dragPreview.y2 } : null);
             if (!pt || !state.dragPreview) { state.dragPreview = null; refresh(); return; }
             const start = { x: state.dragPreview.x1, y: state.dragPreview.y1 };
             const end = { x: pt.x, y: pt.y };
@@ -559,22 +1086,22 @@ function buildBoardEditorController({
             const dist = Math.hypot(end.x - start.x, end.y - start.y);
             if (dist < 0.01) { refresh(); setStatus('Drag a little further to draw.'); return; }
             if (kind === 'arrow' || kind === 'line') {
-                state.shapes.push({
+                state.shapes.push(withActiveColor({
                     id: nextId('shape'), kind,
                     x1: start.x, y1: start.y, x2: end.x, y2: end.y,
-                });
+                }));
                 setStatus(kind === 'arrow' ? 'Arrow added.' : 'Line added.');
             } else if (kind === 'zone') {
                 const x = Math.min(start.x, end.x);
                 const y = Math.min(start.y, end.y);
                 const w = Math.max(0.02, Math.abs(end.x - start.x));
                 const h = Math.max(0.02, Math.abs(end.y - start.y));
-                state.shapes.push({
+                state.shapes.push(withActiveColor({
                     id: nextId('shape'), kind: 'zone',
                     x, y,
                     w: Math.min(w, 1 - x),
                     h: Math.min(h, 1 - y),
-                });
+                }));
                 setStatus('Zone added.');
             }
             refresh();
@@ -586,10 +1113,9 @@ function buildBoardEditorController({
     };
 
     const beginDragFreehand = (downEvent) => {
-        const svg = stage.querySelector('svg.tb-svg');
         const move = (event) => {
             event.preventDefault();
-            const pt = pitchPointFromEvent(svg, event);
+            const pt = pitchPointFromEvent(liveSvg(), event);
             if (!pt || !state.dragPreview) return;
             const last = state.dragPreview.points[state.dragPreview.points.length - 1];
             // Drop very-close samples to keep payload small.
@@ -606,9 +1132,58 @@ function buildBoardEditorController({
             const pts = state.dragPreview?.points || [];
             state.dragPreview = null;
             if (pts.length < 2) { refresh(); setStatus('Freehand stroke too short.'); return; }
-            state.shapes.push({ id: nextId('shape'), kind: 'freehand', points: pts });
+            state.shapes.push(withActiveColor({ id: nextId('shape'), kind: 'freehand', points: pts }));
             refresh();
             setStatus('Stroke added.');
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+        window.addEventListener('touchmove', move, { passive: false });
+        window.addEventListener('touchend', up);
+    };
+
+    /** Phase 6d-2 — drag a zone-handle to resize. `which` ∈
+     * {nw,n,ne,e,se,s,sw,w}. The opposite corner stays anchored, the
+     * dragged anchor follows the pointer. Result is clamped inside
+     * pitch bounds and to a minimum 0.02 size so a handle drag past
+     * itself doesn't produce a degenerate or inverted zone. */
+    const beginZoneResize = (downEvent, zone, which) => {
+        const original = { x: zone.x, y: zone.y, w: zone.w, h: zone.h };
+        const minSize = 0.02;
+        const move = (event) => {
+            event.preventDefault();
+            const pt = pitchPointFromEvent(liveSvg(), event);
+            if (!pt) return;
+            // Compute the new bounding box from the anchored opposite
+            // edges. Each handle pins specific edges of the rect.
+            let left = original.x;
+            let right = original.x + original.w;
+            let top = original.y;
+            let bottom = original.y + original.h;
+            if (which.includes('w')) left = clamp01(pt.x);
+            if (which.includes('e')) right = clamp01(pt.x);
+            if (which.includes('n')) top = clamp01(pt.y);
+            if (which.includes('s')) bottom = clamp01(pt.y);
+            if (right - left < minSize) {
+                if (which.includes('w')) left = right - minSize;
+                else right = left + minSize;
+            }
+            if (bottom - top < minSize) {
+                if (which.includes('n')) top = bottom - minSize;
+                else bottom = top + minSize;
+            }
+            zone.x = clamp01(left);
+            zone.y = clamp01(top);
+            zone.w = Math.min(clamp01(right - left), 1 - zone.x);
+            zone.h = Math.min(clamp01(bottom - top), 1 - zone.y);
+            refresh();
+        };
+        const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            window.removeEventListener('touchmove', move);
+            window.removeEventListener('touchend', up);
+            setStatus('Zone resized.');
         };
         window.addEventListener('mousemove', move);
         window.addEventListener('mouseup', up);
@@ -623,14 +1198,13 @@ function buildBoardEditorController({
             ? state.tokens.find((t) => t.id === id)
             : state.shapes.find((s) => s.id === id);
         if (!item) return;
-        const svg = stage.querySelector('svg.tb-svg');
-        const startPt = pitchPointFromEvent(svg, downEvent);
+        const startPt = pitchPointFromEvent(liveSvg(), downEvent);
         if (!startPt) return;
         const original = JSON.parse(JSON.stringify(item));
         let didMove = false;
         const move = (event) => {
             event.preventDefault();
-            const pt = pitchPointFromEvent(svg, event);
+            const pt = pitchPointFromEvent(liveSvg(), event);
             if (!pt) return;
             const dx = pt.x - startPt.x;
             const dy = pt.y - startPt.y;
@@ -680,11 +1254,91 @@ function buildBoardEditorController({
         svg.addEventListener('touchstart', onPointerDown, { passive: false });
     };
 
+    /** Phase 6d-2 — apply a formation preset. Replaces existing PLAYER
+     * tokens; preserves ball and non-player shapes (least-destructive).
+     * Caller is expected to have already confirmed with the coach when
+     * existing player tokens would be replaced. Records both
+     * `gameFormat` and `formation` on the state so the next save
+     * round-trips the metadata. */
+    const applyFormation = (gameFormat, formationId) => {
+        if (!VALID_GAME_FORMATS.includes(gameFormat)) return false;
+        if (formationId === 'custom') {
+            // "Custom" tags the current board with the metadata but
+            // does not replace any tokens — coach has built it by hand.
+            state.gameFormat = gameFormat;
+            state.formation = 'custom';
+            refresh();
+            setStatus('Tagged as custom formation.');
+            return true;
+        }
+        const positions = formationPositions(gameFormat, formationId);
+        if (!positions) return false;
+        // Drop existing player tokens, keep balls.
+        state.tokens = state.tokens.filter((t) => t.kind !== 'player');
+        // Drop the selection if it was a player token we just removed.
+        if (state.selectedId && !state.tokens.some((t) => t.id === state.selectedId)
+            && !state.shapes.some((s) => s.id === state.selectedId)) {
+            state.selectedId = null;
+        }
+        // Cap at MAX tokens (40) — formations max at 11 + ball so the
+        // cap is far above any preset. Splice for safety.
+        const remaining = Math.max(0, 40 - state.tokens.length);
+        positions.slice(0, remaining).forEach((p) => {
+            state.tokens.push({
+                id: nextId('token'),
+                kind: 'player',
+                x: clamp01(p.x),
+                y: clamp01(p.y),
+                label: p.label || '',
+                player_id: '',
+            });
+        });
+        state.gameFormat = gameFormat;
+        state.formation = formationId;
+        refresh();
+        setStatus(`${gameFormat} ${formationId} applied.`);
+        return true;
+    };
+
     return {
         setActiveTool,
         deleteSelected,
         clearAll,
         refresh,
+        applyFormation,
+        setGameFormat: (gf) => {
+            if (gf === null) { delete state.gameFormat; delete state.formation; refresh(); return; }
+            if (!VALID_GAME_FORMATS.includes(gf)) return;
+            state.gameFormat = gf;
+            // Switching format invalidates the formation tag — let
+            // the UI prompt for re-apply if the coach wants to.
+            delete state.formation;
+            refresh();
+        },
+        gameFormat: () => state.gameFormat || null,
+        formation: () => state.formation || null,
+        hasPlayerTokens: () => state.tokens.some((t) => t.kind === 'player'),
+        // Phase 6d-2 color parity follow-up — set / read the active
+        // color used when committing newly-drawn shapes. Passing null
+        // (or the legacy default) clears it so subsequent shapes save
+        // without a `color` field.
+        setActiveColor: (color) => {
+            const norm = normalizeBoardColor(color);
+            if (!norm || norm === DEFAULT_BOARD_COLOR) delete state.activeColor;
+            else state.activeColor = norm;
+        },
+        getActiveColor: () => state.activeColor || DEFAULT_BOARD_COLOR,
+        // Phase 6d-2 thickness parity follow-up — set / read the active
+        // stroke width used when committing newly-drawn shapes. Passing
+        // null (or the legacy default `3`) clears it so subsequent
+        // shapes save without a `stroke_width` field — old boards stay
+        // byte-identical when redrawn at the slider's default.
+        setActiveStrokeWidth: (width) => {
+            const norm = normalizeBoardStrokeWidth(width);
+            if (norm === undefined || norm === DEFAULT_BOARD_STROKE_WIDTH) delete state.activeStrokeWidth;
+            else state.activeStrokeWidth = norm;
+        },
+        getActiveStrokeWidth: () => state.activeStrokeWidth || DEFAULT_BOARD_STROKE_WIDTH,
         scenePayload: () => buildScenePayload(state),
         loadScene: (board) => {
             const seed = normalizeBoardForRender(board);
@@ -694,6 +1348,9 @@ function buildBoardEditorController({
             state.activeTool = null;
             state.pendingShape = null;
             state.dragPreview = null;
+            // Phase 6d-2 — restore metadata (or clear it for an empty load).
+            if (seed?.game_format) state.gameFormat = seed.game_format; else delete state.gameFormat;
+            if (seed?.formation) state.formation = seed.formation; else delete state.formation;
             refresh();
         },
         getState: () => state,
@@ -751,50 +1408,120 @@ export const tacticalBoardMixin = {
         if (seed) {
             state.tokens = seed.tokens.map((t) => ({ ...t }));
             state.shapes = seed.shapes.map((s) => ({ ...s }));
+            // Phase 6d-2 — restore optional metadata.
+            if (seed.game_format) state.gameFormat = seed.game_format;
+            if (seed.formation) state.formation = seed.formation;
         }
-        // Tool button grid — visually mirrors the video-mode telestrator
-        // toolbar (`renderCoachTelestratorToolbar` in coaching.js) so
-        // the side panel feels consistent across source modes. The
-        // .coach-tool-btn class re-uses existing video-tool styling;
-        // an extra .coach-tb-tool-btn hook keeps tactical-only tweaks
-        // scoped if needed.
+        // Phase 6d-2 — tool button grid uses the SAME inline-SVG icon
+        // language as `renderCoachTelestratorToolbar` (coaching.js) so a
+        // coach who learned the Video toolset recognizes every overlap.
+        // Tool ids that match the video tools (select / arrow / line /
+        // zone / freehand / label) carry the same paint-system path
+        // strings and the same visible labels; tactical-only tools
+        // (player / ball) keep their distinctive glyphs.
+        // Telestrator-overlap mapping:
+        //   Video Arrow ↔ tactical Arrow
+        //   Video Freehand (Pen) ↔ tactical Pen
+        //   Video Zone ↔ tactical Zone
+        //   Video Label ↔ tactical Label
+        //   Video Select ↔ tactical Select
         const TOOLS = [
-            { id: 'select',   label: 'Select',   tip: 'Select / move / delete' },
-            { id: 'player',   label: 'Player',   tip: 'Add player token' },
-            { id: 'ball',     label: 'Ball',     tip: 'Add ball' },
-            { id: 'arrow',    label: 'Arrow',    tip: 'Drag to draw an arrow' },
-            { id: 'line',     label: 'Line',     tip: 'Drag to draw a line' },
-            { id: 'zone',     label: 'Zone',     tip: 'Drag to draw a zone (rectangle)' },
-            { id: 'freehand', label: 'Pen',      tip: 'Drag to draw freehand' },
-            { id: 'label',    label: 'Label',    tip: 'Add a text label (use the Label text field)' },
+            { id: 'select',   label: 'Select',   tip: 'Select / move / delete (V)',
+              path: 'M5 3l14 8-6 1.5L11 19z' },
+            { id: 'player',   label: 'Player',   tip: 'Add player token (P)',
+              path: 'M12 5a4 4 0 100 8 4 4 0 000-8zM5 21c0-3.5 3-6 7-6s7 2.5 7 6' },
+            { id: 'ball',     label: 'Ball',     tip: 'Add ball (B)',
+              // Soccer ball: outer circle + central pentagon + five
+              // short radial lines from each pentagon vertex out to
+              // the rim, so the icon reads as a panelled ball rather
+              // than a circle with an X.
+              path: 'M12 4a8 8 0 100 16 8 8 0 000-16zM12 8.4l3.04 2.21-1.16 3.57h-3.76l-1.16-3.57zM12 8.4V5M15.04 10.61l3.23-1.05M13.88 14.18l1.99 2.74M10.12 14.18l-1.99 2.74M8.96 10.61L5.73 9.56' },
+            { id: 'arrow',    label: 'Arrow',    tip: 'Drag to draw an arrow (A)',
+              path: 'M4 12h13m-4-5l5 5-5 5' },
+            { id: 'line',     label: 'Line',     tip: 'Drag to draw a line (L)',
+              path: 'M5 19L19 5' },
+            { id: 'zone',     label: 'Zone',     tip: 'Drag to draw a zone (Z)',
+              path: 'M4 6h4M10 6h4M16 6h4M20 8v4M20 14v4M20 18h-4M14 18h-4M8 18H4M4 16v-4M4 10V6' },
+            { id: 'freehand', label: 'Pen',      tip: 'Drag to draw freehand (F)',
+              path: 'M3 17c2-4 4-6 6-6s2 4 4 4 4-4 6-6' },
+            { id: 'label',    label: 'Label',    tip: 'Add text label (T)',
+              path: 'M6 6h12M12 6v12' },
         ];
+        const formationToolbarHtml = `
+            <div class="coach-tb-formation" role="group" aria-label="Game format and formation">
+                <label class="coach-tb-input-wrap">
+                    <span>Game format</span>
+                    <select class="coach-tb-input" data-coach-tb-input="game-format" aria-label="Game format">
+                        <option value="">— None —</option>
+                        ${VALID_GAME_FORMATS.map((gf) => `<option value="${gf}">${escAttr(GAME_FORMAT_LABELS[gf])}</option>`).join('')}
+                    </select>
+                </label>
+                <label class="coach-tb-input-wrap">
+                    <span>Formation</span>
+                    <select class="coach-tb-input" data-coach-tb-input="formation" aria-label="Formation" disabled>
+                        <option value="">— Pick a game format —</option>
+                    </select>
+                </label>
+                <button type="button" class="mini-action-btn coach-tb-formation-apply" data-coach-tb-action="apply-formation" disabled aria-label="Apply selected formation to the board">Apply formation</button>
+            </div>
+        `;
+        // Phase 6d-2 follow-up — toolbar mirrors the video telestrator
+        // structure exactly. Same outer `.coach-telestrator` wrapper,
+        // same `.coach-tool-grid` (5-col CSS grid, 34 px desktop icons,
+        // 44 px touch labels, single icon-first language), same
+        // `.coach-tool-row` for swatches + W slider, same `.coach-draw-
+        // actions` row at the bottom for Delete / Clear. Formation
+        // controls live above the telestrator (tactical-only addition);
+        // Player # / Label text inputs sit beside the label-text input
+        // the video telestrator already exposes. Buttons keep the same
+        // `coach-tool-btn` class so active-state, hover, focus ring,
+        // and pointer-fine collapse rules apply identically.
         toolbarEl.innerHTML = `
-            <div class="coach-tb-tool-grid" role="group" aria-label="Tactical board tools">
-                ${TOOLS.map((t) => `
-                    <button type="button"
-                            class="coach-tool-btn coach-tb-tool-btn"
-                            data-coach-tb-tool="${escAttr(t.id)}"
-                            aria-pressed="false"
-                            title="${escAttr(t.tip)}"
-                            aria-label="${escAttr(t.tip)}">
-                        <span class="coach-tb-tool-glyph" aria-hidden="true">${tacticalToolGlyph(t.id)}</span>
-                        <span class="coach-tool-label">${escAttr(t.label)}</span>
-                    </button>
-                `).join('')}
-            </div>
-            <div class="coach-tb-tool-meta">
-                <label class="coach-tb-input-wrap">
-                    <span>Player #</span>
-                    <input type="text" class="coach-tb-input" data-coach-tb-input="player-label" maxlength="24" placeholder="e.g. 7">
-                </label>
-                <label class="coach-tb-input-wrap">
-                    <span>Label text</span>
-                    <input type="text" class="coach-tb-input" data-coach-tb-input="label-text" maxlength="80" placeholder="e.g. press here">
-                </label>
-            </div>
-            <div class="coach-tb-tool-actions">
-                <button type="button" class="mini-action-btn" data-coach-tb-action="delete" disabled aria-label="Delete selected item">Delete selected</button>
-                <button type="button" class="mini-action-btn" data-coach-tb-action="clear" aria-label="Clear all items">Clear board</button>
+            ${formationToolbarHtml}
+            <div class="coach-telestrator" role="toolbar" aria-label="Tactical board tools">
+                <div class="coach-tool-grid" role="group" aria-label="Drawing tools">
+                    ${TOOLS.map((t) => `
+                        <button type="button"
+                                class="coach-tool-btn"
+                                data-coach-tb-tool="${escAttr(t.id)}"
+                                aria-pressed="false"
+                                title="${escAttr(t.tip)}"
+                                aria-label="${escAttr(t.tip)}">
+                            <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="${t.path}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-tool-label">${escAttr(t.label)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+                <div class="coach-tool-row" role="group" aria-label="Color and width">
+                    ${BOARD_COLOR_PALETTE.map((color) => `
+                        <button type="button"
+                                data-coach-tb-color="${escAttr(color)}"
+                                class="coach-color-swatch"
+                                style="--swatch:${escAttr(color)}"
+                                title="${escAttr(BOARD_COLOR_NAMES[color] || color)}"
+                                aria-label="Color: ${escAttr(BOARD_COLOR_NAMES[color] || color)}"
+                                aria-pressed="false"></button>
+                    `).join('')}
+                    <label class="coach-width-control" title="Stroke width">
+                        <span class="coach-width-label" aria-hidden="true">W</span>
+                        <input type="range"
+                               min="${BOARD_STROKE_WIDTH_MIN}"
+                               max="${BOARD_STROKE_WIDTH_MAX}"
+                               value="${DEFAULT_BOARD_STROKE_WIDTH}"
+                               data-coach-tb-input="stroke-width"
+                               aria-label="Stroke width">
+                    </label>
+                </div>
+                <div class="coach-tb-tool-meta">
+                    <input type="text" class="coach-tb-input" data-coach-tb-input="player-label" maxlength="24" placeholder="Next player # (e.g. 7)" aria-label="Next player number for the next player token">
+                    <input type="text" class="coach-tb-input" data-coach-tb-input="label-text" maxlength="80" placeholder="Label text (e.g. press here)" aria-label="Text for the next label">
+                </div>
+                <div class="coach-draw-actions" role="group" aria-label="Board actions">
+                    <button type="button" class="mini-action-btn" data-coach-tb-action="delete" disabled aria-label="Delete selected item">Delete selected</button>
+                    <button type="button" class="mini-action-btn" data-coach-tb-action="clear" aria-label="Clear all items from the board">Clear board</button>
+                </div>
             </div>
         `;
         const tbPlayerInput = toolbarEl.querySelector('[data-coach-tb-input="player-label"]');
@@ -855,14 +1582,160 @@ export const tacticalBoardMixin = {
             if (!ok) return;
             ctrl.clearAll();
         });
-        // Delete / Backspace handles "delete selected" when the focus
-        // is on the stage or the toolbar (not when typing in inputs).
+
+        // Phase 6d-2 — formation controls. Game format select drives
+        // formation select options; pressing Apply confirms with the
+        // coach (when player tokens already exist) and pushes the
+        // preset positions through the controller.
+        const gameFormatSel = toolbarEl.querySelector('[data-coach-tb-input="game-format"]');
+        const formationSel = toolbarEl.querySelector('[data-coach-tb-input="formation"]');
+        const applyBtn = toolbarEl.querySelector('[data-coach-tb-action="apply-formation"]');
+        const refreshFormationOptions = () => {
+            const gf = gameFormatSel.value;
+            if (!VALID_GAME_FORMATS.includes(gf)) {
+                formationSel.disabled = true;
+                applyBtn.disabled = true;
+                formationSel.innerHTML = '<option value="">— Pick a game format —</option>';
+                return;
+            }
+            const presets = formationsForGameFormat(gf);
+            formationSel.innerHTML = '<option value="">— Select formation —</option>'
+                + presets.map((p) => `<option value="${escAttr(p.id)}">${escAttr(p.label)}</option>`).join('');
+            formationSel.disabled = false;
+            // Pre-select the saved formation if it matches this format.
+            const currentFormation = ctrl.formation();
+            if (currentFormation && presets.some((p) => p.id === currentFormation)) {
+                formationSel.value = currentFormation;
+            }
+            applyBtn.disabled = !formationSel.value;
+        };
+        const syncFormationControlsFromState = () => {
+            const gf = ctrl.gameFormat();
+            if (gf) {
+                gameFormatSel.value = gf;
+                refreshFormationOptions();
+            } else {
+                gameFormatSel.value = '';
+                refreshFormationOptions();
+            }
+        };
+        gameFormatSel.addEventListener('change', () => refreshFormationOptions());
+        formationSel.addEventListener('change', () => {
+            applyBtn.disabled = !formationSel.value || !gameFormatSel.value;
+        });
+        applyBtn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            const gf = gameFormatSel.value;
+            const fid = formationSel.value;
+            if (!gf || !fid) return;
+            // Confirm if existing player tokens would be replaced.
+            // Custom doesn't replace tokens — never asks.
+            if (fid !== 'custom' && ctrl.hasPlayerTokens()) {
+                const ok = await window.app.confirmAction({
+                    title: 'Apply formation',
+                    message: `Replace the player tokens currently on the board with the ${gf} ${fid} preset? Ball and shapes are kept.`,
+                    confirmLabel: 'Replace players',
+                    danger: false,
+                });
+                if (!ok) return;
+            }
+            ctrl.applyFormation(gf, fid);
+            applyBtn.disabled = !formationSel.value;
+        });
+        syncFormationControlsFromState();
+
+        // Phase 6d-2 color parity follow-up — color swatch wiring.
+        // Mirrors the video telestrator's swatch active state (`active`
+        // class + `aria-pressed`). Selecting a swatch updates the
+        // controller's active color so subsequent shapes carry it.
+        const colorSwatches = Array.from(toolbarEl.querySelectorAll('[data-coach-tb-color]'));
+        const syncColorSwatches = () => {
+            const active = ctrl.getActiveColor();
+            colorSwatches.forEach((sw) => {
+                const on = sw.dataset.coachTbColor === active;
+                sw.classList.toggle('active', on);
+                sw.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+        };
+        colorSwatches.forEach((sw) => {
+            sw.addEventListener('click', (event) => {
+                event.preventDefault();
+                ctrl.setActiveColor(sw.dataset.coachTbColor);
+                syncColorSwatches();
+            });
+        });
+        // Phase 6d-2 — default armed color matches the video telestrator
+        // default (`#38bdf8` Sky blue). Old boards still render their
+        // default yellow because individual saved shapes without a color
+        // field fall through to DEFAULT_BOARD_COLOR at render time.
+        ctrl.setActiveColor('#38bdf8');
+        syncColorSwatches();
+
+        // Phase 6d-2 thickness parity follow-up — slider wiring. Mirrors
+        // the video telestrator's `<input type="range" min="2" max="10">`
+        // slider exactly. `input` (not `change`) so the live drag preview
+        // reflects the chosen width as the coach drags the slider.
+        const strokeWidthInput = toolbarEl.querySelector('[data-coach-tb-input="stroke-width"]');
+        if (strokeWidthInput) {
+            strokeWidthInput.addEventListener('input', () => {
+                ctrl.setActiveStrokeWidth(strokeWidthInput.value);
+            });
+        }
+
+        // Phase 6d-2 — keyboard shortcuts. Only active when Coach Review
+        // is in tactical_board source mode (the body[data-coach-review-
+        // source="tactical_board"] gate). Skip while typing in any input
+        // / textarea / select OR when modifier keys are held (Cmd+S, etc.
+        // belong to the host page). The shortcut letters mirror the video
+        // telestrator's choices so a coach learns one keybinding once
+        // (A, F, Z, T match the video toolset; P, B, L, V are
+        // tactical-board specific).
+        const TB_KEY_TO_TOOL = {
+            v: 'select', V: 'select',
+            p: 'player', P: 'player',
+            b: 'ball',   B: 'ball',
+            a: 'arrow',  A: 'arrow', '1': 'arrow',
+            l: 'line',   L: 'line',
+            z: 'zone',   Z: 'zone',
+            f: 'freehand', F: 'freehand',
+            t: 'label',  T: 'label',
+        };
+        const activateToolViaKey = (toolId) => {
+            const btn = toolbarEl.querySelector(`[data-coach-tb-tool="${toolId}"]`);
+            if (btn) btn.click();
+        };
         const onKeydown = (event) => {
+            // Only fire while tactical_board mode is the active source.
+            if (document.body.dataset.coachReviewSource !== 'tactical_board') return;
+            if (event.metaKey || event.ctrlKey || event.altKey) return;
+            const tag = (event.target?.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            if (event.target?.isContentEditable) return;
+            // Delete / Backspace removes selected item.
             if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedId) {
-                const tag = (event.target?.tagName || '').toLowerCase();
-                if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
                 event.preventDefault();
                 ctrl.deleteSelected();
+                return;
+            }
+            // Esc clears selection or armed tool.
+            if (event.key === 'Escape') {
+                if (state.activeTool && state.activeTool !== 'select') {
+                    event.preventDefault();
+                    activateToolViaKey('select');
+                    return;
+                }
+                if (state.selectedId) {
+                    event.preventDefault();
+                    state.selectedId = null;
+                    ctrl.refresh();
+                    return;
+                }
+                return;
+            }
+            const tool = TB_KEY_TO_TOOL[event.key];
+            if (tool) {
+                event.preventDefault();
+                activateToolViaKey(tool);
             }
         };
         window.addEventListener('keydown', onKeydown);
@@ -874,13 +1747,51 @@ export const tacticalBoardMixin = {
             deleteSelected: () => ctrl.deleteSelected(),
             clearAll: () => ctrl.clearAll(),
             scenePayload: () => ctrl.scenePayload(),
-            loadScene: (board) => ctrl.loadScene(board),
+            loadScene: (board) => {
+                ctrl.loadScene(board);
+                // Phase 6d-2 — keep the formation controls in sync with
+                // the loaded scene so a re-mounted controller doesn't
+                // show stale game format / formation values.
+                syncFormationControlsFromState();
+            },
+            // Phase 6d-2 — formation accessors used by the spec for QA
+            // and by the inline tactical Save flow.
+            applyFormation: (gf, fid) => {
+                const ok = ctrl.applyFormation(gf, fid);
+                syncFormationControlsFromState();
+                return ok;
+            },
+            gameFormat: () => ctrl.gameFormat(),
+            formation: () => ctrl.formation(),
+            hasPlayerTokens: () => ctrl.hasPlayerTokens(),
+            setActiveColor: (color) => {
+                ctrl.setActiveColor(color);
+                syncColorSwatches();
+            },
+            getActiveColor: () => ctrl.getActiveColor(),
+            setActiveStrokeWidth: (width) => {
+                ctrl.setActiveStrokeWidth(width);
+                if (strokeWidthInput) {
+                    strokeWidthInput.value = String(ctrl.getActiveStrokeWidth());
+                }
+            },
+            getActiveStrokeWidth: () => ctrl.getActiveStrokeWidth(),
+            // Phase 6d-2 — surface the inner controller's `refresh()`
+            // and a select-by-id helper so QA / capture specs can drive
+            // selection state without reaching into private state.
+            refresh: () => ctrl.refresh(),
+            selectShapeById: (id) => {
+                const exists = state.tokens.some((t) => t.id === id) || state.shapes.some((s) => s.id === id);
+                state.selectedId = exists ? id : null;
+                ctrl.refresh();
+            },
             destroy: () => {
                 window.removeEventListener('keydown', onKeydown);
                 stageEl.innerHTML = '';
                 toolbarEl.innerHTML = '';
             },
-            hasContent: () => state.tokens.length > 0 || state.shapes.length > 0,
+            hasContent: () => state.tokens.length > 0 || state.shapes.length > 0
+                || !!state.gameFormat || !!state.formation,
             // Read-only state accessor — callers MUST NOT mutate the
             // returned object directly; use `setTool` / `loadScene`
             // / `deleteSelected` / `clearAll` to drive state. Useful
