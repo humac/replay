@@ -1027,15 +1027,22 @@
                     <strong data-field="title"></strong>
                     <span data-field="subtitle"></span>
                 </div>
-                <div class="player-wrapper feedback-player-wrapper">
+                <!-- Phase 6e — the playback area is one of two visuals:
+                     a video player (notes / clips / playlists) OR a
+                     read-only tactical board (observation notes). The
+                     mounter shows whichever applies and hides the other. -->
+                <div class="player-wrapper feedback-player-wrapper" data-field="video-wrapper">
                     <!-- allow-native-controls: focused feedback player modal; native HLS chrome is the canonical UX -->
                     <video data-field="video" id="feedback-player-video" controls playsinline preload="metadata" class="main-video"></video>
                     <canvas data-field="canvas" id="feedback-drawing-canvas" class="coach-drawing-canvas"></canvas>
                 </div>
+                <div class="feedback-player-board" data-field="board-wrapper" hidden></div>
                 <div class="feedback-player-rail" data-field="rail" hidden></div>
                 <!-- PR 1c: changed from <p> to <div> so the focused-note
                      body can host structured field block markup (<dl>) +
-                     a collapsible "Coach context" disclosure. -->
+                     a collapsible "Coach context" disclosure. Phase 6e
+                     extends this body to also carry the same structured
+                     detail layout for observations + clips. -->
                 <div class="feedback-player-body" data-field="body"></div>
             </div>
         </template>

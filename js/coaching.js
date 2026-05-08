@@ -4585,23 +4585,6 @@ export const coachingMixin = {
         return `<span class="feedback-tone-pill" data-tone="${this.esc(noteType)}">${this.esc(label)}</span>`;
     },
 
-    /** PR 1c — paint the focused-note modal body. Same composition
-     *  as the notes-list row, scaled up: tone pill, primary summary,
-     *  structured what/why/next stack, and a collapsed "Coach context"
-     *  disclosure for the long-form `body` when both are present. */
-    _renderFeedbackBody(target, note) {
-        if (!target) return;
-        const { primary, secondary } = this._feedbackNoteSummary(note);
-        const parts = [];
-        const tone = this._feedbackTonePillHtml(note?.note_type);
-        if (tone) parts.push(`<div class="feedback-player-tone">${tone}</div>`);
-        if (primary) parts.push(`<p class="feedback-note-summary feedback-player-summary">${this.esc(primary)}</p>`);
-        const structured = this._feedbackStructuredHtml(note);
-        if (structured) parts.push(structured);
-        if (secondary) parts.push(`<details class="feedback-note-more"><summary>Coach context</summary><p>${this.esc(secondary)}</p></details>`);
-        target.innerHTML = parts.join('');
-    },
-
     /** PR 1c — structured what / why / next stack. Renders only the
      *  fields that are non-empty so a simple note (with only
      *  `player_summary`) still feels lightweight. `coach_private_note`
@@ -4739,20 +4722,18 @@ export const coachingMixin = {
             container.innerHTML = '<div class="session-empty">No coaching notes have been shared with you yet.</div>';
             return;
         }
-        // Cards are scannable previews — tone + title + meta + a
-        // line of summary + actions. The full structured What /
-        // Why / Next stack and the Coach context disclosure live
-        // inside the focused Watch modal, where the player has the
-        // video + drawing context to anchor them.
+        // Cards are intentionally compact: thumb + tone + title + meta
+        // only. No inline summary, no inline board, no row of action
+        // buttons. Clicking the card opens the unified detail/playback
+        // modal (`openFeedbackNote(id)`) which is the single review
+        // surface — same layout for video, observation, and tactical-
+        // board notes — so a viewer always lands in one consistent UI.
         container.innerHTML = notes.map((n) => {
             const isReviewed = reviewed.has(Number(n.id));
             const isObservation = (n.note_context || 'video') === 'observation';
             const tonePill = this._feedbackTonePillHtml(n.note_type);
-            const { primary } = this._feedbackNoteSummary(n);
-            // Phase 6b — observation notes have no match/slot/
-            // timestamp anchor. Use event metadata when available so
-            // the meta line never shows "null · 0:00 · Full". Video
-            // notes keep the existing meta exactly as before.
+            // Observation notes have no match/slot/timestamp anchor — use
+            // event metadata so the meta line never shows "null · 0:00".
             const metaParts = [];
             if (isObservation) {
                 if (n.event_type) {
@@ -4761,51 +4742,29 @@ export const coachingMixin = {
                 } else {
                     metaParts.push('Observation');
                 }
-                if (n.event_title) metaParts.push(n.event_title);
                 if (n.event_date) metaParts.push(n.event_date);
             } else {
                 metaParts.push(this.matchLabel(n.match_id));
                 metaParts.push(this.formatClock(n.timestamp_seconds));
-                metaParts.push(this.slotLabel(n.slot));
             }
             metaParts.push(isReviewed ? 'Reviewed' : 'New');
             const meta = metaParts.filter(Boolean).map((p) => this.esc(p)).join(' · ');
             const titleText = (n.title || '').trim()
                 || (isObservation ? ((n.event_title || '').trim() || 'Observation note') : '(untitled)');
-            // Observation notes have no playable video. Phase 6b
-            // ships the read-only viewer experience without an
-            // additional modal — show the note inline only via the
-            // structured fields. The Watch button is suppressed and
-            // the focused-feedback player is not opened. Phase 6c:
-            // when an observation carries a tactical board, show a
-            // compact SVG preview tile instead of the clipboard
-            // glyph so the viewer immediately sees the sketch.
+            // Thumbnail variants:
+            //  - video note: source-video JPEG via the auth-checked
+            //    thumbnail mount
+            //  - observation with tactical board: compact SVG chip of
+            //    the board
+            //  - observation without board: clipboard glyph placeholder
             const hasBoard = isObservation && this.tacticalBoardHasContent(n.tactical_board_json);
             const thumb = isObservation
                 ? (hasBoard
                     ? `<div class="coach-thumb coach-thumb--card coach-thumb--board" aria-hidden="false">${this.tacticalBoardSvg(n.tactical_board_json, { size: 'chip' })}</div>`
                     : '<div class="coach-thumb coach-thumb--card coach-thumb--observation" data-thumb-state="placeholder" aria-hidden="true"><span class="coach-thumb-observation-glyph">📋</span></div>')
                 : this._coachNoteThumbHtml(n, { size: 'card' });
-            const actions = isObservation
-                ? `<button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>`
-                : `
-                    <button type="button" class="btn-primary" onclick="app.openFeedbackNote(${n.id})">▶ Watch</button>
-                    <button type="button" class="mini-action-btn" onclick="app.markFeedbackItemReviewed({ note_id: ${n.id} })">${isReviewed ? 'Reviewed ✓' : 'Mark reviewed'}</button>
-                `;
-            // Phase 6c — read-only board preview rendered inline below
-            // the summary. The note `n` came from `/api/my-feedback`,
-            // which already routes every viewer-visible note through
-            // `_filter_notes_for_user` → `_strip_private_fields` on the
-            // server. `tactical_board_json` follows the parent note's
-            // visibility, so a board on the page implies the viewer is
-            // authorized to see it. NO client-side authorization is
-            // introduced here — parent-note visibility remains the
-            // source of truth.
-            const boardPreview = hasBoard
-                ? `<div class="feedback-card-board">${this.tacticalBoardSvg(n.tactical_board_json, { size: 'preview' })}</div>`
-                : '';
             return `
-            <article class="feedback-card feedback-note-card feedback-card--with-thumb" data-note-context="${isObservation ? 'observation' : 'video'}">
+            <article class="feedback-card feedback-note-card feedback-card--with-thumb feedback-card--clickable" data-note-context="${isObservation ? 'observation' : 'video'}" tabindex="0" role="button" aria-label="Open ${this.esc(titleText)}" onclick="app.openFeedbackNote(${n.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();app.openFeedbackNote(${n.id});}">
                 ${thumb}
                 <div class="feedback-card-body">
                     <div class="feedback-card-head">
@@ -4814,11 +4773,6 @@ export const coachingMixin = {
                     </div>
                     <h3 class="feedback-card-title">${this.esc(titleText)}</h3>
                     <div class="feedback-card-meta">${meta}</div>
-                    ${primary ? `<p class="feedback-card-summary">${this.esc(primary)}</p>` : ''}
-                    ${boardPreview}
-                    <div class="feedback-card-actions">
-                        ${actions}
-                    </div>
                 </div>
             </article>`;
         }).join('');
@@ -4829,9 +4783,18 @@ export const coachingMixin = {
         this.mountCoachNoteThumbnailsIn(container);
     },
 
+    /** Open the unified feedback review modal for a note. The same
+     *  modal handles both video notes (with HLS playback + telestration)
+     *  and observation notes (with a read-only tactical board where the
+     *  video would be); the body always shows the same structured-field
+     *  layout so a viewer never sees three different shells across the
+     *  three review types. */
     openFeedbackNote(noteId) {
         const note = (this._feedbackData?.notes || []).find((n) => Number(n.id) === Number(noteId));
-        if (!note) return;
+        if (!note) {
+            this.showError('Note not available.');
+            return;
+        }
         this.openFeedbackPlayer({ mode: 'note', note });
     },
 
@@ -4860,12 +4823,17 @@ export const coachingMixin = {
             container.innerHTML = '<div class="session-empty">No coaching clips have been shared with you yet.</div>';
             return;
         }
+        // Compact clip cards — thumb + clip pill + title + meta. The
+        // description, structured fields, and Watch/Mark-reviewed live
+        // inside the unified detail modal that opens on card click,
+        // matching the notes/observations behaviour so the viewer never
+        // sees three different layouts for three review types.
         container.innerHTML = clips.map((c) => {
-            const meta = `${this.esc(this.matchLabel(c.match_id))} · ${this.esc(this.slotLabel(c.slot))} · `
+            const meta = `${this.esc(this.matchLabel(c.match_id))} · `
                 + `${this.esc(this.formatClock(c.start_seconds))}–${this.esc(this.formatClock(c.end_seconds))} `
                 + `(${this.esc(this._clipDurationLabel(c))})`;
             return `
-            <article class="feedback-card feedback-clip-card feedback-card--with-thumb">
+            <article class="feedback-card feedback-clip-card feedback-card--with-thumb feedback-card--clickable" tabindex="0" role="button" aria-label="Open ${this.esc(c.title)}" onclick="app.openFeedbackClip(${c.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();app.openFeedbackClip(${c.id});}">
                 ${this._coachClipThumbHtml(c)}
                 <div class="feedback-card-body">
                     <div class="feedback-card-head">
@@ -4873,10 +4841,6 @@ export const coachingMixin = {
                     </div>
                     <h3 class="feedback-card-title">${this.esc(c.title)}</h3>
                     <div class="feedback-card-meta">${meta}</div>
-                    ${c.description ? `<p class="feedback-card-summary">${this.esc(c.description)}</p>` : ''}
-                    <div class="feedback-card-actions">
-                        <button type="button" class="btn-primary" onclick="app.openFeedbackClip(${c.id})">▶ Watch clip</button>
-                    </div>
                 </div>
             </article>`;
         }).join('');
@@ -4889,6 +4853,209 @@ export const coachingMixin = {
         const clip = (this._feedbackData?.clips || []).find((c) => Number(c.id) === Number(clipId));
         if (!clip) return;
         this.openFeedbackPlayer({ mode: 'clip', clip, playerSource: 'feedback' });
+    },
+
+    // ===== Phase 6e — viewer detail modals =====
+    //
+    // The detail modal is the single read-only surface a player/family
+    // viewer uses to read the full structured feedback for a note,
+    // observation, or clip. It is composed from the data the server
+    // already returned in `/api/my-feedback` (or
+    // `/api/my-feedback/players/{id}/development`) — no new endpoints, no
+    // new client-side authorization, no client-side filtering.
+    //
+    // Privacy invariants (defense in depth):
+    //   - `coach_private_note` is NEVER templated here. The server
+    //     scrubs it via `_strip_private_fields` for viewers; we also
+    //     refuse to render it client-side regardless of payload.
+    //   - The detail modal pulls the note/clip out of `_feedbackData`,
+    //     so it can only show what the viewer endpoint already returned.
+    //   - `tactical_board_json` follows the parent note's visibility on
+    //     the server. If a board reaches us, the parent note is visible.
+    //
+    // Defensive rendering:
+    //   - Missing optional structured fields collapse cleanly (no empty
+    //     section headings, no "null" / "undefined" / "NaN").
+    //   - Observation notes without a board fall through to the text
+    //     layout — no empty board container.
+    //   - Older notes without Phase 6 fields render without the event
+    //     metadata block.
+
+    /** Resolve linked-player chips for a note/clip from the data the
+     *  server already shipped. Falls back to `_feedbackData.players`
+     *  (the linked-strip payload) and then to a "Player {short id}" label
+     *  so a defensive payload never produces "undefined". */
+    _resolveLinkedPlayerChips(playerIds) {
+        if (!Array.isArray(playerIds) || !playerIds.length) return '';
+        const knownPlayers = (this._feedbackData?.players || []);
+        const byId = new Map(knownPlayers.map((p) => [String(p.id), p]));
+        const chips = playerIds.map((pid) => {
+            const player = byId.get(String(pid));
+            const label = player ? this.playerLabel(player) : 'Linked player';
+            return `<span class="feedback-linked-pill">${this.esc(label)}</span>`;
+        });
+        return chips.join('');
+    },
+
+    /** Build the structured-fields stack — this is the single composition
+     *  point shared between the My Feedback note detail modal and the
+     *  focused-feedback-player body. Renders only what's non-empty so a
+     *  viewer never sees an empty "What happened" block. */
+    _detailStructuredHtml(note) {
+        const items = [
+            ['What happened',     note?.what_happened],
+            ['Why it matters',    note?.why_it_matters],
+            ['What to do next',   note?.what_to_do_next],
+        ].filter(([, v]) => (v || '').trim());
+        if (!items.length) return '';
+        return items.map(([label, value]) => `
+            <section class="feedback-detail-section">
+                <h4 class="feedback-detail-section-title">${this.esc(label)}</h4>
+                <p class="feedback-detail-section-body">${this.esc(value.trim())}</p>
+            </section>
+        `).join('');
+    },
+
+    /** Build the meta line for a video note's detail header. */
+    _detailVideoMetaHtml(note) {
+        const parts = [
+            this.matchLabel(note.match_id),
+            this.slotLabel(note.slot),
+            this.formatClock(note.timestamp_seconds),
+        ].filter(Boolean);
+        return parts.map((p) => this.esc(p)).join(' · ');
+    },
+
+    /** Build the meta line for an observation note's detail header.
+     *  Returns HTML-escaped text safe to drop into innerHTML. */
+    _detailObservationMetaHtml(note) {
+        return this.esc(this._observationMetaText(note));
+    },
+
+    /** Plain-text variant — safe to assign via textContent. The HTML
+     *  helper above escapes the same string; assigning the escaped
+     *  HTML to textContent would double-escape characters like `&`,
+     *  so the modal subtitle uses this plain-text form. */
+    _observationMetaText(note) {
+        const parts = [];
+        if (note.event_type) {
+            const typeLabel = `${note.event_type[0].toUpperCase()}${note.event_type.slice(1)}`;
+            parts.push(`${typeLabel} observation`);
+        } else {
+            parts.push('Coach observation');
+        }
+        if (note.event_title && note.event_title !== (note.title || '')) {
+            parts.push(note.event_title);
+        }
+        if (note.event_date) parts.push(note.event_date);
+        return parts.filter(Boolean).join(' · ');
+    },
+
+    /** Phase 6e — the unified review-modal body composer. Builds the
+     *  same structured layout for video notes, observation notes, and
+     *  clips so the viewer always sees one consistent reading
+     *  experience. The visual (video / tactical board / playback
+     *  window) is rendered ABOVE this body by the focused-feedback
+     *  player template; this composer fills the body slot below it
+     *  with: tone + category + linked players + Summary +
+     *  What happened / Why / Next + Additional detail + tags.
+     *
+     *  `coach_private_note` is NEVER referenced or templated — defense
+     *  in depth even though the server already scrubs it for viewers
+     *  via `_strip_private_fields`.
+     *
+     *  Inputs:
+     *    { kind: 'note',  note }   — video or observation note
+     *    { kind: 'clip',  clip }   — coaching clip
+     */
+    _renderUnifiedFeedbackBody(target, { kind, note = null, clip = null }) {
+        if (!target) return;
+        const reviews = this._feedbackData?.reviews || [];
+        let parts = [];
+        if (kind === 'note' && note) {
+            const isObservation = (note.note_context || 'video') === 'observation';
+            const isReviewed = reviews.some((r) => Number(r.note_id) === Number(note.id));
+            const tonePill = this._feedbackTonePillHtml(note.note_type);
+            const categoryHtml = note.category
+                ? `<span class="feedback-detail-chip">${this.esc(this._categoryLabel(note.category))}</span>`
+                : '';
+            const contextPill = isObservation
+                ? `<span class="feedback-detail-context-pill" data-context="observation">${this.esc(this._observationContextLabel(note))}</span>`
+                : `<span class="feedback-detail-context-pill" data-context="video">Video note</span>`;
+            const reviewedChip = isReviewed
+                ? '<span class="feedback-detail-chip feedback-detail-chip--reviewed">Reviewed ✓</span>'
+                : '';
+            const linkedHtml = this._resolveLinkedPlayerChips(note.player_ids);
+            const linkedSection = linkedHtml
+                ? `<div class="feedback-detail-linked"><span class="feedback-detail-linked-label">For:</span>${linkedHtml}</div>`
+                : '';
+            const { primary, secondary } = this._feedbackNoteSummary(note);
+            const structured = this._detailStructuredHtml(note);
+            const tagsHtml = (note.tags && note.tags.length)
+                ? `<div class="feedback-detail-chips" aria-label="Tags">${note.tags.map((t) => `<span class="feedback-detail-chip feedback-detail-chip--tag">#${this.esc(t)}</span>`).join('')}</div>`
+                : '';
+            parts.push(`
+                <div class="feedback-detail-head-row">
+                    ${contextPill}
+                    ${tonePill}
+                    ${categoryHtml}
+                    ${reviewedChip}
+                </div>
+                ${linkedSection}
+            `);
+            if (primary) {
+                parts.push(`<section class="feedback-detail-summary"><h4 class="feedback-detail-section-title">Summary</h4><p>${this.esc(primary)}</p></section>`);
+            }
+            if (structured) parts.push(structured);
+            if (secondary) {
+                parts.push(`<section class="feedback-detail-section feedback-detail-additional"><h4 class="feedback-detail-section-title">Additional detail</h4><p class="feedback-detail-section-body">${this.esc(secondary)}</p></section>`);
+            }
+            if (tagsHtml) parts.push(tagsHtml);
+        } else if (kind === 'clip' && clip) {
+            const categoryLabel = this._categoryLabel(clip.category || 'other');
+            const linkedHtml = this._resolveLinkedPlayerChips(clip.player_ids);
+            const linkedSection = linkedHtml
+                ? `<div class="feedback-detail-linked"><span class="feedback-detail-linked-label">For:</span>${linkedHtml}</div>`
+                : '';
+            const description = (clip.description || '').trim();
+            parts.push(`
+                <div class="feedback-detail-head-row">
+                    <span class="feedback-detail-context-pill" data-context="clip">Coaching clip</span>
+                    ${categoryLabel ? `<span class="feedback-detail-chip">${this.esc(categoryLabel)}</span>` : ''}
+                </div>
+                ${linkedSection}
+            `);
+            if (description) {
+                parts.push(`<section class="feedback-detail-summary"><h4 class="feedback-detail-section-title">Description</h4><p>${this.esc(description)}</p></section>`);
+            }
+        }
+        target.classList.add('feedback-detail-body');
+        target.dataset.context = kind === 'clip' ? 'clip' : ((note?.note_context || 'video') === 'observation' ? 'observation' : 'video');
+        target.innerHTML = parts.join('');
+    },
+
+    /** Helper — resolve a category code to its display label. Falls back
+     *  to the raw value (capitalized) for unknown codes so a forward-
+     *  compat payload from a future migration still renders sensibly. */
+    _categoryLabel(category) {
+        if (!category) return '';
+        const map = Object.fromEntries(NOTE_CATEGORIES);
+        return map[category] || category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, ' ');
+    },
+
+    /** Helper — choose a human-friendly observation context label for
+     *  the detail modal pill. Mirrors the card-meta wording but avoids
+     *  the suffix "observation" duplication when the event_type already
+     *  spells it out. */
+    _observationContextLabel(note) {
+        if (note.event_type === 'tactical' && this.tacticalBoardHasContent(note.tactical_board_json)) {
+            return 'Tactical observation';
+        }
+        if (note.event_type) {
+            const typeLabel = `${note.event_type[0].toUpperCase()}${note.event_type.slice(1)}`;
+            return `${typeLabel} observation`;
+        }
+        return 'Coach observation';
     },
 
     // ===== Focused feedback / playlist player modal =====
@@ -4927,51 +5094,88 @@ export const coachingMixin = {
 
         const onMount = () => {
             this._feedbackPlayer = { body, mode, note, playlist, clip, playerSource };
+            const videoWrapper = body.querySelector('[data-field="video-wrapper"]');
+            const boardWrapper = body.querySelector('[data-field="board-wrapper"]');
             if (mode === 'note') {
-                body.querySelector('[data-field="title"]').textContent = note.title || 'Coaching note';
-                body.querySelector('[data-field="subtitle"]').textContent = `${this.matchLabel(note.match_id)} · ${this.formatClock(note.timestamp_seconds)} · ${this.slotLabel(note.slot)}`;
-                // PR 1c: player_summary first, then structured stack,
-                // then body as collapsible "Coach context" if both
-                // exist. Switch from textContent to innerHTML so the
-                // helper-rendered HTML lands intact (each helper
-                // already passes user data through `this.esc()`).
-                this._renderFeedbackBody(body.querySelector('[data-field="body"]'), note);
-                this._loadFeedbackVideoForNote(note);
+                const isObservation = (note.note_context || 'video') === 'observation';
+                body.querySelector('[data-field="title"]').textContent = note.title || (isObservation ? 'Coach observation' : 'Coaching note');
+                body.querySelector('[data-field="subtitle"]').textContent = isObservation
+                    ? this._observationMetaText(note)
+                    : `${this.matchLabel(note.match_id)} · ${this.formatClock(note.timestamp_seconds)} · ${this.slotLabel(note.slot)}`;
+                // Phase 6e — the focused player modal is the SINGLE
+                // review surface for notes (video + observation). For
+                // observation notes there's no playable video: hide the
+                // <video>+canvas wrapper and reveal the read-only
+                // tactical board (when present) where the video would
+                // be. For video notes, hide the board wrapper and load
+                // the HLS source as before.
+                if (isObservation) {
+                    if (videoWrapper) videoWrapper.hidden = true;
+                    if (boardWrapper) {
+                        const hasBoard = this.tacticalBoardHasContent(note.tactical_board_json);
+                        if (hasBoard) {
+                            boardWrapper.hidden = false;
+                            boardWrapper.innerHTML = this.tacticalBoardSvg(note.tactical_board_json, { size: 'preview' });
+                        } else {
+                            boardWrapper.hidden = true;
+                        }
+                    }
+                } else {
+                    if (boardWrapper) boardWrapper.hidden = true;
+                    if (videoWrapper) videoWrapper.hidden = false;
+                    this._loadFeedbackVideoForNote(note);
+                }
+                // Always render the unified structured-field body
+                // (Summary / What happened / Why / Next / Additional
+                // detail / tags / linked players). `coach_private_note`
+                // is never templated.
+                this._renderUnifiedFeedbackBody(body.querySelector('[data-field="body"]'), { kind: 'note', note });
             } else if (mode === 'playlist') {
                 body.querySelector('[data-field="title"]').textContent = playlist.title || 'Review playlist';
                 body.querySelector('[data-field="subtitle"]').textContent = `${(playlist.note_ids || []).length} clips`;
                 body.querySelector('[data-field="body"]').textContent = playlist.description || '';
+                if (boardWrapper) boardWrapper.hidden = true;
                 this.startCoachingPlaylistSession(playlist, { playerSource });
             } else if (mode === 'clip') {
                 // Phase 4b: clip playback. Title + a subtitle that
                 // names the match, slot, and the [start–end] window
                 // so the player knows what they're about to watch.
-                // The body shows the clip's optional description (the
-                // player-friendly text the coach wrote).
                 body.querySelector('[data-field="title"]').textContent = clip.title || 'Coaching clip';
                 body.querySelector('[data-field="subtitle"]').textContent =
                     `${this.matchLabel(clip.match_id)} · ${this.slotLabel(clip.slot)} · `
                     + `${this.formatClock(clip.start_seconds)}–${this.formatClock(clip.end_seconds)} `
                     + `(${this._clipDurationLabel(clip)})`;
-                body.querySelector('[data-field="body"]').textContent = clip.description || '';
+                if (boardWrapper) boardWrapper.hidden = true;
+                if (videoWrapper) videoWrapper.hidden = false;
                 this._loadFeedbackVideoForClip(clip);
-                // PR #96 review fix: clips are not review-trackable
-                // (`coaching_reviews` has no `clip_id` column today),
-                // so hiding the "Mark reviewed" CTA in clip mode is
-                // honest. The Cancel button is relabeled to "Close" by
-                // the caller — that becomes the only modal action,
-                // which is the correct UX for a watch-only surface.
-                // Walk up to the modal card from the body to find the
-                // confirm button, since `body` is the cloned template
-                // and `.app-modal-confirm` lives on the modal shell.
+                // Phase 6e — clips share the unified body layout. Show
+                // category + meta + description in the same Summary /
+                // section structure as notes so the viewer sees one
+                // consistent layout across all three review types.
+                this._renderUnifiedFeedbackBody(body.querySelector('[data-field="body"]'), { kind: 'clip', clip });
+                // Clips have no Mark-reviewed backend yet — hide the
+                // confirm button so Close is the only action.
                 const modalCard = body.closest('.app-modal-card');
                 const confirmBtn = modalCard?.querySelector('.app-modal-confirm');
                 if (confirmBtn) confirmBtn.hidden = true;
             }
         };
 
+        // Phase 6e — title reflects the kind so the player knows what
+        // they're looking at, but the modal shell is the same one for
+        // every review type. Observation notes carry a context-aware
+        // kicker ("Practice observation" / "Tactical observation"
+        // etc.) so the reading experience matches the card meta.
+        const modalTitle = (() => {
+            if (mode === 'playlist') return 'Review Session';
+            if (mode === 'clip') return 'Coaching Clip';
+            if (mode === 'note' && (note.note_context || 'video') === 'observation') {
+                return this._observationContextLabel(note);
+            }
+            return 'Coaching Note';
+        })();
         await this.formModal({
-            title: mode === 'playlist' ? 'Review Session' : (mode === 'clip' ? 'Coaching Clip' : 'Coaching Note'),
+            title: modalTitle,
             kicker: 'Feedback',
             body,
             confirmLabel: 'Mark reviewed',
@@ -5620,6 +5824,13 @@ export const coachingMixin = {
                 target.innerHTML = '<div class="session-empty">Profile not available.</div>';
                 return;
             }
+            // Phase 6e — cache the per-player profile so a viewer who
+            // clicks a recent-note row in Development can open the
+            // detail modal even when the underlying note wasn't in the
+            // main /api/my-feedback notes[] payload (the dev endpoint
+            // applies the same visibility ladder).
+            this._feedbackDevCache = this._feedbackDevCache || {};
+            this._feedbackDevCache[String(activeId)] = profile;
             target.innerHTML = this._renderPlayerDevelopmentProfile(profile, { viewer: true });
             this.mountCoachNoteThumbnailsIn(target);
             this.mountCoachClipThumbnailsIn(target);
@@ -5879,6 +6090,62 @@ export const coachingMixin = {
      *  exposes it but we don't show coach-private text in this UI to
      *  keep the surface consistent — Phase 6 may add an explicit
      *  coach-only block). */
+    /** Phase 6e — open the unified review modal for a recent dev row.
+     *  The viewer surface routes through the SAME `openFeedbackPlayer`
+     *  modal that the My Feedback Notes tab uses, so a viewer never
+     *  sees a different reading layout depending on which tab they
+     *  clicked from.
+     *
+     *  When the note isn't in the main `/api/my-feedback` notes[]
+     *  payload (the dev endpoint applies the same visibility ladder
+     *  but is scoped per-player), we fall back to the cached
+     *  development payload for the active player. No client-side
+     *  authorization is added. */
+    openFeedbackNoteDetailFromDev(noteId) {
+        let note = (this._feedbackData?.notes || []).find((n) => Number(n.id) === Number(noteId));
+        if (!note) {
+            const dev = this._feedbackDevCache?.[this._feedbackDevPlayerId];
+            const allDevNotes = [
+                ...(dev?.recent_notes || []),
+                ...(dev?.recent_positives || []),
+                ...(dev?.recent_corrections || []),
+            ];
+            note = allDevNotes.find((n) => Number(n.id) === Number(noteId)) || null;
+        }
+        if (!note) {
+            this.showError('Note not available.');
+            return;
+        }
+        // Cache the dev-only note temporarily on _feedbackData so the
+        // unified body composer's review-state lookup + linked-player
+        // resolver still work. Defensive — `_feedbackData.notes` may be
+        // empty for a viewer who only browsed Development.
+        if (!this._feedbackData) this._feedbackData = { notes: [], clips: [], reviews: [], players: [] };
+        if (!this._feedbackData.notes.some((n) => Number(n.id) === Number(note.id))) {
+            this._feedbackData.notes = [...(this._feedbackData.notes || []), note];
+        }
+        this.openFeedbackPlayer({ mode: 'note', note });
+    },
+
+    /** Phase 6e — open the unified review modal for a recent dev clip
+     *  row, reusing the same focused-player modal as the Clips tab. */
+    openFeedbackClipDetailFromDev(clipId) {
+        let clip = (this._feedbackData?.clips || []).find((c) => Number(c.id) === Number(clipId));
+        if (!clip) {
+            const dev = this._feedbackDevCache?.[this._feedbackDevPlayerId];
+            clip = (dev?.recent_clips || []).find((c) => Number(c.id) === Number(clipId)) || null;
+        }
+        if (!clip) {
+            this.showError('Clip not available.');
+            return;
+        }
+        if (!this._feedbackData) this._feedbackData = { notes: [], clips: [], reviews: [], players: [] };
+        if (!this._feedbackData.clips.some((c) => Number(c.id) === Number(clip.id))) {
+            this._feedbackData.clips = [...(this._feedbackData.clips || []), clip];
+        }
+        this.openFeedbackPlayer({ mode: 'clip', clip });
+    },
+
     _renderDevNoteItem(note, { viewer, emphasizeNext = false } = {}) {
         const isObservation = (note.note_context || 'video') === 'observation';
         const summary = (note.player_summary || '').trim() || (note.body || '').trim();
@@ -5921,8 +6188,20 @@ export const coachingMixin = {
         const boardPill = hasBoard
             ? '<span class="coach-row-board-pill" title="Tactical board attached">⌬ Board</span>'
             : '';
+        // Phase 6e — make viewer-side dev rows clickable so a parent
+        // browsing the development profile can open the same detail
+        // modal as the My Feedback Notes tab. Coach-side preview stays
+        // unchanged (the coach surface uses the modal it already mounts
+        // for the development view; click-to-detail isn't its job).
+        const detailHandler = viewer && Number.isFinite(Number(note.id))
+            ? `onclick="app.openFeedbackNoteDetailFromDev(${Number(note.id)})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();app.openFeedbackNoteDetailFromDev(${Number(note.id)});}"`
+            : '';
+        const interactiveAttrs = viewer && detailHandler
+            ? `tabindex="0" role="button" aria-label="Open details for ${this.esc(title || 'note')}"`
+            : '';
+        const itemClass = `player-dev-note-item${viewer && detailHandler ? ' player-dev-note-item--clickable' : ''}`;
         return `
-            <li class="player-dev-note-item" data-note-context="${isObservation ? 'observation' : 'video'}">
+            <li class="${itemClass}" data-note-context="${isObservation ? 'observation' : 'video'}" ${interactiveAttrs} ${detailHandler}>
                 ${thumb}
                 <div class="player-dev-note-body">
                     <div class="player-dev-note-head">
@@ -5949,7 +6228,13 @@ export const coachingMixin = {
                     <div class="player-dev-empty">No clips yet.</div>
                 </section>`;
         }
-        const watchHandler = viewer ? 'app.openFeedbackClip' : 'app.previewCoachClip';
+        // Phase 6e — viewers route through the dev-aware fallback so a
+        // recent clip that's only in the per-player development payload
+        // (and not in the main /api/my-feedback clips[]) still opens the
+        // unified modal. `openFeedbackClip` would silently no-op on the
+        // miss because it only looks in `_feedbackData.clips`. The note
+        // path uses the same fallback via `openFeedbackNoteDetailFromDev`.
+        const watchHandler = viewer ? 'app.openFeedbackClipDetailFromDev' : 'app.previewCoachClip';
         return `
             <section class="player-dev-section">
                 <h4 class="player-dev-section-title">Recent clips</h4>
