@@ -469,11 +469,40 @@ function renderShapeSvg(shape, opts = {}) {
         : `class="tb-shape"`;
     if (shape.kind === 'arrow' || shape.kind === 'line') {
         const x1 = shape.x1 * W, y1 = shape.y1 * H, x2 = shape.x2 * W, y2 = shape.y2 * H;
-        // Selected arrows get the selection-color marker so the arrowhead
-        // doesn't look detached from the highlighted line.
-        const markerColor = sel ? BOARD_SELECTION_COLOR : baseColor;
-        const marker = shape.kind === 'arrow' ? ` marker-end="url(#${arrowMarkerIdForColor(markerColor)})"` : '';
-        return `<line ${dataAttr} x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-linecap="round"${marker}/>`;
+        if (shape.kind === 'line') {
+            return `<line ${dataAttr} x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-linecap="round"/>`;
+        }
+        // Phase 6d-2 follow-up #3 — render the arrowhead as an inline
+        // <polygon> sibling instead of an SVG `<marker>` element. SVG
+        // markers were not rendering reliably in preview (Chrome
+        // appears to drop them when the marker definition is rebuilt
+        // each refresh), so we draw the head explicitly to match the
+        // video telestrator's filled-triangle approach (`head = 14 +
+        // width`, ±π/6 angle from the tail). Geometry computed in
+        // viewBox units so the head scales with the SVG.
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.hypot(dx, dy) || 1;
+        const angle = Math.atan2(dy, dx);
+        // Head size in viewBox units; matches the video canvas
+        // `head = 14 + width`. Selection bumps it slightly.
+        const headLen = (sel ? 22 : 18) + baseWidth * 1.2;
+        // Pull the line short of the tip by half the head length so
+        // the round-cap end doesn't poke through the triangle. Cap
+        // adjustment respects the original direction.
+        const lineEndX = x2 - Math.cos(angle) * (headLen * 0.45);
+        const lineEndY = y2 - Math.sin(angle) * (headLen * 0.45);
+        const tipX = x2;
+        const tipY = y2;
+        const baseLeftX = x2 - headLen * Math.cos(angle - Math.PI / 6);
+        const baseLeftY = y2 - headLen * Math.sin(angle - Math.PI / 6);
+        const baseRightX = x2 - headLen * Math.cos(angle + Math.PI / 6);
+        const baseRightY = y2 - headLen * Math.sin(angle + Math.PI / 6);
+        // Wrap line + polygon in a <g> so the data-shape-id stays on
+        // a single hit target for select / drag / delete.
+        return `<g ${dataAttr}>
+            <line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${lineEndX.toFixed(2)}" y2="${lineEndY.toFixed(2)}" stroke="${stroke}" stroke-width="${strokeAttr}" stroke-linecap="round"/>
+            <polygon points="${tipX.toFixed(2)},${tipY.toFixed(2)} ${baseLeftX.toFixed(2)},${baseLeftY.toFixed(2)} ${baseRightX.toFixed(2)},${baseRightY.toFixed(2)}" fill="${stroke}"/>
+        </g>`;
     }
     if (shape.kind === 'zone') {
         const x = shape.x * W, y = shape.y * H, w = shape.w * W, h = shape.h * H;
@@ -579,26 +608,17 @@ function renderTokenSvg(token, opts = {}) {
 }
 
 function renderDefs() {
-    // One arrow marker per palette color + the legacy default marker
-    // (`tb-arrow`) keyed off `#fde047` for backwards compatibility with
-    // any external SVG references. The selection-color marker is also
-    // emitted so a selected arrow shows a matching arrowhead.
-    const markerColors = [
-        ['tb-arrow', DEFAULT_BOARD_COLOR],
-        ['tb-arrow-selected', BOARD_SELECTION_COLOR],
-        ...BOARD_COLOR_PALETTE.map((c) => [arrowMarkerIdForColor(c), c]),
-    ];
-    const markers = markerColors.map(([id, color]) => `
-        <marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/>
-        </marker>
-    `).join('');
+    // Phase 6d-2 follow-up #3 — arrowheads are rendered as inline
+    // <polygon> elements inside each arrow's <g>, NOT as SVG `<marker>`
+    // elements referenced via `marker-end`. The marker-based approach
+    // proved unreliable in Chrome when the marker definitions were
+    // rebuilt every refresh — the head silently vanished. Defs now
+    // only carry the pitch grass gradient.
     return `<defs>
         <linearGradient id="tb-grass-grad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stop-color="${SOCCER_GRASS}"/>
             <stop offset="1" stop-color="${SOCCER_GRASS_DARK}"/>
         </linearGradient>
-        ${markers}
     </defs>`;
 }
 
@@ -779,8 +799,25 @@ function buildBoardEditorController({
             line.setAttribute('stroke-width', previewWidth);
             line.setAttribute('stroke-dasharray', '6 4');
             line.setAttribute('stroke-linecap', 'round');
-            if (preview.kind === 'arrow') line.setAttribute('marker-end', `url(#${arrowMarkerIdForColor(previewColor)})`);
             g.appendChild(line);
+            // Live preview arrowhead — same inline-polygon approach as
+            // the committed render so the coach sees the head while
+            // dragging.
+            if (preview.kind === 'arrow') {
+                const x2v = preview.x2 * W, y2v = preview.y2 * H;
+                const dx = x2v - preview.x1 * W;
+                const dy = y2v - preview.y1 * H;
+                const angle = Math.atan2(dy, dx);
+                const headLen = 18 + Number(previewWidth) * 1.2;
+                const polygon = document.createElementNS(ns, 'polygon');
+                polygon.setAttribute('points',
+                    `${x2v.toFixed(2)},${y2v.toFixed(2)} ` +
+                    `${(x2v - headLen * Math.cos(angle - Math.PI / 6)).toFixed(2)},${(y2v - headLen * Math.sin(angle - Math.PI / 6)).toFixed(2)} ` +
+                    `${(x2v - headLen * Math.cos(angle + Math.PI / 6)).toFixed(2)},${(y2v - headLen * Math.sin(angle + Math.PI / 6)).toFixed(2)}`
+                );
+                polygon.setAttribute('fill', previewColor);
+                g.appendChild(polygon);
+            }
         } else if (preview.kind === 'zone') {
             const x = Math.min(preview.x1, preview.x2);
             const y = Math.min(preview.y1, preview.y2);
