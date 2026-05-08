@@ -281,7 +281,15 @@ def _seed_roster() -> dict[str, str]:
         # Children with FK ON DELETE CASCADE are wiped automatically when
         # players is cleared — but we clear them too to keep the seed fully
         # explicit and avoid leaving orphan rows from any prior schema state.
+        # Phase 6e follow-up: include coaching_clips + coaching_clip_players
+        # in the wipe. `coaching_clips.match_id` has no FK declaration and
+        # the project doesn't enable PRAGMA foreign_keys, so re-running
+        # the seed against the same data dir would otherwise pile up clip
+        # rows whose `match_id` references the previous run's matches
+        # (which `_seed_matches` rewrites with fresh UUIDs every run).
         conn.execute("DELETE FROM coaching_reviews")
+        conn.execute("DELETE FROM coaching_clip_players")
+        conn.execute("DELETE FROM coaching_clips")
         conn.execute("DELETE FROM coaching_playlist_players")
         conn.execute("DELETE FROM coaching_playlist_items")
         conn.execute("DELETE FROM coaching_playlists")
@@ -403,110 +411,140 @@ def _drawing_spotlight_dim() -> dict:
 
 # Notes: (home, away, date) selects a seeded match. Coordinates and content
 # are tuned so each note demonstrates a distinct telestrator tool combination.
-def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[str, str]) -> list[int]:
+#
+# Each spec carries a stable `key` (e.g. "press_trigger", "p7_recovery") so
+# downstream seeders (`_seed_clips`, `_seed_playlists`) can look notes up by
+# name instead of by positional index. Adding/reordering notes in this list
+# now no longer silently rebinds clip `source_note_id`s or playlist items.
+def _seed_coaching_notes(
+    matches: dict[tuple[str, str, str], str],
+    roster: dict[str, str],
+) -> dict[str, int]:
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     m1 = matches[("Riverside FC", "Northgate United", "2025-09-14")]
     m2 = matches[("Riverside FC", "Highbridge Town",  "2025-09-28")]
     m3 = matches[("Riverside FC", "Pinehurst Rangers","2025-11-02")]
 
-    # (match_id, slot, ts, title, body, category, visibility, drawing,
-    #  linked_player_jerseys, tags, note_type, player_summary,
-    #  what_happened, why_it_matters, what_to_do_next, coach_private_note)
-    #
-    # Phase 1 structured fields are optional — empty strings render the
-    # legacy `body`-only path, populated values render the full
-    # tone-pill + summary + structured <dl> stack in My Feedback.
-    spec = [
-        (m1, "first_half",  312.5,
-         "Pressing trigger on goal-kick",
-         "When their #1 plants the ball, our front three step up together. Watch the angle "
-         "the wide forward takes — body shape forces the keeper to go long.",
-         "pressing", "team",
-         _drawing_arrow_zone(),
-         [], ["pressing", "shape"],
-         "team_concept",
-         "When their keeper plants the ball, step up together — angle the press so the keeper has to go long.",
-         "Their goal kick at 5:12. Our front three drifted apart, the keeper had a free short pass to the centre-back, and we lost ten yards of pressure.",
-         "If we time the trigger together we force long balls into our centre-backs' headers — that's a 70% recovery rate for us.",
-         "Watch your wide partner's first step. When they go, you go. Body shape closes the inside lane, not the keeper directly.",
-         "Coach note: drilled this on Tuesday with the front three only — second unit still drifting late."),
-
-        (m1, "second_half", 1820.0,
-         "Back-four shape during Northgate spell",
-         "The line stayed compact for ten minutes here. Notice how the holding mid drops in "
-         "to make a five when Northgate worked the wide channel.",
-         "shape", "team",
-         _drawing_back_four_formation(roster),
-         ["3", "4", "5", "2", "6"], ["shape", "defending"],
-         "positive",
-         "Best ten-minute defensive spell of the half — line stayed compact and the #6 dropped to make a five in the wide channel.",
-         "",
-         "",
-         "",
-         ""),
-
-        (m2, "full",         642.0,
-         "First-touch under pressure",
-         "Receive across the body, open the hips, and you're already facing forward. "
-         "Compare this clip with the turnover at 14:30.",
-         "build_up", "team",
-         _drawing_circle_label(),
-         [], ["technique"],
-         "individual_goal",
-         "Receive across your body — open hips, take the touch into space, and you're facing forward already.",
-         "Ball came from the keeper. You took it facing your own goal, had to turn under pressure, and lost it.",
-         "One extra touch backwards is one extra second for their press to set. Open the body once and you skip that whole sequence.",
-         "On reception: plant the back foot, point the front foot toward the opponent's goal, take the touch with your far foot.",
-         ""),
-
-        (m2, "full",        1430.0,
-         "Player #7 — defensive recovery",
-         "Strong recovery run from the far side. Track the angle: cut across the passing "
-         "lane, don't chase the ball.",
-         "defending", "player",
-         _drawing_freehand_arrow(),
-         ["7"], ["recovery", "1v1"],
-         "positive",
-         "Beautiful recovery run — you cut across the passing lane instead of chasing the ball. That's the model.",
-         "",
-         "",
-         "",
-         ""),
-
-        (m3, "first_half",   215.0,
-         "Player #10 — early run",
-         "Read the trigger off the keeper and break early. Spotlight is the gap you should "
-         "be attacking before the centre-back closes.",
-         "transition", "player",
-         _drawing_spotlight_dim(),
-         ["10"], ["transition"],
-         "correction",
-         "Break earlier on the keeper's release — attack the gap before the centre-back can close it.",
-         "Keeper rolled it out at 3:35. You started moving 1.5 seconds late and the gap had already shut.",
-         "If you read the trigger off the keeper's body shape (not the ball), you get a 5–8 yard head start on the centre-back. That's the difference between a chance and a recycle.",
-         "Two cues: (1) keeper's plant foot turns sideways → release is coming, (2) centre-back's eyes go to the ball → blind side opens. Move on cue 1, finish on cue 2.",
-         "Coach note: pulled #10 at 18' for a debrief on this; he saw it. Repeat in next session's possession game."),
-
-        (m3, "second_half", 1100.0,
-         "Internal: substitution rationale",
-         "Coaching note only — context for the staff. Subbing for energy in the press, not "
-         "punishing the player.",
-         "other", "private",
-         {"version": 2, "objects": []},
-         [], [],
-         "correction",
-         "",
-         "",
-         "",
-         "",
-         "Sub at 65' was for energy in the press, NOT punishment. Make sure the player hears that on Tuesday — last time we left it ambiguous and his confidence dropped for a week."),
+    # Each entry is a dict with a stable `key`. Phase 1 structured fields
+    # are optional — empty strings render the legacy `body`-only path,
+    # populated values render the full tone-pill + summary + structured
+    # <dl> stack in My Feedback.
+    specs: list[dict] = [
+        {
+            "key": "press_trigger",
+            "match_id": m1, "slot": "first_half", "timestamp_seconds": 312.5,
+            "title": "Pressing trigger on goal-kick",
+            "body": (
+                "When their #1 plants the ball, our front three step up together. Watch the angle "
+                "the wide forward takes — body shape forces the keeper to go long."
+            ),
+            "category": "pressing", "visibility": "team",
+            "drawing": _drawing_arrow_zone(),
+            "jerseys": [], "tags": ["pressing", "shape"],
+            "note_type": "team_concept",
+            "player_summary": "When their keeper plants the ball, step up together — angle the press so the keeper has to go long.",
+            "what_happened": "Their goal kick at 5:12. Our front three drifted apart, the keeper had a free short pass to the centre-back, and we lost ten yards of pressure.",
+            "why_it_matters": "If we time the trigger together we force long balls into our centre-backs' headers — that's a 70% recovery rate for us.",
+            "what_to_do_next": "Watch your wide partner's first step. When they go, you go. Body shape closes the inside lane, not the keeper directly.",
+            "coach_private_note": "Coach note: drilled this on Tuesday with the front three only — second unit still drifting late.",
+        },
+        {
+            "key": "back_four_shape",
+            "match_id": m1, "slot": "second_half", "timestamp_seconds": 1820.0,
+            "title": "Back-four shape during Northgate spell",
+            "body": (
+                "The line stayed compact for ten minutes here. Notice how the holding mid drops in "
+                "to make a five when Northgate worked the wide channel."
+            ),
+            "category": "shape", "visibility": "team",
+            "drawing": _drawing_back_four_formation(roster),
+            "jerseys": ["3", "4", "5", "2", "6"], "tags": ["shape", "defending"],
+            "note_type": "positive",
+            "player_summary": "Best ten-minute defensive spell of the half — line stayed compact and the #6 dropped to make a five in the wide channel.",
+            "what_happened": "", "why_it_matters": "", "what_to_do_next": "",
+            "coach_private_note": "",
+        },
+        {
+            "key": "first_touch_pressure",
+            "match_id": m2, "slot": "full", "timestamp_seconds": 642.0,
+            "title": "First-touch under pressure",
+            "body": (
+                "Receive across the body, open the hips, and you're already facing forward. "
+                "Compare this clip with the turnover at 14:30."
+            ),
+            "category": "build_up", "visibility": "team",
+            "drawing": _drawing_circle_label(),
+            "jerseys": [], "tags": ["technique"],
+            "note_type": "individual_goal",
+            "player_summary": "Receive across your body — open hips, take the touch into space, and you're facing forward already.",
+            "what_happened": "Ball came from the keeper. You took it facing your own goal, had to turn under pressure, and lost it.",
+            "why_it_matters": "One extra touch backwards is one extra second for their press to set. Open the body once and you skip that whole sequence.",
+            "what_to_do_next": "On reception: plant the back foot, point the front foot toward the opponent's goal, take the touch with your far foot.",
+            "coach_private_note": "",
+        },
+        {
+            "key": "p7_recovery",
+            "match_id": m2, "slot": "full", "timestamp_seconds": 1430.0,
+            "title": "Player #7 — defensive recovery",
+            "body": (
+                "Strong recovery run from the far side. Track the angle: cut across the passing "
+                "lane, don't chase the ball."
+            ),
+            "category": "defending", "visibility": "player",
+            "drawing": _drawing_freehand_arrow(),
+            "jerseys": ["7"], "tags": ["recovery", "1v1"],
+            "note_type": "positive",
+            "player_summary": "Beautiful recovery run — you cut across the passing lane instead of chasing the ball. That's the model.",
+            "what_happened": "", "why_it_matters": "", "what_to_do_next": "",
+            "coach_private_note": "",
+        },
+        {
+            "key": "p10_early_run",
+            "match_id": m3, "slot": "first_half", "timestamp_seconds": 215.0,
+            "title": "Player #10 — early run",
+            "body": (
+                "Read the trigger off the keeper and break early. Spotlight is the gap you should "
+                "be attacking before the centre-back closes."
+            ),
+            "category": "transition", "visibility": "player",
+            "drawing": _drawing_spotlight_dim(),
+            "jerseys": ["10"], "tags": ["transition"],
+            "note_type": "correction",
+            "player_summary": "Break earlier on the keeper's release — attack the gap before the centre-back can close it.",
+            "what_happened": "Keeper rolled it out at 3:35. You started moving 1.5 seconds late and the gap had already shut.",
+            "why_it_matters": "If you read the trigger off the keeper's body shape (not the ball), you get a 5–8 yard head start on the centre-back. That's the difference between a chance and a recycle.",
+            "what_to_do_next": "Two cues: (1) keeper's plant foot turns sideways → release is coming, (2) centre-back's eyes go to the ball → blind side opens. Move on cue 1, finish on cue 2.",
+            "coach_private_note": "Coach note: pulled #10 at 18' for a debrief on this; he saw it. Repeat in next session's possession game.",
+        },
+        {
+            "key": "private_sub_rationale",
+            "match_id": m3, "slot": "second_half", "timestamp_seconds": 1100.0,
+            "title": "Internal: substitution rationale",
+            "body": (
+                "Coaching note only — context for the staff. Subbing for energy in the press, not "
+                "punishing the player."
+            ),
+            "category": "other", "visibility": "private",
+            "drawing": {"version": 2, "objects": []},
+            "jerseys": [], "tags": [],
+            "note_type": "correction",
+            "player_summary": "", "what_happened": "", "why_it_matters": "", "what_to_do_next": "",
+            "coach_private_note": "Sub at 65' was for energy in the press, NOT punishment. Make sure the player hears that on Tuesday — last time we left it ambiguous and his confidence dropped for a week.",
+        },
     ]
 
-    note_ids: list[int] = []
+    # Defensive: surface duplicate seed keys at seed time rather than
+    # silently overwriting the map below. Catches typos when a future
+    # contributor adds a new spec entry.
+    seen_keys: set[str] = set()
+    for spec in specs:
+        if spec["key"] in seen_keys:
+            raise RuntimeError(f"duplicate seed key in _seed_coaching_notes: {spec['key']!r}")
+        seen_keys.add(spec["key"])
+
+    note_ids_by_key: dict[str, int] = {}
     with _db.connect() as conn:
-        for (match_id, slot, ts, title, body, category, visibility, drawing,
-             jerseys, tags, note_type, player_summary, what_happened,
-             why_it_matters, what_to_do_next, coach_private_note) in spec:
+        for spec in specs:
             cur = conn.execute(
                 """
                 INSERT INTO coaching_notes (
@@ -516,25 +554,28 @@ def _seed_coaching_notes(matches: dict[tuple[str, str, str], str], roster: dict[
                     what_to_do_next, coach_private_note
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (match_id, slot, ts, title, body, category, visibility,
-                 json.dumps(drawing), "coach1", now, now,
-                 note_type, player_summary, what_happened, why_it_matters,
-                 what_to_do_next, coach_private_note),
+                (
+                    spec["match_id"], spec["slot"], spec["timestamp_seconds"],
+                    spec["title"], spec["body"], spec["category"], spec["visibility"],
+                    json.dumps(spec["drawing"]), "coach1", now, now,
+                    spec["note_type"], spec["player_summary"], spec["what_happened"],
+                    spec["why_it_matters"], spec["what_to_do_next"], spec["coach_private_note"],
+                ),
             )
             note_id = cur.lastrowid
-            note_ids.append(note_id)
-            for jersey in jerseys:
+            note_ids_by_key[spec["key"]] = note_id
+            for jersey in spec["jerseys"]:
                 conn.execute(
                     "INSERT INTO coaching_note_players (note_id, player_id) VALUES (?, ?)",
                     (note_id, roster[jersey]),
                 )
-            for tag in tags:
+            for tag in spec["tags"]:
                 conn.execute(
                     "INSERT INTO coaching_note_tags (note_id, tag) VALUES (?, ?)",
                     (note_id, tag),
                 )
         conn.commit()
-    return note_ids
+    return note_ids_by_key
 
 
 def _seed_observation_notes(
@@ -686,19 +727,22 @@ def _seed_observation_notes(
 def _seed_clips(
     matches: dict[tuple[str, str, str], str],
     roster: dict[str, str],
-    note_ids: list[int],
+    note_ids_by_key: dict[str, int],
 ) -> int:
     """Phase 6e — at least one viewer-visible clip so the My Feedback Clips
     tab has content. Anchored to the same match the mock video covers
-    (Riverside FC vs Northgate United, first_half), referencing note #4
-    (Player #7 — defensive recovery) so the clip thumbnail can fall through
-    to the source note's JPEG.
+    (Riverside FC vs Northgate United, first_half), referencing the
+    Player #7 defensive-recovery note via its stable seed key
+    (`p7_recovery`) so the clip thumbnail can fall through to the source
+    note's JPEG.
+
+    Phase 6e follow-up: looks up the source note by stable key instead of
+    by positional index. Reordering or adding entries to
+    `_seed_coaching_notes` no longer silently rebinds `source_note_id`.
     """
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     m1 = matches[("Riverside FC", "Northgate United", "2025-09-14")]
-    # note4 is the Player #7 defensive recovery note (positive). Tying the
-    # clip to it gives the viewer a co-located thumbnail fallback.
-    note_player7 = note_ids[3]
+    note_player7 = note_ids_by_key["p7_recovery"]
     with _db.connect() as conn:
         cur = conn.execute(
             """
@@ -725,11 +769,16 @@ def _seed_clips(
     return 1
 
 
-def _seed_playlists(note_ids: list[int], roster: dict[str, str]) -> int:
-    """Two playlists. A is team-visible (notes 1+3); B is player-visible and
-    scoped to player #7 via coaching_playlist_players."""
+def _seed_playlists(note_ids_by_key: dict[str, int], roster: dict[str, str]) -> int:
+    """Two playlists. A is team-visible (`press_trigger` + `first_touch_pressure`);
+    B is player-visible (`p7_recovery`) and scoped to player #7 via
+    coaching_playlist_players.
+
+    Phase 6e follow-up: notes are looked up by stable seed key instead of
+    by positional unpacking, so reordering or adding entries to
+    `_seed_coaching_notes` no longer silently rebinds playlist items.
+    """
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    note1, _note2, note3, note4, _note5, _note6 = note_ids
     with _db.connect() as conn:
         cur = conn.execute(
             "INSERT INTO coaching_playlists (title, description, visibility, pre_roll_seconds,"
@@ -739,10 +788,10 @@ def _seed_playlists(note_ids: list[int], roster: dict[str, str]) -> int:
              "team", 5.0, 8.0, "coach1", now, now),
         )
         playlist_a = cur.lastrowid
-        for position, nid in enumerate((note1, note3)):
+        for position, key in enumerate(("press_trigger", "first_touch_pressure")):
             conn.execute(
                 "INSERT INTO coaching_playlist_items (playlist_id, note_id, position) VALUES (?, ?, ?)",
-                (playlist_a, nid, position),
+                (playlist_a, note_ids_by_key[key], position),
             )
 
         cur = conn.execute(
@@ -755,7 +804,7 @@ def _seed_playlists(note_ids: list[int], roster: dict[str, str]) -> int:
         playlist_b = cur.lastrowid
         conn.execute(
             "INSERT INTO coaching_playlist_items (playlist_id, note_id, position) VALUES (?, ?, ?)",
-            (playlist_b, note4, 0),
+            (playlist_b, note_ids_by_key["p7_recovery"], 0),
         )
         conn.execute(
             "INSERT INTO coaching_playlist_players (playlist_id, player_id) VALUES (?, ?)",
@@ -861,6 +910,85 @@ def _seed_mock_video(
     return f"  seeded mock {MOCK_VIDEO_SLOT} for {MOCK_VIDEO_TARGET[0]} vs {MOCK_VIDEO_TARGET[1]}"
 
 
+def _seed_coach_note_and_clip_thumbnails(data_dir: Path) -> str:
+    """Phase 3a / 4e — generate per-note + per-clip thumbnails for any
+    seeded coaching note or clip whose match slot now has a real source
+    MP4 on disk. The runtime equivalent runs as a background task on
+    POST /api/coach/notes / /api/coach/clips, but the seed writes
+    directly to SQLite and bypasses that flow — without this pass, every
+    seeded note/clip card on My Feedback would render the placeholder
+    tile because GET /api/coach/notes/{id}/thumbnail 404s.
+
+    Best-effort: notes whose source video isn't on disk yet (or whose
+    match was created without a mock video) are silently skipped. The
+    seed never fails because a thumbnail couldn't be generated.
+
+    Path-containment is enforced inside `_media.coach_note_thumbnail_path`
+    / `_media.clip_thumbnail_path` (purely deterministic from
+    match_id + note_id / match_id + clip_id), so the same `match_id`
+    that produced the source MP4 is the only one we read."""
+    videos_dir = data_dir / "videos"
+    originals_dir = data_dir / "videos"  # un-tiered single-volume layout
+
+    note_count = 0
+    clip_count = 0
+    skipped = 0
+
+    async def _run() -> None:
+        nonlocal note_count, clip_count, skipped
+        with _db.connect() as conn:
+            note_rows = conn.execute(
+                "SELECT id, match_id, slot, timestamp_seconds, note_context "
+                "FROM coaching_notes "
+                "WHERE COALESCE(note_context, 'video') = 'video' "
+                "  AND match_id IS NOT NULL AND slot IS NOT NULL"
+            ).fetchall()
+            clip_rows = conn.execute(
+                "SELECT id, match_id, slot, start_seconds FROM coaching_clips"
+            ).fetchall()
+
+        for row in note_rows:
+            src = _media.find_slot_raw_path(originals_dir, row["match_id"], row["slot"])
+            if src is None:
+                src = originals_dir / row["match_id"] / f"{row['slot']}.mp4"
+            if not src.is_file():
+                skipped += 1
+                continue
+            dest = _media.coach_note_thumbnail_path(
+                videos_dir, row["match_id"], row["id"]
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            ok = await _media.generate_thumbnail_at_timestamp(
+                src, dest, timestamp_s=row["timestamp_seconds"] or 0.0,
+            )
+            if ok:
+                note_count += 1
+            else:
+                skipped += 1
+
+        for row in clip_rows:
+            src = _media.find_slot_raw_path(originals_dir, row["match_id"], row["slot"])
+            if src is None:
+                src = originals_dir / row["match_id"] / f"{row['slot']}.mp4"
+            if not src.is_file():
+                skipped += 1
+                continue
+            dest = _media.clip_thumbnail_path(
+                videos_dir, row["match_id"], row["id"]
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            ok = await _media.generate_thumbnail_at_timestamp(
+                src, dest, timestamp_s=row["start_seconds"] or 0.0,
+            )
+            if ok:
+                clip_count += 1
+            else:
+                skipped += 1
+
+    asyncio.run(_run())
+    return f"  generated {note_count} note + {clip_count} clip thumbnails (skipped {skipped} without source video)"
+
+
 def main() -> None:
     data_dir = _resolve_data_dir()
     db_file = data_dir / "replay.db"
@@ -877,11 +1005,19 @@ def main() -> None:
     users = _seed_users()
     roster = _seed_roster()
     links = _seed_player_user_links(roster, users)
-    note_ids = _seed_coaching_notes(matches_by_key, roster)
+    note_ids_by_key = _seed_coaching_notes(matches_by_key, roster)
     obs_note_ids = _seed_observation_notes(matches_by_key, roster)
-    clip_count = _seed_clips(matches_by_key, roster, note_ids)
-    playlists = _seed_playlists(note_ids, roster)
+    clip_count = _seed_clips(matches_by_key, roster, note_ids_by_key)
+    playlists = _seed_playlists(note_ids_by_key, roster)
     mock_video_status = _seed_mock_video(data_dir, matches_by_key)
+    # Phase 3a / 4e seed parity: the runtime path (POST /api/coach/notes
+    # and /api/coach/clips) spawns a background thumbnail-generation
+    # task. The seed bypasses those endpoints and writes straight to
+    # SQLite, so without this pass every seeded note/clip card on My
+    # Feedback would render the placeholder. Run AFTER `_seed_mock_video`
+    # so the source MP4 + HLS are already on disk for any note that
+    # targets the mock video's match+slot.
+    coach_thumb_status = _seed_coach_note_and_clip_thumbnails(data_dir)
 
     print()
     print("=" * 60)
@@ -889,12 +1025,14 @@ def main() -> None:
     print("=" * 60)
     print(f"  Matches:    {len(matches_by_key)}")
     print(f"  Roster:     {len(roster)} players")
-    print(f"  Notes:      {len(note_ids)} video + {len(obs_note_ids)} observation")
+    print(f"  Notes:      {len(note_ids_by_key)} video + {len(obs_note_ids)} observation")
     print(f"  Clips:      {clip_count}")
     print(f"  Playlists:  {playlists}")
     print(f"  Links:      {links} player ↔ user")
     print(f"  Mock video:")
     print(mock_video_status)
+    print(f"  Coach thumbs:")
+    print(coach_thumb_status)
     print()
     print("  Demo accounts (password: %s):" % DEMO_PASSWORD)
     print("    uploader1  — uploader        (admin → matches only)")
