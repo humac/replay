@@ -11018,49 +11018,30 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     cursor: not-allowed;
 }
 
-/* Phase 6d-2 follow-up #2 — fill the dead space below Board Tools when
- * the pitch is taller than the side panel content. The default
- * `.coach-review-side` packs children at the top with `align-content:
- * start`, leaving a vertical gap at the bottom that visually divorces
- * the right column from the board. In tactical board mode, the inner
- * side pane is the column we want to flex: the toolbar grows to take
- * extra vertical space (its `coach-telestrator` sub-grid stretches its
- * tool grid + swatch row + meta inputs + actions to share the slack
- * vertically), and the observation form keeps natural height. The
- * source-mode mirror lives on <body> as well as the shell, so the rule
- * is scoped via the visible source.
- *
- * Selectors target both the in-shell case AND the focus-mode drawer
- * case (where `.coach-review-side` is re-parented to <body>). */
-.coach-review-shell[data-source="tactical_board"] .coach-review-side .coach-review-side-pane[data-source-only="tactical_board"],
-body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-review-side-pane[data-source-only="tactical_board"] {
-    display: flex !important;
-    flex-direction: column;
-    gap: 0.6rem;
-    min-height: 0;
-    height: 100%;
-}
+/* Phase 6d-2 follow-up — match the tactical-mode side aside to the
+ * pitch height the same way `_syncCoachReviewSideHeight` matches the
+ * video inspector to the video wrapper. We rely on JS to set the
+ * inline `max-height` (see `_syncCoachReviewSideHeightFromBoard` in
+ * `js/coaching.js`); CSS just makes the column scroll internally if
+ * content overflows that cap, mirroring the video-mode pattern at
+ * `#coach-view.is-review-mode .coach-review-side` (overflow: auto +
+ * thin themed scrollbar). The toolbar and observation form keep
+ * their natural heights and stack vertically in a single column. */
 .coach-review-shell[data-source="tactical_board"] .coach-review-side {
-    align-content: stretch;
+    align-self: stretch;
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
-.coach-review-shell[data-source="tactical_board"] #coach-tb-toolbar,
-body[data-coach-review-source="tactical_board"] #coach-tb-toolbar {
-    flex: 1 1 auto;
-    min-height: 0;
+.coach-review-shell[data-source="tactical_board"] .coach-review-side::-webkit-scrollbar {
+    width: 6px;
 }
-/* The toolbar itself is a grid; spread its children so the icon grid
- * + swatch row + inputs + actions distribute evenly when there's slack. */
-.coach-review-shell[data-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator,
-body[data-coach-review-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    height: 100%;
+.coach-review-shell[data-source="tactical_board"] .coach-review-side::-webkit-scrollbar-track {
+    background: transparent;
 }
-.coach-review-shell[data-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator > .coach-tool-grid,
-body[data-coach-review-source="tactical_board"] .coach-tb-toolbar > .coach-telestrator > .coach-tool-grid {
-    flex: 1 1 auto;
-    align-content: start;
+.coach-review-shell[data-source="tactical_board"] .coach-review-side::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
 }
 
 /* Phase 6d-2 follow-up — formation selectors styled like other Coach
