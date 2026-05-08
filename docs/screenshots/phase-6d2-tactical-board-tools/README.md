@@ -30,6 +30,7 @@ login rate limit in `auth.py`.
 | `09-saved-observation-with-formation.png` | coach1 | Coach > Notes | Saved observation surfaces in Coach > Notes with the board preview rendering the saved 4-3-3 — proves the metadata round-trips end-to-end. |
 | `10-color-swatches-and-colored-shapes.png` | coach1 | Coach > Review (Tactical Board) | Color-parity follow-up: side panel renders the same six color swatches as the video telestrator (`#38bdf8` / `#f97316` / `#22c55e` / `#facc15` / `#f43f5e` / `#ffffff`) with the active swatch (`#f97316`) outlined; pitch carries one shape per palette color so saved per-shape `color` metadata is visible. |
 | `11-stroke-width-control-and-thicknesses.png` | coach1 | Coach > Review (Tactical Board) | Thickness-parity follow-up: the W slider (range 2–10) sits beside the swatch row, mirroring the video telestrator. Pitch shows five horizontal lines with stroke_widths 2 / 4 / 6 / 8 / 10 — proves per-shape `stroke_width` metadata round-trips and renders. |
+| `12-drag-drawn-shapes-no-top-left-bug.png` | coach1 | Coach > Review (Tactical Board) | Coordinate-bug regression: drives real Playwright mouse drags through the toolbar tools (arrow / line / zone / freehand) and asserts no shape lands in `(0, 0)`. Proves the post-PR fix where every drag commits where the coach actually moved the pointer instead of the top-left corner. The shot also shows the new telestrator-style toolbar (5-col icon grid on desktop, video-matched swatches + W slider in a row). |
 
 ## Seeded data assumptions
 

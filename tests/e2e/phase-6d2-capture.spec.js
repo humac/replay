@@ -136,6 +136,51 @@ test('10 — color swatches with multi-color shapes (telestrator parity)', async
     await shotShell(page, '10-color-swatches-and-colored-shapes');
 });
 
+test('12 — drag-drawn shapes land where the coach drags (regression)', async ({ page }) => {
+    // Phase 6d-2 follow-up — drives real mouse drags through the
+    // toolbar tools instead of API-loading a pre-built scene. Proves
+    // the post-PR coordinate fix: every drag commits where the coach
+    // actually moved the pointer, not in the top-left of the pitch.
+    await openTacticalBoard(page);
+    const stage = page.locator('#coach-review-board-canvas svg.tb-svg');
+    await stage.waitFor();
+    const dragInside = async (toolKey, sxFrac, syFrac, exFrac, eyFrac) => {
+        await page.locator(`[data-coach-tb-tool="${toolKey}"]`).click();
+        const box = await stage.boundingBox();
+        const sx = box.x + box.width * sxFrac;
+        const sy = box.y + box.height * syFrac;
+        const ex = box.x + box.width * exFrac;
+        const ey = box.y + box.height * eyFrac;
+        await page.mouse.move(sx, sy);
+        await page.mouse.down();
+        // Several intermediate moves so the live preview engages.
+        for (let i = 1; i <= 5; i++) {
+            await page.mouse.move(sx + (ex - sx) * (i / 5), sy + (ey - sy) * (i / 5));
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(80);
+    };
+    // Pick a non-default color so the swatches render with an active state.
+    await page.evaluate(() => window.app._coachReviewBoardCtrl.setActiveColor('#f97316'));
+    await dragInside('arrow',    0.25, 0.30, 0.55, 0.30);
+    await dragInside('line',     0.55, 0.20, 0.85, 0.40);
+    await page.evaluate(() => window.app._coachReviewBoardCtrl.setActiveColor('#22c55e'));
+    await dragInside('zone',     0.55, 0.50, 0.85, 0.75);
+    await page.evaluate(() => window.app._coachReviewBoardCtrl.setActiveColor('#f43f5e'));
+    await dragInside('freehand', 0.20, 0.70, 0.45, 0.90);
+    // Verify nothing landed at (0,0) — guards the regression.
+    const bad = await page.evaluate(() => {
+        const shapes = window.app._coachReviewBoardCtrl.getState().shapes;
+        return shapes.filter((s) => {
+            if ('x1' in s) return s.x1 < 0.02 && s.y1 < 0.02 && s.x2 < 0.02 && s.y2 < 0.02;
+            if ('x' in s && 'w' in s) return s.x < 0.02 && s.y < 0.02 && s.w < 0.05 && s.h < 0.05;
+            return false;
+        });
+    });
+    expect(bad).toEqual([]);
+    await shotShell(page, '12-drag-drawn-shapes-no-top-left-bug');
+});
+
 test('11 — stroke width control with visibly different line widths', async ({ page }) => {
     await openTacticalBoard(page);
     // Render multiple shapes with different stroke_width values so the

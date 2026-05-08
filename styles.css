@@ -10851,57 +10851,27 @@ body.coach-focus-drawer-tb-mode .coach-focus-backdrop {
 /* Tactical board side-panel toolbar. Visually mirrors the video
  * telestrator toolbar (.coach-tool-grid) so the side panel feels
  * consistent across source modes. */
+/* Phase 6d-2 follow-up — the tactical board side panel now reuses the
+ * exact same `.coach-telestrator` + `.coach-tool-grid` + `.coach-tool-
+ * btn` chain as the video telestrator, so 99% of the visual rules come
+ * from the existing video-side CSS. The only tactical-only blocks left
+ * here are the structural wrappers above the telestrator (formation
+ * controls) and below it (text inputs container). The earlier 6d-2
+ * tactical-only `coach-tb-tool-*` overrides (2-col grid, left-aligned
+ * row layout, glyph swap) have been deleted because they conflict with
+ * parity. Tokens placed by the Player tool still get their `label`
+ * from the same `data-coach-tb-input="player-label"` input — the
+ * input lives in the new `.coach-tb-tool-meta` row below the swatches
+ * + slider so it visually rhymes with the video telestrator's label-
+ * text input. */
 .coach-tb-toolbar {
     display: grid;
     gap: 0.6rem;
 }
 
-.coach-tb-tool-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.4rem;
-}
-
-.coach-tb-tool-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 0.4rem 0.55rem;
-    text-align: left;
-    font-size: 0.85rem;
-}
-
-.coach-tb-tool-btn .coach-tb-tool-glyph {
-    font-size: 1.1rem;
-    line-height: 1;
-    width: 1.2em;
-    text-align: center;
-}
-
-.coach-tb-tool-btn .coach-tool-label {
-    /* Override the visually-hidden default so the tactical-mode
-     * tool grid shows labels (mirrors the video telestrator's
-     * touch-mode label visibility). */
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip: auto;
-    margin: 0;
-    padding: 0;
-    color: inherit;
-}
-
 .coach-tb-tool-meta {
     display: grid;
     gap: 0.4rem;
-}
-
-.coach-tb-input-wrap {
-    display: grid;
-    gap: 0.2rem;
-    font-size: 0.78rem;
-    color: var(--text-muted);
 }
 
 /* Tactical-board toolbar text inputs share the visual language of the
@@ -11048,17 +11018,24 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     cursor: not-allowed;
 }
 
-/* Phase 6d-2 color parity follow-up — color swatch row inside the
- * tactical board side panel. Reuses `.coach-tool-row` + `.coach-color-
- * swatch` from the video telestrator so the visual language matches
- * across modes. The outer wrapper just gives it the same vertical
- * rhythm as `.coach-tb-tool-meta` / `.coach-tb-tool-actions`. */
-.coach-tb-color-row {
-    padding-top: 0.4rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+/* Phase 6d-2 follow-up — formation selectors styled like other Coach
+ * <select>s (no native OS chrome). Mirrors `.coach-mini-form select`
+ * (appearance:none + custom chevron) but scoped to the tactical board
+ * formation row, since the row is NOT a `.coach-mini-form` ancestor
+ * and the existing rule wouldn't otherwise reach it. The chevron icon
+ * is the same SVG used by `.coach-mini-form select`. */
+.coach-tb-formation select.coach-tb-input {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 2.35rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23888890' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.85rem center;
+    background-size: 12px 8px;
 }
-[data-theme="light"] .coach-tb-color-row {
-    border-top-color: rgba(0, 0, 0, 0.08);
+[data-theme="light"] .coach-tb-formation select.coach-tb-input {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%231f2937' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
 }
 
 /* Phase 6d-2 — zone resize handles. The yellow squares at corners +
@@ -11080,11 +11057,11 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     cursor: nesw-resize;
 }
 
-/* Mobile collapse: source toggle wraps and the picker bar stacks. */
+/* Mobile collapse: source toggle wraps and the picker bar stacks.
+ * The tactical tool grid now reuses `.coach-tool-grid`, which already
+ * has its own responsive rules from the video telestrator CSS — no
+ * tactical-only override needed here. */
 @media (max-width: 720px) {
-    .coach-tb-tool-grid {
-        grid-template-columns: 1fr;
-    }
     .coach-tb-form .coach-tb-row {
         grid-template-columns: 1fr;
     }

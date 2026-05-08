@@ -915,11 +915,19 @@ function buildBoardEditorController({
         }
     };
 
+    // Phase 6d-2 follow-up — `stage` is stable across renders but each
+    // `refresh()` replaces the inner SVG via innerHTML, which detaches
+    // any previously-captured `svg` reference. Re-query inside every
+    // pointer handler so getBoundingClientRect() reads from the live
+    // node. (The earlier code captured svg once per drag and watched
+    // every mousemove resolve to {0,0,0,0} after the first move
+    // triggered refresh().)
+    const liveSvg = () => stage.querySelector('svg.tb-svg');
+
     const beginDragDraw = (downEvent, kind) => {
-        const svg = stage.querySelector('svg.tb-svg');
         const move = (event) => {
             event.preventDefault();
-            const pt = pitchPointFromEvent(svg, event);
+            const pt = pitchPointFromEvent(liveSvg(), event);
             if (!pt || !state.dragPreview) return;
             state.dragPreview.x2 = pt.x;
             state.dragPreview.y2 = pt.y;
@@ -930,7 +938,7 @@ function buildBoardEditorController({
             window.removeEventListener('mouseup', up);
             window.removeEventListener('touchmove', move);
             window.removeEventListener('touchend', up);
-            const pt = pitchPointFromEvent(svg, event) || (state.dragPreview ? { x: state.dragPreview.x2, y: state.dragPreview.y2 } : null);
+            const pt = pitchPointFromEvent(liveSvg(), event) || (state.dragPreview ? { x: state.dragPreview.x2, y: state.dragPreview.y2 } : null);
             if (!pt || !state.dragPreview) { state.dragPreview = null; refresh(); return; }
             const start = { x: state.dragPreview.x1, y: state.dragPreview.y1 };
             const end = { x: pt.x, y: pt.y };
@@ -967,10 +975,9 @@ function buildBoardEditorController({
     };
 
     const beginDragFreehand = (downEvent) => {
-        const svg = stage.querySelector('svg.tb-svg');
         const move = (event) => {
             event.preventDefault();
-            const pt = pitchPointFromEvent(svg, event);
+            const pt = pitchPointFromEvent(liveSvg(), event);
             if (!pt || !state.dragPreview) return;
             const last = state.dragPreview.points[state.dragPreview.points.length - 1];
             // Drop very-close samples to keep payload small.
@@ -1003,12 +1010,11 @@ function buildBoardEditorController({
      * pitch bounds and to a minimum 0.02 size so a handle drag past
      * itself doesn't produce a degenerate or inverted zone. */
     const beginZoneResize = (downEvent, zone, which) => {
-        const svg = stage.querySelector('svg.tb-svg');
         const original = { x: zone.x, y: zone.y, w: zone.w, h: zone.h };
         const minSize = 0.02;
         const move = (event) => {
             event.preventDefault();
-            const pt = pitchPointFromEvent(svg, event);
+            const pt = pitchPointFromEvent(liveSvg(), event);
             if (!pt) return;
             // Compute the new bounding box from the anchored opposite
             // edges. Each handle pins specific edges of the rect.
@@ -1054,14 +1060,13 @@ function buildBoardEditorController({
             ? state.tokens.find((t) => t.id === id)
             : state.shapes.find((s) => s.id === id);
         if (!item) return;
-        const svg = stage.querySelector('svg.tb-svg');
-        const startPt = pitchPointFromEvent(svg, downEvent);
+        const startPt = pitchPointFromEvent(liveSvg(), downEvent);
         if (!startPt) return;
         const original = JSON.parse(JSON.stringify(item));
         let didMove = false;
         const move = (event) => {
             event.preventDefault();
-            const pt = pitchPointFromEvent(svg, event);
+            const pt = pitchPointFromEvent(liveSvg(), event);
             if (!pt) return;
             const dx = pt.x - startPt.x;
             const dy = pt.y - startPt.y;
@@ -1318,56 +1323,63 @@ export const tacticalBoardMixin = {
                 <button type="button" class="mini-action-btn coach-tb-formation-apply" data-coach-tb-action="apply-formation" disabled aria-label="Apply selected formation to the board">Apply formation</button>
             </div>
         `;
+        // Phase 6d-2 follow-up — toolbar mirrors the video telestrator
+        // structure exactly. Same outer `.coach-telestrator` wrapper,
+        // same `.coach-tool-grid` (5-col CSS grid, 34 px desktop icons,
+        // 44 px touch labels, single icon-first language), same
+        // `.coach-tool-row` for swatches + W slider, same `.coach-draw-
+        // actions` row at the bottom for Delete / Clear. Formation
+        // controls live above the telestrator (tactical-only addition);
+        // Player # / Label text inputs sit beside the label-text input
+        // the video telestrator already exposes. Buttons keep the same
+        // `coach-tool-btn` class so active-state, hover, focus ring,
+        // and pointer-fine collapse rules apply identically.
         toolbarEl.innerHTML = `
             ${formationToolbarHtml}
-            <div class="coach-tb-tool-grid" role="group" aria-label="Tactical board tools">
-                ${TOOLS.map((t) => `
-                    <button type="button"
-                            class="coach-tool-btn coach-tb-tool-btn"
-                            data-coach-tb-tool="${escAttr(t.id)}"
-                            aria-pressed="false"
-                            title="${escAttr(t.tip)}"
-                            aria-label="${escAttr(t.tip)}">
-                        <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                            <path d="${t.path}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                        <span class="coach-tool-label">${escAttr(t.label)}</span>
-                    </button>
-                `).join('')}
-            </div>
-            <div class="coach-tool-row coach-tb-color-row" role="group" aria-label="Shape color and stroke width">
-                ${BOARD_COLOR_PALETTE.map((color) => `
-                    <button type="button"
-                            data-coach-tb-color="${escAttr(color)}"
-                            class="coach-color-swatch"
-                            style="--swatch:${escAttr(color)}"
-                            title="${escAttr(BOARD_COLOR_NAMES[color] || color)}"
-                            aria-label="Color: ${escAttr(BOARD_COLOR_NAMES[color] || color)}"
-                            aria-pressed="false"></button>
-                `).join('')}
-                <label class="coach-width-control" title="Stroke width">
-                    <span class="coach-width-label" aria-hidden="true">W</span>
-                    <input type="range"
-                           min="${BOARD_STROKE_WIDTH_MIN}"
-                           max="${BOARD_STROKE_WIDTH_MAX}"
-                           value="${DEFAULT_BOARD_STROKE_WIDTH}"
-                           data-coach-tb-input="stroke-width"
-                           aria-label="Stroke width">
-                </label>
-            </div>
-            <div class="coach-tb-tool-meta">
-                <label class="coach-tb-input-wrap">
-                    <span>Player #</span>
-                    <input type="text" class="coach-tb-input" data-coach-tb-input="player-label" maxlength="24" placeholder="e.g. 7">
-                </label>
-                <label class="coach-tb-input-wrap">
-                    <span>Label text</span>
-                    <input type="text" class="coach-tb-input" data-coach-tb-input="label-text" maxlength="80" placeholder="e.g. press here">
-                </label>
-            </div>
-            <div class="coach-tb-tool-actions">
-                <button type="button" class="mini-action-btn" data-coach-tb-action="delete" disabled aria-label="Delete selected item">Delete selected</button>
-                <button type="button" class="mini-action-btn" data-coach-tb-action="clear" aria-label="Clear all items">Clear board</button>
+            <div class="coach-telestrator" role="toolbar" aria-label="Tactical board tools">
+                <div class="coach-tool-grid" role="group" aria-label="Drawing tools">
+                    ${TOOLS.map((t) => `
+                        <button type="button"
+                                class="coach-tool-btn"
+                                data-coach-tb-tool="${escAttr(t.id)}"
+                                aria-pressed="false"
+                                title="${escAttr(t.tip)}"
+                                aria-label="${escAttr(t.tip)}">
+                            <svg class="coach-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="${t.path}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span class="coach-tool-label">${escAttr(t.label)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+                <div class="coach-tool-row" role="group" aria-label="Color and width">
+                    ${BOARD_COLOR_PALETTE.map((color) => `
+                        <button type="button"
+                                data-coach-tb-color="${escAttr(color)}"
+                                class="coach-color-swatch"
+                                style="--swatch:${escAttr(color)}"
+                                title="${escAttr(BOARD_COLOR_NAMES[color] || color)}"
+                                aria-label="Color: ${escAttr(BOARD_COLOR_NAMES[color] || color)}"
+                                aria-pressed="false"></button>
+                    `).join('')}
+                    <label class="coach-width-control" title="Stroke width">
+                        <span class="coach-width-label" aria-hidden="true">W</span>
+                        <input type="range"
+                               min="${BOARD_STROKE_WIDTH_MIN}"
+                               max="${BOARD_STROKE_WIDTH_MAX}"
+                               value="${DEFAULT_BOARD_STROKE_WIDTH}"
+                               data-coach-tb-input="stroke-width"
+                               aria-label="Stroke width">
+                    </label>
+                </div>
+                <div class="coach-tb-tool-meta">
+                    <input type="text" class="coach-tb-input" data-coach-tb-input="player-label" maxlength="24" placeholder="Next player # (e.g. 7)" aria-label="Next player number for the next player token">
+                    <input type="text" class="coach-tb-input" data-coach-tb-input="label-text" maxlength="80" placeholder="Label text (e.g. press here)" aria-label="Text for the next label">
+                </div>
+                <div class="coach-draw-actions" role="group" aria-label="Board actions">
+                    <button type="button" class="mini-action-btn" data-coach-tb-action="delete" disabled aria-label="Delete selected item">Delete selected</button>
+                    <button type="button" class="mini-action-btn" data-coach-tb-action="clear" aria-label="Clear all items from the board">Clear board</button>
+                </div>
             </div>
         `;
         const tbPlayerInput = toolbarEl.querySelector('[data-coach-tb-input="player-label"]');
