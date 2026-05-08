@@ -2965,6 +2965,14 @@ export const coachingMixin = {
         // Only intercept when the Review tab is actually showing.
         const reviewPanel = document.getElementById('coach-tab-review');
         if (!reviewPanel || reviewPanel.hidden) return;
+        // Phase 6d-2 — tactical_board source mode owns its own keydown
+        // handler (mountTacticalBoardReviewCanvas), which uses the SAME
+        // letter shortcuts where they overlap (A / F / Z / T) plus the
+        // tactical-only V / P / B / L. Returning early here keeps the
+        // two handlers from double-firing AND prevents this handler
+        // from hitting the video setCoachDrawingTool path (which would
+        // try to paint on a non-existent video canvas in tactical mode).
+        if (this._coachReviewSource === 'tactical_board' && event.key !== '?') return;
         const video = document.getElementById(this._coachVideoId);
 
         switch (event.key) {
@@ -3081,16 +3089,27 @@ export const coachingMixin = {
             ['<kbd>Esc</kbd>', 'Exit focus mode'],
             ['<kbd>?</kbd>', 'Show / hide this help'],
         ];
+        // Phase 6d-2 — tactical-board keyboard shortcuts. Shortcut
+        // letters mirror the video telestrator's conventions where the
+        // tools overlap (A / F / Z / T / V); tactical-only tools take
+        // P (Player) / B (Ball) / L (Line). Bound in
+        // mountTacticalBoardReviewCanvas's keydown handler, gated on
+        // `body[data-coach-review-source="tactical_board"]`.
         const TB_ITEMS = [
+            ['<kbd>V</kbd>', 'Select / move'],
+            ['<kbd>P</kbd>', 'Player token'],
+            ['<kbd>B</kbd>', 'Ball'],
+            ['<kbd>A</kbd> / <kbd>1</kbd>', 'Arrow'],
+            ['<kbd>L</kbd>', 'Line'],
+            ['<kbd>Z</kbd>', 'Zone'],
+            ['<kbd>F</kbd>', 'Pen / freehand'],
+            ['<kbd>T</kbd>', 'Label / text'],
             ['<kbd>Delete</kbd> / <kbd>Backspace</kbd>', 'Delete the selected token or shape'],
-            ['<kbd>Esc</kbd>', 'Exit focus mode'],
+            ['<kbd>Esc</kbd>', 'Clear selection or exit drawing tool'],
             ['<kbd>?</kbd>', 'Show / hide this help'],
-            // Tactical-mode-specific tool shortcuts ship in Phase 6d-2.
         ];
         const items = source === 'tactical_board' ? TB_ITEMS : VIDEO_ITEMS;
-        const note = source === 'tactical_board'
-            ? '<li class="coach-shortcuts-help-note"><span>More tactical-board shortcuts arrive in Phase 6d-2.</span></li>'
-            : '';
+        const note = '';
         list.innerHTML = items.map(([keys, label]) => `<li>${keys}<span>${this.esc(label)}</span></li>`).join('') + note;
     },
 

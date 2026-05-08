@@ -11023,6 +11023,63 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     display: none !important;
 }
 
+/* Phase 6d-2 — formation controls. Stacks game format + formation
+ * selects + Apply button vertically inside the side toolbar so the
+ * controls sit above the tool grid. Visually mirrors `.coach-tb-tool-
+ * meta` so the side panel reads as one surface. */
+.coach-tb-formation {
+    display: grid;
+    gap: 0.4rem;
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] .coach-tb-formation {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.coach-tb-formation-apply {
+    justify-self: stretch;
+}
+
+.coach-tb-formation-apply:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Phase 6d-2 color parity follow-up — color swatch row inside the
+ * tactical board side panel. Reuses `.coach-tool-row` + `.coach-color-
+ * swatch` from the video telestrator so the visual language matches
+ * across modes. The outer wrapper just gives it the same vertical
+ * rhythm as `.coach-tb-tool-meta` / `.coach-tb-tool-actions`. */
+.coach-tb-color-row {
+    padding-top: 0.4rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+[data-theme="light"] .coach-tb-color-row {
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Phase 6d-2 — zone resize handles. The yellow squares at corners +
+ * edge midpoints of a selected zone. The transparent outer rect (rendered
+ * by the SVG, not styled here) gives a generous touch target. */
+.tb-zone-handle {
+    cursor: nwse-resize;
+}
+.tb-zone-handle[data-zone-resize="n"],
+.tb-zone-handle[data-zone-resize="s"] {
+    cursor: ns-resize;
+}
+.tb-zone-handle[data-zone-resize="e"],
+.tb-zone-handle[data-zone-resize="w"] {
+    cursor: ew-resize;
+}
+.tb-zone-handle[data-zone-resize="ne"],
+.tb-zone-handle[data-zone-resize="sw"] {
+    cursor: nesw-resize;
+}
+
 /* Mobile collapse: source toggle wraps and the picker bar stacks. */
 @media (max-width: 720px) {
     .coach-tb-tool-grid {
@@ -11030,6 +11087,17 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     }
     .coach-tb-form .coach-tb-row {
         grid-template-columns: 1fr;
+    }
+}
+
+/* Tighter mobile (390px) — formation controls stay one column and
+ * the tactical toolbar wraps cleanly. */
+@media (max-width: 480px) {
+    .coach-tb-formation {
+        grid-template-columns: 1fr;
+    }
+    .coach-tb-formation-apply {
+        width: 100%;
     }
 }
 

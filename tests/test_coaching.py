@@ -4409,3 +4409,398 @@ async def test_tactical_board_legacy_payload_without_freehand_still_accepted(cli
     board = resp.json()["note"]["tactical_board_json"]
     kinds = sorted(s["kind"] for s in board["shapes"])
     assert kinds == ["arrow", "label", "zone"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 6d-2 — game_format + formation metadata. Both fields are
+# optional and backwards-compatible: old boards saved without metadata
+# still validate and round-trip. Unknown game_format rejects on write;
+# formation is bounded but free-form.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_accepts_game_format_and_formation(client, auth_headers):
+    """A valid game_format + formation pair round-trips with the rest of
+    the scene preserved. Tests the happy path for the 6d-2 metadata."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "11v11 4-3-3 build-up",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "game_format": "11v11",
+            "formation": "4-3-3",
+            "tokens": [
+                {"kind": "player", "x": 0.20, "y": 0.50, "label": "GK"},
+                {"kind": "ball", "x": 0.50, "y": 0.50},
+            ],
+            "shapes": [],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    assert board["game_format"] == "11v11"
+    assert board["formation"] == "4-3-3"
+    assert len(board["tokens"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_accepts_each_valid_game_format(client, auth_headers):
+    """Every value in `_VALID_BOARD_GAME_FORMATS` is accepted; a rep
+    formation per format is round-tripped."""
+    for gf, formation in [("7v7", "2-3-1"), ("9v9", "3-2-3"), ("11v11", "4-3-3")]:
+        resp = await client.post("/api/coach/notes", json={
+            "title": f"{gf} {formation}",
+            "note_context": "observation",
+            "category": "other", "visibility": "team",
+            "tactical_board_json": {
+                "pitch_kind": "soccer_full",
+                "game_format": gf,
+                "formation": formation,
+                "tokens": [{"kind": "player", "x": 0.5, "y": 0.5, "label": "1"}],
+            },
+        }, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        board = resp.json()["note"]["tactical_board_json"]
+        assert board["game_format"] == gf
+        assert board["formation"] == formation
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_unknown_game_format(client, auth_headers):
+    """An out-of-set game_format is rejected with 422 — matches the
+    closed-set policy on every other board enum."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Bad format", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "game_format": "5v5",
+            "tokens": [{"kind": "player", "x": 0.5, "y": 0.5, "label": "1"}],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_non_string_game_format(client, auth_headers):
+    """Numeric / boolean game_format is rejected (defense in depth — a
+    corrupted client must not coerce True → 1 → \"1\")."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Bad format type", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "game_format": 11,
+            "tokens": [{"kind": "player", "x": 0.5, "y": 0.5, "label": "1"}],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_oversized_formation(client, auth_headers):
+    """Formation strings longer than `_MAX_BOARD_FORMATION_LENGTH` are
+    rejected — keeps the row bounded even if the client is corrupted."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Long formation", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "game_format": "11v11",
+            "formation": "x" * 64,
+            "tokens": [{"kind": "player", "x": 0.5, "y": 0.5, "label": "1"}],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_rejects_blank_formation(client, auth_headers):
+    """A formation that strips to empty is rejected (same as oversize —
+    row would carry meaningless metadata)."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Blank formation", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "game_format": "11v11",
+            "formation": "   ",
+            "tokens": [{"kind": "player", "x": 0.5, "y": 0.5, "label": "1"}],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_legacy_payload_without_metadata_still_accepted(client, auth_headers):
+    """6c / 6d-1 boards saved without `game_format` / `formation` MUST
+    keep loading. The validator does not synthesize defaults."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Legacy no-metadata", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "tokens": [{"kind": "player", "x": 0.4, "y": 0.5, "label": "7"}],
+            "shapes": [{"kind": "zone", "x": 0.6, "y": 0.6, "w": 0.2, "h": 0.2}],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    assert "game_format" not in board
+    assert "formation" not in board
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_metadata_null_treated_as_absent(client, auth_headers):
+    """Explicit JSON null for either metadata field clears it (treated
+    as absent), which matches the 'old boards have no metadata' default."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Null metadata", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "game_format": None,
+            "formation": None,
+            "tokens": [{"kind": "player", "x": 0.5, "y": 0.5, "label": "7"}],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    assert "game_format" not in board
+    assert "formation" not in board
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_custom_formation_label_round_trips(client, auth_headers):
+    """The 'custom' sentinel formation (used by the JS UI when the coach
+    built the board by hand) is just another short string and round-
+    trips. The backend doesn't enumerate formation values."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Custom layout", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "game_format": "11v11",
+            "formation": "custom",
+            "tokens": [{"kind": "player", "x": 0.5, "y": 0.5, "label": "10"}],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    board = resp.json()["note"]["tactical_board_json"]
+    assert board["formation"] == "custom"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6d-2 color parity follow-up — per-shape color metadata. Closed
+# palette mirrors the video telestrator exactly. Off-palette / non-string
+# values are dropped (not 422) so old boards with stray fields keep
+# loading. Legacy boards without any color field round-trip unchanged.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_shape_accepts_palette_color(client, auth_headers):
+    """A shape with a palette-color string round-trips lowercased."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Colored arrow",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "color": "#F97316"},
+                {"kind": "zone", "x": 0.6, "y": 0.6, "w": 0.2, "h": 0.2, "color": "#38bdf8"},
+                {"kind": "freehand", "color": "#22c55e", "points": [
+                    {"x": 0.1, "y": 0.5}, {"x": 0.2, "y": 0.5}, {"x": 0.3, "y": 0.5},
+                ]},
+                {"kind": "label", "x": 0.4, "y": 0.4, "text": "switch", "color": "#facc15"},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    shapes = resp.json()["note"]["tactical_board_json"]["shapes"]
+    by_kind = {s["kind"]: s for s in shapes}
+    assert by_kind["arrow"]["color"] == "#f97316"
+    assert by_kind["zone"]["color"] == "#38bdf8"
+    assert by_kind["freehand"]["color"] == "#22c55e"
+    assert by_kind["label"]["color"] == "#facc15"
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_shape_drops_off_palette_color(client, auth_headers):
+    """Off-palette colors are silently dropped (not 422). Same row still
+    loads — defense in depth so a corrupted client cannot DoS the
+    note-load path with a stray field."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Off-palette color",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5,
+                 "color": "rebeccapurple"},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5,
+                 "color": "javascript:alert(1)"},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5,
+                 "color": True},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5,
+                 "color": 123},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    shapes = resp.json()["note"]["tactical_board_json"]["shapes"]
+    assert len(shapes) == 4
+    for s in shapes:
+        assert "color" not in s
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_legacy_default_color_round_trips(client, auth_headers):
+    """The pre-color-controls default `#fde047` is in the accepted
+    palette so a board saved with it (e.g. by a future client that
+    explicitly tags every shape) still validates."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Legacy default", "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "line", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5,
+                 "color": "#fde047"},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["note"]["tactical_board_json"]["shapes"][0]["color"] == "#fde047"
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_legacy_no_color_unchanged(client, auth_headers):
+    """Existing boards saved before the color-controls follow-up have
+    no `color` field on any shape. They MUST keep loading and the
+    response MUST NOT synthesize a color."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "No color field",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5},
+                {"kind": "zone", "x": 0.6, "y": 0.6, "w": 0.2, "h": 0.2},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    for s in resp.json()["note"]["tactical_board_json"]["shapes"]:
+        assert "color" not in s
+
+
+# ---------------------------------------------------------------------------
+# Phase 6d-2 thickness parity follow-up — per-shape `stroke_width`. Same
+# defense-in-depth shape as the color follow-up: out-of-range / non-
+# numeric / boolean values are silently dropped (not 422); accepted
+# values are rounded to int and bounded `[2, 10]`. Matches the video
+# telestrator slider exactly.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_shape_accepts_stroke_width(client, auth_headers):
+    """A shape with an in-range integer stroke_width round-trips."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Thick arrow",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": 7},
+                {"kind": "zone", "x": 0.6, "y": 0.6, "w": 0.2, "h": 0.2, "stroke_width": 4},
+                {"kind": "freehand", "stroke_width": 9, "points": [
+                    {"x": 0.1, "y": 0.5}, {"x": 0.2, "y": 0.5}, {"x": 0.3, "y": 0.5},
+                ]},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    shapes = resp.json()["note"]["tactical_board_json"]["shapes"]
+    by_kind = {s["kind"]: s for s in shapes}
+    assert by_kind["arrow"]["stroke_width"] == 7
+    assert by_kind["zone"]["stroke_width"] == 4
+    assert by_kind["freehand"]["stroke_width"] == 9
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_stroke_width_bounds(client, auth_headers):
+    """Out-of-range / non-numeric / boolean stroke_width values are
+    silently dropped. The shape itself still loads — defense in depth
+    so a corrupted client cannot DoS the note-load path."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Out-of-range widths",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": 0},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": 99},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": -3},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": "fat"},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": True},
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": 1e308},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    shapes = resp.json()["note"]["tactical_board_json"]["shapes"]
+    assert len(shapes) == 6
+    for s in shapes:
+        assert "stroke_width" not in s
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_stroke_width_rounds_floats(client, auth_headers):
+    """Float values inside the bound are rounded to int — keeps the
+    persisted column tight even if the JS slider's value drifts."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "Float widths",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "line", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": 4.4},
+                {"kind": "line", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5, "stroke_width": 4.6},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    widths = [s["stroke_width"] for s in resp.json()["note"]["tactical_board_json"]["shapes"]]
+    assert widths == [4, 5]
+
+
+@pytest.mark.asyncio
+async def test_tactical_board_legacy_no_stroke_width_unchanged(client, auth_headers):
+    """Existing boards saved before the thickness follow-up have no
+    `stroke_width` field. They MUST keep loading and the response MUST
+    NOT synthesize a value."""
+    resp = await client.post("/api/coach/notes", json={
+        "title": "No stroke_width field",
+        "note_context": "observation",
+        "category": "other", "visibility": "team",
+        "tactical_board_json": {
+            "pitch_kind": "soccer_full",
+            "shapes": [
+                {"kind": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5},
+                {"kind": "zone", "x": 0.6, "y": 0.6, "w": 0.2, "h": 0.2},
+            ],
+        },
+    }, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    for s in resp.json()["note"]["tactical_board_json"]["shapes"]:
+        assert "stroke_width" not in s

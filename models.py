@@ -194,6 +194,43 @@ _MAX_BOARD_LABEL_LENGTH = 80
 # bounded so a corrupted client cannot stuff thousands of points into a
 # single shape.
 _MAX_BOARD_FREEHAND_POINTS = 200
+# Phase 6d-2 color parity follow-up — closed palette accepted on per-
+# shape `color` fields. Mirrors the video telestrator palette in
+# `js/coaching.js renderCoachTelestratorToolbar` exactly so a coach who
+# learned the video swatches sees identical hex values in tactical mode.
+# The legacy `#fde047` (pre-color-controls default) is also accepted so
+# old boards saved with a color value round-trip unchanged. Stored
+# values are lowercased; a non-string / off-palette / null value is
+# treated as ABSENT (the field is dropped from the normalized payload)
+# rather than rejected, so a corrupted client cannot 422 a board that
+# has a stray field. Adding any kind of permissive parser here would
+# allow `javascript:` style strings to leak into `<svg fill="…">`, so
+# the closed-set check stays.
+_VALID_BOARD_COLORS = {
+    "#38bdf8", "#f97316", "#22c55e", "#facc15",
+    "#f43f5e", "#ffffff", "#fde047",
+}
+# Phase 6d-2 thickness parity follow-up — bounded stroke-width range
+# mirrors the video telestrator slider (`<input type="range" min="2"
+# max="10" value="3">` in `js/coaching.js renderCoachTelestratorToolbar`)
+# AND the JS-side BOARD_STROKE_WIDTH_MIN / BOARD_STROKE_WIDTH_MAX in
+# `js/tactical-board.js`. Out-of-range / non-numeric values are silently
+# dropped (treated as ABSENT) rather than rejected — same defense-in-
+# depth pattern as `_normalize_board_color`. The legacy default `3` is
+# also accepted for round-trip symmetry.
+_BOARD_STROKE_WIDTH_MIN = 2
+_BOARD_STROKE_WIDTH_MAX = 10
+# Phase 6d-2 — optional game format + formation metadata. Both fields
+# are OPTIONAL; old boards saved without them still load and round-trip
+# unchanged. The validator stores them only when present so a future
+# sport / format can be added without a migration.
+_VALID_BOARD_GAME_FORMATS = {"7v7", "9v9", "11v11"}
+# Formation labels are coach-facing strings (e.g. "2-3-1", "4-3-3",
+# "custom"). We don't enumerate every possible formation here because
+# the registry lives in the JS layer (js/tactical-board.js) and a coach
+# can save a custom layout with any short label. Capped at 32 chars so
+# a corrupted client cannot store a multi-megabyte string.
+_MAX_BOARD_FORMATION_LENGTH = 32
 # Observation notes still need *some* coaching content, otherwise the
 # row carries nothing useful. Any non-empty value in any of these fields
 # is enough — same spirit as the structured-fields list (Phase 1) but
@@ -445,6 +482,37 @@ def _validate_board_token(token: Any, index: int) -> dict[str, Any]:
     return out
 
 
+def _normalize_board_color(value: Any) -> str | None:
+    """Phase 6d-2 color parity follow-up — return the lowercased color
+    when it's in the closed palette, else None. None is a defensive
+    pass-through (drop the field) rather than a 422 — the validator
+    must accept old boards with a stray-but-harmless field. The closed
+    set keeps `<svg fill="…">` from receiving e.g. `javascript:` URIs."""
+    if value is None or isinstance(value, bool) or not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    return candidate if candidate in _VALID_BOARD_COLORS else None
+
+
+def _normalize_board_stroke_width(value: Any) -> int | None:
+    """Phase 6d-2 thickness parity follow-up — return the rounded int
+    when it's inside `[_BOARD_STROKE_WIDTH_MIN, _BOARD_STROKE_WIDTH_MAX]`,
+    else None. Same defense-in-depth pattern as `_normalize_board_color`
+    — out-of-range / non-numeric / boolean values drop the field rather
+    than 422. SVG renderers don't have a code-execution surface here,
+    but a runaway value (e.g. `1e308`) could blow up viewer canvases,
+    so the bound stays tight."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not (_BOARD_STROKE_WIDTH_MIN <= n <= _BOARD_STROKE_WIDTH_MAX):
+        return None
+    return round(n)
+
+
 def _validate_board_shape(shape: Any, index: int) -> dict[str, Any]:
     if not isinstance(shape, dict):
         raise ValueError(f"tactical_board shapes[{index}] must be an object")
@@ -454,6 +522,12 @@ def _validate_board_shape(shape: Any, index: int) -> dict[str, Any]:
             f"tactical_board shapes[{index}].kind must be one of {sorted(_VALID_BOARD_SHAPE_KINDS)}"
         )
     out: dict[str, Any] = {"kind": kind}
+    color = _normalize_board_color(shape.get("color"))
+    if color:
+        out["color"] = color
+    stroke_width = _normalize_board_stroke_width(shape.get("stroke_width"))
+    if stroke_width is not None:
+        out["stroke_width"] = stroke_width
     sid = shape.get("id")
     if sid is not None:
         if not isinstance(sid, str) or not sid.strip():
@@ -589,13 +663,40 @@ def validate_tactical_board_payload(value: dict[str, Any] | None) -> dict[str, A
         raise ValueError(f"tactical_board_json shapes exceed max ({_MAX_BOARD_SHAPES})")
     shapes = [_validate_board_shape(s, i) for i, s in enumerate(shapes_raw)]
 
-    return {
+    # Phase 6d-2 — optional game_format + formation metadata. Absent =
+    # legacy board (do not synthesize). Present-but-null is treated as
+    # absent so a client that wants to clear can send null. Unknown
+    # game_format rejects on write; formation is a free-form short
+    # string that's bounds-checked but not enumerated here.
+    out = {
         "version": 1,
         "pitch_kind": pitch_kind,
         "orientation": orientation,
         "tokens": tokens,
         "shapes": shapes,
     }
+    if "game_format" in value and value["game_format"] is not None:
+        gf = value["game_format"]
+        if not isinstance(gf, str):
+            raise ValueError("tactical_board_json game_format must be a string")
+        if gf not in _VALID_BOARD_GAME_FORMATS:
+            raise ValueError(
+                f"tactical_board_json game_format must be one of {sorted(_VALID_BOARD_GAME_FORMATS)}"
+            )
+        out["game_format"] = gf
+    if "formation" in value and value["formation"] is not None:
+        fm = value["formation"]
+        if isinstance(fm, bool) or not isinstance(fm, str):
+            raise ValueError("tactical_board_json formation must be a string")
+        fm = fm.strip()
+        if not fm:
+            raise ValueError("tactical_board_json formation cannot be blank")
+        if len(fm) > _MAX_BOARD_FORMATION_LENGTH:
+            raise ValueError(
+                f"tactical_board_json formation exceeds max length ({_MAX_BOARD_FORMATION_LENGTH})"
+            )
+        out["formation"] = fm
+    return out
 
 
 class CreateCoachingNoteRequest(BaseModel):
