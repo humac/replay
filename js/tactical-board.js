@@ -625,6 +625,64 @@ function renderDefs() {
 /** Public — render a board as an SVG string. opts.editor adds per-item
  * data attributes used by the editor click/drag handlers. opts.size
  * controls the wrapper class for sizing (preview / chip / full). */
+/** Phase 6d-2 follow-up — compute the bounding box (in normalized 0..1
+ * coords) of any token/shape, mirroring `coachObjectBounds` in
+ * `js/coaching.js`. The selected item gets a dashed-rect overlay
+ * drawn around this box so the coach has the same selection
+ * affordance as the video telestrator. */
+function boardItemBounds(item) {
+    if (!item) return null;
+    if (item.kind === 'arrow' || item.kind === 'line') {
+        const x = Math.min(item.x1, item.x2);
+        const y = Math.min(item.y1, item.y2);
+        const w = Math.max(0.02, Math.abs(item.x2 - item.x1));
+        const h = Math.max(0.02, Math.abs(item.y2 - item.y1));
+        return { x, y, w, h };
+    }
+    if (item.kind === 'zone') return { x: item.x, y: item.y, w: item.w, h: item.h };
+    if (item.kind === 'freehand') {
+        const pts = item.points || [];
+        if (!pts.length) return null;
+        const xs = pts.map((p) => p.x);
+        const ys = pts.map((p) => p.y);
+        const x = Math.min(...xs), y = Math.min(...ys);
+        return { x, y, w: Math.max(0.02, Math.max(...xs) - x), h: Math.max(0.02, Math.max(...ys) - y) };
+    }
+    if (item.kind === 'label') {
+        // Label is a pill ~280 viewBox-units wide × 44 tall, centered on
+        // (item.x, item.y). Bounds reflect the visible pill.
+        return { x: Math.max(0, item.x - 0.14), y: Math.max(0, item.y - 0.04), w: 0.28, h: 0.08 };
+    }
+    if (item.kind === 'player' || item.kind === 'ball') {
+        // Tokens are circular; pick a square bounds matching the
+        // selection-bumped radius (26 vb-units for player, 18 for ball)
+        // expressed in normalized coords (PITCH_VIEWBOX.w = 1050).
+        const r = item.kind === 'player' ? 26 : 18;
+        const dx = (r + 4) / PITCH_VIEWBOX.w;
+        const dy = (r + 4) / PITCH_VIEWBOX.h;
+        return { x: Math.max(0, item.x - dx), y: Math.max(0, item.y - dy), w: dx * 2, h: dy * 2 };
+    }
+    return null;
+}
+
+function renderSelectionBoundsSvg(selectedItem) {
+    if (!selectedItem) return '';
+    const b = boardItemBounds(selectedItem);
+    if (!b) return '';
+    const W = PITCH_VIEWBOX.w, H = PITCH_VIEWBOX.h;
+    // Pad the box so the dashed rect doesn't touch the shape outline.
+    const pad = 6;
+    const x = b.x * W - pad;
+    const y = b.y * H - pad;
+    const w = b.w * W + pad * 2;
+    const h = b.h * H + pad * 2;
+    // Match the video selection rect: white stroke, dashed [5, 4],
+    // 1.5 stroke-width. `pointer-events="none"` so the rect doesn't
+    // intercept clicks on the underlying shape (which still owns the
+    // hit target via data-shape-id / data-token-id).
+    return `<rect class="tb-selection-rect" pointer-events="none" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+}
+
 export function renderTacticalBoardSvg(board, opts = {}) {
     const normalized = normalizeBoardForRender(board);
     if (!normalized) {
@@ -640,12 +698,24 @@ export function renderTacticalBoardSvg(board, opts = {}) {
     if (normalized.tokens.length) summaryParts.push(`${normalized.tokens.length} token${normalized.tokens.length === 1 ? '' : 's'}`);
     if (normalized.shapes.length) summaryParts.push(`${normalized.shapes.length} shape${normalized.shapes.length === 1 ? '' : 's'}`);
     const summary = summaryParts.length ? `Tactical board — ${summaryParts.join(', ')}` : 'Tactical board (empty)';
+    // Phase 6d-2 follow-up — selection affordance parity with the video
+    // telestrator. When an item is selected in editor mode, draw a
+    // dashed white bounding rect over it (same `5 4` dash pattern + 1.5
+    // stroke width as `paintCoachSelection` in js/coaching.js). The
+    // rect is rendered AFTER shapes/tokens so it sits on top.
+    let selectedItem = null;
+    if (opts.editor && opts.selectedId) {
+        selectedItem = normalized.shapes.find((s) => s.id === opts.selectedId)
+            || normalized.tokens.find((t) => t.id === opts.selectedId)
+            || null;
+    }
     return `<div class="tb-svg-wrap${sizeClass}${editorClass}" role="img" aria-label="${escAttr(summary)}">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PITCH_VIEWBOX.w} ${PITCH_VIEWBOX.h}" preserveAspectRatio="xMidYMid meet" class="tb-svg">
             ${renderDefs()}
             ${renderer()}
             <g class="tb-shapes">${normalized.shapes.map((s) => renderShapeSvg(s, opts)).join('')}</g>
             <g class="tb-tokens">${normalized.tokens.map((t) => renderTokenSvg(t, opts)).join('')}</g>
+            ${selectedItem ? renderSelectionBoundsSvg(selectedItem) : ''}
         </svg>
     </div>`;
 }
