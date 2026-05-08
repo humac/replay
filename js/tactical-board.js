@@ -262,14 +262,20 @@ const FORMATION_PRESETS = {
         ] },
         { id: '3-5-2', label: '3-5-2', positions: [
             { x: 0.07, y: 0.50, label: 'GK' },
+            // Back three: 4 / 5 / 6 (centre-backs).
             { x: 0.20, y: 0.30, label: '4' },
             { x: 0.20, y: 0.50, label: '5' },
             { x: 0.20, y: 0.70, label: '6' },
+            // Midfield five: 2 (right-wing-back), 8 / 10 (centre-mids),
+            // 7 (right-side mid), 3 (left-wing-back). Earlier label
+            // sets carried duplicate '6' on the right-side mid; the
+            // canonical 3-5-2 number is '7' there.
             { x: 0.42, y: 0.12, label: '2' },
             { x: 0.42, y: 0.35, label: '8' },
             { x: 0.42, y: 0.50, label: '10' },
-            { x: 0.42, y: 0.65, label: '6' },
+            { x: 0.42, y: 0.65, label: '7' },
             { x: 0.42, y: 0.88, label: '3' },
+            // Front two.
             { x: 0.72, y: 0.40, label: '9' },
             { x: 0.72, y: 0.60, label: '11' },
         ] },

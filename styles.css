@@ -11044,6 +11044,19 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     border-radius: 3px;
 }
 
+/* Phase 6d-2 follow-up — light-theme scrollbar parity. The dark-theme
+ * thumb above is white-on-dark; in light mode that renders as white-
+ * on-light and is near-invisible. Mirror the video-mode pattern at
+ * `[data-theme="light"] #coach-view.is-review-mode .coach-review-side`
+ * with dark-on-light. Per CLAUDE.md: "Visible controls must be themed
+ * in both dark and light modes... or unthemed scrollbars." */
+[data-theme="light"] .coach-review-shell[data-source="tactical_board"] .coach-review-side {
+    scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+[data-theme="light"] .coach-review-shell[data-source="tactical_board"] .coach-review-side::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+}
+
 /* Phase 6d-2 follow-up — formation selectors styled like other Coach
  * <select>s (no native OS chrome). Mirrors `.coach-mini-form select`
  * (appearance:none + custom chevron) but scoped to the tactical board
