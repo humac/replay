@@ -25,32 +25,28 @@ async function seedReviewActivity(page) {
     await login(page, 'family1', PASS);
     await page.goto('/feedback?tab=notes');
     await page.waitForFunction(() => !!window.app?._feedbackData);
-    return await page.evaluate(async () => {
-        const token = sessionStorage.getItem('replay_admin_token');
-        const headers = { Authorization: `Bearer ${token}` };
-        const dataResp = await fetch('/api/my-feedback', { headers });
-        const data = await dataResp.json();
-        const note = (data.notes || [])[0];
-        const playlist = (data.playlists || [])[0];
-        const results = [];
-        if (note) {
-            const resp = await fetch('/api/my-feedback/review', {
-                method: 'POST',
-                headers: { ...headers, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ note_id: note.id, reflection: 'Phase 9 E2E reflection needing coach response.' }),
-            });
-            results.push({ kind: 'note', status: resp.status, body: await resp.json().catch(() => ({})) });
-        }
-        if (playlist) {
-            const resp = await fetch('/api/my-feedback/review', {
-                method: 'POST',
-                headers: { ...headers, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ playlist_id: playlist.id }),
-            });
-            results.push({ kind: 'playlist', status: resp.status, body: await resp.json().catch(() => ({})) });
-        }
-        return results;
-    });
+    const token = await page.evaluate(() => sessionStorage.getItem('replay_admin_token'));
+    const headers = { Authorization: `Bearer ${token}` };
+    const dataResp = await page.request.get(`${BASE}/api/my-feedback`, { headers });
+    const data = await dataResp.json();
+    const note = (data.notes || [])[0];
+    const playlist = (data.playlists || [])[0];
+    const results = [];
+    if (note) {
+        const resp = await page.request.post(`${BASE}/api/my-feedback/review`, {
+            headers,
+            data: { note_id: note.id, reflection: 'Phase 9 E2E reflection needing coach response.' },
+        });
+        results.push({ kind: 'note', status: resp.status(), body: await resp.json().catch(() => ({})) });
+    }
+    if (playlist) {
+        const resp = await page.request.post(`${BASE}/api/my-feedback/review`, {
+            headers,
+            data: { playlist_id: playlist.id },
+        });
+        results.push({ kind: 'playlist', status: resp.status(), body: await resp.json().catch(() => ({})) });
+    }
+    return results;
 }
 
 test.describe('Phase 9 — engagement dashboard UI and privacy captures', () => {
