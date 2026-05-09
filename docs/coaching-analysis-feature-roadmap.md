@@ -74,8 +74,7 @@ Computer vision can later help Replay find candidate moments, player tracks, tac
 - ✅ Phase 7 — Action items and next-match goals — **complete**
 - ✅ Phase 8 — Match coaching summaries — **complete**
 - ⏭️ Phase 9 — Coach engagement dashboard — **next**
-
-- ⏳ Phases 8–17 — not started
+- ⏳ Phases 10–17 — not started
 
 See `ROADMAP.md` for the per-PR completion log and exact dates.
 
