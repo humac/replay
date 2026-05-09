@@ -625,10 +625,63 @@ def _migrate_v10(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v12(conn: sqlite3.Connection):
+    """Add Phase 7 player goals, status history, and reflections."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            context TEXT NOT NULL DEFAULT 'next_match',
+            status TEXT NOT NULL DEFAULT 'open',
+            source_note_id INTEGER,
+            source_clip_id INTEGER,
+            source_playlist_id INTEGER,
+            source_playlist_item_note_id INTEGER,
+            target_match_id TEXT,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goals_player ON player_goals(player_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goals_status ON player_goals(status)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_goal_status_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            goal_id INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            changed_by TEXT,
+            changed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goal_status_history_goal ON player_goal_status_history(goal_id)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_goal_reflections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            goal_id INTEGER NOT NULL,
+            user_id TEXT NOT NULL,
+            reflection TEXT NOT NULL DEFAULT '',
+            needs_coach_follow_up INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goal_reflections_goal ON player_goal_reflections(goal_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goal_reflections_user ON player_goal_reflections(user_id)")
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
-    _migrate_v10, _migrate_v11,
+    _migrate_v10, _migrate_v11, _migrate_v12,
 ]
 
 
@@ -1035,6 +1088,13 @@ def update_player(player_id: str, **fields) -> bool:
 
 def delete_player(player_id: str) -> bool:
     with connect() as conn:
+        goal_rows = conn.execute("SELECT id FROM player_goals WHERE player_id = ?", (player_id,)).fetchall()
+        goal_ids = [row["id"] for row in goal_rows]
+        if goal_ids:
+            placeholders = ",".join("?" for _ in goal_ids)
+            conn.execute(f"DELETE FROM player_goal_status_history WHERE goal_id IN ({placeholders})", goal_ids)
+            conn.execute(f"DELETE FROM player_goal_reflections WHERE goal_id IN ({placeholders})", goal_ids)
+            conn.execute(f"DELETE FROM player_goals WHERE id IN ({placeholders})", goal_ids)
         conn.execute("DELETE FROM player_user_links WHERE player_id = ?", (player_id,))
         conn.execute("DELETE FROM coaching_note_players WHERE player_id = ?", (player_id,))
         conn.execute("DELETE FROM coaching_playlist_players WHERE player_id = ?", (player_id,))
@@ -1326,6 +1386,14 @@ def delete_coaching_note(note_id: int) -> bool:
             "UPDATE coaching_clips SET source_note_id = NULL WHERE source_note_id = ?",
             (note_id,),
         )
+        conn.execute(
+            "UPDATE player_goals SET source_note_id = NULL WHERE source_note_id = ?",
+            (note_id,),
+        )
+        conn.execute(
+            "UPDATE player_goals SET source_playlist_item_note_id = NULL WHERE source_playlist_item_note_id = ?",
+            (note_id,),
+        )
         cur = conn.execute("DELETE FROM coaching_notes WHERE id = ?", (note_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -1446,6 +1514,10 @@ def delete_coaching_playlist(playlist_id: int) -> bool:
         conn.execute("DELETE FROM coaching_playlist_items WHERE playlist_id = ?", (playlist_id,))
         conn.execute("DELETE FROM coaching_playlist_players WHERE playlist_id = ?", (playlist_id,))
         conn.execute("DELETE FROM coaching_reviews WHERE playlist_id = ?", (playlist_id,))
+        conn.execute(
+            "UPDATE player_goals SET source_playlist_id = NULL, source_playlist_item_note_id = NULL WHERE source_playlist_id = ?",
+            (playlist_id,),
+        )
         cur = conn.execute("DELETE FROM coaching_playlists WHERE id = ?", (playlist_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -1655,9 +1727,151 @@ def update_coaching_clip(clip_id: int, data: dict) -> dict | None:
 def delete_coaching_clip(clip_id: int) -> bool:
     with connect() as conn:
         conn.execute("DELETE FROM coaching_clip_players WHERE clip_id = ?", (clip_id,))
+        conn.execute(
+            "UPDATE player_goals SET source_clip_id = NULL WHERE source_clip_id = ?",
+            (clip_id,),
+        )
         cur = conn.execute("DELETE FROM coaching_clips WHERE id = ?", (clip_id,))
         conn.commit()
         return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Player goals (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+def _row_to_goal(row: sqlite3.Row, history: list[dict] | None = None, reflections: list[dict] | None = None) -> dict:
+    refl = reflections or []
+    return {
+        "id": row["id"], "player_id": row["player_id"], "title": row["title"] or "",
+        "description": row["description"] or "", "context": row["context"] or "next_match",
+        "status": row["status"] or "open", "source_note_id": row["source_note_id"],
+        "source_clip_id": row["source_clip_id"], "source_playlist_id": row["source_playlist_id"],
+        "source_playlist_item_note_id": row["source_playlist_item_note_id"], "target_match_id": row["target_match_id"],
+        "created_by": row["created_by"] or "", "created_at": row["created_at"], "updated_at": row["updated_at"],
+        "status_history": history or [], "reflections": refl, "latest_reflection": refl[0] if refl else None,
+        "needs_coach_follow_up": any(r.get("needs_coach_follow_up") for r in refl),
+    }
+
+
+def _goal_history(conn: sqlite3.Connection, goal_ids: list[int]) -> dict[int, list[dict]]:
+    if not goal_ids:
+        return {}
+    placeholders = ",".join("?" for _ in goal_ids)
+    out: dict[int, list[dict]] = {gid: [] for gid in goal_ids}
+    rows = conn.execute(f"SELECT * FROM player_goal_status_history WHERE goal_id IN ({placeholders}) ORDER BY changed_at ASC, id ASC", goal_ids).fetchall()
+    for row in rows:
+        out.setdefault(row["goal_id"], []).append(dict(row))
+    return out
+
+
+def _goal_reflections(conn: sqlite3.Connection, goal_ids: list[int]) -> dict[int, list[dict]]:
+    if not goal_ids:
+        return {}
+    placeholders = ",".join("?" for _ in goal_ids)
+    out: dict[int, list[dict]] = {gid: [] for gid in goal_ids}
+    rows = conn.execute(f"SELECT * FROM player_goal_reflections WHERE goal_id IN ({placeholders}) ORDER BY updated_at DESC, id DESC", goal_ids).fetchall()
+    for row in rows:
+        item = dict(row)
+        item["needs_coach_follow_up"] = bool(item.get("needs_coach_follow_up"))
+        out.setdefault(row["goal_id"], []).append(item)
+    return out
+
+
+def _hydrate_goals(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict]:
+    ids = [row["id"] for row in rows]
+    history = _goal_history(conn, ids)
+    reflections = _goal_reflections(conn, ids)
+    return [_row_to_goal(row, history.get(row["id"], []), reflections.get(row["id"], [])) for row in rows]
+
+
+def list_player_goals(player_id: str | None = None, *, statuses: list[str] | None = None) -> list[dict]:
+    where: list[str] = []
+    params: list = []
+    if player_id:
+        where.append("player_id = ?")
+        params.append(player_id)
+    if statuses:
+        placeholders = ",".join("?" for _ in statuses)
+        where.append(f"status IN ({placeholders})")
+        params.extend(statuses)
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+    with connect() as conn:
+        rows = conn.execute(f"SELECT * FROM player_goals{where_sql} ORDER BY updated_at DESC, id DESC", params).fetchall()
+        return _hydrate_goals(conn, rows)
+
+
+def get_player_goal(goal_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM player_goals WHERE id = ?", (goal_id,)).fetchone()
+        if not row:
+            return None
+        return _hydrate_goals(conn, [row])[0]
+
+
+def create_player_goal(data: dict, *, actor: str | None = None) -> dict:
+    now = _now_iso()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO player_goals (player_id, title, description, context, status, source_note_id,
+                source_clip_id, source_playlist_id, source_playlist_item_note_id, target_match_id, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (data["player_id"], data["title"], data.get("description", ""), data.get("context", "next_match"), data.get("status", "open"),
+             data.get("source_note_id"), data.get("source_clip_id"), data.get("source_playlist_id"), data.get("source_playlist_item_note_id"),
+             data.get("target_match_id"), actor or "", now, now),
+        )
+        goal_id = cur.lastrowid
+        conn.execute("INSERT INTO player_goal_status_history (goal_id, status, changed_by, changed_at) VALUES (?, ?, ?, ?)", (goal_id, data.get("status", "open"), actor or "", now))
+        conn.commit()
+    return get_player_goal(goal_id)
+
+
+def update_player_goal(goal_id: int, data: dict, *, actor: str | None = None) -> dict | None:
+    existing = get_player_goal(goal_id)
+    if not existing:
+        return None
+    allowed = {"title", "description", "context", "status", "source_note_id", "source_clip_id", "source_playlist_id", "source_playlist_item_note_id", "target_match_id"}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return existing
+    now = _now_iso()
+    updates["updated_at"] = now
+    with connect() as conn:
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(f"UPDATE player_goals SET {set_clause} WHERE id = ?", list(updates.values()) + [goal_id])
+        if "status" in updates and updates["status"] != existing.get("status"):
+            conn.execute("INSERT INTO player_goal_status_history (goal_id, status, changed_by, changed_at) VALUES (?, ?, ?, ?)", (goal_id, updates["status"], actor or "", now))
+        conn.commit()
+    return get_player_goal(goal_id)
+
+
+def delete_player_goal(goal_id: int) -> bool:
+    with connect() as conn:
+        conn.execute("DELETE FROM player_goal_status_history WHERE goal_id = ?", (goal_id,))
+        conn.execute("DELETE FROM player_goal_reflections WHERE goal_id = ?", (goal_id,))
+        cur = conn.execute("DELETE FROM player_goals WHERE id = ?", (goal_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def add_player_goal_reflection(goal_id: int, user_id: str, reflection: str) -> dict:
+    now = _now_iso()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO player_goal_reflections (goal_id, user_id, reflection, needs_coach_follow_up, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            """,
+            (goal_id, user_id, reflection, now, now),
+        )
+        row = conn.execute("SELECT * FROM player_goal_reflections WHERE id = ?", (cur.lastrowid,)).fetchone()
+        conn.commit()
+        item = dict(row)
+        item["needs_coach_follow_up"] = bool(item.get("needs_coach_follow_up"))
+        return item
 
 
 # ---------------------------------------------------------------------------

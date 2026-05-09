@@ -11353,4 +11353,21 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
 [data-theme="light"] .player-dev-note-item--clickable:hover {
     background: rgba(23, 113, 201, 0.06);
 }
+/* Phase 7 — player goals / reflections */
+.player-dev-section-headline { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; margin-bottom: .75rem; }
+.player-goal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .8rem; }
+.player-goal-card { border: 1px solid var(--border-light, rgba(148,163,184,.28)); border-radius: 14px; padding: .9rem; background: var(--bg-card, rgba(15,23,42,.42)); display: flex; flex-direction: column; gap: .65rem; }
+.player-goal-card.is-muted { opacity: .72; }
+.player-goal-card.is-preview { padding: 0; border: 0; background: transparent; }
+.player-goal-card-head { display: flex; justify-content: space-between; gap: .75rem; align-items: flex-start; }
+.player-goal-card h4 { margin: .15rem 0 0; font-size: 1rem; }
+.player-goal-kicker, .player-goal-source span, .player-goal-reflection span { display: block; color: var(--text-muted, #94a3b8); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.player-goal-status { white-space: nowrap; border-radius: 999px; padding: .2rem .55rem; font-size: .78rem; background: rgba(56,189,248,.14); color: var(--accent, #38bdf8); }
+.player-goal-status[data-status="needs_follow_up"] { background: rgba(251,191,36,.16); color: #fbbf24; }
+.player-goal-status[data-status="achieved"] { background: rgba(34,197,94,.16); color: #22c55e; }
+.player-goal-status[data-status="archived"] { background: rgba(148,163,184,.16); color: #94a3b8; }
+.player-goal-desc, .player-goal-reflection p { margin: 0; line-height: 1.45; }
+.player-goal-source { border-left: 3px solid rgba(56,189,248,.45); padding-left: .6rem; }
+.player-goal-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: auto; }
+.player-goal-status-select { min-height: 32px; border-radius: 9px; }
 
