@@ -45,6 +45,8 @@ Then load whichever of the others matches the active sprint:
 | Phase 7 goals/action plans | `coaching-data-privacy.md`, `vanilla-js-mixin-pattern.md`, `testing-and-qa.md`, `pr-review-checklist.md` |
 | Phase 8 match summaries | `coaching-data-privacy.md`, `vanilla-js-mixin-pattern.md`, `testing-and-qa.md`, `pr-review-checklist.md` |
 
+| Phase 9 engagement dashboard | `coaching-data-privacy.md`, `vanilla-js-mixin-pattern.md`, `css-responsive-accessibility.md`, `testing-and-qa.md`, `pr-review-checklist.md` |
+
 
 Always re-read `testing-and-qa.md` before declaring done.
 
