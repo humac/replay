@@ -1024,6 +1024,80 @@ class UpdateCoachingPlaylistRequest(BaseModel):
         return CreateCoachingNoteRequest.validate_visibility(v)
 
 
+class CreateMatchSummaryRequest(BaseModel):
+    match_id: str = Field(..., min_length=1, max_length=120)
+    visibility: str = Field("private")
+    team_positives: str = Field("", max_length=4000)
+    team_improvements: str = Field("", max_length=4000)
+    training_focus: str = Field("", max_length=2000)
+    body: str = Field("", max_length=8000)
+    note_ids: list[int] = Field(default_factory=list, max_length=100)
+    clip_ids: list[int] = Field(default_factory=list, max_length=100)
+    playlist_ids: list[int] = Field(default_factory=list, max_length=100)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str) -> str:
+        return CreateCoachingNoteRequest.validate_visibility(v)
+
+    @field_validator("team_positives", "team_improvements", "training_focus", "body")
+    @classmethod
+    def strip_text(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("note_ids", "clip_ids", "playlist_ids")
+    @classmethod
+    def normalize_ids(cls, v: list[int]) -> list[int]:
+        seen = set()
+        out = []
+        for item in v:
+            if item <= 0:
+                raise ValueError("linked source ids must be positive")
+            if item in seen:
+                continue
+            seen.add(item)
+            out.append(item)
+        return out
+
+    @model_validator(mode="after")
+    def validate_has_content(self):
+        if not any((getattr(self, name) or "").strip() for name in ("team_positives", "team_improvements", "training_focus", "body")):
+            raise ValueError("match summary requires at least one text field")
+        return self
+
+
+class UpdateMatchSummaryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    visibility: Optional[str] = None
+    team_positives: Optional[str] = Field(None, max_length=4000)
+    team_improvements: Optional[str] = Field(None, max_length=4000)
+    training_focus: Optional[str] = Field(None, max_length=2000)
+    body: Optional[str] = Field(None, max_length=8000)
+    note_ids: Optional[list[int]] = Field(None, max_length=100)
+    clip_ids: Optional[list[int]] = Field(None, max_length=100)
+    playlist_ids: Optional[list[int]] = Field(None, max_length=100)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreateCoachingNoteRequest.validate_visibility(v)
+
+    @field_validator("team_positives", "team_improvements", "training_focus", "body")
+    @classmethod
+    def strip_text(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+    @field_validator("note_ids", "clip_ids", "playlist_ids")
+    @classmethod
+    def normalize_ids(cls, v: list[int] | None) -> list[int] | None:
+        if v is None:
+            return v
+        return CreateMatchSummaryRequest.normalize_ids(v)
+
+
 class MarkCoachingReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

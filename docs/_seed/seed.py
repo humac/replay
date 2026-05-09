@@ -291,6 +291,10 @@ def _seed_roster() -> dict[str, str]:
         conn.execute("DELETE FROM player_goal_reflections")
         conn.execute("DELETE FROM player_goal_status_history")
         conn.execute("DELETE FROM player_goals")
+        conn.execute("DELETE FROM coaching_match_summary_playlists")
+        conn.execute("DELETE FROM coaching_match_summary_clips")
+        conn.execute("DELETE FROM coaching_match_summary_notes")
+        conn.execute("DELETE FROM coaching_match_summaries")
         conn.execute("DELETE FROM coaching_clip_players")
         conn.execute("DELETE FROM coaching_clips")
         conn.execute("DELETE FROM coaching_playlist_players")
@@ -466,6 +470,18 @@ def _seed_coaching_notes(
             "player_summary": "Best ten-minute defensive spell of the half — line stayed compact and the #6 dropped to make a five in the wide channel.",
             "what_happened": "", "why_it_matters": "", "what_to_do_next": "",
             "coach_private_note": "",
+        },
+        {
+            "key": "phase8_private_summary_source",
+            "match_id": m1, "slot": "second_half", "timestamp_seconds": 1900.0,
+            "title": "PHASE8_PRIVATE_SOURCE_CANARY title",
+            "body": "PHASE8_PRIVATE_SOURCE_CANARY body must not leak through team-visible summary links.",
+            "category": "other", "visibility": "private",
+            "drawing": {"version": 2, "objects": []},
+            "jerseys": [], "tags": ["phase8-private-source"],
+            "note_type": "correction",
+            "player_summary": "", "what_happened": "", "why_it_matters": "", "what_to_do_next": "",
+            "coach_private_note": "PHASE8_PRIVATE_SOURCE_CANARY coach-private text",
         },
         {
             "key": "first_touch_pressure",
@@ -866,6 +882,74 @@ def _seed_player_goals(note_ids_by_key: dict[str, int], roster: dict[str, str]) 
     return len([g1, g2, g3])
 
 
+def _seed_match_summaries(matches_by_key: dict[tuple[str, str, str], str], note_ids_by_key: dict[str, int]) -> int:
+    """Phase 8 screenshot data: one team-visible summary plus one private draft.
+
+    The viewer-facing summary links only to source ids that are also visible to
+    family1/team viewers. The private draft carries a canary phrase so the E2E
+    privacy check can verify it never appears in My Feedback.
+    """
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    match_id = matches_by_key[MOCK_VIDEO_TARGET]
+    with _db.connect() as conn:
+        clip = conn.execute(
+            "SELECT id FROM coaching_clips WHERE match_id = ? AND visibility IN ('team', 'unlisted') ORDER BY id LIMIT 1",
+            (match_id,),
+        ).fetchone()
+        playlist = conn.execute(
+            "SELECT id FROM coaching_playlists WHERE visibility IN ('team', 'unlisted') ORDER BY id LIMIT 1"
+        ).fetchone()
+        cur = conn.execute(
+            "INSERT INTO coaching_match_summaries (match_id, visibility, team_positives, team_improvements, training_focus, body, created_by, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                match_id,
+                "team",
+                "We pressed together after goal kicks and forced play wide before they could face forward.",
+                "Our weak-side winger was late tucking in twice, which opened the switch across midfield.",
+                "Practice focus: back-side recovery runs, scanning before the press trigger, and first touch out of pressure.",
+                "Overall this was a strong team performance: brave pressure, good recovery habits, and clear next steps for training.",
+                "coach1",
+                now,
+                now,
+            ),
+        )
+        summary_id = cur.lastrowid
+        for position, key in enumerate(("press_trigger", "phase8_private_summary_source", "p7_recovery")):
+            conn.execute(
+                "INSERT INTO coaching_match_summary_notes (summary_id, note_id, position) VALUES (?, ?, ?)",
+                (summary_id, note_ids_by_key[key], position),
+            )
+        if clip:
+            conn.execute(
+                "INSERT INTO coaching_match_summary_clips (summary_id, clip_id, position) VALUES (?, ?, ?)",
+                (summary_id, clip["id"], 0),
+            )
+        if playlist:
+            conn.execute(
+                "INSERT INTO coaching_match_summary_playlists (summary_id, playlist_id, position) VALUES (?, ?, ?)",
+                (summary_id, playlist["id"], 0),
+            )
+
+        conn.execute(
+            "INSERT INTO coaching_match_summaries (match_id, visibility, team_positives, team_improvements, training_focus, body, created_by, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                match_id,
+                "private",
+                "PRIVATE_PHASE8_CANARY: internal staff-only positives.",
+                "PRIVATE_PHASE8_CANARY: staff-only improvement notes.",
+                "PRIVATE_PHASE8_CANARY: not for families.",
+                "PRIVATE_PHASE8_CANARY: private draft body.",
+                "coach1",
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+    return 2
+
+
 # ---------------------------------------------------------------------------
 # Mock video — committed alongside the seed script so a fresh seed always has
 # at least one playable match. The committed file is a 30-second 1280x720
@@ -1062,6 +1146,7 @@ def main() -> None:
     clip_count = _seed_clips(matches_by_key, roster, note_ids_by_key)
     playlists = _seed_playlists(note_ids_by_key, roster)
     goals = _seed_player_goals(note_ids_by_key, roster)
+    summaries = _seed_match_summaries(matches_by_key, note_ids_by_key)
     mock_video_status = _seed_mock_video(data_dir, matches_by_key)
     # Phase 3a / 4e seed parity: the runtime path (POST /api/coach/notes
     # and /api/coach/clips) spawns a background thumbnail-generation
@@ -1082,6 +1167,7 @@ def main() -> None:
     print(f"  Clips:      {clip_count}")
     print(f"  Playlists:  {playlists}")
     print(f"  Goals:      {goals}")
+    print(f"  Summaries:  {summaries}")
     print(f"  Links:      {links} player ↔ user")
     print(f"  Mock video:")
     print(mock_video_status)

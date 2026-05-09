@@ -279,6 +279,7 @@
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="notes" onclick="app.setCoachTab('notes')">Notes</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="playlists" onclick="app.setCoachTab('playlists')">Playlists</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="clips" onclick="app.setCoachTab('clips')">Clips</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="summaries" onclick="app.setCoachTab('summaries')">Match Summaries</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="review" onclick="app.setCoachTab('review')">Review</button>
             </nav>
 
@@ -488,6 +489,22 @@
                         </div>
                     </div>
                     <div id="coach-clips-list" class="coach-list mt-4"></div>
+                </div>
+            </div>
+
+            <!-- Match summaries sub-tab (Phase 8) -->
+            <div id="coach-tab-summaries" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-summaries" hidden>
+                <div class="options-card">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Match Coaching Summaries</h3>
+                            <p class="admin-card-sub">Publish match-level positives, improvements, and training focus for the team. Private summaries stay coach-only.</p>
+                        </div>
+                        <div class="admin-panel-actions">
+                            <button type="button" class="btn-head" onclick="app.openCoachMatchSummaryModal()">+ New summary</button>
+                        </div>
+                    </div>
+                    <div id="coach-summaries-list" class="coach-list mt-4"></div>
                 </div>
             </div>
 
@@ -1061,6 +1078,7 @@
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-feedback-tab="playlists" onclick="app.setFeedbackTab('playlists')">Playlists</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="notes" onclick="app.setFeedbackTab('notes')">Notes</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="clips" onclick="app.setFeedbackTab('clips')">Clips</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="summaries" onclick="app.setFeedbackTab('summaries')">Match Summaries</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-feedback-tab="development" onclick="app.setFeedbackTab('development')">Development</button>
             </nav>
 
@@ -1081,6 +1099,10 @@
                  reach this surface. -->
             <div id="feedback-tab-clips" class="coach-tab-panel feedback-tab-panel" hidden>
                 <div id="feedback-clips-list" class="feedback-card-grid" aria-label="Coaching clips"></div>
+            </div>
+
+            <div id="feedback-tab-summaries" class="coach-tab-panel feedback-tab-panel" hidden>
+                <div id="feedback-summaries-list" class="feedback-card-grid" aria-label="Match coaching summaries"></div>
             </div>
 
             <!-- Phase 5b: per-player development profile. Driven by

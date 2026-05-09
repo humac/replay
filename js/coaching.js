@@ -40,8 +40,8 @@ const FEEDBACK_NOTE_TYPE_LABELS = {
     individual_goal: 'Individual goal',
 };
 
-const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'review'];
-const VALID_FEEDBACK_TABS = ['playlists', 'notes', 'clips', 'development'];
+const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'summaries', 'review'];
+const VALID_FEEDBACK_TABS = ['playlists', 'notes', 'clips', 'summaries', 'development'];
 
 const GOAL_STATUS_OPTIONS = [
     ['open', 'Open'], ['in_progress', 'In progress'], ['needs_follow_up', 'Needs follow-up'],
@@ -256,6 +256,7 @@ export const coachingMixin = {
         if (name === 'notes') this.renderCoachNotes();
         if (name === 'playlists') this.renderCoachPlaylists();
         if (name === 'clips') this.renderCoachClips();
+        if (name === 'summaries') this.renderCoachMatchSummaries();
         if (name === 'review') this.renderCoachReview();
         else this.tearDownCoachReview();
     },
@@ -276,6 +277,7 @@ export const coachingMixin = {
             const url = `/feedback?tab=${name}`;
             this.pushHistoryState({ view: 'feedback', tab: name }, { replace: true, url });
         }
+        if (name === 'summaries') this.renderFeedbackMatchSummaries(this._feedbackData || {});
         if (name === 'development') this.renderFeedbackDevelopment();
     },
 
@@ -293,6 +295,7 @@ export const coachingMixin = {
             this.renderCoachNotes();
             this.renderCoachPlaylists();
             this.renderCoachClips();
+            this.renderCoachMatchSummaries();
             this.renderCoachReviewPicker();
         } catch (err) {
             this.showError(err.message || 'Could not load coaching workspace.');
@@ -1990,6 +1993,158 @@ export const coachingMixin = {
     },
 
     // ===== Review sub-tab =====
+
+    // ===== Match summaries sub-tab (Phase 8) =====
+
+    _summaryVisibilityLabel(visibility) {
+        return (VISIBILITY_OPTIONS.find(([v]) => v === visibility)?.[1]) || visibility || 'Private';
+    },
+
+    _summaryLinkedCounts(summary) {
+        const bits = [];
+        const noteCount = (summary?.note_ids || []).length;
+        const clipCount = (summary?.clip_ids || []).length;
+        const playlistCount = (summary?.playlist_ids || []).length;
+        if (noteCount) bits.push(`${noteCount} note${noteCount === 1 ? '' : 's'}`);
+        if (clipCount) bits.push(`${clipCount} clip${clipCount === 1 ? '' : 's'}`);
+        if (playlistCount) bits.push(`${playlistCount} playlist${playlistCount === 1 ? '' : 's'}`);
+        return bits.join(' · ');
+    },
+
+    renderCoachMatchSummaries() {
+        const list = document.getElementById('coach-summaries-list');
+        if (!list) return;
+        const summaries = this._coachBundle?.match_summaries || [];
+        if (!summaries.length) {
+            list.innerHTML = '<div class="session-empty">No match summaries yet. Add a team-visible recap after a match.</div>';
+            return;
+        }
+        list.innerHTML = summaries.map((s) => {
+            const sections = [
+                ['Positives', s.team_positives],
+                ['Improve', s.team_improvements],
+                ['Training focus', s.training_focus],
+                ['Coach recap', s.body],
+            ].filter(([, value]) => (value || '').trim());
+            const linked = this._summaryLinkedCounts(s);
+            return `
+                <article class="coach-list-item" data-summary-id="${Number(s.id)}">
+                    <div class="coach-list-main">
+                        <strong>${this.esc(this.matchLabel(s.match_id))}</strong>
+                        <span>${this.esc(this._summaryVisibilityLabel(s.visibility))}${linked ? ` · ${this.esc(linked)}` : ''}</span>
+                        ${sections.map(([label, value]) => `<p><strong>${this.esc(label)}:</strong> ${this.esc(value)}</p>`).join('')}
+                    </div>
+                    <div class="coach-list-actions">
+                        <button type="button" class="mini-action-btn" onclick="app.openCoachMatchSummaryModal(${Number(s.id)})">Edit</button>
+                        <button type="button" class="mini-action-btn danger" onclick="app.handleCoachDeleteMatchSummary(${Number(s.id)})">Delete</button>
+                    </div>
+                </article>`;
+        }).join('');
+    },
+
+    _renderSummaryChecklist(box, items, selectedIds, emptyLabel) {
+        this.renderCoachCheckList(box, items, emptyLabel);
+        const selected = new Set((selectedIds || []).map(String));
+        box.querySelectorAll('.coach-check-option').forEach((btn) => {
+            if (selected.has(btn.dataset.value)) {
+                btn.classList.add('is-selected');
+                btn.setAttribute('aria-pressed', 'true');
+            }
+        });
+    },
+
+    async openCoachMatchSummaryModal(summaryId = null) {
+        const summary = summaryId ? (this._coachBundle?.match_summaries || []).find((s) => Number(s.id) === Number(summaryId)) : null;
+        const body = document.createElement('div');
+        body.className = 'coach-link-modal';
+        body.innerHTML = `
+            <span class="admin-card-kicker">Match Summary</span>
+            <h3>${summary ? 'Edit match summary' : 'New match summary'}</h3>
+            <p class="admin-card-sub">Team-visible summaries appear in My Feedback. Linked private source notes/clips/playlists are filtered server-side and are never exposed to viewers.</p>
+            <div class="form-row">
+                <div class="form-group"><label>Match</label><select data-field="match"></select></div>
+                <div class="form-group"><label>Visibility</label><select data-field="visibility">${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}</select></div>
+            </div>
+            <div class="form-group"><label>Team positives</label><textarea data-field="team_positives" rows="3" maxlength="4000" placeholder="What went well as a team?"></textarea></div>
+            <div class="form-group"><label>Areas to improve</label><textarea data-field="team_improvements" rows="3" maxlength="4000" placeholder="What should we clean up next match?"></textarea></div>
+            <div class="form-group"><label>Training focus</label><textarea data-field="training_focus" rows="2" maxlength="2000" placeholder="Next practice focus"></textarea></div>
+            <div class="form-group"><label>Coach recap</label><textarea data-field="body" rows="4" maxlength="8000" placeholder="Optional full recap for the team"></textarea></div>
+            <details class="mt-4"><summary>Link notes, clips, and playlists</summary>
+                <div class="form-row mt-4">
+                    <div class="form-group"><label>Notes</label><div data-field="notes" class="coach-check-list"></div></div>
+                    <div class="form-group"><label>Clips</label><div data-field="clips" class="coach-check-list"></div></div>
+                    <div class="form-group"><label>Playlists</label><div data-field="playlists" class="coach-check-list"></div></div>
+                </div>
+            </details>`;
+        const matchSel = body.querySelector('[data-field="match"]');
+        matchSel.innerHTML = this.matches.map((m) => `<option value="${this.esc(m.id)}">${this.esc(this.matchLabel(m.id))}</option>`).join('') || '<option value="">No matches yet</option>';
+        if (summary) {
+            matchSel.value = summary.match_id;
+            matchSel.disabled = true;
+            matchSel.title = 'Match cannot be changed after a summary is created.';
+            matchSel.closest('.form-group')?.insertAdjacentHTML('beforeend', '<small class="form-help">Create a new summary to recap a different match.</small>');
+        }
+        body.querySelector('[data-field="visibility"]').value = summary?.visibility || 'private';
+        ['team_positives', 'team_improvements', 'training_focus', 'body'].forEach((field) => {
+            body.querySelector(`[data-field="${field}"]`).value = summary?.[field] || '';
+        });
+        const notes = (this._coachBundle?.notes || []).filter((n) => !summary || n.match_id === summary.match_id || (summary.note_ids || []).includes(n.id));
+        const clips = (this._coachBundle?.clips || []).filter((c) => !summary || c.match_id === summary.match_id || (summary.clip_ids || []).includes(c.id));
+        const playlists = this._coachBundle?.playlists || [];
+        this._renderSummaryChecklist(body.querySelector('[data-field="notes"]'), notes.map((n) => ({ value: n.id, label: this.noteLabel(n) })), summary?.note_ids, 'No notes yet');
+        this._renderSummaryChecklist(body.querySelector('[data-field="clips"]'), clips.map((c) => ({ value: c.id, label: `${this.formatClock(c.start_seconds)}-${this.formatClock(c.end_seconds)} · ${c.title}` })), summary?.clip_ids, 'No clips yet');
+        this._renderSummaryChecklist(body.querySelector('[data-field="playlists"]'), playlists.map((p) => ({ value: p.id, label: p.title })), summary?.playlist_ids, 'No playlists yet');
+
+        const result = await this.formModal({
+            title: summary ? 'Edit Match Summary' : 'New Match Summary',
+            kicker: 'Coaching',
+            body,
+            confirmLabel: summary ? 'Save changes' : 'Save summary',
+            onSubmit: (close) => {
+                const textFields = ['team_positives', 'team_improvements', 'training_focus', 'body'];
+                const data = Object.fromEntries(textFields.map((f) => [f, body.querySelector(`[data-field="${f}"]`).value.trim()]));
+                if (!Object.values(data).some(Boolean)) { this.showError('Add at least one summary field.'); return; }
+                const matchId = body.querySelector('[data-field="match"]').value;
+                if (!matchId) { this.showError('Match is required.'); return; }
+                const selected = (field) => Array.from(body.querySelector(`[data-field="${field}"]`).querySelectorAll('.coach-check-option.is-selected')).map((b) => Number(b.dataset.value));
+                close({
+                    match_id: matchId,
+                    visibility: body.querySelector('[data-field="visibility"]').value || 'private',
+                    ...data,
+                    note_ids: selected('notes'),
+                    clip_ids: selected('clips'),
+                    playlist_ids: selected('playlists'),
+                });
+            },
+        });
+        if (!result) return;
+        try {
+            if (summary) {
+                const patchBody = { ...result };
+                delete patchBody.match_id;
+                await this.updateCoachMatchSummary(summary.id, patchBody);
+            } else {
+                await this.createCoachMatchSummary(result);
+            }
+            this.showSuccess(summary ? 'Match summary updated.' : 'Match summary saved.');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
+
+    async handleCoachDeleteMatchSummary(summaryId) {
+        const ok = await this.confirmAction({
+            title: 'Delete match summary',
+            message: 'Delete this match-level coaching summary?',
+            confirmLabel: 'Delete summary',
+            danger: true,
+        });
+        if (!ok) return;
+        try {
+            await this.deleteCoachMatchSummary(summaryId);
+            this.showSuccess('Match summary deleted.');
+            await this.renderCoachWorkspace();
+        } catch (err) { this.showError(err.message); }
+    },
 
     renderCoachReviewPicker() {
         const matchSel = document.getElementById('coach-review-match');
@@ -4558,10 +4713,12 @@ export const coachingMixin = {
         const playlistsList = document.getElementById('feedback-playlists-list');
         const notesList = document.getElementById('feedback-notes-list');
         const clipsList = document.getElementById('feedback-clips-list');
+        const summariesList = document.getElementById('feedback-summaries-list');
         if (linkedStrip) linkedStrip.innerHTML = '';
         if (playlistsList) playlistsList.innerHTML = '<div class="session-empty">Loading…</div>';
         if (notesList) notesList.innerHTML = '<div class="session-empty">Loading…</div>';
         if (clipsList) clipsList.innerHTML = '<div class="session-empty">Loading…</div>';
+        if (summariesList) summariesList.innerHTML = '<div class="session-empty">Loading…</div>';
         try {
             const data = await this.loadMyFeedback();
             this._feedbackData = data;
@@ -4569,10 +4726,12 @@ export const coachingMixin = {
             this.renderFeedbackPlaylists(data);
             this.renderFeedbackNotes(data);
             this.renderFeedbackClips(data);
+            this.renderFeedbackMatchSummaries(data);
         } catch (err) {
             if (playlistsList) playlistsList.innerHTML = '<div class="session-empty">Could not load feedback.</div>';
             if (notesList) notesList.innerHTML = '';
             if (clipsList) clipsList.innerHTML = '';
+            if (summariesList) summariesList.innerHTML = '';
             this.showError(err.message);
         }
     },
@@ -5989,6 +6148,44 @@ export const coachingMixin = {
      *  endpoint fetch. If multiple players are linked, a chip selector
      *  switches between them — for a single player we skip the
      *  selector and show the profile straight away. */
+    renderFeedbackMatchSummaries(data) {
+        const list = document.getElementById('feedback-summaries-list');
+        if (!list) return;
+        const summaries = data?.match_summaries || [];
+        if (!summaries.length) {
+            list.innerHTML = '<div class="session-empty">No team-visible match summaries yet.</div>';
+            return;
+        }
+        const notesById = new Map((data?.notes || []).map((n) => [Number(n.id), n]));
+        const clipsById = new Map((data?.clips || []).map((c) => [Number(c.id), c]));
+        const playlistsById = new Map((data?.playlists || []).map((p) => [Number(p.id), p]));
+        list.innerHTML = summaries.map((s) => {
+            const sections = [
+                ['What went well', s.team_positives],
+                ['What we can improve', s.team_improvements],
+                ['Training focus', s.training_focus],
+                ['Coach recap', s.body],
+            ].filter(([, value]) => (value || '').trim());
+            const notes = (s.note_ids || []).map((id) => notesById.get(Number(id))).filter(Boolean);
+            const clips = (s.clip_ids || []).map((id) => clipsById.get(Number(id))).filter(Boolean);
+            const playlists = (s.playlist_ids || []).map((id) => playlistsById.get(Number(id))).filter(Boolean);
+            const sources = [
+                ...notes.map((n) => `<button type="button" class="mini-action-btn" onclick="app.openFeedbackNote(${Number(n.id)})">Note: ${this.esc(n.title || 'Moment')}</button>`),
+                ...clips.map((c) => `<button type="button" class="mini-action-btn" onclick="app.openFeedbackClip(${Number(c.id)})">Clip: ${this.esc(c.title || 'Clip')}</button>`),
+                ...playlists.map((p) => `<button type="button" class="mini-action-btn" onclick="app.openFeedbackPlaylist(${Number(p.id)})">Playlist: ${this.esc(p.title || 'Session')}</button>`),
+            ];
+            return `
+                <article class="feedback-card feedback-summary-card">
+                    <div class="feedback-card-body">
+                        <div class="feedback-card-kicker">Match summary</div>
+                        <h3>${this.esc(this.matchLabel(s.match_id))}</h3>
+                        ${sections.map(([label, value]) => `<section class="feedback-detail-summary"><h4 class="feedback-detail-section-title">${this.esc(label)}</h4><p>${this.esc(value)}</p></section>`).join('')}
+                        ${sources.length ? `<div class="feedback-card-actions">${sources.join('')}</div>` : ''}
+                    </div>
+                </article>`;
+        }).join('');
+    },
+
     async renderFeedbackDevelopment() {
         const root = document.getElementById('feedback-development-content');
         if (!root) return;
