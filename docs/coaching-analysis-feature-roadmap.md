@@ -72,7 +72,9 @@ Computer vision can later help Replay find candidate moments, player tracks, tac
   - ✅ 6d-2 — Tactical board authoring improvements and formations
   - ✅ 6e — Unified viewer review modal for My Feedback / Player Development
 - ✅ Phase 7 — Action items and next-match goals — **complete**
-- ⏭️ Phase 8 — Match coaching summaries — **next**
+- ✅ Phase 8 — Match coaching summaries — **complete**
+- ⏭️ Phase 9 — Coach engagement dashboard — **next**
+
 - ⏳ Phases 8–17 — not started
 
 See `ROADMAP.md` for the per-PR completion log and exact dates.

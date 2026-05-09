@@ -43,6 +43,8 @@ Then load whichever of the others matches the active sprint:
 | 8 (a11y polish) | `css-responsive-accessibility.md` |
 | 9 (QA + docs) | `testing-and-qa.md`, `pr-review-checklist.md` |
 | Phase 7 goals/action plans | `coaching-data-privacy.md`, `vanilla-js-mixin-pattern.md`, `testing-and-qa.md`, `pr-review-checklist.md` |
+| Phase 8 match summaries | `coaching-data-privacy.md`, `vanilla-js-mixin-pattern.md`, `testing-and-qa.md`, `pr-review-checklist.md` |
+
 
 Always re-read `testing-and-qa.md` before declaring done.
 
