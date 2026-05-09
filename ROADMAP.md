@@ -6,6 +6,21 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Coaching Analysis Phase 7 — Player Goals and Action Plans ✅ COMPLETE (2026-05-09)
+
+Turns derived focus areas into first-class player action items. Coaches can create goals from player profiles, notes, clips, playlist items, and observation contexts; players/families see active goals in My Feedback and can add reflections for coach follow-up.
+
+- **Schema** (`db.py` migration v12): adds durable `player_goals`, `player_goal_status_history`, and `player_goal_reflections` records with source references for notes, clips, playlists, and playlist items. Delete paths explicitly clean/null related references because SQLite foreign-key cascades are not globally relied on.
+- **Models/API** (`models.py`, `server.py`): coach/admin endpoints create, list, update, archive/achieve goals, and viewer endpoints expose only linked-player goals whose source evidence is visible to the signed-in user. Whitespace-only titles/reflections are rejected after trim.
+- **Privacy**: viewer-facing goal payloads include only the current user's reflections. Goal `source_playlist.items` hydrates from viewer-filtered/scrubbed notes so `coach_private_note` and another linked account's reflection/user id cannot leak.
+- **UI** (`js/api.js`, `js/coaching.js`, `styles.css`): Coach development profile gains active/archived goal lists, source-aware goal creation, status controls, and edit/reflection follow-up affordances. My Feedback Development shows current goals and lets linked players/families submit reflections.
+- **Evidence**: seed data includes Phase 7 privacy canaries; Playwright screenshots live in `docs/screenshots/phase-7-goals/`.
+- **Validation**: `pytest -q tests/test_coaching.py` → 155 passed; `npm run capture-phase-7` → 3 passed; `node --check` and backend `py_compile` clean.
+
+**Next**: Phase 8 — Match coaching summaries.
+
+---
+
 ## Coaching Analysis Phase 6c — Tactical Board MVP ✅ COMPLETE (2026-05-07)
 
 Adds a soccer-pitch tactical board editor + read-only renderer for observation notes. Coaches can now sketch a structured board scene (player tokens, ball, arrows, zones, text labels) on a normalized 0..1 pitch surface and attach it to an observation note; viewers who can see the parent note see the same scene rendered read-only. **No new endpoints, no schema changes** — Phase 6c uses the `tactical_board_json` TEXT column added in Phase 6a.
