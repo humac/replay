@@ -1518,12 +1518,14 @@ def _validate_goal_source_links(data: dict, player_id: str):
         if player_id not in (clip.get("player_ids") or []):
             raise HTTPException(400, "Source clip is not linked to this player")
     playlist_id = data.get("source_playlist_id")
+    if data.get("source_playlist_item_note_id") is not None and playlist_id is None:
+        raise HTTPException(400, "source_playlist_id is required for a playlist item source")
     if playlist_id is not None:
         playlist = _db.get_coaching_playlist(playlist_id)
         if not playlist:
             raise HTTPException(404, "Source playlist not found")
         item_note_id = data.get("source_playlist_item_note_id")
-        if player_id not in (playlist.get("player_ids") or []) and item_note_id not in (playlist.get("note_ids") or []):
+        if player_id not in (playlist.get("player_ids") or []) and item_note_id is None:
             raise HTTPException(400, "Source playlist is not linked to this player")
         if item_note_id is not None:
             if item_note_id not in (playlist.get("note_ids") or []):
@@ -1540,15 +1542,28 @@ def _filter_goals_for_user(goals: list[dict], user: dict) -> list[dict]:
     if _auth.has_role(user, "admin", "coach"):
         return goals
     linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
-    return [g for g in goals if g.get("player_id") in linked_players and g.get("status") in _ACTIVE_GOAL_STATUSES]
+    return [
+        g for g in goals
+        if g.get("player_id") in linked_players
+        and g.get("status") in _ACTIVE_GOAL_STATUSES
+        and g.get("visibility", "player") == "player"
+    ]
+
+
+def _strip_goal_private_fields(goal: dict) -> dict:
+    out = dict(goal)
+    out["coach_private_note"] = ""
+    return out
 
 
 def _goal_with_visible_sources(goal: dict, user: dict) -> dict:
     out = dict(goal)
     if not _auth.has_role(user, "admin", "coach"):
+        out = _strip_goal_private_fields(out)
         user_id = user.get("user_id")
         reflections = [
-            r for r in (out.get("reflections") or [])
+            {k: v for k, v in r.items() if k != "user_id"}
+            for r in (out.get("reflections") or [])
             if r.get("user_id") == user_id
         ]
         out["reflections"] = reflections
@@ -2570,7 +2585,7 @@ async def my_feedback_goal_reflection(goal_id: int, request: Request, body: Crea
     if not goal or goal not in _filter_goals_for_user([goal], user):
         raise HTTPException(404, "Goal not found")
     reflection = _db.add_player_goal_reflection(goal_id, user.get("user_id"), body.reflection)
-    return {"ok": True, "reflection": reflection}
+    return {"ok": True, "reflection": {k: v for k, v in reflection.items() if k != "user_id"}}
 
 
 @app.get("/api/my-feedback")

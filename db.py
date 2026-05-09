@@ -634,6 +634,11 @@ def _migrate_v12(conn: sqlite3.Connection):
             player_id TEXT NOT NULL,
             title TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
+            visibility TEXT NOT NULL DEFAULT 'player',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            target_date TEXT NOT NULL DEFAULT '',
+            success_criteria TEXT NOT NULL DEFAULT '',
+            coach_private_note TEXT NOT NULL DEFAULT '',
             context TEXT NOT NULL DEFAULT 'next_match',
             status TEXT NOT NULL DEFAULT 'open',
             source_note_id INTEGER,
@@ -647,8 +652,19 @@ def _migrate_v12(conn: sqlite3.Connection):
         )
         """
     )
+    goal_cols = {row["name"] for row in conn.execute("PRAGMA table_info(player_goals)").fetchall()}
+    for name, ddl in {
+        "visibility": "ALTER TABLE player_goals ADD COLUMN visibility TEXT NOT NULL DEFAULT 'player'",
+        "priority": "ALTER TABLE player_goals ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium'",
+        "target_date": "ALTER TABLE player_goals ADD COLUMN target_date TEXT NOT NULL DEFAULT ''",
+        "success_criteria": "ALTER TABLE player_goals ADD COLUMN success_criteria TEXT NOT NULL DEFAULT ''",
+        "coach_private_note": "ALTER TABLE player_goals ADD COLUMN coach_private_note TEXT NOT NULL DEFAULT ''",
+    }.items():
+        if name not in goal_cols:
+            conn.execute(ddl)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goals_player ON player_goals(player_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goals_status ON player_goals(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goals_visibility ON player_goals(visibility)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS player_goal_status_history (
@@ -1746,6 +1762,9 @@ def _row_to_goal(row: sqlite3.Row, history: list[dict] | None = None, reflection
     return {
         "id": row["id"], "player_id": row["player_id"], "title": row["title"] or "",
         "description": row["description"] or "", "context": row["context"] or "next_match",
+        "visibility": row["visibility"] or "player", "priority": row["priority"] or "medium",
+        "target_date": row["target_date"] or "", "success_criteria": row["success_criteria"] or "",
+        "coach_private_note": row["coach_private_note"] or "",
         "status": row["status"] or "open", "source_note_id": row["source_note_id"],
         "source_clip_id": row["source_clip_id"], "source_playlist_id": row["source_playlist_id"],
         "source_playlist_item_note_id": row["source_playlist_item_note_id"], "target_match_id": row["target_match_id"],
@@ -1815,11 +1834,14 @@ def create_player_goal(data: dict, *, actor: str | None = None) -> dict:
     with connect() as conn:
         cur = conn.execute(
             """
-            INSERT INTO player_goals (player_id, title, description, context, status, source_note_id,
+            INSERT INTO player_goals (player_id, title, description, visibility, priority, target_date,
+                success_criteria, coach_private_note, context, status, source_note_id,
                 source_clip_id, source_playlist_id, source_playlist_item_note_id, target_match_id, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (data["player_id"], data["title"], data.get("description", ""), data.get("context", "next_match"), data.get("status", "open"),
+            (data["player_id"], data["title"], data.get("description", ""), data.get("visibility", "player"),
+             data.get("priority", "medium"), data.get("target_date", ""), data.get("success_criteria", ""),
+             data.get("coach_private_note", ""), data.get("context", "next_match"), data.get("status", "open"),
              data.get("source_note_id"), data.get("source_clip_id"), data.get("source_playlist_id"), data.get("source_playlist_item_note_id"),
              data.get("target_match_id"), actor or "", now, now),
         )
@@ -1833,7 +1855,7 @@ def update_player_goal(goal_id: int, data: dict, *, actor: str | None = None) ->
     existing = get_player_goal(goal_id)
     if not existing:
         return None
-    allowed = {"title", "description", "context", "status", "source_note_id", "source_clip_id", "source_playlist_id", "source_playlist_item_note_id", "target_match_id"}
+    allowed = {"title", "description", "visibility", "priority", "target_date", "success_criteria", "coach_private_note", "context", "status", "source_note_id", "source_clip_id", "source_playlist_id", "source_playlist_item_note_id", "target_match_id"}
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return existing

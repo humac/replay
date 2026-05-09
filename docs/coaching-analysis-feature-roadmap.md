@@ -803,8 +803,14 @@ Turn feedback into practical next steps.
    - description
    - source_note_id optional
    - source_clip_id optional
+   - source_playlist_id / source_playlist_item_note_id optional
    - target_match_id optional
-   - status: open, in_progress, achieved, archived
+   - visibility: player, coach (default player)
+   - priority: low, medium, high (default medium)
+   - target_date: empty or YYYY-MM-DD
+   - success_criteria
+   - coach_private_note (coach/admin only; scrubbed from viewer payloads)
+   - status: open, in_progress, needs_follow_up, achieved, archived
    - due/context: next match, next training, season goal
 3. My Feedback shows current goals.
 4. Coach can mark achieved or needs follow-up.
