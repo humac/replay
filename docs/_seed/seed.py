@@ -538,9 +538,9 @@ def _seed_coaching_notes(
         {
             "key": "private_sub_rationale",
             "match_id": m3, "slot": "second_half", "timestamp_seconds": 1100.0,
-            "title": "Internal: substitution rationale",
+            "title": "PRIVATE CANARY — internal substitution rationale",
             "body": (
-                "Coaching note only — context for the staff. Subbing for energy in the press, not "
+                "PRIVATE CANARY coaching note only — context for the staff. Subbing for energy in the press, not "
                 "punishing the player."
             ),
             "category": "other", "visibility": "private",

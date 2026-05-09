@@ -280,6 +280,7 @@
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="playlists" onclick="app.setCoachTab('playlists')">Playlists</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="clips" onclick="app.setCoachTab('clips')">Clips</button>
                 <button type="button" id="coach-subnav-summaries" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="summaries" onclick="app.setCoachTab('summaries')">Match Summaries</button>
+                <button type="button" id="coach-subnav-engagement" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="engagement" onclick="app.setCoachTab('engagement')">Engagement</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="review" onclick="app.setCoachTab('review')">Review</button>
             </nav>
 
@@ -505,6 +506,30 @@
                         </div>
                     </div>
                     <div id="coach-summaries-list" class="coach-list mt-4"></div>
+
+            <!-- Engagement dashboard sub-tab (Phase 9) -->
+            <div id="coach-tab-engagement" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-engagement" hidden>
+                <div class="options-card coach-engagement-shell">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Review Completion &amp; Engagement</h3>
+                            <p class="admin-card-sub">Coach/admin-only aggregates from review completions and player reflections. Private note bodies and coach-only notes are not shown here.</p>
+                        </div>
+                        <div class="admin-panel-actions">
+                            <button type="button" class="btn-head" onclick="app.loadCoachEngagementDashboard()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="coach-engagement-filters" aria-label="Engagement filters">
+                        <label><span>Player</span><select id="coach-engagement-player" onchange="app.loadCoachEngagementDashboard()"></select></label>
+                        <label><span>Playlist</span><select id="coach-engagement-playlist" onchange="app.loadCoachEngagementDashboard()"></select></label>
+                        <label><span>Match</span><select id="coach-engagement-match" onchange="app.loadCoachEngagementDashboard()"></select></label>
+                        <label><span>Visibility</span><select id="coach-engagement-visibility" onchange="app.loadCoachEngagementDashboard()"><option value="">Team + player</option><option value="team">Team</option><option value="player">Player</option></select></label>
+                        <label><span>Start</span><input type="date" id="coach-engagement-start" onchange="app.loadCoachEngagementDashboard()"></label>
+                        <label><span>End</span><input type="date" id="coach-engagement-end" onchange="app.loadCoachEngagementDashboard()"></label>
+                    </div>
+                    <div id="coach-engagement-dashboard" class="coach-engagement-dashboard mt-4">
+                        <div class="session-empty">Loading engagement dashboard...</div>
+                    </div>
                 </div>
             </div>
 

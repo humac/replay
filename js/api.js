@@ -670,6 +670,19 @@ export const apiMixin = {
         return resp.json();
     },
 
+    async getCoachEngagement(filters = {}) {
+        const params = new URLSearchParams();
+        ['player_id', 'playlist_id', 'match_id', 'visibility', 'start_date', 'end_date'].forEach((key) => {
+            if (filters[key]) params.set(key, filters[key]);
+        });
+        const qs = params.toString();
+        const resp = await this.authFetch(`/api/coach/engagement${qs ? `?${qs}` : ''}`, {
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load engagement dashboard');
+        return (await resp.json()).engagement || null;
+    },
+
     // ===== Phase 3b — coach-note thumbnails =====
     //
     // The thumbnail endpoint (`GET /api/coach/notes/{id}/thumbnail`) is
