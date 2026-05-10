@@ -308,6 +308,8 @@ CLI writes through `services/teams.py` — the same code path as the API, never 
 - Last-admin protection blocks revoke.
 - CLI and API produce identical state given the same inputs.
 
+**Implementation note (feat/platform-pr1-4-admin-teams):** API routes were added in `routers/admin_teams.py`, mounted by `server.py`, and share `services/teams.py` with `tools/admin.py`. `auth.require_global_admin()` is the explicit gate for these recovery/cross-team operations; team membership roles alone are rejected. Regression coverage lives in `tests/test_admin_teams.py` and covers create/list/patch, nested seasons, membership 404/409 behavior, last-`team_admin` revoke protection, and CLI/API shared state.
+
 ### PR 1.5: Tenant-Aware Media Path Adapter
 
 **Objective:** New media uploads write under team-aware paths so Phase 10's eventual storage migration is "swap the backend" rather than "swap the backend AND re-key 100% of existing media." Existing media stays in place.

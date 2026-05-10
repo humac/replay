@@ -33,6 +33,7 @@ import media as _media
 import settings as _settings
 import streams as _streams
 import uploads as _uploads
+from routers.admin_teams import router as admin_teams_router
 from models import (
     CreateCoachingClipRequest, CreateCoachingNoteRequest, CreateCoachingPlaylistRequest,
     CreateMatchRequest, CreateMatchSummaryRequest, CreatePlayerGoalReflectionRequest,
@@ -259,6 +260,7 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(title="Replay", lifespan=lifespan)
+app.include_router(admin_teams_router)
 
 # Shared secret MediaMTX sends in X-Internal-Secret when calling /api/live/auth.
 # Configure via mediamtx.yml authHTTPHeaders. If unset the endpoint is open

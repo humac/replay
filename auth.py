@@ -132,6 +132,11 @@ def require_role(request: Request, *roles: str) -> dict:
     return user
 
 
+def require_global_admin(request: Request) -> dict:
+    """Require the legacy global/system admin role for recovery and cross-team operations."""
+    return require_role(request, "admin")
+
+
 def check_login_rate_limit(request: Request):
     """Raise 429 if too many login attempts from this IP."""
     # Imported lazily to avoid a top-level circular import (streams imports nothing
