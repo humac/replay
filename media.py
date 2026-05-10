@@ -163,12 +163,44 @@ async def cancel_active_transcodes():
 #     pre-tiering behavior (everything on one volume).
 # ---------------------------------------------------------------------------
 
-def slot_hls_dir(videos_dir: Path, match_id: str, slot: str) -> Path:
-    return videos_dir / match_id / "hls" / slot
+def _safe_path_part(value: str, *, label: str) -> str:
+    """Return a filesystem path component after rejecting traversal tricks."""
+    text = str(value or "")
+    if not text or text in {".", ".."} or "/" in text or "\\" in text:
+        raise ValueError(f"Invalid {label}")
+    if Path(text).is_absolute():
+        raise ValueError(f"Invalid {label}")
+    return text
 
 
-def slot_hls_master_path(videos_dir: Path, match_id: str, slot: str) -> Path:
-    return slot_hls_dir(videos_dir, match_id, slot) / "master.m3u8"
+def _match_media_dir(root_dir: Path, match_id: str, team_id: str | None = None) -> Path:
+    safe_match = _safe_path_part(match_id, label="match_id")
+    if team_id is None:
+        return root_dir / safe_match
+    safe_team = _safe_path_part(team_id, label="team_id")
+    return root_dir / "teams" / safe_team / "matches" / safe_match
+
+
+def slot_hls_dir(videos_dir: Path, match_id: str, slot: str, *, team_id: str | None = None) -> Path:
+    return _match_media_dir(videos_dir, match_id, team_id) / "hls" / _safe_path_part(slot, label="slot")
+
+
+def slot_hls_master_path(videos_dir: Path, match_id: str, slot: str, *, team_id: str | None = None) -> Path:
+    return slot_hls_dir(videos_dir, match_id, slot, team_id=team_id) / "master.m3u8"
+
+
+def existing_slot_hls_dir(videos_dir: Path, match_id: str, slot: str, *, team_id: str | None = None) -> Path:
+    team_path = slot_hls_dir(videos_dir, match_id, slot, team_id=team_id) if team_id is not None else None
+    if team_path is not None and team_path.exists():
+        return team_path
+    return slot_hls_dir(videos_dir, match_id, slot)
+
+
+def existing_slot_hls_master_path(videos_dir: Path, match_id: str, slot: str, *, team_id: str | None = None) -> Path:
+    team_path = slot_hls_master_path(videos_dir, match_id, slot, team_id=team_id) if team_id is not None else None
+    if team_path is not None and team_path.exists():
+        return team_path
+    return slot_hls_master_path(videos_dir, match_id, slot)
 
 
 def cleanup_hls_staging_dirs(videos_dir: Path) -> int:
@@ -186,7 +218,14 @@ def cleanup_hls_staging_dirs(videos_dir: Path) -> int:
     removed = 0
     if not videos_dir.is_dir():
         return removed
-    for match_dir in videos_dir.iterdir():
+    match_dirs = [p for p in videos_dir.iterdir() if p.name != "teams"]
+    teams_dir = videos_dir / "teams"
+    if teams_dir.is_dir():
+        for team_dir in teams_dir.iterdir():
+            matches_dir = team_dir / "matches"
+            if matches_dir.is_dir():
+                match_dirs.extend(matches_dir.iterdir())
+    for match_dir in match_dirs:
         hls_root = match_dir / "hls"
         if not hls_root.is_dir():
             continue
@@ -203,47 +242,72 @@ def cleanup_hls_staging_dirs(videos_dir: Path) -> int:
     return removed
 
 
-def match_originals_dir(originals_dir: Path, match_id: str) -> Path:
+def match_originals_dir(originals_dir: Path, match_id: str, *, team_id: str | None = None) -> Path:
     """Per-match cold storage: raw uploads + finished MP4."""
-    return originals_dir / match_id
+    return _match_media_dir(originals_dir, match_id, team_id)
 
 
-def slot_mp4_path(originals_dir: Path, match_id: str, slot: str) -> Path:
+def slot_mp4_path(originals_dir: Path, match_id: str, slot: str, *, team_id: str | None = None) -> Path:
     """Finished, transcoded MP4 for a slot."""
-    return match_originals_dir(originals_dir, match_id) / f"{slot}.mp4"
+    return match_originals_dir(originals_dir, match_id, team_id=team_id) / f"{_safe_path_part(slot, label='slot')}.mp4"
 
 
-def slot_raw_path(originals_dir: Path, match_id: str, slot: str, ext: str) -> Path:
+def slot_raw_path(originals_dir: Path, match_id: str, slot: str, ext: str, *, team_id: str | None = None) -> Path:
     """Raw upload destination for a slot (before transcode). `ext` includes
     the leading dot, e.g. '.mp4' or '.mkv'."""
-    return match_originals_dir(originals_dir, match_id) / f"{slot}_raw{ext}"
+    if ext not in {".mp4", ".mkv"}:
+        raise ValueError("Invalid raw extension")
+    return match_originals_dir(originals_dir, match_id, team_id=team_id) / f"{_safe_path_part(slot, label='slot')}_raw{ext}"
 
 
-def find_slot_raw_path(originals_dir: Path, match_id: str, slot: str) -> Path | None:
-    """Return the existing raw upload file for *slot*, trying .mp4 then .mkv."""
-    for ext in (".mp4", ".mkv"):
-        p = slot_raw_path(originals_dir, match_id, slot, ext)
-        if p.is_file():
-            return p
+def existing_slot_mp4_path(originals_dir: Path, match_id: str, slot: str, *, team_id: str | None = None) -> Path:
+    team_path = slot_mp4_path(originals_dir, match_id, slot, team_id=team_id) if team_id is not None else None
+    if team_path is not None and team_path.exists():
+        return team_path
+    return slot_mp4_path(originals_dir, match_id, slot)
+
+
+def find_slot_raw_path(originals_dir: Path, match_id: str, slot: str, *, team_id: str | None = None) -> Path | None:
+    """Return the existing raw upload file for *slot*, trying team path then legacy, .mp4 then .mkv."""
+    roots: list[str | None] = [team_id, None] if team_id is not None else [None]
+    for candidate_team in roots:
+        for ext in (".mp4", ".mkv"):
+            p = slot_raw_path(originals_dir, match_id, slot, ext, team_id=candidate_team)
+            if p.is_file():
+                return p
     return None
 
 
-def coach_note_thumbnail_path(videos_dir: Path, match_id: str, note_id: int) -> Path:
+def coach_note_thumbnail_path(videos_dir: Path, match_id: str, note_id: int, *, team_id: str | None = None) -> Path:
     """Per-coaching-note thumbnail path. Lives on the SSD `videos_dir`
     next to the match's HLS variants because every notes-list / playlist
     render hits one. Phase 3a (per-note thumbnails for scanability) —
     derived purely from match_id + note_id so we don't need a DB column;
     the serving endpoint just checks `path.is_file()`."""
-    return videos_dir / match_id / "coach_thumbs" / f"{note_id}.jpg"
+    return _match_media_dir(videos_dir, match_id, team_id) / "coach_thumbs" / f"{int(note_id)}.jpg"
 
 
-def clip_thumbnail_path(videos_dir: Path, match_id: str, clip_id: int) -> Path:
+def existing_coach_note_thumbnail_path(videos_dir: Path, match_id: str, note_id: int, *, team_id: str | None = None) -> Path:
+    team_path = coach_note_thumbnail_path(videos_dir, match_id, note_id, team_id=team_id) if team_id is not None else None
+    if team_path is not None and team_path.exists():
+        return team_path
+    return coach_note_thumbnail_path(videos_dir, match_id, note_id)
+
+
+def clip_thumbnail_path(videos_dir: Path, match_id: str, clip_id: int, *, team_id: str | None = None) -> Path:
     """Phase 4e — per-coaching-clip thumbnail path. Same convention as
     `coach_note_thumbnail_path` but rooted under `clip_thumbs/` so the
     namespace can't collide with note ids. Derived purely from
     match_id + clip_id so no DB column is needed; the serving endpoint
     just checks `path.is_file()`."""
-    return videos_dir / match_id / "clip_thumbs" / f"{clip_id}.jpg"
+    return _match_media_dir(videos_dir, match_id, team_id) / "clip_thumbs" / f"{int(clip_id)}.jpg"
+
+
+def existing_clip_thumbnail_path(videos_dir: Path, match_id: str, clip_id: int, *, team_id: str | None = None) -> Path:
+    team_path = clip_thumbnail_path(videos_dir, match_id, clip_id, team_id=team_id) if team_id is not None else None
+    if team_path is not None and team_path.exists():
+        return team_path
+    return clip_thumbnail_path(videos_dir, match_id, clip_id)
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +508,7 @@ async def build_hls_assets(
     hls_segment_duration: int,
     hls_variant_presets: list[dict],
     hwaccel_preference: str | None = None,
+    team_id: str | None = None,
 ) -> bool:
     """Build the HLS variant ladder for *match_id/slot* atomically.
 
@@ -460,7 +525,7 @@ async def build_hls_assets(
     """
     width, height = await probe_video_dimensions(source_mp4)
     variants = build_hls_variants(width, height, hls_variant_presets)
-    final_hls_dir = slot_hls_dir(videos_dir, match_id, slot)
+    final_hls_dir = slot_hls_dir(videos_dir, match_id, slot, team_id=team_id)
     # Stage into <slot>.tmp/ — same filesystem as the final dir so the
     # atomic rename at the end is a metadata-only operation.
     hls_dir = final_hls_dir.with_name(final_hls_dir.name + ".tmp")
@@ -720,6 +785,7 @@ async def transcode_video(
     transcode_concurrency: int,
     set_video_status,
     hwaccel_preference: str | None = None,
+    team_id: str | None = None,
 ):
     """Background task: transcode *src* -> *dest* (H.264 / AAC, faststart).
 
@@ -735,6 +801,7 @@ async def transcode_video(
         videos_dir=videos_dir,
         hls_segment_duration=hls_segment_duration,
         hls_variant_presets=hls_variant_presets,
+        team_id=team_id,
     )
     thumb_path = videos_dir / match_id / "thumb.jpg"
 
@@ -766,7 +833,8 @@ async def transcode_video(
                 src.unlink(missing_ok=True)
                 return
 
-            shutil.rmtree(slot_hls_dir(videos_dir, match_id, slot), ignore_errors=True)
+            shutil.rmtree(slot_hls_dir(videos_dir, match_id, slot, team_id=team_id), ignore_errors=True)
+            dest.parent.mkdir(parents=True, exist_ok=True)
             dest.unlink(missing_ok=True)
 
             # --- 1. Remux if already browser-friendly ---
@@ -1072,6 +1140,7 @@ async def backfill_thumbnails(
 
     for match in matches:
         match_id = match["id"]
+        team_id = match.get("team_id")
         thumb_path = videos_dir / match_id / "thumb.jpg"
         if thumb_path.exists():
             continue
@@ -1081,7 +1150,7 @@ async def backfill_thumbnails(
         videos = match.get("videos", {})
         for slot in ("full", "first_half", "second_half"):
             if vs.get(slot) == "ready" and videos.get(slot):
-                mp4_path = slot_mp4_path(originals_dir, match_id, slot)
+                mp4_path = existing_slot_mp4_path(originals_dir, match_id, slot, team_id=team_id)
                 if mp4_path.is_file():
                     ok = await generate_thumbnail(mp4_path, thumb_path)
                     if ok:
@@ -1105,6 +1174,7 @@ def verify_slot_assets(
     match_id: str,
     slot: str,
     originals_dir: Path | None = None,
+    team_id: str | None = None,
 ) -> dict:
     """Check that expected media assets exist for a slot.
 
@@ -1116,12 +1186,12 @@ def verify_slot_assets(
     """
     if originals_dir is None:
         originals_dir = videos_dir
-    mp4_path = slot_mp4_path(originals_dir, match_id, slot)
+    mp4_path = existing_slot_mp4_path(originals_dir, match_id, slot, team_id=team_id)
     mp4_exists = mp4_path.is_file()
     mp4_size = mp4_path.stat().st_size if mp4_exists else 0
 
-    hls_dir = slot_hls_dir(videos_dir, match_id, slot)
-    master = slot_hls_master_path(videos_dir, match_id, slot)
+    hls_dir = existing_slot_hls_dir(videos_dir, match_id, slot, team_id=team_id)
+    master = existing_slot_hls_master_path(videos_dir, match_id, slot, team_id=team_id)
     master_exists = master.is_file()
 
     missing_variants: list[str] = []
@@ -1179,10 +1249,15 @@ async def backfill_hls_for_existing_videos(
         candidates = ready_slots_missing_hls(matches)
         generated = 0
 
-        for match_id, slot in candidates:
-            mp4_path = slot_mp4_path(originals_dir, match_id, slot)
+        for candidate in candidates:
+            if len(candidate) == 3:
+                match_id, slot, team_id = candidate
+            else:
+                match_id, slot = candidate
+                team_id = None
+            mp4_path = existing_slot_mp4_path(originals_dir, match_id, slot, team_id=team_id)
             try:
-                ok = await build_hls_assets(mp4_path, match_id, slot, **hls_kwargs)
+                ok = await build_hls_assets(mp4_path, match_id, slot, **hls_kwargs, team_id=team_id)
                 if ok:
                     generated += 1
                     logger.info("Backfilled HLS assets for %s/%s", match_id, slot)
