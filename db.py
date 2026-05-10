@@ -896,6 +896,7 @@ def _migrate_v14(conn: sqlite3.Connection):
             starts_on TEXT,
             ends_on TEXT,
             created_at TEXT NOT NULL,
+            UNIQUE(team_id, name),
             FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
         )
         """
@@ -906,7 +907,7 @@ def _migrate_v14(conn: sqlite3.Connection):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             team_id INTEGER NOT NULL,
             user_id TEXT NOT NULL,
-            role TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('team_admin', 'coach', 'assistant_coach', 'viewer', 'guardian', 'player', 'uploader')),
             created_at TEXT NOT NULL,
             UNIQUE(team_id, user_id, role),
             FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE,
@@ -919,6 +920,7 @@ def _migrate_v14(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE users ADD COLUMN last_team_id INTEGER")
 
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_slug ON teams(slug)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_seasons_team_name ON seasons(team_id, name)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_seasons_team ON seasons(team_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_user ON team_user_memberships(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_team ON team_user_memberships(team_id)")

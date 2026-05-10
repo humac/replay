@@ -134,6 +134,19 @@ def test_default_scope_helpers_return_expected_rows(fresh_db):
     assert fresh_db.get_default_season(team["id"])["id"] == season["id"]
 
 
+def test_tenancy_schema_enforces_default_uniqueness_and_known_roles(fresh_db):
+    team = fresh_db.get_default_team()
+    assert team is not None
+    with fresh_db.connect() as conn:
+        season_indexes = {row["name"] for row in conn.execute("PRAGMA index_list(seasons)").fetchall()}
+        membership_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'team_user_memberships'"
+        ).fetchone()["sql"]
+
+    assert "idx_seasons_team_name" in season_indexes
+    assert "CHECK(role IN" in membership_sql
+
+
 def test_new_users_receive_default_memberships_after_v14(fresh_db):
     user = fresh_db.create_user("newcoach", "hash", "coach,viewer")
 
@@ -147,3 +160,12 @@ def test_role_updates_refresh_default_memberships(fresh_db):
     assert fresh_db.update_user(user["id"], role="coach,parent") is True
 
     assert [m["role"] for m in fresh_db.list_user_memberships(user["id"])] == ["coach", "guardian"]
+
+
+def test_delete_user_removes_default_memberships(fresh_db):
+    user = fresh_db.create_user("deleteme", "hash", "coach")
+    assert fresh_db.list_user_memberships(user["id"])
+
+    assert fresh_db.delete_user(user["id"]) is True
+
+    assert fresh_db.list_user_memberships(user["id"]) == []
