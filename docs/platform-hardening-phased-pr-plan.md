@@ -521,6 +521,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Notes/goals `coach_private_note` canaries pass.
 - Cross-team variants pass.
 
+**Implementation note (feat/platform-pr3-1-visibility-service):** Coaching visibility and viewer-scrubbing helpers now live in `services/visibility.py`, with `server.py` importing them under the existing private helper aliases to preserve route behavior while shrinking policy code out of the route module. Controller review found no privacy/behavior regression after ensuring the new service file is tracked; full tests passed.
+
 ### PR 3.2: Extract Engagement, Thumbnails, Activity Services
 
 **Files:**
