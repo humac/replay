@@ -2011,6 +2011,19 @@ export const coachingMixin = {
         return bits.join(' · ');
     },
 
+    _summarySectionData(summary, labels = {}) {
+        return [
+            [labels.team_positives || 'Positives', summary?.team_positives],
+            [labels.team_improvements || 'Improve', summary?.team_improvements],
+            [labels.training_focus || 'Training focus', summary?.training_focus],
+            [labels.body || 'Coach recap', summary?.body],
+        ].filter(([, value]) => (value || '').trim());
+    },
+
+    _summarySourceCount(summary) {
+        return (summary?.note_ids || []).length + (summary?.clip_ids || []).length + (summary?.playlist_ids || []).length;
+    },
+
     renderCoachMatchSummaries() {
         const list = document.getElementById('coach-summaries-list');
         if (!list) return;
@@ -2020,23 +2033,28 @@ export const coachingMixin = {
             return;
         }
         list.innerHTML = summaries.map((s) => {
-            const sections = [
-                ['Positives', s.team_positives],
-                ['Improve', s.team_improvements],
-                ['Training focus', s.training_focus],
-                ['Coach recap', s.body],
-            ].filter(([, value]) => (value || '').trim());
+            const sections = this._summarySectionData(s);
             const linked = this._summaryLinkedCounts(s);
+            const sourceCount = this._summarySourceCount(s);
             return `
                 <article class="coach-list-item" data-summary-id="${Number(s.id)}">
                     <div class="coach-list-main">
-                        <strong>${this.esc(this.matchLabel(s.match_id))}</strong>
-                        <span>${this.esc(this._summaryVisibilityLabel(s.visibility))}${linked ? ` · ${this.esc(linked)}` : ''}</span>
-                        ${sections.map(([label, value]) => `<p><strong>${this.esc(label)}:</strong> ${this.esc(value)}</p>`).join('')}
+                        <div class="coach-summary-row-head">
+                            <strong>${this.esc(this.matchLabel(s.match_id))}</strong>
+                            <span class="coach-summary-meta">${this.esc(this._summaryVisibilityLabel(s.visibility))}${linked ? ` · ${this.esc(linked)}` : ''}</span>
+                        </div>
+                        <div class="coach-summary-preview" aria-label="Summary preview">
+                            ${sections.slice(0, 3).map(([label, value]) => `
+                                <section class="coach-summary-preview-section">
+                                    <span class="coach-summary-preview-label">${this.esc(label)}</span>
+                                    <p>${this.esc(value)}</p>
+                                </section>`).join('')}
+                        </div>
+                        <span class="coach-summary-source-meta">${sourceCount ? `${sourceCount} linked source${sourceCount === 1 ? '' : 's'} · ` : ''}Edit to view full recap and evidence.</span>
                     </div>
                     <div class="coach-list-actions">
                         <button type="button" class="mini-action-btn" onclick="app.openCoachMatchSummaryModal(${Number(s.id)})">Edit</button>
-                        <button type="button" class="mini-action-btn danger" onclick="app.handleCoachDeleteMatchSummary(${Number(s.id)})">Delete</button>
+                        <button type="button" class="mini-action-btn btn-danger-soft" onclick="app.handleCoachDeleteMatchSummary(${Number(s.id)})">Delete</button>
                     </div>
                 </article>`;
         }).join('');
@@ -2056,24 +2074,32 @@ export const coachingMixin = {
     async openCoachMatchSummaryModal(summaryId = null) {
         const summary = summaryId ? (this._coachBundle?.match_summaries || []).find((s) => Number(s.id) === Number(summaryId)) : null;
         const body = document.createElement('div');
-        body.className = 'coach-link-modal';
+        body.className = 'coach-link-modal coach-summary-modal';
+        const idPrefix = `coach-summary-${summary ? Number(summary.id) : 'new'}`;
         body.innerHTML = `
             <span class="admin-card-kicker">Match Summary</span>
             <h3>${summary ? 'Edit match summary' : 'New match summary'}</h3>
             <p class="admin-card-sub">Team-visible summaries appear in My Feedback. Linked private source notes/clips/playlists are filtered server-side and are never exposed to viewers.</p>
-            <div class="form-row">
-                <div class="form-group"><label>Match</label><select data-field="match"></select></div>
-                <div class="form-group"><label>Visibility</label><select data-field="visibility">${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}</select></div>
+            <div class="coach-summary-form-card">
+                <span class="coach-summary-form-kicker">Match &amp; visibility</span>
+                <div class="form-row">
+                    <div class="form-group"><label for="${idPrefix}-match">Match</label><select id="${idPrefix}-match" data-field="match"></select></div>
+                    <div class="form-group"><label for="${idPrefix}-visibility">Visibility</label><select id="${idPrefix}-visibility" data-field="visibility">${VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}</select></div>
+                </div>
             </div>
-            <div class="form-group"><label>Team positives</label><textarea data-field="team_positives" rows="3" maxlength="4000" placeholder="What went well as a team?"></textarea></div>
-            <div class="form-group"><label>Areas to improve</label><textarea data-field="team_improvements" rows="3" maxlength="4000" placeholder="What should we clean up next match?"></textarea></div>
-            <div class="form-group"><label>Training focus</label><textarea data-field="training_focus" rows="2" maxlength="2000" placeholder="Next practice focus"></textarea></div>
-            <div class="form-group"><label>Coach recap</label><textarea data-field="body" rows="4" maxlength="8000" placeholder="Optional full recap for the team"></textarea></div>
-            <details class="mt-4"><summary>Link notes, clips, and playlists</summary>
-                <div class="form-row mt-4">
-                    <div class="form-group"><label>Notes</label><div data-field="notes" class="coach-check-list"></div></div>
-                    <div class="form-group"><label>Clips</label><div data-field="clips" class="coach-check-list"></div></div>
-                    <div class="form-group"><label>Playlists</label><div data-field="playlists" class="coach-check-list"></div></div>
+            <div class="coach-summary-form-card">
+                <span class="coach-summary-form-kicker">Team recap</span>
+                <div class="form-group"><label for="${idPrefix}-team-positives">Team positives</label><textarea id="${idPrefix}-team-positives" data-field="team_positives" rows="3" maxlength="4000" placeholder="What went well as a team?"></textarea></div>
+                <div class="form-group"><label for="${idPrefix}-team-improvements">Areas to improve</label><textarea id="${idPrefix}-team-improvements" data-field="team_improvements" rows="3" maxlength="4000" placeholder="What should we clean up next match?"></textarea></div>
+                <div class="form-group"><label for="${idPrefix}-training-focus">Training focus</label><textarea id="${idPrefix}-training-focus" data-field="training_focus" rows="2" maxlength="2000" placeholder="Next practice focus"></textarea></div>
+                <div class="form-group"><label for="${idPrefix}-body">Coach recap</label><textarea id="${idPrefix}-body" data-field="body" rows="4" maxlength="8000" placeholder="Optional full recap for the team"></textarea></div>
+            </div>
+            <details class="coach-summary-disclosure">
+                <summary><span>Evidence</span><small>Link notes, clips, and playlists</small></summary>
+                <div class="form-row coach-summary-evidence-grid">
+                    <div class="form-group"><span id="${idPrefix}-notes-label" class="form-label-like">Notes</span><div data-field="notes" class="coach-check-list" role="group" aria-labelledby="${idPrefix}-notes-label"></div></div>
+                    <div class="form-group"><span id="${idPrefix}-clips-label" class="form-label-like">Clips</span><div data-field="clips" class="coach-check-list" role="group" aria-labelledby="${idPrefix}-clips-label"></div></div>
+                    <div class="form-group"><span id="${idPrefix}-playlists-label" class="form-label-like">Playlists</span><div data-field="playlists" class="coach-check-list" role="group" aria-labelledby="${idPrefix}-playlists-label"></div></div>
                 </div>
             </details>`;
         const matchSel = body.querySelector('[data-field="match"]');
@@ -6160,12 +6186,11 @@ export const coachingMixin = {
         const clipsById = new Map((data?.clips || []).map((c) => [Number(c.id), c]));
         const playlistsById = new Map((data?.playlists || []).map((p) => [Number(p.id), p]));
         list.innerHTML = summaries.map((s) => {
-            const sections = [
-                ['What went well', s.team_positives],
-                ['What we can improve', s.team_improvements],
-                ['Training focus', s.training_focus],
-                ['Coach recap', s.body],
-            ].filter(([, value]) => (value || '').trim());
+            const sections = this._summarySectionData(s, {
+                team_positives: 'What went well',
+                team_improvements: 'What we can improve',
+                body: 'Coach recap',
+            });
             const notes = (s.note_ids || []).map((id) => notesById.get(Number(id))).filter(Boolean);
             const clips = (s.clip_ids || []).map((id) => clipsById.get(Number(id))).filter(Boolean);
             const playlists = (s.playlist_ids || []).map((id) => playlistsById.get(Number(id))).filter(Boolean);
@@ -6174,13 +6199,23 @@ export const coachingMixin = {
                 ...clips.map((c) => `<button type="button" class="mini-action-btn" onclick="app.openFeedbackClip(${Number(c.id)})">Clip: ${this.esc(c.title || 'Clip')}</button>`),
                 ...playlists.map((p) => `<button type="button" class="mini-action-btn" onclick="app.openFeedbackPlaylist(${Number(p.id)})">Playlist: ${this.esc(p.title || 'Session')}</button>`),
             ];
+            const sourceCount = sources.length;
             return `
                 <article class="feedback-card feedback-summary-card">
                     <div class="feedback-card-body">
                         <div class="feedback-card-kicker">Match summary</div>
-                        <h3>${this.esc(this.matchLabel(s.match_id))}</h3>
-                        ${sections.map(([label, value]) => `<section class="feedback-detail-summary"><h4 class="feedback-detail-section-title">${this.esc(label)}</h4><p>${this.esc(value)}</p></section>`).join('')}
-                        ${sources.length ? `<div class="feedback-card-actions">${sources.join('')}</div>` : ''}
+                        <h3 class="feedback-card-title">${this.esc(this.matchLabel(s.match_id))}</h3>
+                        <p class="feedback-card-meta">${sourceCount ? `${sourceCount} source${sourceCount === 1 ? '' : 's'} linked` : 'Team recap'}</p>
+                        <div class="feedback-summary-preview" aria-label="Match summary preview">
+                            ${sections.slice(0, 3).map(([label, value]) => `<section class="feedback-summary-section"><h4>${this.esc(label)}</h4><p>${this.esc(value)}</p></section>`).join('')}
+                        </div>
+                        <details class="feedback-summary-more">
+                            <summary>Full match summary</summary>
+                            <div class="feedback-summary-full">
+                                ${sections.map(([label, value]) => `<section><h4>${this.esc(label)}</h4><p>${this.esc(value)}</p></section>`).join('')}
+                            </div>
+                        </details>
+                        ${sources.length ? `<div class="feedback-card-actions feedback-summary-sources" aria-label="Linked evidence">${sources.join('')}</div>` : ''}
                     </div>
                 </article>`;
         }).join('');
