@@ -251,6 +251,13 @@ Net: three coaching objects get explicit `season_id` (observation notes, playlis
 - Only enforce NOT NULL after tests prove all legacy rows backfill correctly.
 - Add indexes for frequent filters, e.g. `(team_id)`, `(team_id, season_id)`, `(team_id, player_id)`, `(team_id, match_id)` where relevant.
 
+**Tests:**
+
+- Fresh DB creates required schema.
+- Existing DB migrates cleanly from pre-tenancy state.
+- Tenant columns are non-null where contract says they are non-null.
+- Migration remains idempotent.
+
 ### PR 1.4: Global-Admin Team/Season/Membership CRUD
 
 **Objective:** Provide an explicit, gated path for global admins to create and manage teams, seasons, and memberships before Phase 9 ships full onboarding/invites. Without this, second-team setup between Phase 1 and Phase 9 falls back to direct DB writes — fragile and easy to leak into runbooks.
@@ -341,13 +348,6 @@ CLI writes through `services/teams.py` — the same code path as the API, never 
 - Path containment rejects `..` / absolute-path tricks under both schemes.
 - Caddy regex matches both shapes (manual or via integration test).
 - Dry-run relocation script reports planned moves without touching disk.
-
-**Tests:**
-
-- Fresh DB creates required schema.
-- Existing DB migrates cleanly from pre-tenancy state.
-- Tenant columns are non-null where contract says they are non-null.
-- Migration remains idempotent.
 
 ---
 
@@ -897,7 +897,7 @@ while True:
 - `ai.drafting_enabled`: bool, default false.
 - `ai.allowed_draft_targets`: array enum of `player_summary`, `what_happened`, `why_it_matters`, `what_to_do_next`, `clip_title`, `clip_description`, `goal_description`, `goal_success_criteria`, `summary_team_positives`, `summary_team_improvements`, `summary_training_focus`.
 - `ai.tone`: enum `direct`, `encouraging`, `technical`.
-- `ai.never_draft_for_visibilities`: array enum `private`, `player`.
+- `ai.never_draft_for_visibilities`: array enum `private`, `player`. **Default `["private", "player"]`** — drafts are coach-private by default in the MVP. A team must explicitly opt in to drafting for player-visible visibilities (and even then the draft is always reviewable by the coach before save; AI never publishes directly). The setting governs both **draft generation** for output fields tagged with the listed visibilities AND **context inclusion** for source objects with the listed visibilities — see PR 8.2 for the context-builder enforcement.
 - `notes.default_visibility`: optional early coaching default if easy.
 - `summaries.default_visibility`: optional early coaching default if easy.
 - `goals.default_visibility`: optional early coaching default if easy. Use the goal-specific enum from `_VALID_GOAL_VISIBILITIES` (`player`, `coach`), not the four-value coaching visibility enum.
@@ -996,6 +996,8 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Prefer compact evidence references over raw full dumps.
 - Exclude `coach_private_note` always.
 - Exclude private notes, private playlist descriptions, and tactical board JSON from AI context in the MVP. Do not add an escape hatch in Phase 8; if a later product decision wants this, it needs a separate policy setting, threat model, and canary tests.
+- **Default visibility filter for context inclusion mirrors `ai.never_draft_for_visibilities`** (default `["private", "player"]` per PR 7.1). Source objects whose `visibility` is in the team's never-draft list are excluded from provider context, not just from output drafting. Rationale: a team that has not opted in to player-visible drafting also has not consented to player-visible content being shipped to the LLM provider — even for a coach-private output field, because providers may log/cache prompts. To include `player`-visibility context, a team must explicitly remove `player` from `ai.never_draft_for_visibilities` (and any team that has opted in to player drafting has by definition consented to player context as well — same toggle).
+- `team` and `unlisted` visibilities are NOT in the default never-draft list; team-visible content can flow into provider context by default. A future product decision could promote `team` into the default if needed.
 
 **Tests:**
 
@@ -1004,6 +1006,8 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Cross-team notes/goals/clips/playlists/summaries never appear.
 - Unlinked player data never appears.
 - Disallowed draft target is rejected by team settings.
+- **Default never-draft canary:** with `ai.never_draft_for_visibilities` at its default `["private", "player"]`, a player-visibility note in the requested context bundle is **not** sent to the provider — even when the requested draft target is a coach-private field.
+- **Opt-in path:** with `ai.never_draft_for_visibilities = ["private"]`, the same player-visibility note IS included in provider context.
 
 ### PR 8.3: Provider Interface And Mock Provider
 
