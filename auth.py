@@ -137,6 +137,26 @@ def require_global_admin(request: Request) -> dict:
     return require_role(request, "admin")
 
 
+def require_team_role(request: Request, team_id: str, *roles: str, allow_global_admin_override: bool = False):
+    """Require the current user to have a scoped team membership role/capability."""
+    import tenancy as _tenancy
+
+    user = require_auth(request)
+    return _tenancy.require_team_role(
+        request,
+        user,
+        team_id,
+        *roles,
+        allow_global_admin_override=allow_global_admin_override,
+    )
+
+
+# Compatibility alias for callers that follow the internal helper naming used
+# in the platform plan.
+_require_team_role = require_team_role
+_require_global_admin = require_global_admin
+
+
 def check_login_rate_limit(request: Request):
     """Raise 429 if too many login attempts from this IP."""
     # Imported lazily to avoid a top-level circular import (streams imports nothing

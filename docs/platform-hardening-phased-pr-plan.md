@@ -393,6 +393,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Multi-team user without selected scope gets selection-required response.
 - Global admin override path works only through explicit helper.
 
+**Implementation note (feat/platform-pr2-1-scope-resolver):** `tenancy.py` now owns the centralized role/capability map and `resolve_scope(...)` contract. It resolves explicit `?team=`/`team_id`, then `users.last_team_id`, then a single eligible membership; ambiguous multi-team users get a 409 selection-required error. Normal scoped resources require a `team_user_memberships` row even when legacy `users.role` says `coach`/`admin`; global-admin bypass is available only through explicit override paths (`auth.require_global_admin()` or `allow_global_admin_override=True`). `auth.py` exposes `require_team_role()` / `_require_team_role` as the integration shim. Focused regression coverage is in `tests/test_tenancy.py`.
+
 ### PR 2.2: Visibility Helpers Accept Team Scope
 
 **Files:**

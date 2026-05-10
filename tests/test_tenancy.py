@@ -522,3 +522,223 @@ def test_db_helpers_create_rows_in_default_scope(fresh_db):
         assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_playlists WHERE id = ?", (playlist["id"],)).fetchone()) == (default_team["id"], default_season["id"])
         assert tuple(conn.execute("SELECT team_id, season_id FROM player_goals WHERE id = ?", (goal["id"],)).fetchone()) == (default_team["id"], default_season["id"])
         assert conn.execute("SELECT team_id FROM coaching_match_summaries WHERE id = ?", (summary["id"],)).fetchone()["team_id"] == default_team["id"]
+
+
+class _ScopeRequest:
+    def __init__(self, **query):
+        self.query_params = query
+        self.headers = {}
+
+
+def _insert_team_with_season(conn, team_id: str, slug: str, season_id: str | None = None):
+    now = "2026-04-01T00:00:00Z"
+    season_id = season_id or f"{team_id}-season"
+    conn.execute(
+        "INSERT INTO teams (id, name, slug, game_format, created_at) VALUES (?, ?, ?, 'full', ?)",
+        (team_id, team_id.replace('-', ' ').title(), slug, now),
+    )
+    conn.execute(
+        "INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES (?, ?, 'Default Season', '', '', ?)",
+        (season_id, team_id, now),
+    )
+    return season_id
+
+
+def _insert_user(conn, user_id: str, username: str, role: str = "viewer", last_team_id: str | None = None):
+    now = "2026-04-01T00:00:00Z"
+    conn.execute(
+        """
+        INSERT INTO users (id, username, password_hash, role, display_name, enabled, created_at, updated_at, last_team_id)
+        VALUES (?, ?, 'hash', ?, '', 1, ?, ?, ?)
+        """,
+        (user_id, username, role, now, now, last_team_id),
+    )
+
+
+def _grant_membership(conn, team_id: str, user_id: str, role: str):
+    conn.execute(
+        "INSERT INTO team_user_memberships (team_id, user_id, role, created_at) VALUES (?, ?, ?, '2026-04-01T00:00:00Z')",
+        (team_id, user_id, role),
+    )
+
+
+def test_pr_2_1_resolve_scope_allows_single_team_membership_by_default(fresh_db):
+    import tenancy
+
+    with fresh_db.connect() as conn:
+        team = fresh_db.get_default_team(conn=conn)
+        season = fresh_db.get_default_season(team["id"], conn=conn)
+        _insert_user(conn, "coach-scope", "coach_scope", "coach")
+        conn.execute("DELETE FROM team_user_memberships WHERE user_id = 'coach-scope'")
+        _grant_membership(conn, team["id"], "coach-scope", "coach")
+        conn.commit()
+
+    scope = tenancy.resolve_scope(
+        _ScopeRequest(),
+        {"user_id": "coach-scope", "username": "coach_scope", "role": "coach"},
+        require_role="coach",
+    )
+    assert scope.team["id"] == team["id"]
+    assert scope.season["id"] == season["id"]
+    assert scope.membership["role"] == "coach"
+    assert scope.effective_role == "coach"
+    assert scope.is_global_admin is False
+
+
+def test_pr_2_1_explicit_team_requires_membership_even_with_legacy_coach_role(fresh_db):
+    import tenancy
+    from fastapi import HTTPException
+
+    with fresh_db.connect() as conn:
+        _insert_team_with_season(conn, "team-a", "team-a")
+        _insert_team_with_season(conn, "team-b", "team-b")
+        _insert_user(conn, "coach-a", "coach_a", "coach")
+        _grant_membership(conn, "team-a", "coach-a", "coach")
+        conn.commit()
+
+    scope = tenancy.resolve_scope(
+        _ScopeRequest(team="team-a"),
+        {"user_id": "coach-a", "username": "coach_a", "role": "coach"},
+        require_role="coach",
+    )
+    assert scope.team["id"] == "team-a"
+
+    with pytest.raises(HTTPException) as exc:
+        tenancy.resolve_scope(
+            _ScopeRequest(team="team-b"),
+            {"user_id": "coach-a", "username": "coach_a", "role": "coach"},
+            require_role="coach",
+        )
+    assert exc.value.status_code == 403
+
+
+def test_pr_2_1_multi_team_user_without_selected_scope_requires_selection(fresh_db):
+    import tenancy
+    from fastapi import HTTPException
+
+    with fresh_db.connect() as conn:
+        _insert_team_with_season(conn, "multi-a", "multi-a")
+        _insert_team_with_season(conn, "multi-b", "multi-b")
+        _insert_user(conn, "multi-coach", "multi_coach", "coach")
+        _grant_membership(conn, "multi-a", "multi-coach", "coach")
+        _grant_membership(conn, "multi-b", "multi-coach", "coach")
+        conn.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        tenancy.resolve_scope(
+            _ScopeRequest(),
+            {"user_id": "multi-coach", "username": "multi_coach", "role": "coach"},
+            require_role="coach",
+        )
+    assert exc.value.status_code == 409
+    assert "selection" in str(exc.value.detail).lower()
+
+
+def test_pr_2_1_saved_last_team_breaks_multi_team_tie(fresh_db):
+    import tenancy
+
+    with fresh_db.connect() as conn:
+        _insert_team_with_season(conn, "saved-a", "saved-a")
+        _insert_team_with_season(conn, "saved-b", "saved-b")
+        _insert_user(conn, "saved-coach", "saved_coach", "coach", last_team_id="saved-b")
+        _grant_membership(conn, "saved-a", "saved-coach", "coach")
+        _grant_membership(conn, "saved-b", "saved-coach", "coach")
+        conn.commit()
+
+    scope = tenancy.resolve_scope(
+        _ScopeRequest(),
+        {"user_id": "saved-coach", "username": "saved_coach", "role": "coach"},
+        require_role="coach",
+    )
+    assert scope.team["id"] == "saved-b"
+
+
+def test_pr_2_1_assistant_coach_capability_limits_are_centralized():
+    import tenancy
+
+    assert tenancy.role_has_capability("assistant_coach", "coach_object:write")
+    assert tenancy.role_has_capability("assistant_coach", "coach_object:edit")
+    assert not tenancy.role_has_capability("assistant_coach", "membership:manage")
+    assert not tenancy.role_has_capability("assistant_coach", "team_settings:manage")
+    assert not tenancy.role_has_capability("assistant_coach", "ai_settings:manage")
+    assert not tenancy.role_has_capability("assistant_coach", "global_admin")
+    assert not tenancy.role_has_capability("assistant_coach", "coach_object:delete_others")
+
+
+def test_pr_2_1_explicit_global_admin_override_is_not_implicit(fresh_db):
+    import tenancy
+    from fastapi import HTTPException
+
+    with fresh_db.connect() as conn:
+        _insert_team_with_season(conn, "admin-target", "admin-target")
+        conn.commit()
+
+    global_admin = {"user_id": None, "username": "admin", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        tenancy.resolve_scope(
+            _ScopeRequest(team="admin-target"),
+            global_admin,
+            require_role="team_admin",
+        )
+    assert exc.value.status_code == 403
+
+    scope = tenancy.resolve_scope(
+        _ScopeRequest(team="admin-target"),
+        global_admin,
+        require_role="team_admin",
+        allow_global_admin_override=True,
+    )
+    assert scope.team["id"] == "admin-target"
+    assert scope.membership is None
+    assert scope.effective_role == "global_admin"
+    assert scope.is_global_admin is True
+
+
+def test_pr_2_1_explicit_global_admin_override_wins_over_low_membership(fresh_db):
+    import tenancy
+    from fastapi import HTTPException
+
+    with fresh_db.connect() as conn:
+        _insert_team_with_season(conn, "admin-member-target", "admin-member-target")
+        _insert_user(conn, "db-admin", "db_admin", "admin")
+        _grant_membership(conn, "admin-member-target", "db-admin", "guardian")
+        conn.commit()
+
+    db_admin = {"user_id": "db-admin", "username": "db_admin", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        tenancy.resolve_scope(
+            _ScopeRequest(team="admin-member-target"),
+            db_admin,
+            require_role="team_admin",
+        )
+    assert exc.value.status_code == 403
+
+    scope = tenancy.resolve_scope(
+        _ScopeRequest(team="admin-member-target"),
+        db_admin,
+        require_role="team_admin",
+        allow_global_admin_override=True,
+    )
+    assert scope.membership["role"] == "guardian"
+    assert scope.effective_role == "global_admin"
+    assert scope.is_global_admin is True
+
+
+def test_pr_2_1_explicit_season_id_resolves_owning_team(fresh_db):
+    import tenancy
+
+    with fresh_db.connect() as conn:
+        _insert_team_with_season(conn, "season-team-a", "season-team-a", "season-a")
+        _insert_team_with_season(conn, "season-team-b", "season-team-b", "season-b")
+        _insert_user(conn, "season-coach", "season_coach", "coach")
+        _grant_membership(conn, "season-team-a", "season-coach", "coach")
+        _grant_membership(conn, "season-team-b", "season-coach", "coach")
+        conn.commit()
+
+    scope = tenancy.resolve_scope(
+        _ScopeRequest(season_id="season-b"),
+        {"user_id": "season-coach", "username": "season_coach", "role": "coach"},
+        require_role="coach",
+    )
+    assert scope.team["id"] == "season-team-b"
+    assert scope.season["id"] == "season-b"
