@@ -35,6 +35,9 @@ import streams as _streams
 import tenancy as _tenancy
 import uploads as _uploads
 from routers.admin_teams import router as admin_teams_router
+from services import activity as _activity
+from services import engagement as _engagement
+from services import thumbnails as _thumbs
 from services.visibility import (
     ACTIVE_GOAL_STATUSES as _ACTIVE_GOAL_STATUSES,
     can_view_coach_clip as _can_view_coach_clip,
@@ -429,51 +432,21 @@ async def _admin_settings_payload() -> dict:
     return payload
 
 
-def _log_activity(
-    event_type: str,
-    *,
-    severity: str = "info",
-    message: str = "",
-    match_id: str | None = None,
-    slot: str | None = None,
-    actor: str | None = None,
-    metadata: dict | None = None,
-) -> None:
-    """Best-effort admin activity feed writer."""
-    try:
-        _db.log_activity_event(
-            event_type,
-            severity=severity,
-            message=message,
-            match_id=match_id,
-            slot=slot,
-            actor=actor,
-            metadata=metadata,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Activity event logging failed: %s", exc)
+_log_activity = _activity.log_activity
+_coach_note_activity_label = _activity.coach_note_activity_label
+_streams.set_activity_logger(_activity.stream_activity_logger)
 
 
-def _stream_activity_logger(event_type: str, *, severity: str = "info", match_id=None, slot=None, metadata=None):
-    metadata = metadata or {}
-    kind = metadata.get("kind") or "stream"
-    if event_type == "stream.started":
-        label = "Live viewer connected" if kind == "live" else "VOD viewer connected"
-    elif event_type == "stream.ended":
-        label = "Live viewer disconnected" if kind == "live" else "VOD viewer disconnected"
-    else:
-        label = event_type.replace(".", " ")
-    _log_activity(
-        event_type,
-        severity=severity,
-        message=label,
-        match_id=match_id,
-        slot=slot,
-        metadata=metadata,
-    )
+def _thumb_path_within_videos_dir(thumb: Path) -> bool:
+    return _thumbs.thumb_path_within_videos_dir(thumb, VIDEOS_DIR)
 
 
-_streams.set_activity_logger(_stream_activity_logger)
+def _coach_note_thumbnail_candidates(note: dict | None, note_id: int) -> list[Path]:
+    return _thumbs.coach_note_thumbnail_candidates(note, note_id, VIDEOS_DIR)
+
+
+def _coach_clip_thumbnail_candidates(clip: dict | None, clip_id: int) -> list[Path]:
+    return _thumbs.coach_clip_thumbnail_candidates(clip, clip_id, VIDEOS_DIR)
 
 
 async def _render_index_html() -> str:
@@ -1728,31 +1701,6 @@ async def coach_list_notes(request: Request, match_id: str | None = None):
     return {"notes": [n for n in _db.list_coaching_notes(match_id=match_id) if _same_team(n, team_id)]}
 
 
-def _coach_note_activity_label(note: dict | None) -> str:
-    """Pick a human-readable label for the activity log message.
-
-    Phase 6b (#112) — observation notes can legitimately have no
-    `title` (Phase 6b allows clearing it via PATCH for observations
-    when other content is meaningful). Falling back through the most
-    user-visible fields keeps the activity feed scannable instead of
-    showing `Coaching note created: ` with a trailing space.
-
-    `coach_private_note` is intentionally NEVER used here — the
-    activity log is read by every admin/uploader, not just the note's
-    coach. Use only the fields that are already visible to a viewer
-    (or, for video notes, that match the existing behavior).
-    """
-    if not note:
-        return ""
-    for key in ("title", "event_title", "player_summary"):
-        value = (note.get(key) or "").strip()
-        if value:
-            return value
-    if (note.get("note_context") or "video") == "observation":
-        return "Observation note"
-    return ""
-
-
 @app.post("/api/coach/notes")
 async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
     user, scope = _resolve_coach_scope(request)
@@ -1790,7 +1738,7 @@ async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
     # Phase 6a: observation notes have no video timestamp so we skip
     # generation entirely — there is no source frame to capture.
     if note.get("note_context") == "video":
-        _spawn_task(_spawn_coach_note_thumbnail(note))
+        _spawn_task(_thumbs.spawn_coach_note_thumbnail(note, videos_dir=VIDEOS_DIR, slot_mp4_path=_slot_mp4_path))
     return {"ok": True, "note": note}
 
 
@@ -1882,7 +1830,7 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
     new_context = note.get("note_context") or "video"
     old_context = existing.get("note_context") or "video"
     if new_context == "video" and moment_fields.intersection(updates.keys()):
-        _spawn_task(_spawn_coach_note_thumbnail(note))
+        _spawn_task(_thumbs.spawn_coach_note_thumbnail(note, videos_dir=VIDEOS_DIR, slot_mp4_path=_slot_mp4_path))
     elif old_context == "video" and new_context == "observation":
         # Phase 6b (#114) — flipping a video note to an observation
         # leaves the original JPEG orphaned on disk; nothing serves
@@ -1896,8 +1844,8 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
         prior_match_id = existing.get("match_id")
         if prior_match_id:
             try:
-                for thumb in _coach_note_thumbnail_candidates(existing, note_id):
-                    if _thumb_path_within_videos_dir(thumb):
+                for thumb in _thumbs.coach_note_thumbnail_candidates(existing, note_id, VIDEOS_DIR):
+                    if _thumbs.thumb_path_within_videos_dir(thumb, VIDEOS_DIR):
                         thumb.unlink(missing_ok=True)
             except (OSError, ValueError) as exc:
                 _log.setup("replay").warning(
@@ -1934,8 +1882,8 @@ async def coach_delete_note(note_id: int, request: Request):
         # Phase 6a — observation notes have no `match_id`, so the
         # thumbnail path is meaningless. Skip the unlink attempt
         # entirely. Video notes still clean up their JPEG.
-        for thumb in _coach_note_thumbnail_candidates(note, note_id):
-            if _thumb_path_within_videos_dir(thumb):
+        for thumb in _thumbs.coach_note_thumbnail_candidates(note, note_id, VIDEOS_DIR):
+            if _thumbs.thumb_path_within_videos_dir(thumb, VIDEOS_DIR):
                 thumb.unlink(missing_ok=True)
     except (OSError, ValueError) as exc:
         _log.setup("replay").warning(
@@ -1945,149 +1893,6 @@ async def coach_delete_note(note_id: int, request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Phase 3a — per-coaching-note thumbnails
-#
-# Storage: $REPLAY_DATA_DIR/videos/<match_id>/coach_thumbs/<note_id>.jpg
-# (resolved by `_media.coach_note_thumbnail_path` so the convention is
-# single-sourced). Path is purely deterministic from `match_id` + `note_id`,
-# so no DB column is required and no schema migration ships in this PR.
-#
-# Generation is best-effort and runs in the background after a note is
-# created or its match/slot/timestamp changes. A failure to generate
-# (missing source video, ffmpeg crash, disk full) MUST NOT block note
-# save — the serving endpoint just returns 404 when the file is absent.
-#
-# Auth follows the existing visibility ladder: coach/admin can see every
-# thumbnail; signed-in viewers can see thumbnails for notes that
-# `_filter_notes_for_user` already grants them access to (team-visible,
-# unlisted, or player-tagged notes for a linked player). Private
-# coach-only notes never leak. The check reuses the same helper that
-# powers `/api/my-feedback` so visibility logic stays single-sourced.
-#
-# Namespace exception: most `/api/coach/*` routes require `admin|coach`.
-# `GET /api/coach/notes/{id}/thumbnail` is the one read-only,
-# visibility-checked exception that is reachable by any signed-in user
-# whose visibility check passes (see CLAUDE.md / AGENTS.md). The
-# regenerate endpoint stays coach/admin-only.
-#
-# Defense-in-depth: every site that reads / writes / unlinks one of
-# these JPEGs runs the path through `_thumb_path_within_videos_dir` so
-# a corrupted DB row whose `match_id` contains `..` cannot escape
-# `VIDEOS_DIR`. Same pattern as `serve_logo` / `serve_thumbnail`
-# (commit `e11992d` — "m6 — Path containment on thumbnail/logo
-# endpoints").
-# ---------------------------------------------------------------------------
-
-def _thumb_path_within_videos_dir(thumb: Path) -> bool:
-    """Defense-in-depth path-containment check.
-
-    Returns True only when the thumbnail path resolves under
-    `VIDEOS_DIR.resolve()`. If the resolution itself raises (the
-    parent directory doesn't exist yet, a symlink cycle, etc.), we
-    treat that as "outside" and return False. Callers MUST handle
-    `False` by short-circuiting safely (404 / no-write / no-unlink),
-    not by raising — the GET handler in particular returns the same
-    404 it uses for "unknown note" / "no permission" / "no file" so
-    a probing viewer cannot tell the four cases apart.
-
-    Mirrors the `if VIDEOS_DIR.resolve() not in path.resolve().parents`
-    check used by `serve_logo` and `serve_thumbnail`.
-    """
-    try:
-        return VIDEOS_DIR.resolve() in thumb.resolve().parents
-    except OSError:
-        return False
-
-
-def _unique_thumbnail_candidates(paths: list[Path]) -> list[Path]:
-    seen: set[Path] = set()
-    unique: list[Path] = []
-    for path in paths:
-        try:
-            key = path.resolve(strict=False)
-        except OSError:
-            key = path
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(path)
-    return unique
-
-
-def _coach_note_thumbnail_candidates(note: dict | None, note_id: int) -> list[Path]:
-    if not note or not note.get("match_id") or (note.get("note_context") or "video") != "video":
-        return []
-    match_id = note["match_id"]
-    paths = [
-        _media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id, team_id=note.get("team_id"))
-    ]
-    if note.get("team_id"):
-        paths.append(_media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id))
-    return _unique_thumbnail_candidates(paths)
-
-
-def _coach_clip_thumbnail_candidates(clip: dict | None, clip_id: int) -> list[Path]:
-    if not clip or not clip.get("match_id"):
-        return []
-    match_id = clip["match_id"]
-    paths = [
-        _media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id, team_id=clip.get("team_id"))
-    ]
-    if clip.get("team_id"):
-        paths.append(_media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id))
-    return _unique_thumbnail_candidates(paths)
-
-
-async def _spawn_coach_note_thumbnail(note: dict) -> None:
-    """Best-effort generator — never raises. Caller (note create / update /
-    regenerate endpoint) should call this AFTER the DB row is written
-    (we need the note's id) and AFTER the note response has been
-    returned to the client (we don't block on ffmpeg).
-
-    Phase 6a defense-in-depth: if a caller forgets to gate on
-    `note_context == "video"` and routes an observation note here,
-    bail out cleanly. Observation notes have no video frame to
-    capture; trying to ffmpeg an empty match path would just log a
-    confusing warning and waste a worker slot."""
-    if not note or not note.get("id") or not note.get("match_id"):
-        return
-    if (note.get("note_context") or "video") != "video":
-        return
-    note_id = int(note["id"])
-    match_id = note["match_id"]
-    slot = note.get("slot") or "full"
-    timestamp_s = float(note.get("timestamp_seconds") or 0)
-    try:
-        src = _slot_mp4_path(match_id, slot)
-        dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id, team_id=note.get("team_id"))
-    except ValueError as exc:
-        _log.setup("replay").warning(
-            "Coach-note thumbnail spawn skipped for note %s: invalid path component (%s)",
-            note_id, exc,
-        )
-        return
-    # Defense-in-depth: refuse to write outside the videos tree even if
-    # the DB row's `match_id` somehow resolves to an escaping path.
-    if not _thumb_path_within_videos_dir(dest):
-        _log.setup("replay").warning(
-            "Coach-note thumbnail spawn skipped for note %s: dest path escapes VIDEOS_DIR (%s)",
-            note_id, dest,
-        )
-        return
-    try:
-        await _media.generate_thumbnail_at_timestamp(src, dest, timestamp_s=timestamp_s)
-    except Exception as exc:                                # noqa: BLE001
-        # `generate_thumbnail_at_timestamp` already swallows ffmpeg
-        # errors and logs them, but we wrap the whole call in a final
-        # safety net so an unexpected exception (e.g. disk full,
-        # permissions error on `dest.parent.mkdir`) cannot break the
-        # parent task that scheduled this coroutine.
-        _log.setup("replay").warning(
-            "Coach-note thumbnail spawn failed for note %s: %s", note_id, exc
-        )
-
-
-
 @app.get("/api/coach/notes/{note_id}/thumbnail")
 async def coach_get_note_thumbnail(note_id: int, request: Request):
     """Serve the per-note thumbnail JPEG.
@@ -2127,7 +1932,7 @@ async def coach_get_note_thumbnail(note_id: int, request: Request):
     # Same response shape as the missing-file branch so a viewer can't
     # use a probing match_id to distinguish containment-fail from
     # not-generated-yet.
-    if not _thumb_path_within_videos_dir(thumb):
+    if not _thumbs.thumb_path_within_videos_dir(thumb, VIDEOS_DIR):
         raise HTTPException(404, "Thumbnail not found")
     if not thumb.is_file():
         raise HTTPException(404, "Thumbnail not generated yet")
@@ -2173,29 +1978,12 @@ async def coach_regenerate_note_thumbnail(note_id: int, request: Request):
     # need a new branch.
     if (note.get("note_context") or "video") != "video" or not note.get("match_id"):
         return {"ok": True, "generated": False}
-    try:
-        src = _slot_mp4_path(note["match_id"], note.get("slot") or "full")
-        dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id, team_id=note.get("team_id"))
-    except ValueError:
-        return {"ok": True, "generated": False}
-    # Defense-in-depth: never write outside VIDEOS_DIR. Returns the
-    # same `generated: false` shape as a successful-but-no-source run
-    # so callers handle the result identically.
-    if not _thumb_path_within_videos_dir(dest):
-        _log.setup("replay").warning(
-            "Coach-note thumbnail regenerate skipped for note %s: dest path escapes VIDEOS_DIR (%s)",
-            note_id, dest,
-        )
-        return {"ok": True, "generated": False}
-    try:
-        ok = await _media.generate_thumbnail_at_timestamp(
-            src, dest, timestamp_s=float(note.get("timestamp_seconds") or 0)
-        )
-    except Exception as exc:                                # noqa: BLE001
-        _log.setup("replay").warning(
-            "Coach-note thumbnail regenerate failed for note %s: %s", note_id, exc
-        )
-        ok = False
+    ok = await _thumbs.regenerate_coach_note_thumbnail(
+        note,
+        note_id,
+        videos_dir=VIDEOS_DIR,
+        slot_mp4_path=_slot_mp4_path,
+    )
     return {"ok": True, "generated": ok}
 
 
@@ -2496,7 +2284,7 @@ async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
     # blocks clip save. The serving endpoint just returns 404 when the
     # JPEG is absent, and the manual regenerate endpoint lets the coach
     # retry once the source video lands.
-    _spawn_task(_spawn_coach_clip_thumbnail(clip))
+    _spawn_task(_thumbs.spawn_coach_clip_thumbnail(clip, videos_dir=VIDEOS_DIR, slot_mp4_path=_slot_mp4_path))
     return {"ok": True, "clip": clip}
 
 
@@ -2534,7 +2322,7 @@ async def coach_update_clip(clip_id: int, request: Request, body: UpdateCoaching
     # so start_seconds is the only field that can shift the captured
     # frame. Scheduled as a background task; failures don't block save.
     if "start_seconds" in updates and updates["start_seconds"] != existing.get("start_seconds"):
-        _spawn_task(_spawn_coach_clip_thumbnail(clip))
+        _spawn_task(_thumbs.spawn_coach_clip_thumbnail(clip, videos_dir=VIDEOS_DIR, slot_mp4_path=_slot_mp4_path))
     return {"ok": True, "clip": clip}
 
 
@@ -2555,8 +2343,8 @@ async def coach_delete_clip(clip_id: int, request: Request):
     # was already deleted (matches `coach_delete_note` exactly).
     if clip:
         try:
-            for thumb in _coach_clip_thumbnail_candidates(clip, clip_id):
-                if _thumb_path_within_videos_dir(thumb):
+            for thumb in _thumbs.coach_clip_thumbnail_candidates(clip, clip_id, VIDEOS_DIR):
+                if _thumbs.thumb_path_within_videos_dir(thumb, VIDEOS_DIR):
                     thumb.unlink(missing_ok=True)
         except (OSError, ValueError) as exc:
             _log.setup("replay").warning(
@@ -2575,69 +2363,6 @@ async def coach_delete_clip(clip_id: int, request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Phase 4e — per-coaching-clip thumbnails
-#
-# Storage: $REPLAY_DATA_DIR/videos/<match_id>/clip_thumbs/<clip_id>.jpg
-# (resolved by `_media.clip_thumbnail_path`). Same convention as the
-# Phase 3a per-note thumbnails (separate directory so the namespaces
-# can never collide); derived purely from match_id + clip_id so no DB
-# column or migration ships with this PR.
-#
-# Generation runs on POST /api/coach/clips and on PATCH when
-# `start_seconds` changes (the clip's match_id/slot are immutable per
-# `UpdateCoachingClipRequest`'s `extra="forbid"` config). DELETE
-# unlinks the JPEG. Generation failures are best-effort and never
-# block the parent clip save — the serving endpoint just returns 404
-# when the file is absent, and the manual regenerate endpoint lets a
-# coach retry once the source video lands.
-#
-# Auth follows the same visibility ladder as `/api/my-feedback` clips:
-# coach/admin can fetch any clip thumbnail; signed-in viewers see
-# `team`/`unlisted` clips and `player` clips for linked players.
-# Private clips never leak. Path containment runs through the same
-# `_thumb_path_within_videos_dir` guard used by note thumbnails.
-# ---------------------------------------------------------------------------
-
-
-async def _spawn_coach_clip_thumbnail(clip: dict) -> None:
-    """Best-effort generator — never raises. Caller (clip create / update /
-    regenerate endpoint) should call this AFTER the DB row is written
-    (we need the clip's id) and AFTER the response has been returned to
-    the client (we don't block on ffmpeg)."""
-    if not clip or not clip.get("id") or not clip.get("match_id"):
-        return
-    clip_id = int(clip["id"])
-    match_id = clip["match_id"]
-    slot = clip.get("slot") or "full"
-    # Capture a frame at clip.start_seconds so the still represents the
-    # opening moment of the clip. `generate_thumbnail_at_timestamp`
-    # already clamps negative values to 0 and timestamps past the
-    # video's duration to (duration - 1).
-    start_s = float(clip.get("start_seconds") or 0)
-    try:
-        src = _slot_mp4_path(match_id, slot)
-        dest = _media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id, team_id=clip.get("team_id"))
-    except ValueError as exc:
-        _log.setup("replay").warning(
-            "Coach-clip thumbnail spawn skipped for clip %s: invalid path component (%s)",
-            clip_id, exc,
-        )
-        return
-    if not _thumb_path_within_videos_dir(dest):
-        _log.setup("replay").warning(
-            "Coach-clip thumbnail spawn skipped for clip %s: dest path escapes VIDEOS_DIR (%s)",
-            clip_id, dest,
-        )
-        return
-    try:
-        await _media.generate_thumbnail_at_timestamp(src, dest, timestamp_s=start_s)
-    except Exception as exc:                                # noqa: BLE001
-        _log.setup("replay").warning(
-            "Coach-clip thumbnail spawn failed for clip %s: %s", clip_id, exc
-        )
-
-
-
 @app.get("/api/coach/clips/{clip_id}/thumbnail")
 async def coach_get_clip_thumbnail(clip_id: int, request: Request):
     """Serve the per-clip thumbnail JPEG.
@@ -2673,7 +2398,7 @@ async def coach_get_clip_thumbnail(clip_id: int, request: Request):
         thumb = _media.existing_clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id, team_id=clip.get("team_id"))
     except ValueError:
         raise HTTPException(404, "Thumbnail not found")
-    if not _thumb_path_within_videos_dir(thumb):
+    if not _thumbs.thumb_path_within_videos_dir(thumb, VIDEOS_DIR):
         raise HTTPException(404, "Thumbnail not found")
     if not thumb.is_file():
         raise HTTPException(404, "Thumbnail not found")
@@ -2699,26 +2424,12 @@ async def coach_regenerate_clip_thumbnail(clip_id: int, request: Request):
     _user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     clip = _require_clip_in_team(clip_id, team_id)
-    try:
-        src = _slot_mp4_path(clip["match_id"], clip.get("slot") or "full")
-        dest = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id, team_id=clip.get("team_id"))
-    except ValueError:
-        return {"ok": True, "generated": False}
-    if not _thumb_path_within_videos_dir(dest):
-        _log.setup("replay").warning(
-            "Coach-clip thumbnail regenerate skipped for clip %s: dest path escapes VIDEOS_DIR (%s)",
-            clip_id, dest,
-        )
-        return {"ok": True, "generated": False}
-    try:
-        ok = await _media.generate_thumbnail_at_timestamp(
-            src, dest, timestamp_s=float(clip.get("start_seconds") or 0)
-        )
-    except Exception as exc:                                # noqa: BLE001
-        _log.setup("replay").warning(
-            "Coach-clip thumbnail regenerate failed for clip %s: %s", clip_id, exc
-        )
-        ok = False
+    ok = await _thumbs.regenerate_coach_clip_thumbnail(
+        clip,
+        clip_id,
+        videos_dir=VIDEOS_DIR,
+        slot_mp4_path=_slot_mp4_path,
+    )
     return {"ok": True, "generated": ok}
 
 
@@ -3156,322 +2867,6 @@ def _build_player_development_profile(
     return profile
 
 
-def _pct(reviewed: int, assigned: int) -> int:
-    return int(round((reviewed / assigned) * 100)) if assigned else 0
-
-
-def _phase9_item_date(item: dict, matches_by_id: dict[str, dict]) -> str:
-    match = matches_by_id.get(item.get("match_id") or "")
-    if match and match.get("date"):
-        return match["date"]
-    return (item.get("updated_at") or item.get("created_at") or "")[:10]
-
-
-def _phase9_in_date_range(item: dict, matches_by_id: dict[str, dict], start_date: str | None, end_date: str | None) -> bool:
-    item_date = _phase9_item_date(item, matches_by_id)
-    if start_date and item_date and item_date < start_date:
-        return False
-    if end_date and item_date and item_date > end_date:
-        return False
-    return True
-
-
-def _build_coach_engagement_dashboard(
-    *,
-    player_id: str | None = None,
-    playlist_id: int | None = None,
-    match_id: str | None = None,
-    visibility: str | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    team_id: str | None = None,
-) -> dict:
-    """Phase 9 review-completion dashboard built from existing data.
-
-    It reports aggregate metadata only (ids, titles, player ids, dates,
-    counts). Note bodies, playlist descriptions, drawings, and
-    `coach_private_note` are intentionally omitted from the payload.
-    """
-    players = _db.list_players(include_inactive=True, team_id=team_id)
-    linked_user_ids_by_player: dict[str, set[str]] = {
-        p["id"]: {str(link.get("user_id")) for link in (p.get("links") or []) if link.get("user_id")}
-        for p in players
-    }
-    player_rows = {
-        p["id"]: {
-            "player_id": p["id"],
-            "display_name": p.get("display_name") or "",
-            "jersey_number": p.get("jersey_number") or "",
-            "active": bool(p.get("active", True)),
-            "assigned_count": 0,
-            "reviewed_count": 0,
-            "reflection_count": 0,
-            "latest_reviewed_at": None,
-            "completion_percentage": 0,
-        }
-        for p in players
-        if not player_id or p["id"] == player_id
-    }
-    matches_by_id = {m["id"]: m for m in _db.load_matches_unlocked() if _same_team(m, team_id)}
-    all_notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
-    all_playlists = [p for p in _db.list_coaching_playlists() if _same_team(p, team_id)]
-    reviews = _db.list_coaching_reviews()
-    note_by_id = {n["id"]: n for n in all_notes}
-
-    def note_ok(note: dict) -> bool:
-        # Engagement metrics represent assigned player/family feedback. Coach-only
-        # private notes are excluded by default (and are not an exposed filter) so
-        # their titles/bodies cannot appear as assigned items.
-        if note.get("visibility") == "private":
-            return False
-        if player_id and player_id not in (note.get("player_ids") or []):
-            return False
-        if match_id and note.get("match_id") != match_id:
-            return False
-        if visibility and note.get("visibility") != visibility:
-            return False
-        return _phase9_in_date_range(note, matches_by_id, start_date, end_date)
-
-    notes = [n for n in all_notes if note_ok(n)]
-    note_ids = {n["id"] for n in notes}
-
-    def reviews_for_player(item_reviews: list[dict], pid: str) -> list[dict]:
-        linked_user_ids = linked_user_ids_by_player.get(pid) or set()
-        return [r for r in item_reviews if str(r.get("user_id")) in linked_user_ids]
-
-    def reviews_for_players(item_reviews: list[dict], pids: Iterable[str]) -> list[dict]:
-        allowed: set[str] = set()
-        for pid in pids:
-            allowed.update(linked_user_ids_by_player.get(pid) or set())
-        return [r for r in item_reviews if str(r.get("user_id")) in allowed]
-
-    def playlist_matching_notes(playlist: dict) -> list[dict]:
-        matched: list[dict] = []
-        for nid in (playlist.get("note_ids") or []):
-            note = note_by_id.get(nid)
-            if not note or note.get("visibility") == "private":
-                continue
-            if match_id and note.get("match_id") != match_id:
-                continue
-            if not _phase9_in_date_range(note, matches_by_id, start_date, end_date):
-                continue
-            matched.append(note)
-        return matched
-
-    def playlist_assigned_player_ids(playlist: dict) -> set[str]:
-        """Return player ids this playlist assigns under the active filters.
-
-        For combined player+match/date filters, derive assignment from notes that
-        actually match the match/date window instead of independently unioning the
-        playlist's explicit players with unrelated matching notes.
-        """
-        matched_notes = playlist_matching_notes(playlist)
-        pids: set[str] = set()
-        if match_id or start_date or end_date:
-            for note in matched_notes:
-                pids.update(note.get("player_ids") or [])
-        else:
-            pids.update(playlist.get("player_ids") or [])
-            for note in matched_notes:
-                pids.update(note.get("player_ids") or [])
-        if player_id:
-            pids = {pid for pid in pids if pid == player_id}
-        return pids
-
-    def playlist_ok(playlist: dict) -> bool:
-        if playlist_id and int(playlist.get("id") or 0) != playlist_id:
-            return False
-        if playlist.get("visibility") == "private":
-            return False
-        if visibility and playlist.get("visibility") != visibility:
-            return False
-        item_notes = playlist_matching_notes(playlist)
-        pids = playlist_assigned_player_ids(playlist)
-        if player_id and not pids:
-            return False
-        if match_id and not item_notes:
-            return False
-        if start_date or end_date:
-            if item_notes or (match_id and not item_notes):
-                return bool(item_notes)
-            return _phase9_in_date_range({"updated_at": playlist.get("updated_at"), "created_at": playlist.get("created_at")}, matches_by_id, start_date, end_date)
-        return True
-
-    playlists = [p for p in all_playlists if playlist_ok(p)]
-    playlist_ids = {p["id"] for p in playlists}
-    reviews_by_note: dict[int, list[dict]] = {}
-    reviews_by_playlist: dict[int, list[dict]] = {}
-    for review in reviews:
-        if review.get("note_id") in note_ids:
-            reviews_by_note.setdefault(review["note_id"], []).append(review)
-        if review.get("playlist_id") in playlist_ids:
-            reviews_by_playlist.setdefault(review["playlist_id"], []).append(review)
-
-    unreviewed: list[dict] = []
-    summary_reviews: list[dict] = []
-    most_watched_entries: list[dict] = []
-    match_rows: dict[str, dict] = {}
-
-    def match_label(mid: str | None) -> str:
-        match = matches_by_id.get(mid or "")
-        if not match:
-            return "Observation / no match"
-        home = match.get("home_team") or "Home"
-        away = match.get("away_team") or "Away"
-        return f"{home} vs {away}"
-
-    def apply_to_match(mid: str | None, item_reviews: list[dict]) -> None:
-        key = mid or ""
-        row = match_rows.setdefault(key, {
-            "match_id": mid,
-            "label": match_label(mid),
-            "date": (matches_by_id.get(mid or "") or {}).get("date") or "",
-            "assigned_count": 0,
-            "reviewed_count": 0,
-            "reflection_count": 0,
-            "latest_reviewed_at": None,
-            "completion_percentage": 0,
-        })
-        row["assigned_count"] += 1
-        if item_reviews:
-            row["reviewed_count"] += 1
-        row["reflection_count"] += sum(1 for r in item_reviews if (r.get("reflection") or "").strip())
-        latest = _sort_recent(item_reviews, key="reviewed_at")[:1]
-        if latest and (not row["latest_reviewed_at"] or latest[0]["reviewed_at"] > row["latest_reviewed_at"]):
-            row["latest_reviewed_at"] = latest[0]["reviewed_at"]
-
-    def apply_to_player(pid: str, item_reviews: list[dict]) -> None:
-        row = player_rows.get(pid)
-        if not row:
-            return
-        item_reviews = reviews_for_player(item_reviews, pid)
-        row["assigned_count"] += 1
-        if item_reviews:
-            row["reviewed_count"] += 1
-        row["reflection_count"] += sum(1 for r in item_reviews if (r.get("reflection") or "").strip())
-        latest = _sort_recent(item_reviews, key="reviewed_at")[:1]
-        if latest and (not row["latest_reviewed_at"] or latest[0]["reviewed_at"] > row["latest_reviewed_at"]):
-            row["latest_reviewed_at"] = latest[0]["reviewed_at"]
-
-    for note in notes:
-        item_reviews = reviews_by_note.get(note["id"], [])
-        pids = [pid for pid in (note.get("player_ids") or []) if pid in player_rows]
-        scoped_item_reviews = reviews_for_players(item_reviews, pids)
-        summary_reviews.extend(scoped_item_reviews)
-        if scoped_item_reviews:
-            most_watched_entries.append({"kind": "note", "item_id": note["id"], "title": note.get("title") or "", "review_count": len(scoped_item_reviews)})
-        for pid in pids:
-            apply_to_player(pid, item_reviews)
-        if pids:
-            apply_to_match(note.get("match_id"), scoped_item_reviews)
-        if pids and not scoped_item_reviews:
-            unreviewed.append({
-                "kind": "note",
-                "item_id": note["id"],
-                "title": note.get("title") or "",
-                "player_ids": pids,
-                "match_id": note.get("match_id"),
-                "date": _phase9_item_date(note, matches_by_id),
-            })
-
-    by_playlist: list[dict] = []
-    for playlist in playlists:
-        item_reviews = reviews_by_playlist.get(playlist["id"], [])
-        pids = playlist_assigned_player_ids(playlist)
-        pids = {pid for pid in pids if pid in player_rows}
-        scoped_item_reviews = reviews_for_players(item_reviews, pids)
-        summary_reviews.extend(scoped_item_reviews)
-        if scoped_item_reviews:
-            most_watched_entries.append({"kind": "playlist", "item_id": playlist["id"], "title": playlist.get("title") or "", "review_count": len(scoped_item_reviews)})
-        for pid in pids:
-            apply_to_player(pid, item_reviews)
-        if pids:
-            mids = {note.get("match_id") for note in playlist_matching_notes(playlist)}
-            if match_id:
-                mids = {match_id}
-            for mid in (mids or {None}):
-                apply_to_match(mid, scoped_item_reviews)
-        latest = _sort_recent(scoped_item_reviews, key="reviewed_at")[:1]
-        refs = [r for r in scoped_item_reviews if (r.get("reflection") or "").strip()]
-        by_playlist.append({
-            "playlist_id": playlist["id"],
-            "title": playlist.get("title") or "",
-            "player_ids": sorted(pids),
-            "assigned_count": 1 if pids else 0,
-            "reviewed_count": 1 if scoped_item_reviews else 0,
-            "reflection_count": len(refs),
-            "latest_reviewed_at": latest[0]["reviewed_at"] if latest else None,
-            "completion_percentage": 100 if scoped_item_reviews else 0,
-        })
-        if pids and not scoped_item_reviews:
-            unreviewed.append({
-                "kind": "playlist",
-                "item_id": playlist["id"],
-                "title": playlist.get("title") or "",
-                "player_ids": sorted(pids),
-                "match_id": match_id,
-                "date": (playlist.get("updated_at") or playlist.get("created_at") or "")[:10],
-            })
-
-    for row in player_rows.values():
-        row["completion_percentage"] = _pct(row["reviewed_count"], row["assigned_count"])
-    for row in match_rows.values():
-        row["completion_percentage"] = _pct(row["reviewed_count"], row["assigned_count"])
-    by_player = sorted(
-        [row for row in player_rows.values() if row["assigned_count"] or not player_id],
-        key=lambda r: (-r["assigned_count"], r["display_name"].lower(), r["player_id"]),
-    )
-    by_playlist = sorted(by_playlist, key=lambda r: (-r["assigned_count"], r["title"].lower(), r["playlist_id"]))
-    sorted_reviews = _sort_recent(summary_reviews, key="reviewed_at")
-    reflections = [r for r in sorted_reviews if (r.get("reflection") or "").strip()]
-    assigned_total = sum(row["assigned_count"] for row in by_player)
-    reviewed_total = sum(row["reviewed_count"] for row in by_player)
-    no_recent_cutoff = end_date or time.strftime("%Y-%m-%d", time.gmtime(time.time() - 14 * 24 * 60 * 60))
-    recent_pids = {
-        pid
-        for n in all_notes
-        if n.get("visibility") != "private"
-        if _phase9_item_date(n, matches_by_id) >= no_recent_cutoff
-        for pid in (n.get("player_ids") or [])
-    }
-    most_watched = sorted(
-        most_watched_entries,
-        key=lambda item: (-item["review_count"], item["kind"], item["item_id"]),
-    )[:5]
-    return {
-        "filters": {"player_id": player_id, "playlist_id": playlist_id, "match_id": match_id, "visibility": visibility, "start_date": start_date, "end_date": end_date},
-        "summary": {
-            "assigned_items": assigned_total,
-            "reviewed_items": reviewed_total,
-            "reflection_count": len(reflections),
-            "latest_reviewed_at": sorted_reviews[0]["reviewed_at"] if sorted_reviews else None,
-            "completion_percentage": _pct(reviewed_total, assigned_total),
-            "unreviewed_items": max(0, assigned_total - reviewed_total),
-        },
-        "by_player": by_player,
-        "by_playlist": by_playlist,
-        "by_match": sorted(match_rows.values(), key=lambda r: (r.get("date") or "", r.get("label") or ""), reverse=True),
-        "unreviewed_assigned_items": sorted(unreviewed, key=lambda item: (item.get("date") or "", item["kind"], item["item_id"]), reverse=True)[:25],
-        "reflections_needing_response": [
-            {"user_id": r.get("user_id"), "note_id": r.get("note_id"), "playlist_id": r.get("playlist_id"), "reflection": r.get("reflection") or "", "reviewed_at": r.get("reviewed_at")}
-            for r in reflections[:25]
-        ],
-        "players_with_no_recent_feedback": [
-            {"player_id": p["id"], "display_name": p.get("display_name") or "", "jersey_number": p.get("jersey_number") or ""}
-            for p in players
-            if p.get("active", True) and (not player_id or p["id"] == player_id) and p["id"] not in recent_pids
-        ],
-        "most_watched": most_watched,
-        "limitations": {
-            "clip_reviews_supported": False,
-            "most_watched_source": "coaching_reviews note_id/playlist_id counts; clip watch tracking is not yet supported.",
-            "reflection_response_tracking_supported": False,
-            "goal_reflections_supported": False,
-            "goal_reflections_scope": "Phase 9 tracks feedback review reflections only; player goal reflections needing coach follow-up stay in player development/goals APIs for now.",
-        },
-    }
-
-
 @app.get("/api/coach/engagement")
 async def coach_engagement_dashboard(
     request: Request,
@@ -3492,7 +2887,7 @@ async def coach_engagement_dashboard(
         raise HTTPException(404, "Match not found")
     if visibility and visibility not in {"player", "team"}:
         raise HTTPException(422, "Invalid visibility filter")
-    return {"engagement": _build_coach_engagement_dashboard(player_id=player_id, playlist_id=playlist_id, match_id=match_id, visibility=visibility, start_date=start_date, end_date=end_date, team_id=team_id)}
+    return {"engagement": _engagement.build_coach_engagement_dashboard(player_id=player_id, playlist_id=playlist_id, match_id=match_id, visibility=visibility, start_date=start_date, end_date=end_date, team_id=team_id)}
 
 
 @app.get("/api/coach/players/{player_id}/development")
