@@ -117,6 +117,7 @@ docker run --rm -p 8090:8090 -v replay_data:/data replay
 | `STALE_UPLOAD_SESSION_SECONDS` | `21600` | Idle upload session age before cleanup |
 | `MEDIAMTX_HLS_URL` | `http://mediamtx:8888` | Internal HLS endpoint of the MediaMTX sidecar |
 | `MEDIAMTX_API_URL` | `http://mediamtx:9997` | Internal control API of the MediaMTX sidecar |
+| `REPLAY_STRICT_TENANCY` | unset | Optional developer/test guardrail. Truthy values (`1`, `true`, `yes`, `on`) make tenant-aware DB helpers fail when `team_id` is omitted unless the call explicitly opts into a documented global/legacy read. Tests enable this by default. |
 
 ## System Settings
 
