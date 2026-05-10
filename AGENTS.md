@@ -90,8 +90,10 @@ Most relevant variables:
 - `MEDIAMTX_HLS_URL` — internal address of the MediaMTX sidecar's HLS port (default `http://mediamtx:8888`)
 - `MEDIAMTX_API_URL` — internal address of the MediaMTX control API (default `http://mediamtx:9997`)
 - `TRUSTED_PROXY` — `cloudflare` (default) or `none`; controls whether `client_ip()` in `streams.py` honors `CF-Connecting-IP`/`X-Forwarded-For`. Set to `none` for bare deployments not behind Cloudflare.
-- `LIVE_AUTH_SECRET` — shared secret MediaMTX sends to `/api/live/auth`. MediaMTX 1.18 dropped `authHTTPHeaders`, so the secret travels as the password half of HTTP Basic Auth in `authHTTPAddress` itself: `http://_:${MTX_LIVE_AUTH_SECRET}@replay:8090/api/live/auth`. The replay handler accepts the secret from either the `Authorization: Basic …` header (current MediaMTX) or the legacy `X-Internal-Secret:` header. If unset, the endpoint returns 503 by default; set `LIVE_AUTH_ALLOW_INSECURE=1` only for local/dev firewalled scenarios.
+- `REPLAY_STRICT_TENANCY` — when truthy (`1`/`true`/`yes`/`on`), tenant-aware DB helpers raise if a call omits `team_id` unless the call site explicitly passes `allow_unscoped=True` for a documented global/legacy read. Tests default this to `1` in `tests/conftest.py`; production keeps legacy fallback unless enabled.
+- `LIVE_AUTH_SECRET` — shared secret MediaMTX sends to `/api/live/auth`. MediaMTX 1.18 dropped `authHTTPHeaders`, so the secret travels as the password half of HTTP Basic Auth in `authHTTPAddress` itself: `http://_:***@replay:8090/api/live/auth`. The replay handler accepts the secret from either the `Authorization: Basic …` header (current MediaMTX) or the legacy `X-Internal-Secret:` header. If unset, the endpoint returns 503 by default; set `LIVE_AUTH_ALLOW_INSECURE=1` only for local/dev firewalled scenarios.
 - `LIVE_STALE_SEGMENT_AGE_SECONDS` — stream flips to offline when no new HLS segment has been cut for this many seconds (default 90)
+
 
 ## Project Constraints
 

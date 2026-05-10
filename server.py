@@ -1373,7 +1373,7 @@ async def auth_check(request: Request):
 @app.get("/api/users")
 async def list_users(request: Request):
     _auth.require_role(request, "admin")
-    users = _db.list_users()
+    users = _db.list_users(allow_unscoped=True)
     # Strip password hashes from response
     return [
         {k: v for k, v in u.items() if k != "password_hash"}
@@ -1489,7 +1489,7 @@ def _require_match_in_team(match_id: str | None, team_id: str) -> dict:
 
 
 def _require_player_in_team(player_id: str, team_id: str) -> dict:
-    return _require_scoped_item(_db.get_player(player_id), team_id, "Player not found")
+    return _require_scoped_item(_db.get_player(player_id, team_id=team_id), team_id, "Player not found")
 
 
 def _require_note_in_team(note_id: int, team_id: str) -> dict:
@@ -1646,7 +1646,7 @@ _ACTIVE_GOAL_STATUSES = {"open", "in_progress", "needs_follow_up"}
 def _validate_goal_source_links(data: dict, player_id: str, team_id: str | None = None):
     if team_id is not None:
         _require_player_in_team(player_id, team_id)
-    elif not _db.get_player(player_id):
+    elif not _db.get_player(player_id, allow_unscoped=True):
         raise HTTPException(404, "Player not found")
     note_id = data.get("source_note_id")
     if note_id is not None:
@@ -2987,7 +2987,7 @@ async def coach_delete_goal(goal_id: int, request: Request):
 async def my_feedback_goals(request: Request):
     user, scope = _resolve_feedback_scope(request)
     team_id = _scope_team_id(scope)
-    goals = _filter_goals_for_user([g for g in _db.list_player_goals() if _same_team(g, team_id)], user)
+    goals = _filter_goals_for_user([g for g in _db.list_player_goals() if _same_team(g, team_id)], user, team_id=team_id)
     return {"goals": _goals_with_visible_sources(goals, user, team_id=team_id)}
 
 
@@ -2996,7 +2996,7 @@ async def my_feedback_goal_reflection(goal_id: int, request: Request, body: Crea
     user, scope = _resolve_feedback_scope(request)
     team_id = _scope_team_id(scope)
     goal = _db.get_player_goal(goal_id)
-    if not goal or not _same_team(goal, team_id) or goal not in _filter_goals_for_user([goal], user):
+    if not goal or not _same_team(goal, team_id) or goal not in _filter_goals_for_user([goal], user, team_id=team_id):
         raise HTTPException(404, "Goal not found")
     reflection = _db.add_player_goal_reflection(goal_id, user.get("user_id"), body.reflection)
     return {"ok": True, "reflection": {k: v for k, v in reflection.items() if k != "user_id"}}

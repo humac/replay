@@ -7,6 +7,9 @@ import os
 # Provide a test-only default so auth.py doesn't raise on import when ADMIN_PASS
 # is absent from the environment. Production deployments must set it explicitly.
 os.environ.setdefault("ADMIN_PASS", "admin")
+# Phase 2 PR 2.5: tests default to strict tenancy so newly tenant-aware
+# query helpers fail loudly when call sites omit an explicit team scope.
+os.environ.setdefault("REPLAY_STRICT_TENANCY", "1")
 
 import pytest
 import pytest_asyncio

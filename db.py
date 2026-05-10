@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -13,6 +14,20 @@ from typing import Any
 import log as _log
 
 logger = _log.setup("replay")
+
+_STRICT_TENANCY_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def strict_tenancy_enabled() -> bool:
+    return os.getenv("REPLAY_STRICT_TENANCY", "").strip().lower() in _STRICT_TENANCY_TRUE_VALUES
+
+
+def _require_team_scope_for_strict(helper: str, team_id: str | None, *, allow_unscoped: bool = False) -> None:
+    if strict_tenancy_enabled() and team_id is None and not allow_unscoped:
+        raise RuntimeError(
+            f"{helper} requires team_id when REPLAY_STRICT_TENANCY=1; "
+            "pass team_id=... or allow_unscoped=True for documented global/legacy reads"
+        )
 
 _thread_local = threading.local()
 
@@ -1362,7 +1377,8 @@ def user_has_team_membership(user_id: str, team_id: str | None) -> bool:
         return row is not None
 
 
-def list_users(team_id: str | None = None) -> list[dict]:
+def list_users(team_id: str | None = None, *, allow_unscoped: bool = False) -> list[dict]:
+    _require_team_scope_for_strict("list_users", team_id, allow_unscoped=allow_unscoped)
     with connect() as conn:
         if team_id is not None:
             rows = conn.execute(
@@ -1539,7 +1555,8 @@ def _links_for_players(conn: sqlite3.Connection, player_ids: list[str]) -> dict[
     return grouped
 
 
-def list_players(*, include_inactive: bool = True, team_id: str | None = None) -> list[dict]:
+def list_players(*, include_inactive: bool = True, team_id: str | None = None, allow_unscoped: bool = False) -> list[dict]:
+    _require_team_scope_for_strict("list_players", team_id, allow_unscoped=allow_unscoped)
     with connect() as conn:
         where_parts = [] if include_inactive else ["active = 1"]
         params: list = []
@@ -1556,7 +1573,8 @@ def list_players(*, include_inactive: bool = True, team_id: str | None = None) -
         return [_row_to_player(row, links.get(row["id"], [])) for row in rows]
 
 
-def get_player(player_id: str, team_id: str | None = None) -> dict | None:
+def get_player(player_id: str, team_id: str | None = None, *, allow_unscoped: bool = False) -> dict | None:
+    _require_team_scope_for_strict("get_player", team_id, allow_unscoped=allow_unscoped)
     with connect() as conn:
         if team_id is not None:
             row = conn.execute("SELECT * FROM players WHERE id = ? AND team_id = ?", (player_id, team_id)).fetchone()
@@ -1584,7 +1602,7 @@ def create_player(display_name: str, jersey_number: str = "", active: bool = Tru
             (player_id, display_name, jersey_number, 1 if active else 0, notes, now, now, team_id, season_id),
         )
         conn.commit()
-    return get_player(player_id) or {
+    return get_player(player_id, team_id=team_id) or {
         "id": player_id, "display_name": display_name, "jersey_number": jersey_number,
         "active": active, "notes": notes, "created_at": now, "updated_at": now,
         "team_id": team_id, "season_id": season_id, "links": [],
@@ -1645,7 +1663,7 @@ def link_player_user(player_id: str, user_id: str, relationship: str) -> dict:
             (player_id, user_id, relationship, now, team_id),
         )
         conn.commit()
-    player = get_player(player_id)
+    player = get_player(player_id, team_id=team_id)
     return player or {}
 
 
@@ -1662,7 +1680,8 @@ def delete_player_user_link(link_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def linked_player_ids_for_user(user_id: str | None, team_id: str | None = None) -> list[str]:
+def linked_player_ids_for_user(user_id: str | None, team_id: str | None = None, *, allow_unscoped: bool = False) -> list[str]:
+    _require_team_scope_for_strict("linked_player_ids_for_user", team_id, allow_unscoped=allow_unscoped)
     if not user_id:
         return []
     with connect() as conn:
