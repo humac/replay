@@ -77,7 +77,7 @@ Until multi-team UI is fully active:
 - **Global/system admin:** recovery and cross-team ops routes; can explicitly manage all teams through global-admin endpoints.
 - **Team admin:** manage roster, memberships, invites, team settings, and team data for assigned team(s).
 - **Coach:** manage coaching objects for assigned team/season.
-- **Assistant coach:** view/write coaching objects according to exact implementation permissions; no membership/admin settings by default.
+- **Assistant coach:** scoped coaching contributor role. May view roster/matches and create/edit coaching notes, clips, playlists, goals, and summaries for assigned team/season. May not manage memberships, invites, team settings, AI enablement/settings, storage/provider settings, or global-admin endpoints. May not delete other coaches' objects unless a later PR explicitly adds owner-aware delete policy and tests.
 - **Guardian:** view linked player feedback/goals/summaries only within scoped team/season.
 - **Player:** view own feedback/goals if player login is enabled.
 - **Viewer:** legacy/basic read role; no coach/admin APIs.
@@ -335,6 +335,16 @@ CLI writes through `services/teams.py` — the same code path as the API, never 
 - Path containment guard (`_thumb_path_within_videos_dir` and equivalents) extends to cover the new prefix — same defense in depth as today.
 - Caddy regex for VOD HLS sendfile must match BOTH path shapes during the legacy window. Update `Caddyfile` and the inlined Caddyfile in `docker-compose-intel.yml`.
 
+**HLS URL compatibility contract:**
+
+Do not make Caddy infer `team_id` from a URL that only carries `match_id` and `slot`. PR 1.5 must choose and document one concrete strategy before changing write paths:
+
+1. **Preferred:** introduce team-aware HLS URLs such as `/hls/teams/{team_id}/matches/{match_id}/{slot}/master.m3u8`, and keep the legacy `/hls/{match_id}/{slot}/...` URL as a read fallback while legacy media exists.
+2. Or route HLS through FastAPI for a DB-backed `match_id -> team_id` lookup, then internally redirect/rewrite to the team-aware filesystem path after normal scope checks.
+3. Or create an explicit compatibility index/symlink layer for legacy URL shapes, with path-containment checks and tests.
+
+Whichever option lands, helper signatures must receive enough scope data (`team_id` or resolved match/team row) to try the team-aware path first. Tests must cover both the legacy and team-aware URL shapes, direct HLS segment access, path traversal rejection, and Caddy/docker-compose regex behavior.
+
 **One-shot relocation script (not auto-run):**
 
 - `scripts/relocate_to_team_paths.py --dry-run` walks every match and prints planned moves.
@@ -347,6 +357,7 @@ CLI writes through `services/teams.py` — the same code path as the API, never 
 - Reads fall back to legacy paths for pre-PR-1.5 objects.
 - Path containment rejects `..` / absolute-path tricks under both schemes.
 - Caddy regex matches both shapes (manual or via integration test).
+- HLS playlist and segment URLs resolve for both legacy and team-aware media; wrong-team direct HLS URLs fail scope checks before filesystem access.
 - Dry-run relocation script reports planned moves without touching disk.
 
 ---
@@ -369,12 +380,14 @@ CLI writes through `services/teams.py` — the same code path as the API, never 
 - Resolve active team from `?team=<slug>` / `team_id`, then `users.last_team_id`, then only membership if exactly one.
 - Add `_require_team_role(team_id, *roles)`.
 - Add explicit `_require_global_admin` for recovery/cross-team ops.
+- Encode the role matrix from the top of this plan in one central role/capability map, including the assistant-coach limits. Do not scatter special-case role strings across route handlers.
 - A user without membership for the target team gets `403` even if `users.role` says `coach`; global admin override must be explicit.
 
 **Tests:**
 
 - Coach with Team A membership can access Team A.
 - Coach without Team B membership cannot access Team B.
+- Assistant coach can create/edit scoped coaching objects but cannot manage memberships, team settings, AI enablement/settings, or global-admin endpoints.
 - Multi-team user without selected scope gets selection-required response.
 - Global admin override path works only through explicit helper.
 
@@ -417,10 +430,12 @@ CLI writes through `services/teams.py` — the same code path as the API, never 
 - Add optional `team_id` / `team` / `season_id` query parameters where needed.
 - Viewer/family endpoints return empty or `404` for unrelated scoped resources.
 - Direct object routes must validate the object belongs to the resolved team. Checklist includes, but is not limited to: `/api/coach/notes/{id}`, `/api/coach/notes/{id}/thumbnail`, `/api/coach/notes/{id}/thumbnail/regenerate`, `/api/coach/clips/{id}`, `/api/coach/clips/{id}/thumbnail`, `/api/coach/clips/{id}/thumbnail/regenerate`, `/api/coach/playlists/{id}`, `/api/coach/players/{id}/development`, `/api/coach/players/{id}/goals`, `/api/coach/match-summaries/{id}`, `/api/my-feedback/notes/{id}`, `/api/my-feedback/clips/{id}`, `/api/my-feedback/playlists/{id}`, and `/api/my-feedback/players/{id}/development`. Thumbnail GETs are canonical privacy-bypass routes and must be tested explicitly.
+- Write handlers must reject cross-team composition before inserting join rows or source references. This includes playlist items pointing at another team's notes/clips, match summaries linking another team's notes/clips/playlists, goals or development-profile source refs pointing across teams, and note/clip player associations where the player belongs to another team. Do not rely on inherited scope in join tables as the only guard; validate every child object against the resolved parent team.
 
 **Tests:**
 
 - Direct-object access fails across teams for notes, clips, playlists, goals, summaries, thumbnails, development profiles, engagement source pickers.
+- Cross-team composition writes fail with `403`/`404`/`422` before creating join rows: playlist item add, summary source attach, goal source attach, note player attach, and clip player attach.
 - Existing single-team behavior remains unchanged.
 - Wrong-team `?team=` values without membership return `403` / selection-safe errors.
 
@@ -589,14 +604,17 @@ CLI writes through `services/teams.py` — the same code path as the API, never 
 
 **Key changes:**
 
-- Add endpoint to update `users.last_team_id` and optional last season preference if implemented.
+- Add endpoint to update `users.last_team_id` and `users.last_season_id` or an equivalent per-user/per-team active-season preference table. Because this is greenfield platform work, do not leave last-season persistence optional.
 - Validate membership before saving.
-- If membership is revoked later, active scope becomes invalid and requires reselection.
+- Validate the selected season belongs to the selected team and is one of the user's eligible seasons.
+- If membership is revoked later, or the selected season no longer belongs to the selected team, active scope becomes invalid and requires reselection.
 
 **Tests:**
 
 - User can save a team they belong to.
+- User can save a season belonging to that team and subsequent requests resolve to that saved team/season.
 - User cannot save a team they do not belong to.
+- User cannot save a season from another team.
 - Invalid active scope produces selection-required response.
 
 ### PR 4.3: Active Team/Season Selector UI
@@ -835,7 +853,8 @@ while True:
 
 - Transcodes get `background_jobs` rows and lifecycle status. Execution remains in-process for this PR (the existing `_spawn_transcode` / `ResizableSemaphore` path stays); the job table is the durable record alongside it. Do not leave a half-migrated path where only some transcode types write job rows without a documented reason.
 - AI drafting (Phase 8) runs through the same queue — no AI-only queue.
-- Job access is team-scoped: every read endpoint requires `team_id` to match the user's resolved team.
+- User/API job access is team-scoped: every enqueue/read/cancel endpoint requires `team_id` to match the user's resolved team and role.
+- Worker leasing is an internal service path, not a user-scoped API. A worker may lease jobs across teams, but every leased job carries `team_id`; job execution must re-resolve team-scoped resources from the job payload and fail closed if the resources no longer belong to that team. Do not expose worker lease/heartbeat/complete endpoints to browser sessions unless a later PR adds explicit service authentication.
 
 **Test contract (must all pass):**
 
@@ -845,8 +864,9 @@ while True:
 4. **Stuck recovery to pending:** Job with `status='running'`, `locked_until < NOW()`, `attempts=1, max_attempts=3` → `recover_stuck()` flips to `pending`.
 5. **Stuck recovery to failed:** Same as above but `attempts=3, max_attempts=3` → `recover_stuck()` flips to `failed` with the exceeded-attempts error.
 6. **Heartbeat extends lease:** `heartbeat()` from the holding worker bumps `locked_until`; from a non-holder, 0 rows affected.
-7. **Team scoping:** Team A user cannot enqueue, lease, or read jobs for Team B.
-8. **Existing transcode behavior:** All existing transcode integration tests still pass; new assertions confirm a corresponding `background_jobs` row exists.
+7. **User/API team scoping:** Team A user cannot enqueue, read, or cancel jobs for Team B.
+8. **Worker boundary:** Internal worker can lease due jobs across teams, but stale/wrong-team payload references fail closed during execution and user sessions cannot call worker-only lease/heartbeat/complete paths.
+9. **Existing transcode behavior:** All existing transcode integration tests still pass; new assertions confirm a corresponding `background_jobs` row exists.
 
 ### PR 6.4: SQLite To Postgres Migration Command
 
@@ -897,7 +917,7 @@ while True:
 - `ai.drafting_enabled`: bool, default false.
 - `ai.allowed_draft_targets`: array enum of `player_summary`, `what_happened`, `why_it_matters`, `what_to_do_next`, `clip_title`, `clip_description`, `goal_description`, `goal_success_criteria`, `summary_team_positives`, `summary_team_improvements`, `summary_training_focus`.
 - `ai.tone`: enum `direct`, `encouraging`, `technical`.
-- `ai.never_draft_for_visibilities`: array enum `private`, `player`. **Default `["private", "player"]`** — drafts are coach-private by default in the MVP. A team must explicitly opt in to drafting for player-visible visibilities (and even then the draft is always reviewable by the coach before save; AI never publishes directly). The setting governs both **draft generation** for output fields tagged with the listed visibilities AND **context inclusion** for source objects with the listed visibilities — see PR 8.2 for the context-builder enforcement.
+- `ai.never_draft_for_visibilities`: array enum `private`, `player`. **Default `["private", "player"]`** — drafts are coach-private by default in the MVP. A team must explicitly opt in to drafting for player-visible visibilities (and even then the draft is always reviewable by the coach before save; AI never publishes directly). The setting governs both **draft generation** for output fields tagged with the listed visibilities AND **context inclusion** for source objects with the listed visibilities — see PR 8.2 for the context-builder enforcement. Draft-target visibility must be derived from the target resource where the field itself has no fixed visibility (for example clip descriptions, goal descriptions, and player summaries inherit the target object's current/proposed visibility).
 - `notes.default_visibility`: optional early coaching default if easy.
 - `summaries.default_visibility`: optional early coaching default if easy.
 - `goals.default_visibility`: optional early coaching default if easy. Use the goal-specific enum from `_VALID_GOAL_VISIBILITIES` (`player`, `coach`), not the four-value coaching visibility enum.
@@ -913,6 +933,7 @@ while True:
 - Invalid key/type/range/enum returns `422`.
 - Team A coach cannot read/write Team B settings.
 - Raw JSON cannot smuggle unsupported AI targets.
+- Draft-target visibility mapping rejects generation when the target resource's current/proposed visibility is in `ai.never_draft_for_visibilities`.
 
 ### PR 7.2: Team Settings API And Minimal UI
 
@@ -928,7 +949,8 @@ while True:
 
 - Add `GET /api/coach/team/settings`.
 - Add `PATCH /api/coach/team/settings`.
-- Require team admin or coach role on active team for AI settings; decide if only team admin can toggle `ai.drafting_enabled`.
+- Require team admin or global admin for `ai.drafting_enabled`, provider-facing AI settings, and `ai.never_draft_for_visibilities`. Coaches may read settings and use drafting only after team-admin enablement; they may not opt the team into provider processing or player-visible context/drafting.
+- Non-AI display defaults such as `notes.default_visibility` may be editable by team admin and coach if product wants coach-managed defaults, but keep the AI governance controls admin-only.
 - Add minimal Coach > Settings surface if needed before AI; hide AI group until provider is configured if appropriate.
 
 **Tests:**
@@ -937,6 +959,7 @@ while True:
 - PATCH validates each key.
 - UI visible only to eligible roles.
 - Settings are loaded with active team and change when team switches.
+- Coach cannot toggle `ai.drafting_enabled` or relax `ai.never_draft_for_visibilities`; team admin/global admin can.
 
 ### Future Full Team Settings Phase
 
@@ -998,6 +1021,7 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Exclude private notes, private playlist descriptions, and tactical board JSON from AI context in the MVP. Do not add an escape hatch in Phase 8; if a later product decision wants this, it needs a separate policy setting, threat model, and canary tests.
 - **Default visibility filter for context inclusion mirrors `ai.never_draft_for_visibilities`** (default `["private", "player"]` per PR 7.1). Source objects whose `visibility` is in the team's never-draft list are excluded from provider context, not just from output drafting. Rationale: a team that has not opted in to player-visible drafting also has not consented to player-visible content being shipped to the LLM provider — even for a coach-private output field, because providers may log/cache prompts. To include `player`-visibility context, a team must explicitly remove `player` from `ai.never_draft_for_visibilities` (and any team that has opted in to player drafting has by definition consented to player context as well — same toggle).
 - `team` and `unlisted` visibilities are NOT in the default never-draft list; team-visible content can flow into provider context by default. A future product decision could promote `team` into the default if needed.
+- The context builder must return structured audit metadata showing which source refs were included, excluded by visibility, excluded by cross-team scope, or excluded by permanent policy. Do not log raw prompt text or private source content in normal app logs.
 
 **Tests:**
 
@@ -1008,6 +1032,7 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Disallowed draft target is rejected by team settings.
 - **Default never-draft canary:** with `ai.never_draft_for_visibilities` at its default `["private", "player"]`, a player-visibility note in the requested context bundle is **not** sent to the provider — even when the requested draft target is a coach-private field.
 - **Opt-in path:** with `ai.never_draft_for_visibilities = ["private"]`, the same player-visibility note IS included in provider context.
+- Audit metadata records excluded source refs without leaking raw private text.
 
 ### PR 8.3: Provider Interface And Mock Provider
 
@@ -1024,6 +1049,10 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Add timeout/error handling.
 - Record failed run states.
 - Keep no streaming infra in MVP.
+- Provider calls fail closed when `ai.drafting_enabled` is false, when no provider is configured, when provider secrets are missing, or when the target team has not explicitly enabled drafting.
+- Provider secrets live only in environment/secret config, never in `team_settings` JSON, app logs, job payloads, or DB rows.
+- Redact raw prompts, provider responses, private source text, and secrets from normal logs. Store only bounded status/error codes and structured audit metadata unless an explicit secure debug mode is added later.
+- Document provider data-handling/retention expectations in deployment docs before enabling a non-mock provider.
 
 **Tests:**
 
@@ -1031,6 +1060,8 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Provider failure recorded.
 - Timeout/error returns safe response.
 - Retry-safe state transitions.
+- No provider call occurs when drafting is disabled, provider config is absent, or provider secret is missing.
+- Logs/job rows do not contain provider secrets or raw prompt text in failure paths.
 
 ### PR 8.4: Drafting API
 
@@ -1043,8 +1074,9 @@ Do not block AI MVP on the full catalog unless product needs require it.
 **Key changes:**
 
 - Add `/api/coach/ai/draft` or similarly narrow endpoint.
-- Input includes target field, resource references, active scope, and optional coach prompt.
-- Enforce `ai.drafting_enabled` and `ai.allowed_draft_targets`.
+- Input includes target field, target resource id/type, target resource current/proposed visibility when applicable, resource references, active scope, and optional coach prompt.
+- Enforce `ai.drafting_enabled`, `ai.allowed_draft_targets`, and target visibility against `ai.never_draft_for_visibilities` before building provider context or enqueueing a job.
+- If a target field has no fixed visibility, derive visibility from the target resource using the same normal scoped DB reads used for authorization. Reject mismatches between client-provided visibility and server-derived visibility.
 - For short prompts, return synchronously; for long prompts, enqueue `background_jobs` and return job/run id.
 - Generated output remains a draft and is not visible to players/family until explicitly saved into a normal scoped coaching object.
 
@@ -1053,6 +1085,8 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Coach-only access.
 - Team settings opt-in required.
 - Disallowed target rejected.
+- Draft request for a player-visible target is rejected while `ai.never_draft_for_visibilities` contains `player`.
+- Client cannot bypass target-visibility policy by claiming a different visibility than the target resource actually has.
 - Cross-team resource reference rejected.
 - Draft output not visible in `/api/my-feedback/*` until explicitly saved through existing endpoints.
 
