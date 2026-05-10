@@ -138,6 +138,34 @@ test.describe('Phase 7 — goals UI and privacy captures', () => {
         expect(createdFromModal.target_date).toBe('2026-06-15');
         expect(createdFromModal.success_criteria).toBe('Create sends criteria.');
         expect(createdFromModal.coach_private_note).toBe('PHASE7_SECRET create from modal.');
+
+        await page.evaluate((goalId) => { window.app.openCoachGoalModal({ goalId }); return true; }, createdFromModal.id);
+        await expect(page.locator('.app-modal-card [data-field="target_date"]')).toHaveValue('2026-06-15');
+        await page.locator('.app-modal-card [data-field="target_date"]').fill('');
+        await page.locator('.app-modal-card .app-modal-confirm').click();
+        await expect(page.locator('.app-modal-card')).toHaveCount(0);
+        const clearedDateGoal = await page.evaluate(async (goalId) => {
+            const token = sessionStorage.getItem('replay_admin_token');
+            const resp = await fetch('/api/coach/goals', { headers: { Authorization: `Bearer ${token}` } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return ((await resp.json()).goals || []).find((g) => g.id === goalId);
+        }, createdFromModal.id);
+        expect(clearedDateGoal.target_date).toBe('');
+
+        const noDateTitle = `Phase 7 modal no-date coverage ${Date.now()}`;
+        await page.evaluate((playerId) => { window.app.openCoachGoalModal({ playerId }); return true; }, prepared.player_id);
+        await page.locator('.app-modal-card [data-field="title"]').fill(noDateTitle);
+        await page.locator('.app-modal-card [data-field="description"]').fill('Created without a target date.');
+        await expect(page.locator('.app-modal-card [data-field="target_date"]')).toHaveValue('');
+        await page.locator('.app-modal-card .app-modal-confirm').click();
+        await expect(page.locator('.app-modal-card')).toHaveCount(0);
+        const noDateGoal = await page.evaluate(async (title) => {
+            const token = sessionStorage.getItem('replay_admin_token');
+            const resp = await fetch('/api/coach/goals', { headers: { Authorization: `Bearer ${token}` } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return ((await resp.json()).goals || []).find((g) => g.title === title);
+        }, noDateTitle);
+        expect(noDateGoal.target_date).toBe('');
     });
 
     test('03 — family viewer sees goals/reflections without coach-private leakage', async ({ page }) => {
@@ -156,6 +184,14 @@ test.describe('Phase 7 — goals UI and privacy captures', () => {
         const visibleText = await page.locator('#feedback-view').innerText();
         expect(visibleText).not.toContain('coach_private_note');
         expect(visibleText).not.toContain('PHASE7_SECRET');
+        await expect(page.locator('#feedback-development-profile .player-goal-card .mini-action-btn-primary').first()).toContainText('Add reflection');
+        await page.locator('#feedback-development-profile .player-goal-card .mini-action-btn-primary').first().click();
+        await expect(page.locator('.app-modal-card')).toBeVisible();
+        await expect(page.locator('.app-modal-card')).toContainText('Reflect on goal');
+        await expect(page.locator('.app-modal-card article.player-goal-card')).toBeVisible();
+        await expect(page.locator('.app-modal-card article.player-goal-card .mini-action-btn-primary')).toHaveCount(0);
+        await expect(page.locator('.app-modal-card')).not.toContainText('PHASE7_SECRET');
+        await page.locator('.app-modal-card .app-modal-cancel').click();
         await page.screenshot({ path: path.join(OUT, '03-family-current-goals.png'), fullPage: false });
     });
 });

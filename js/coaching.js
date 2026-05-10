@@ -5777,7 +5777,7 @@ export const coachingMixin = {
         return null;
     },
 
-    _renderGoalCard(goal, { viewer = false } = {}) {
+    _renderGoalCard(goal, { viewer = false, actions = true } = {}) {
         const player = this._goalPlayer(goal);
         const source = this._goalSourceSummary(goal);
         const reflections = goal.reflections || [];
@@ -5804,14 +5804,14 @@ export const coachingMixin = {
                 ${!viewer && goal.coach_private_note ? `<div class="player-goal-preview-block player-goal-private-note"><span>Coach private note</span><p class="player-goal-desc">${this.esc(goal.coach_private_note)}</p></div>` : ''}
                 ${source ? `<div class="player-goal-source"><span>${this.esc(source.label)}</span><strong>${this.esc(source.text)}</strong></div>` : ''}
                 ${latest ? `<div class="player-goal-reflection"><span>Latest reflection</span><p>${this.esc(latest.reflection || '')}</p></div>` : ''}
-                <div class="player-goal-actions">
+                ${actions ? `<div class="player-goal-actions">
                     ${viewer ? `<button type="button" class="mini-action-btn mini-action-btn-primary" onclick="app.openGoalReflectionModal(${Number(goal.id)})">Add reflection</button>` : `
                         <select class="player-goal-status-select" aria-label="Goal status" onchange="app.handleCoachGoalStatus(${Number(goal.id)}, this.value)">
                             ${GOAL_STATUS_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === status ? 'selected' : ''}>${this.esc(l)}</option>`).join('')}
                         </select>
                         <button type="button" class="mini-action-btn" onclick="app.openCoachGoalModal({ goalId: ${Number(goal.id)} })">Edit</button>
                         <button type="button" class="mini-action-btn" onclick="app.handleCoachDeleteGoal(${Number(goal.id)})">Delete</button>`}
-                </div>
+                </div>` : ''}
             </article>`;
     },
 
@@ -5869,7 +5869,7 @@ export const coachingMixin = {
                     visibility: body.querySelector('[data-field="visibility"]').value,
                     priority: body.querySelector('[data-field="priority"]').value,
                     status: body.querySelector('[data-field="status"]').value,
-                    target_date: body.querySelector('[data-field="target_date"]').value || null,
+                    target_date: body.querySelector('[data-field="target_date"]').value || '',
                     success_criteria: body.querySelector('[data-field="success_criteria"]').value.trim(),
                     coach_private_note: body.querySelector('[data-field="coach_private_note"]').value.trim(),
                     target_match_id: body.querySelector('[data-field="target_match_id"]').value || null,
@@ -5915,7 +5915,7 @@ export const coachingMixin = {
         const body = document.createElement('div');
         body.className = 'coach-mini-form player-goal-form';
         body.innerHTML = `
-            <div class="player-goal-card is-preview">${this._renderGoalCard(goal, { viewer: true })}</div>
+            <div class="player-goal-card is-preview">${this._renderGoalCard(goal, { viewer: true, actions: false })}</div>
             <label>Your reflection<textarea data-field="reflection" rows="4" maxlength="1000" placeholder="What did you try? What should your coach know?"></textarea></label>`;
         const result = await this.formModal({
             title: 'Reflect on goal', kicker: 'My Feedback', body, confirmLabel: 'Save reflection',
