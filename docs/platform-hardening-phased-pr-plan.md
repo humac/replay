@@ -547,6 +547,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Thumbnail direct-access/privacy tests pass.
 - Activity event tests, if present, pass.
 
+**Implementation note (feat/platform-pr3-2-service-extractions):** Engagement aggregation moved to `services/engagement.py`, coaching note/clip thumbnail helpers moved to `services/thumbnails.py`, and activity-feed wrappers/safe note labels moved to `services/activity.py`. Route handlers continue to own HTTP validation/auth and call services for behavior; compatibility wrappers remain in `server.py` where existing tests import thumbnail helpers directly. Focused coaching/tenancy/media tests and the full suite passed.
+
 ### PR 3.3: Router Split By Domain
 
 **Files:**
