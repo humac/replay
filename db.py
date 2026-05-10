@@ -768,6 +768,62 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, de
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+def _table_column_info(conn: sqlite3.Connection, table: str) -> dict[str, sqlite3.Row]:
+    return {row["name"]: row for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _rebuild_table_with_not_null_text_columns(
+    conn: sqlite3.Connection,
+    table: str,
+    not_null_columns: set[str],
+) -> None:
+    info = _table_column_info(conn, table)
+    if all(info[column]["notnull"] for column in not_null_columns):
+        return
+
+    create_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?",
+        (table,),
+    ).fetchone()
+    if create_row is None or not create_row["sql"]:
+        raise RuntimeError(f"Cannot rebuild missing table {table}")
+
+    temp_table = f"{table}_v15_nonnull"
+    create_sql = create_row["sql"]
+    temp_sql = re.sub(
+        rf"^CREATE\s+TABLE\s+\"?{re.escape(table)}\"?",
+        f"CREATE TABLE {temp_table}",
+        create_sql,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    for column in not_null_columns:
+        temp_sql = re.sub(
+            rf"(\b{re.escape(column)}\s+TEXT)(?!\s+NOT\s+NULL)",
+            r"\1 NOT NULL",
+            temp_sql,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+    index_sql = [
+        row["sql"]
+        for row in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name = ? AND sql IS NOT NULL",
+            (table,),
+        ).fetchall()
+    ]
+    conn.execute(f"DROP TABLE IF EXISTS {temp_table}")
+    conn.execute(temp_sql)
+    columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    columns_sql = ", ".join(columns)
+    conn.execute(f"INSERT INTO {temp_table} ({columns_sql}) SELECT {columns_sql} FROM {table}")
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE {temp_table} RENAME TO {table}")
+    for sql in index_sql:
+        conn.execute(sql)
+
+
 def _ensure_default_team_and_season(conn: sqlite3.Connection) -> tuple[str, str]:
     now = _now_iso()
     conn.execute(
@@ -813,56 +869,7 @@ def _backfill_user_memberships(conn: sqlite3.Connection, team_id: str) -> None:
             )
 
 
-def _migrate_v14(conn: sqlite3.Connection):
-    """Add Phase 1 team/season tenancy tables, columns, and default backfill."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS teams (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            slug TEXT NOT NULL UNIQUE,
-            game_format TEXT NOT NULL DEFAULT 'full',
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS seasons (
-            id TEXT PRIMARY KEY,
-            team_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            starts_on TEXT,
-            ends_on TEXT,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_seasons_team ON seasons(team_id)")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS team_user_memberships (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            team_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(team_id, user_id, role)
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_user ON team_user_memberships(user_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_team ON team_user_memberships(team_id)")
-
-    _add_column_if_missing(conn, "users", "last_team_id", "TEXT")
-    for table in [
-        "matches", "players", "player_user_links", "coaching_notes", "coaching_clips",
-        "coaching_playlists", "player_goals", "coaching_match_summaries",
-    ]:
-        _add_column_if_missing(conn, table, "team_id", "TEXT")
-    for table in ["matches", "players", "coaching_notes", "coaching_playlists", "player_goals"]:
-        _add_column_if_missing(conn, table, "season_id", "TEXT")
-
+def _backfill_default_scope(conn: sqlite3.Connection) -> None:
     team_id, season_id = _ensure_default_team_and_season(conn)
     _backfill_user_memberships(conn, team_id)
 
@@ -925,10 +932,98 @@ def _migrate_v14(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v14(conn: sqlite3.Connection):
+    """Add Phase 1 team/season tenancy tables, columns, and default backfill."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS teams (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            game_format TEXT NOT NULL DEFAULT 'full',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS seasons (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            starts_on TEXT,
+            ends_on TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_seasons_team ON seasons(team_id)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_user_memberships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(team_id, user_id, role)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_user ON team_user_memberships(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_team ON team_user_memberships(team_id)")
+
+    _add_column_if_missing(conn, "users", "last_team_id", "TEXT")
+    for table in [
+        "matches", "players", "player_user_links", "coaching_notes", "coaching_clips",
+        "coaching_playlists", "player_goals", "coaching_match_summaries",
+    ]:
+        _add_column_if_missing(conn, table, "team_id", "TEXT")
+    for table in ["matches", "players", "coaching_notes", "coaching_playlists", "player_goals"]:
+        _add_column_if_missing(conn, table, "season_id", "TEXT")
+
+    _backfill_default_scope(conn)
+
+
+def _migrate_v15(conn: sqlite3.Connection):
+    """Enforce PR 1.3 non-null tenant scope contract and tenant indexes."""
+    _backfill_default_scope(conn)
+
+    for table, columns in {
+        "matches": {"team_id", "season_id"},
+        "players": {"team_id", "season_id"},
+        "player_user_links": {"team_id"},
+        "coaching_notes": {"team_id"},
+        "coaching_clips": {"team_id"},
+        "coaching_playlists": {"team_id", "season_id"},
+        "player_goals": {"team_id", "season_id"},
+        "coaching_match_summaries": {"team_id"},
+    }.items():
+        _rebuild_table_with_not_null_text_columns(conn, table, columns)
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_team ON matches(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_team_season ON matches(team_id, season_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_team ON players(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_team_season ON players(team_id, season_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_user_links_team ON player_user_links(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_user_links_team_player ON player_user_links(team_id, player_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_notes_team ON coaching_notes(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_notes_team_match ON coaching_notes(team_id, match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_clips_team ON coaching_clips(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_clips_team_match ON coaching_clips(team_id, match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_playlists_team ON coaching_playlists(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_playlists_team_season ON coaching_playlists(team_id, season_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goals_team ON player_goals(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goals_team_player ON player_goals(team_id, player_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_match_summaries_team ON coaching_match_summaries(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_match_summaries_team_match ON coaching_match_summaries(team_id, match_id)")
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
+    _migrate_v15,
 ]
 
 

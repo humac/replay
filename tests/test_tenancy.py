@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import sqlite3
 
 import db as _db
 
@@ -30,8 +31,79 @@ def _cols(conn, table: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _column_info(conn, table: str) -> dict[str, sqlite3.Row]:
+    return {row["name"]: row for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _index_names(conn, table: str) -> set[str]:
+    return {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ?",
+            (table,),
+        ).fetchall()
+    }
+
+
+def _assert_not_null(conn, table: str, column: str) -> None:
+    info = _column_info(conn, table)
+    assert info[column]["notnull"] == 1, f"{table}.{column} should be NOT NULL"
+
+
+def _assert_insert_null_fails(conn, table: str, insert_sql: str, params: tuple) -> None:
+    with pytest.raises(sqlite3.IntegrityError, match="NOT NULL"):
+        conn.execute(insert_sql, params)
+
+
 def _count(conn, table: str) -> int:
     return conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+
+
+def _force_tenancy_columns_nullable_for_legacy_test(conn) -> None:
+    """Downgrade scoped columns to PR 1.2's nullable contract for migration tests.
+
+    The test suite boots the current schema, then rewinds schema_version to
+    simulate an older deployment. Once PR 1.3 makes tenant columns NOT NULL,
+    we need to restore the pre-PR-1.3 shape before clearing values and rerunning
+    migrations.
+    """
+    for table, columns in {
+        "matches": {"team_id", "season_id"},
+        "players": {"team_id", "season_id"},
+        "player_user_links": {"team_id"},
+        "coaching_notes": {"team_id"},
+        "coaching_clips": {"team_id"},
+        "coaching_playlists": {"team_id", "season_id"},
+        "player_goals": {"team_id", "season_id"},
+        "coaching_match_summaries": {"team_id"},
+    }.items():
+        create_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()["sql"]
+        new_sql = create_sql.replace(f"CREATE TABLE {table}", f"CREATE TABLE {table}_legacy_nullable", 1)
+        if new_sql == create_sql:
+            new_sql = create_sql.replace(f'CREATE TABLE "{table}"', f"CREATE TABLE {table}_legacy_nullable", 1)
+        for column in columns:
+            new_sql = new_sql.replace(f"{column} TEXT NOT NULL", f"{column} TEXT")
+        if new_sql == create_sql:
+            continue
+        indexes = [
+            row["sql"]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+                (table,),
+            ).fetchall()
+        ]
+        conn.execute(f"DROP TABLE IF EXISTS {table}_legacy_nullable")
+        conn.execute(new_sql)
+        col_names = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        cols_sql = ", ".join(col_names)
+        conn.execute(f"INSERT INTO {table}_legacy_nullable ({cols_sql}) SELECT {cols_sql} FROM {table}")
+        conn.execute(f"DROP TABLE {table}")
+        conn.execute(f"ALTER TABLE {table}_legacy_nullable RENAME TO {table}")
+        for index_sql in indexes:
+            conn.execute(index_sql)
 
 
 def _seed_match(conn, match_id: str = "match-1") -> None:
@@ -62,6 +134,7 @@ def _seed_legacy_v13_database(tmp_path: Path):
         # The repository migrator always applies the latest schema on init.
         # To exercise the Phase 1 migrator idempotently, rewind the version,
         # remove default tenancy rows, and clear scope values from core rows.
+        _force_tenancy_columns_nullable_for_legacy_test(conn)
         for table in ["team_user_memberships", "seasons", "teams"]:
             conn.execute(f"DELETE FROM {table}")
         for table in [
@@ -124,6 +197,93 @@ def test_tenancy_columns_exist_on_core_tables_with_expected_season_placement(fre
             "player_goal_reflections",
         ]:
             assert "team_id" not in _cols(conn, table), table
+
+
+def test_pr_1_3_fresh_schema_enforces_non_null_scope_contract(fresh_db):
+    """Fresh DB schema enforces PR 1.3 NOT NULL only where safe."""
+    with fresh_db.connect() as conn:
+        for table, columns in {
+            "matches": ["team_id", "season_id"],
+            "players": ["team_id", "season_id"],
+            "player_user_links": ["team_id"],
+            "coaching_notes": ["team_id"],
+            "coaching_clips": ["team_id"],
+            "coaching_playlists": ["team_id", "season_id"],
+            "player_goals": ["team_id", "season_id"],
+            "coaching_match_summaries": ["team_id"],
+        }.items():
+            for column in columns:
+                _assert_not_null(conn, table, column)
+
+        # Video coaching notes intentionally keep season_id nullable; they are
+        # match scoped and PR 1.3 must not over-constrain observation/video rows.
+        assert _column_info(conn, "coaching_notes")["season_id"]["notnull"] == 0
+
+
+def test_pr_1_3_null_scope_writes_fail_where_contract_is_non_null(fresh_db):
+    now = "2026-03-01T00:00:00Z"
+    with fresh_db.connect() as conn:
+        _assert_insert_null_fails(
+            conn,
+            "matches",
+            """
+            INSERT INTO matches (
+                id, home_team, away_team, date, time, location, score_home, score_away,
+                format, videos_json, video_status_json, home_logo, away_logo, created_at,
+                slug, updated_at, team_id, season_id
+            ) VALUES ('null-match', 'Home', 'Away', '2026-03-01', '', '', NULL, NULL,
+                'full', '{}', '{}', NULL, NULL, ?, 'null-match', ?, NULL, 'default-season')
+            """,
+            (now, now),
+        )
+        _assert_insert_null_fails(
+            conn,
+            "players",
+            """
+            INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at, team_id, season_id)
+            VALUES ('null-player', 'Null Player', '', 1, '', ?, ?, 'default-team', NULL)
+            """,
+            (now, now),
+        )
+        _assert_insert_null_fails(
+            conn,
+            "coaching_notes",
+            """
+            INSERT INTO coaching_notes (
+                match_id, slot, timestamp_seconds, title, body, category, visibility,
+                drawing_json, created_by, created_at, updated_at, note_context, team_id, season_id
+            ) VALUES (NULL, NULL, NULL, 'Null team note', '', 'other', 'private', '{}', 'coach', ?, ?, 'observation', NULL, NULL)
+            """,
+            (now, now),
+        )
+
+        # Privacy/scope canary: video notes may still carry NULL season_id when
+        # team_id is present, preserving the PR 1.1/1.2 table-by-table contract.
+        conn.execute(
+            """
+            INSERT INTO coaching_notes (
+                match_id, slot, timestamp_seconds, title, body, category, visibility,
+                drawing_json, created_by, created_at, updated_at, note_context, team_id, season_id
+            ) VALUES ('missing-match-ok-for-schema', 'full', 1, 'Video season nullable', '', 'other', 'private', '{}', 'coach', ?, ?, 'video', 'default-team', NULL)
+            """,
+            (now, now),
+        )
+
+
+def test_pr_1_3_scope_indexes_exist_for_frequent_tenant_filters(fresh_db):
+    with fresh_db.connect() as conn:
+        expected_indexes = {
+            "matches": {"idx_matches_team", "idx_matches_team_season"},
+            "players": {"idx_players_team", "idx_players_team_season"},
+            "player_user_links": {"idx_player_user_links_team", "idx_player_user_links_team_player"},
+            "coaching_notes": {"idx_coaching_notes_team", "idx_coaching_notes_team_match"},
+            "coaching_clips": {"idx_coaching_clips_team", "idx_coaching_clips_team_match"},
+            "coaching_playlists": {"idx_coaching_playlists_team", "idx_coaching_playlists_team_season"},
+            "player_goals": {"idx_player_goals_team", "idx_player_goals_team_player"},
+            "coaching_match_summaries": {"idx_coaching_match_summaries_team", "idx_coaching_match_summaries_team_match"},
+        }
+        for table, indexes in expected_indexes.items():
+            assert indexes.issubset(_index_names(conn, table)), table
 
 
 def test_existing_users_backfill_to_expected_default_memberships(tmp_path):
