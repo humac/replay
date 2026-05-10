@@ -5777,13 +5777,13 @@ export const coachingMixin = {
         return `
             <article class="player-goal-card${active ? '' : ' is-muted'}" data-goal-id="${Number(goal.id)}">
                 <div class="player-goal-card-head">
-                    <div>
+                    <div class="player-goal-card-title">
                         <span class="player-goal-kicker">${this.esc(this._goalContextLabel(goal.context))}${player && !viewer ? ` · ${this.esc(this.playerLabel(player))}` : ''}</span>
                         <h4>${this.esc(goal.title || 'Player goal')}</h4>
                     </div>
                     <span class="player-goal-status" data-status="${this.esc(status)}">${this.esc(this._goalStatusLabel(status))}</span>
                 </div>
-                ${goal.description ? `<p class="player-goal-desc">${this.esc(goal.description)}</p>` : ''}
+                ${goal.description ? `<div class="player-goal-preview-block"><span>Action plan</span><p class="player-goal-desc">${this.esc(goal.description)}</p></div>` : ''}
                 ${source ? `<div class="player-goal-source"><span>${this.esc(source.label)}</span><strong>${this.esc(source.text)}</strong></div>` : ''}
                 ${latest ? `<div class="player-goal-reflection"><span>Latest reflection</span><p>${this.esc(latest.reflection || '')}</p></div>` : ''}
                 <div class="player-goal-actions">
