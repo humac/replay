@@ -759,10 +759,176 @@ def _migrate_v13(conn: sqlite3.Connection):
     )
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    if column not in _table_columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _ensure_default_team_and_season(conn: sqlite3.Connection) -> tuple[str, str]:
+    now = _now_iso()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO teams (id, name, slug, game_format, created_at)
+        VALUES ('default-team', 'Default Team', 'default-team', 'full', ?)
+        """,
+        (now,),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO seasons (id, team_id, name, starts_on, ends_on, created_at)
+        VALUES ('default-season', 'default-team', 'Default Season', '', '', ?)
+        """,
+        (now,),
+    )
+    return "default-team", "default-season"
+
+
+def _membership_roles_for_global_role(role: str | None) -> list[str]:
+    parts = {part.strip().lower() for part in (role or "").split(",") if part.strip()}
+    memberships: list[str] = []
+    if "admin" in parts:
+        memberships.append("team_admin")
+    if "coach" in parts:
+        memberships.append("coach")
+    if "viewer" in parts or "player" in parts or "family" in parts or "guardian" in parts:
+        memberships.append("guardian")
+    return memberships
+
+
+def _backfill_user_memberships(conn: sqlite3.Connection, team_id: str) -> None:
+    now = _now_iso()
+    rows = conn.execute("SELECT id, role FROM users").fetchall()
+    for row in rows:
+        for membership_role in _membership_roles_for_global_role(row["role"]):
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO team_user_memberships (team_id, user_id, role, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (team_id, row["id"], membership_role, now),
+            )
+
+
+def _migrate_v14(conn: sqlite3.Connection):
+    """Add Phase 1 team/season tenancy tables, columns, and default backfill."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS teams (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            game_format TEXT NOT NULL DEFAULT 'full',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS seasons (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            starts_on TEXT,
+            ends_on TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_seasons_team ON seasons(team_id)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_user_memberships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(team_id, user_id, role)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_user ON team_user_memberships(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_team ON team_user_memberships(team_id)")
+
+    _add_column_if_missing(conn, "users", "last_team_id", "TEXT")
+    for table in [
+        "matches", "players", "player_user_links", "coaching_notes", "coaching_clips",
+        "coaching_playlists", "player_goals", "coaching_match_summaries",
+    ]:
+        _add_column_if_missing(conn, table, "team_id", "TEXT")
+    for table in ["matches", "players", "coaching_notes", "coaching_playlists", "player_goals"]:
+        _add_column_if_missing(conn, table, "season_id", "TEXT")
+
+    team_id, season_id = _ensure_default_team_and_season(conn)
+    _backfill_user_memberships(conn, team_id)
+
+    conn.execute("UPDATE matches SET team_id = COALESCE(team_id, ?), season_id = COALESCE(season_id, ?)", (team_id, season_id))
+    conn.execute("UPDATE players SET team_id = COALESCE(team_id, ?), season_id = COALESCE(season_id, ?)", (team_id, season_id))
+    conn.execute(
+        """
+        UPDATE player_user_links
+        SET team_id = COALESCE(
+            team_id,
+            (SELECT team_id FROM players WHERE players.id = player_user_links.player_id),
+            ?
+        )
+        """,
+        (team_id,),
+    )
+    conn.execute(
+        """
+        UPDATE coaching_notes
+        SET team_id = COALESCE(
+                team_id,
+                (SELECT team_id FROM matches WHERE matches.id = coaching_notes.match_id),
+                (SELECT team_id FROM players WHERE players.id = (SELECT player_id FROM coaching_note_players WHERE coaching_note_players.note_id = coaching_notes.id LIMIT 1)),
+                ?
+            ),
+            season_id = CASE
+                WHEN note_context = 'observation' THEN COALESCE(
+                    season_id,
+                    (SELECT season_id FROM matches WHERE matches.id = coaching_notes.match_id),
+                    (SELECT season_id FROM players WHERE players.id = (SELECT player_id FROM coaching_note_players WHERE coaching_note_players.note_id = coaching_notes.id LIMIT 1)),
+                    ?
+                )
+                ELSE season_id
+            END
+        """,
+        (team_id, season_id),
+    )
+    conn.execute(
+        """
+        UPDATE coaching_clips
+        SET team_id = COALESCE(team_id, (SELECT team_id FROM matches WHERE matches.id = coaching_clips.match_id), ?)
+        """,
+        (team_id,),
+    )
+    conn.execute("UPDATE coaching_playlists SET team_id = COALESCE(team_id, ?), season_id = COALESCE(season_id, ?)", (team_id, season_id))
+    conn.execute(
+        """
+        UPDATE player_goals
+        SET team_id = COALESCE(team_id, (SELECT team_id FROM players WHERE players.id = player_goals.player_id), ?),
+            season_id = COALESCE(season_id, (SELECT season_id FROM players WHERE players.id = player_goals.player_id), ?)
+        """,
+        (team_id, season_id),
+    )
+    conn.execute(
+        """
+        UPDATE coaching_match_summaries
+        SET team_id = COALESCE(team_id, (SELECT team_id FROM matches WHERE matches.id = coaching_match_summaries.match_id), ?)
+        """,
+        (team_id,),
+    )
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
-    _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13,
+    _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
 ]
 
 
@@ -805,7 +971,8 @@ def ensure_unique_slug(conn: sqlite3.Connection, slug: str, exclude_id: str | No
 
 
 def row_to_match(row: sqlite3.Row) -> dict:
-    return {
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
+    result = {
         "id": row["id"],
         "home_team": row["home_team"],
         "away_team": row["away_team"],
@@ -823,16 +990,23 @@ def row_to_match(row: sqlite3.Row) -> dict:
         "slug": row["slug"] or "",
         "updated_at": row["updated_at"] or "",
     }
+    if "team_id" in keys:
+        result["team_id"] = row["team_id"]
+    if "season_id" in keys:
+        result["season_id"] = row["season_id"]
+    return result
 
 
 def upsert_match(conn: sqlite3.Connection, match: dict):
+    team_id = match.get("team_id") or get_default_team(conn=conn)["id"]
+    season_id = match.get("season_id") or get_default_season(team_id, conn=conn)["id"]
     conn.execute(
         """
         INSERT INTO matches (
             id, home_team, away_team, date, time, location, score_home, score_away,
             format, videos_json, video_status_json, home_logo, away_logo, created_at, slug,
-            updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            updated_at, team_id, season_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             home_team=excluded.home_team,
             away_team=excluded.away_team,
@@ -848,7 +1022,9 @@ def upsert_match(conn: sqlite3.Connection, match: dict):
             away_logo=excluded.away_logo,
             created_at=excluded.created_at,
             slug=excluded.slug,
-            updated_at=excluded.updated_at
+            updated_at=excluded.updated_at,
+            team_id=excluded.team_id,
+            season_id=excluded.season_id
         """,
         (
             match["id"],
@@ -867,6 +1043,8 @@ def upsert_match(conn: sqlite3.Connection, match: dict):
             match.get("created_at", ""),
             match.get("slug", ""),
             match.get("updated_at", ""),
+            team_id,
+            season_id,
         ),
     )
 
@@ -1033,7 +1211,8 @@ def backfill_slugs():
 # ---------------------------------------------------------------------------
 
 def _row_to_user(row: sqlite3.Row) -> dict:
-    return {
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
+    result = {
         "id": row["id"],
         "username": row["username"],
         "password_hash": row["password_hash"],
@@ -1043,6 +1222,9 @@ def _row_to_user(row: sqlite3.Row) -> dict:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+    if "last_team_id" in keys:
+        result["last_team_id"] = row["last_team_id"]
+    return result
 
 
 def create_user(username: str, password_hash: str, role: str, display_name: str = "") -> dict:
@@ -1055,9 +1237,11 @@ def create_user(username: str, password_hash: str, role: str, display_name: str 
             " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
             (user_id, username, password_hash, role, display_name, now, now),
         )
+        team_id, _season_id = _default_scope(conn)
+        _backfill_user_memberships(conn, team_id)
         conn.commit()
     return {"id": user_id, "username": username, "role": role, "display_name": display_name,
-            "enabled": True, "created_at": now, "updated_at": now}
+            "enabled": True, "created_at": now, "updated_at": now, "last_team_id": None}
 
 
 def get_user_by_username(username: str) -> dict | None:
@@ -1107,6 +1291,89 @@ def delete_user(user_id: str) -> bool:
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def get_default_team(*, conn: sqlite3.Connection | None = None) -> dict:
+    """Return the single-team default team, creating it if needed."""
+    own_conn = conn is None
+    db_conn = conn or connect()
+    _ensure_default_team_and_season(db_conn)
+    row = db_conn.execute("SELECT * FROM teams WHERE slug = 'default-team'").fetchone()
+    if own_conn:
+        db_conn.commit()
+    return dict(row)
+
+
+def get_default_season(team_id: str | None = None, *, conn: sqlite3.Connection | None = None) -> dict:
+    """Return the default season for a team, creating it if needed."""
+    own_conn = conn is None
+    db_conn = conn or connect()
+    default_team_id, _ = _ensure_default_team_and_season(db_conn)
+    resolved_team_id = team_id or default_team_id
+    row = db_conn.execute(
+        "SELECT * FROM seasons WHERE team_id = ? AND name = 'Default Season' ORDER BY created_at ASC, id ASC LIMIT 1",
+        (resolved_team_id,),
+    ).fetchone()
+    if row is None and resolved_team_id != default_team_id:
+        now = _now_iso()
+        season_id = f"{resolved_team_id}-default-season"
+        db_conn.execute(
+            "INSERT OR IGNORE INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES (?, ?, 'Default Season', '', '', ?)",
+            (season_id, resolved_team_id, now),
+        )
+        row = db_conn.execute("SELECT * FROM seasons WHERE id = ?", (season_id,)).fetchone()
+    if own_conn:
+        db_conn.commit()
+    return dict(row)
+
+
+def list_user_memberships(user_id: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM team_user_memberships WHERE user_id = ? ORDER BY team_id, role",
+            (user_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def _default_scope(conn: sqlite3.Connection) -> tuple[str, str]:
+    team = get_default_team(conn=conn)
+    season = get_default_season(team["id"], conn=conn)
+    return team["id"], season["id"]
+
+
+def _resolve_note_scope(
+    conn: sqlite3.Connection,
+    *,
+    match_id: str | None,
+    note_context: str,
+    player_ids: list[str] | None = None,
+    team_id: str | None = None,
+    season_id: str | None = None,
+) -> tuple[str, str | None]:
+    default_team_id, default_season_id = _default_scope(conn)
+    match_row = None
+    if match_id:
+        match_row = conn.execute("SELECT team_id, season_id FROM matches WHERE id = ?", (match_id,)).fetchone()
+    player_row = None
+    if player_ids:
+        player_row = conn.execute("SELECT team_id, season_id FROM players WHERE id = ?", (player_ids[0],)).fetchone()
+    resolved_team_id = (
+        team_id
+        or (match_row["team_id"] if match_row and match_row["team_id"] else None)
+        or (player_row["team_id"] if player_row and player_row["team_id"] else None)
+        or default_team_id
+    )
+    if note_context == "observation":
+        resolved_season_id = (
+            season_id
+            or (match_row["season_id"] if match_row and match_row["season_id"] else None)
+            or (player_row["season_id"] if player_row and player_row["season_id"] else None)
+            or default_season_id
+        )
+    else:
+        resolved_season_id = season_id
+    return resolved_team_id, resolved_season_id
 
 
 def _row_to_player(row: sqlite3.Row, links: list[dict] | None = None) -> dict:
@@ -1176,12 +1443,13 @@ def create_player(display_name: str, jersey_number: str = "", active: bool = Tru
     player_id = str(uuid.uuid4())
     now = _now_iso()
     with connect() as conn:
+        team_id, season_id = _default_scope(conn)
         conn.execute(
             """
-            INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at, team_id, season_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (player_id, display_name, jersey_number, 1 if active else 0, notes, now, now),
+            (player_id, display_name, jersey_number, 1 if active else 0, notes, now, now, team_id, season_id),
         )
         conn.commit()
     return get_player(player_id) or {
@@ -1233,13 +1501,15 @@ def delete_player(player_id: str) -> bool:
 def link_player_user(player_id: str, user_id: str, relationship: str) -> dict:
     now = _now_iso()
     with connect() as conn:
+        player = conn.execute("SELECT team_id FROM players WHERE id = ?", (player_id,)).fetchone()
+        team_id = player["team_id"] if player and player["team_id"] else _default_scope(conn)[0]
         conn.execute(
             """
-            INSERT INTO player_user_links (player_id, user_id, relationship, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(player_id, user_id) DO UPDATE SET relationship = excluded.relationship
+            INSERT INTO player_user_links (player_id, user_id, relationship, created_at, team_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(player_id, user_id) DO UPDATE SET relationship = excluded.relationship, team_id = excluded.team_id
             """,
-            (player_id, user_id, relationship, now),
+            (player_id, user_id, relationship, now, team_id),
         )
         conn.commit()
     player = get_player(player_id)
@@ -1397,6 +1667,14 @@ def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
     board = data.get("tactical_board_json")
     board_json = json.dumps(board) if board is not None else None
     with connect() as conn:
+        team_id, season_id = _resolve_note_scope(
+            conn,
+            match_id=data.get("match_id"),
+            note_context=data.get("note_context", "video"),
+            player_ids=data.get("player_ids") or [],
+            team_id=data.get("team_id"),
+            season_id=data.get("season_id"),
+        )
         cur = conn.execute(
             """
             INSERT INTO coaching_notes (
@@ -1404,8 +1682,9 @@ def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
                 drawing_json, created_by, created_at, updated_at,
                 note_type, what_happened, why_it_matters, what_to_do_next,
                 player_summary, coach_private_note,
-                note_context, event_title, event_date, event_type, tactical_board_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                note_context, event_title, event_date, event_type, tactical_board_json,
+                team_id, season_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.get("match_id"), data.get("slot"), data.get("timestamp_seconds"),
@@ -1423,6 +1702,8 @@ def create_coaching_note(data: dict, *, actor: str | None = None) -> dict:
                 data.get("event_date", ""),
                 data.get("event_type", ""),
                 board_json,
+                team_id,
+                season_id,
             ),
         )
         note_id = cur.lastrowid
@@ -1485,6 +1766,26 @@ def update_coaching_note(note_id: int, data: dict) -> dict | None:
                 data.get("player_ids") if data.get("player_ids") is not None else existing.get("player_ids", []),
                 data.get("tags") if data.get("tags") is not None else existing.get("tags", []),
             )
+        if len(updates) > 1 or join_changed:
+            row = conn.execute("SELECT match_id, note_context, team_id, season_id FROM coaching_notes WHERE id = ?", (note_id,)).fetchone()
+            if row:
+                player_rows = conn.execute(
+                    "SELECT player_id FROM coaching_note_players WHERE note_id = ? ORDER BY player_id",
+                    (note_id,),
+                ).fetchall()
+                scope_inputs_changed = any(key in data for key in ("match_id", "note_context", "player_ids"))
+                team_id, season_id = _resolve_note_scope(
+                    conn,
+                    match_id=row["match_id"],
+                    note_context=row["note_context"] or "video",
+                    player_ids=[player_row["player_id"] for player_row in player_rows],
+                    team_id=None if scope_inputs_changed else row["team_id"],
+                    season_id=None if scope_inputs_changed else row["season_id"],
+                )
+                conn.execute(
+                    "UPDATE coaching_notes SET team_id = ?, season_id = ? WHERE id = ?",
+                    (team_id, season_id, note_id),
+                )
         conn.commit()
     return get_coaching_note(note_id)
 
@@ -1590,17 +1891,18 @@ def _replace_playlist_children(conn: sqlite3.Connection, playlist_id: int, note_
 def create_coaching_playlist(data: dict, *, actor: str | None = None) -> dict:
     now = _now_iso()
     with connect() as conn:
+        team_id, season_id = _default_scope(conn)
         cur = conn.execute(
             """
             INSERT INTO coaching_playlists (
                 title, description, visibility, pre_roll_seconds, post_roll_seconds,
-                created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                created_by, created_at, updated_at, team_id, season_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["title"], data.get("description", ""), data.get("visibility", "private"),
                 data.get("pre_roll_seconds", 5.0), data.get("post_roll_seconds", 8.0),
-                actor, now, now,
+                actor, now, now, data.get("team_id") or team_id, data.get("season_id") or season_id,
             ),
         )
         playlist_id = cur.lastrowid
@@ -1783,13 +2085,16 @@ def _replace_clip_children(conn: sqlite3.Connection, clip_id: int, player_ids: l
 def create_coaching_clip(data: dict, *, actor: str | None = None) -> dict:
     now = _now_iso()
     with connect() as conn:
+        default_team_id, _default_season_id = _default_scope(conn)
+        match_row = conn.execute("SELECT team_id FROM matches WHERE id = ?", (data["match_id"],)).fetchone()
+        team_id = data.get("team_id") or (match_row["team_id"] if match_row and match_row["team_id"] else default_team_id)
         cur = conn.execute(
             """
             INSERT INTO coaching_clips (
                 match_id, slot, start_seconds, end_seconds, title, description,
                 category, visibility, source_note_id, drawing_json,
-                created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_by, created_at, updated_at, team_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["match_id"], data["slot"],
@@ -1798,7 +2103,7 @@ def create_coaching_clip(data: dict, *, actor: str | None = None) -> dict:
                 data.get("category", "other"), data.get("visibility", "private"),
                 data.get("source_note_id"),
                 json.dumps(data.get("drawing") or {}),
-                actor, now, now,
+                actor, now, now, team_id,
             ),
         )
         clip_id = cur.lastrowid
@@ -1939,18 +2244,23 @@ def get_player_goal(goal_id: int) -> dict | None:
 def create_player_goal(data: dict, *, actor: str | None = None) -> dict:
     now = _now_iso()
     with connect() as conn:
+        default_team_id, default_season_id = _default_scope(conn)
+        player_row = conn.execute("SELECT team_id, season_id FROM players WHERE id = ?", (data["player_id"],)).fetchone()
+        team_id = data.get("team_id") or (player_row["team_id"] if player_row and player_row["team_id"] else default_team_id)
+        season_id = data.get("season_id") or (player_row["season_id"] if player_row and player_row["season_id"] else default_season_id)
         cur = conn.execute(
             """
             INSERT INTO player_goals (player_id, title, description, visibility, priority, target_date,
                 success_criteria, coach_private_note, context, status, source_note_id,
-                source_clip_id, source_playlist_id, source_playlist_item_note_id, target_match_id, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_clip_id, source_playlist_id, source_playlist_item_note_id, target_match_id, created_by, created_at, updated_at,
+                team_id, season_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (data["player_id"], data["title"], data.get("description", ""), data.get("visibility", "player"),
              data.get("priority", "medium"), data.get("target_date", ""), data.get("success_criteria", ""),
              data.get("coach_private_note", ""), data.get("context", "next_match"), data.get("status", "open"),
              data.get("source_note_id"), data.get("source_clip_id"), data.get("source_playlist_id"), data.get("source_playlist_item_note_id"),
-             data.get("target_match_id"), actor or "", now, now),
+             data.get("target_match_id"), actor or "", now, now, team_id, season_id),
         )
         goal_id = cur.lastrowid
         conn.execute("INSERT INTO player_goal_status_history (goal_id, status, changed_by, changed_at) VALUES (?, ?, ?, ?)", (goal_id, data.get("status", "open"), actor or "", now))
@@ -2113,18 +2423,21 @@ def _replace_summary_children(
 def create_coaching_match_summary(data: dict, *, actor: str | None = None) -> dict:
     now = _now_iso()
     with connect() as conn:
+        default_team_id, _default_season_id = _default_scope(conn)
+        match_row = conn.execute("SELECT team_id FROM matches WHERE id = ?", (data["match_id"],)).fetchone()
+        team_id = data.get("team_id") or (match_row["team_id"] if match_row and match_row["team_id"] else default_team_id)
         cur = conn.execute(
             """
             INSERT INTO coaching_match_summaries (
                 match_id, visibility, team_positives, team_improvements,
-                training_focus, body, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                training_focus, body, created_by, created_at, updated_at, team_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["match_id"], data.get("visibility", "private"),
                 data.get("team_positives", ""), data.get("team_improvements", ""),
                 data.get("training_focus", ""), data.get("body", ""),
-                actor, now, now,
+                actor, now, now, team_id,
             ),
         )
         summary_id = cur.lastrowid

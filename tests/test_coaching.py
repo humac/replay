@@ -118,6 +118,55 @@ async def test_player_link_controls_my_feedback_visibility(client, auth_headers)
 
 
 @pytest.mark.asyncio
+async def test_single_team_coaching_endpoints_keep_default_scope(client, auth_headers):
+    import db as _db
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Default Scope Player",
+        "jersey_number": "11",
+    }, headers=auth_headers)
+    assert player_resp.status_code == 200
+    player = player_resp.json()["player"]
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Default Scope Home",
+        "away_team": "Default Scope Away",
+        "date": "2026-05-21",
+    }, headers=auth_headers)
+    assert match_resp.status_code == 200
+    match_id = match_resp.json()["id"]
+
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Default scoped note",
+        "visibility": "player",
+        "player_ids": [player["id"]],
+    }, headers=auth_headers)
+    assert note_resp.status_code == 200
+    note = note_resp.json()["note"]
+
+    players_resp = await client.get("/api/coach/players", headers=auth_headers)
+    assert players_resp.status_code == 200
+    assert [p["display_name"] for p in players_resp.json()["players"]] == ["Default Scope Player"]
+
+    notes_resp = await client.get("/api/coach/notes", headers=auth_headers)
+    assert notes_resp.status_code == 200
+    assert [n["title"] for n in notes_resp.json()["notes"]] == ["Default scoped note"]
+
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    with _db.connect() as conn:
+        match_scope = conn.execute("SELECT team_id, season_id FROM matches WHERE id = ?", (match_id,)).fetchone()
+        player_scope = conn.execute("SELECT team_id, season_id FROM players WHERE id = ?", (player["id"],)).fetchone()
+        note_scope = conn.execute("SELECT team_id, season_id FROM coaching_notes WHERE id = ?", (note["id"],)).fetchone()
+    assert tuple(match_scope) == (default_team["id"], default_season["id"])
+    assert tuple(player_scope) == (default_team["id"], default_season["id"])
+    assert tuple(note_scope) == (default_team["id"], None)
+
+
+@pytest.mark.asyncio
 async def test_team_visible_note_and_review_tracking(client, auth_headers):
     await client.post("/api/users", json={
         "username": "teamviewer",
