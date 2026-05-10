@@ -419,6 +419,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Private notes remain excluded from viewer/family surfaces.
 - `coach_private_note` is not present in viewer/family payloads for notes or goals.
 
+**Implementation note (feat/platform-pr2-2-visibility-scope):** Visibility helpers in `server.py` now accept an optional `team_id` scope while preserving legacy no-scope behavior for routes that PR 2.3 has not enforced yet. `_filter_notes_for_user`, `_filter_clips_for_user`, `_filter_playlists_for_user`, `_filter_goals_for_user`, `_goals_with_visible_sources`, and `_filter_match_summaries_for_user` first narrow objects to the explicit team, then apply the existing role/visibility ladder. Scoped playlists and match summaries also drop wrong-team source IDs before payload hydration so stale cross-team joins cannot leak IDs when PR 2.3 starts passing resolved scope. Viewer player-link lookups pass the same optional `team_id` through `db.linked_player_ids_for_user(..., team_id=...)`, and viewer payload scrubbing remains separate via `_strip_private_fields` / `_strip_goal_private_fields` so `coach_private_note` stays blanked for notes and goals. Focused regression coverage lives in `tests/test_tenancy.py`.
+
 ### PR 2.3: Scoped Endpoint Enforcement
 
 **Files:**

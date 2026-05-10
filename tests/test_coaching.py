@@ -6,6 +6,8 @@ import asyncio
 
 import pytest
 
+import db as _db
+
 
 async def _login(client, username: str, password: str = "password123") -> dict:
     resp = await client.post("/api/login", json={"username": username, "password": password})
@@ -1437,12 +1439,21 @@ async def test_legacy_body_visible_when_player_summary_blank(client, auth_header
 # ---------------------------------------------------------------------------
 
 
+def _team_id_for_test_match(match_id: str) -> str | None:
+    row = _db.get_match_by_id(match_id)
+    return row.get("team_id") if row else None
+
+
 def _coach_thumb_path(data_dir, match_id: str, note_id: int):
-    """Mirror of `_media.coach_note_thumbnail_path` but rooted at the
-    test fixture's `data_dir / videos`. Kept duplicated rather than
-    importing the helper so a regression in the path convention shows
-    up as a test failure here, not a silent move."""
-    return data_dir / "videos" / match_id / "coach_thumbs" / f"{note_id}.jpg"
+    """Mirror of `_media.coach_note_thumbnail_path` for current media layout."""
+    import media as _media
+
+    return _media.coach_note_thumbnail_path(
+        data_dir / "videos",
+        match_id,
+        note_id,
+        team_id=_team_id_for_test_match(match_id),
+    )
 
 
 # A 1-byte JPEG is good enough for the file-exists check the serving
@@ -3365,10 +3376,15 @@ async def test_dev_profile_viewer_endpoint_scrubs_for_coach_caller(client, auth_
 
 
 def _coach_clip_thumb_path(data_dir, match_id: str, clip_id: int):
-    """Mirror of `_media.clip_thumbnail_path` rooted at the test
-    fixture's `data_dir / videos`. Duplicated so a regression in the
-    path convention shows up as a test failure here, not a silent move."""
-    return data_dir / "videos" / match_id / "clip_thumbs" / f"{clip_id}.jpg"
+    """Mirror of `_media.clip_thumbnail_path` for current media layout."""
+    import media as _media
+
+    return _media.clip_thumbnail_path(
+        data_dir / "videos",
+        match_id,
+        clip_id,
+        team_id=_team_id_for_test_match(match_id),
+    )
 
 
 async def _install_clip_thumbnail_stub(monkeypatch, *, succeed: bool = True, raise_exc: bool = False):
