@@ -11353,4 +11353,251 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
 [data-theme="light"] .player-dev-note-item--clickable:hover {
     background: rgba(23, 113, 201, 0.06);
 }
+/* Phase 7 — player goals / reflections */
+.player-dev-section-headline {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+}
+
+.player-dev-section-headline > * {
+    min-width: 0;
+}
+
+.player-goal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.8rem;
+}
+
+.player-goal-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    min-width: 0;
+    border: 1px solid var(--border-light, rgba(148, 163, 184, 0.28));
+    border-radius: 14px;
+    padding: 0.9rem;
+    background: var(--bg-card, rgba(15, 23, 42, 0.42));
+}
+
+.player-goal-card.is-muted {
+    opacity: 0.72;
+}
+
+.player-goal-card.is-preview {
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.player-goal-card-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: flex-start;
+    min-width: 0;
+}
+
+.player-goal-card-title {
+    min-width: 0;
+}
+
+.player-goal-meta {
+    display: block;
+    margin-top: 0.2rem;
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.player-goal-card h4 {
+    margin: 0.15rem 0 0;
+    font-size: 1rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.player-goal-kicker,
+.player-goal-preview-block span,
+.player-goal-source span,
+.player-goal-reflection span {
+    display: block;
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.player-goal-status {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    background: rgba(56, 189, 248, 0.14);
+    color: var(--accent, #38bdf8);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.player-goal-status[data-status="needs_follow_up"] {
+    border-color: rgba(251, 191, 36, 0.32);
+    background: rgba(251, 191, 36, 0.16);
+    color: #fbbf24;
+}
+
+.player-goal-status[data-status="achieved"] {
+    border-color: rgba(34, 197, 94, 0.32);
+    background: rgba(34, 197, 94, 0.16);
+    color: var(--green, #22c55e);
+}
+
+.player-goal-status[data-status="archived"] {
+    border-color: rgba(148, 163, 184, 0.28);
+    background: rgba(148, 163, 184, 0.16);
+    color: #cbd5e1;
+}
+
+.player-goal-preview-block,
+.player-goal-reflection,
+.player-goal-source {
+    min-width: 0;
+}
+
+.player-goal-desc,
+.player-goal-reflection p,
+.player-goal-source strong {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+}
+
+.player-goal-desc {
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+}
+
+.player-goal-reflection p,
+.player-goal-source strong {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+}
+
+.player-goal-source {
+    border-left: 3px solid rgba(56, 189, 248, 0.45);
+    padding-left: 0.6rem;
+}
+
+.player-goal-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: auto;
+}
+
+.player-goal-status-select {
+    flex: 1 1 11rem;
+    min-width: 0;
+    min-height: 36px;
+    max-width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 9px;
+    padding: 0.45rem 2.1rem 0.45rem 0.65rem;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-color: rgba(0, 0, 0, 0.24);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23888890' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 12px 8px;
+    color: var(--text-main);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.player-goal-status-select:hover {
+    border-color: rgba(255, 255, 255, 0.24);
+    background-color: rgba(0, 0, 0, 0.32);
+}
+
+.player-goal-status-select:focus-visible {
+    border-color: var(--accent, #298bed);
+    box-shadow: 0 0 0 2px rgba(23, 113, 201, 0.18);
+}
+
+[data-theme="light"] .player-goal-status {
+    border-color: rgba(21, 101, 192, 0.28);
+    background: rgba(21, 101, 192, 0.1);
+    color: var(--accent, #1565c0);
+}
+
+[data-theme="light"] .player-goal-status[data-status="needs_follow_up"] {
+    border-color: rgba(146, 64, 14, 0.28);
+    background: rgba(251, 191, 36, 0.22);
+    color: #92400e;
+}
+
+[data-theme="light"] .player-goal-status[data-status="achieved"] {
+    border-color: rgba(22, 101, 52, 0.26);
+    background: rgba(34, 197, 94, 0.16);
+    color: #166534;
+}
+
+[data-theme="light"] .player-goal-status[data-status="archived"] {
+    border-color: rgba(71, 85, 105, 0.24);
+    background: rgba(100, 116, 139, 0.12);
+    color: #475569;
+}
+
+[data-theme="light"] .player-goal-status-select {
+    border-color: rgba(0, 0, 0, 0.14);
+    background-color: #ffffff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+    color: var(--text-main);
+}
+
+[data-theme="light"] .player-goal-status-select:hover {
+    border-color: rgba(0, 0, 0, 0.28);
+    background-color: #ffffff;
+}
+
+[data-theme="light"] .player-goal-status-select:focus-visible {
+    border-color: var(--accent, #1565c0);
+    box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.22);
+}
+
+@media (pointer: coarse), (max-width: 720px) {
+    .player-goal-status-select {
+        min-height: 44px;
+    }
+}
+
+@media (max-width: 520px) {
+    .player-dev-section-headline {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .player-goal-card-head {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .player-goal-status {
+        align-self: flex-start;
+        white-space: normal;
+    }
+}
 

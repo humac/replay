@@ -288,6 +288,9 @@ def _seed_roster() -> dict[str, str]:
         # rows whose `match_id` references the previous run's matches
         # (which `_seed_matches` rewrites with fresh UUIDs every run).
         conn.execute("DELETE FROM coaching_reviews")
+        conn.execute("DELETE FROM player_goal_reflections")
+        conn.execute("DELETE FROM player_goal_status_history")
+        conn.execute("DELETE FROM player_goals")
         conn.execute("DELETE FROM coaching_clip_players")
         conn.execute("DELETE FROM coaching_clips")
         conn.execute("DELETE FROM coaching_playlist_players")
@@ -480,7 +483,7 @@ def _seed_coaching_notes(
             "what_happened": "Ball came from the keeper. You took it facing your own goal, had to turn under pressure, and lost it.",
             "why_it_matters": "One extra touch backwards is one extra second for their press to set. Open the body once and you skip that whole sequence.",
             "what_to_do_next": "On reception: plant the back foot, point the front foot toward the opponent's goal, take the touch with your far foot.",
-            "coach_private_note": "",
+            "coach_private_note": "PHASE7_SECRET: seeded source-note canary that must never appear in viewer goal payloads or UI.",
         },
         {
             "key": "p7_recovery",
@@ -814,6 +817,55 @@ def _seed_playlists(note_ids_by_key: dict[str, int], roster: dict[str, str]) -> 
     return 2
 
 
+def _seed_player_goals(note_ids_by_key: dict[str, int], roster: dict[str, str]) -> int:
+    """Phase 7 demo goals for Coach development profile + My Feedback.
+    Includes one goal tied to a note and one tied to the seeded clip so the UI
+    can demonstrate evidence-backed action plans and viewer reflections.
+    """
+    with _db.connect() as conn:
+        clip = conn.execute("SELECT id FROM coaching_clips WHERE source_note_id = ?", (note_ids_by_key["p7_recovery"],)).fetchone()
+    # The helper creates initial status history and hydrates reflections.
+    g1 = _db.create_player_goal({
+        "player_id": roster["7"],
+        "title": "Scan before receiving under pressure",
+        "description": "Before the ball arrives, check both shoulders and open your first touch away from pressure.",
+        "priority": "high",
+        "target_date": "2026-05-20",
+        "success_criteria": "Check both shoulders before at least three first touches in the next match.",
+        "coach_private_note": "SEED_GOAL_PRIVATE_CANARY: visible only to coaches/admins.",
+        "context": "next_match",
+        "status": "in_progress",
+        "source_note_id": note_ids_by_key["first_touch_pressure"],
+    }, actor="coach1")
+    g2 = _db.create_player_goal({
+        "player_id": roster["7"],
+        "title": "Recover inside to protect the passing lane",
+        "description": "When possession turns over, sprint inside first, then slow down to block the forward pass.",
+        "priority": "medium",
+        "success_criteria": "Recover goal-side within three seconds after a turnover during transition games.",
+        "context": "next_training",
+        "status": "open",
+        "source_clip_id": int(clip["id"]) if clip else None,
+    }, actor="coach1")
+    g3 = _db.create_player_goal({
+        "player_id": roster["14"],
+        "title": "Support angle after the pass",
+        "description": "Move five yards after you pass so the ball carrier has a simple return option.",
+        "visibility": "coach",
+        "priority": "low",
+        "target_date": "",
+        "success_criteria": "Coach-only planning canary: should not appear in My Feedback goal payloads.",
+        "coach_private_note": "SEED_COACH_ONLY_GOAL_CANARY",
+        "context": "season_goal",
+        "status": "open",
+    }, actor="coach1")
+    with _db.connect() as conn:
+        user = conn.execute("SELECT id FROM users WHERE username = ?", ("family1",)).fetchone()
+    if user:
+        _db.add_player_goal_reflection(g1["id"], user["id"], "I tried checking my shoulder before the first touch in training.")
+    return len([g1, g2, g3])
+
+
 # ---------------------------------------------------------------------------
 # Mock video — committed alongside the seed script so a fresh seed always has
 # at least one playable match. The committed file is a 30-second 1280x720
@@ -1009,6 +1061,7 @@ def main() -> None:
     obs_note_ids = _seed_observation_notes(matches_by_key, roster)
     clip_count = _seed_clips(matches_by_key, roster, note_ids_by_key)
     playlists = _seed_playlists(note_ids_by_key, roster)
+    goals = _seed_player_goals(note_ids_by_key, roster)
     mock_video_status = _seed_mock_video(data_dir, matches_by_key)
     # Phase 3a / 4e seed parity: the runtime path (POST /api/coach/notes
     # and /api/coach/clips) spawns a background thumbnail-generation
@@ -1028,6 +1081,7 @@ def main() -> None:
     print(f"  Notes:      {len(note_ids_by_key)} video + {len(obs_note_ids)} observation")
     print(f"  Clips:      {clip_count}")
     print(f"  Playlists:  {playlists}")
+    print(f"  Goals:      {goals}")
     print(f"  Links:      {links} player ↔ user")
     print(f"  Mock video:")
     print(mock_video_status)

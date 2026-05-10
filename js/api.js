@@ -400,14 +400,15 @@ export const apiMixin = {
         // clips endpoint is the same role-gated surface as notes /
         // playlists (PR #95), so this is one more parallel coach-only
         // GET in the same `Promise.all`.
-        const [playersResp, notesResp, playlistsResp, clipsResp, users] = await Promise.all([
+        const [playersResp, notesResp, playlistsResp, clipsResp, goalsResp, users] = await Promise.all([
             this.authFetch('/api/coach/players', { headers: this.getAuthHeaders() }),
             this.authFetch(`/api/coach/notes${suffix}`, { headers: this.getAuthHeaders() }),
             this.authFetch('/api/coach/playlists', { headers: this.getAuthHeaders() }),
             this.authFetch(`/api/coach/clips${suffix}`, { headers: this.getAuthHeaders() }),
+            this.authFetch('/api/coach/goals', { headers: this.getAuthHeaders() }),
             this.authFetch('/api/coach/users', { headers: this.getAuthHeaders() }),
         ]);
-        if (!playersResp.ok || !notesResp.ok || !playlistsResp.ok || !clipsResp.ok || !users.ok) {
+        if (!playersResp.ok || !notesResp.ok || !playlistsResp.ok || !clipsResp.ok || !goalsResp.ok || !users.ok) {
             throw new Error('Failed to load coaching workspace');
         }
         return {
@@ -415,6 +416,7 @@ export const apiMixin = {
             notes: (await notesResp.json()).notes || [],
             playlists: (await playlistsResp.json()).playlists || [],
             clips: (await clipsResp.json()).clips || [],
+            goals: (await goalsResp.json()).goals || [],
             users: (await users.json()).users || [],
         };
     },
@@ -581,6 +583,45 @@ export const apiMixin = {
         });
         if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete coaching clip');
         return resp.json();
+    },
+
+    async createCoachGoal(data) {
+        const resp = await this.authFetch('/api/coach/goals', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save player goal');
+        return (await resp.json()).goal || null;
+    },
+
+    async updateCoachGoal(goalId, data) {
+        const resp = await this.authFetch(`/api/coach/goals/${Number(goalId)}`, {
+            method: 'PATCH',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update player goal');
+        return (await resp.json()).goal || null;
+    },
+
+    async deleteCoachGoal(goalId) {
+        const resp = await this.authFetch(`/api/coach/goals/${Number(goalId)}`, {
+            method: 'DELETE',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete player goal');
+        return resp.json();
+    },
+
+    async createMyGoalReflection(goalId, reflection) {
+        const resp = await this.authFetch(`/api/my-feedback/goals/${Number(goalId)}/reflection`, {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reflection }),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save reflection');
+        return (await resp.json()).reflection || null;
     },
 
     async loadMyFeedback() {

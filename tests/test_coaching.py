@@ -157,6 +157,273 @@ async def test_team_visible_note_and_review_tracking(client, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_player_goals_backend_privacy_status_and_reflections(client, auth_headers):
+    viewer_resp = await client.post("/api/users", json={
+        "username": "goal_family",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    linked_user_id = viewer_resp.json()["user"]["id"]
+    second_viewer_resp = await client.post("/api/users", json={
+        "username": "goal_family_sibling",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    second_linked_user_id = second_viewer_resp.json()["user"]["id"]
+    await client.post("/api/users", json={
+        "username": "goal_unlinked",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+
+    player_resp = await client.post("/api/coach/players", json={
+        "display_name": "Goal Player",
+        "jersey_number": "11",
+    }, headers=auth_headers)
+    player_id = player_resp.json()["player"]["id"]
+    link_resp = await client.post("/api/coach/player-links", json={
+        "player_id": player_id,
+        "user_id": linked_user_id,
+        "relationship": "parent",
+    }, headers=auth_headers)
+    assert link_resp.status_code == 200
+    second_link_resp = await client.post("/api/coach/player-links", json={
+        "player_id": player_id,
+        "user_id": second_linked_user_id,
+        "relationship": "family",
+    }, headers=auth_headers)
+    assert second_link_resp.status_code == 200
+    other_player = (await client.post("/api/coach/players", json={"display_name": "Other"}, headers=auth_headers)).json()["player"]["id"]
+
+    match_id = (await client.post("/api/matches", json={
+        "home_team": "Goals FC",
+        "away_team": "Privacy United",
+        "date": "2026-05-08",
+    }, headers=auth_headers)).json()["id"]
+
+    private_note = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Private source",
+        "body": "Body ok",
+        "category": "decision",
+        "visibility": "private",
+        "player_ids": [player_id],
+        "coach_private_note": "DO NOT LEAK GOAL CANARY",
+    }, headers=auth_headers)
+    assert private_note.status_code == 200
+    private_note_id = private_note.json()["note"]["id"]
+
+    bad = await client.post("/api/coach/goals", json={
+        "player_id": other_player,
+        "title": "Mismatched source",
+        "source_note_id": private_note_id,
+    }, headers=auth_headers)
+    assert bad.status_code == 400
+
+    created = await client.post("/api/coach/goals", json={
+        "player_id": player_id,
+        "title": "Scan before receiving",
+        "description": "Check your shoulder twice before the next pass arrives.",
+        "priority": "high",
+        "target_date": "2026-05-20",
+        "success_criteria": "Scans twice before three first-touch receptions.",
+        "coach_private_note": "GOAL PRIVATE NOTE CANARY",
+        "context": "next_match",
+        "source_note_id": private_note_id,
+        "target_match_id": match_id,
+    }, headers=auth_headers)
+    assert created.status_code == 200
+    goal = created.json()["goal"]
+    assert goal["status"] == "open"
+    assert goal["visibility"] == "player"
+    assert goal["priority"] == "high"
+    assert goal["target_date"] == "2026-05-20"
+    assert goal["success_criteria"] == "Scans twice before three first-touch receptions."
+    assert goal["coach_private_note"] == "GOAL PRIVATE NOTE CANARY"
+    assert goal["source_note_id"] == private_note_id
+    assert goal["status_history"][-1]["status"] == "open"
+
+    coach_only = await client.post("/api/coach/goals", json={
+        "player_id": player_id,
+        "title": "Coach only goal",
+        "visibility": "coach",
+        "priority": "low",
+        "coach_private_note": "COACH ONLY GOAL CANARY",
+    }, headers=auth_headers)
+    assert coach_only.status_code == 200
+
+    patched = await client.patch(f"/api/coach/goals/{goal['id']}", json={"status": "needs_follow_up"}, headers=auth_headers)
+    assert patched.status_code == 200
+    assert [h["status"] for h in patched.json()["goal"]["status_history"]] == ["open", "needs_follow_up"]
+
+    linked_headers = await _login(client, "goal_family")
+    feedback = await client.get("/api/my-feedback", headers=linked_headers)
+    assert feedback.status_code == 200
+    payload = feedback.json()
+    assert [g["id"] for g in payload["goals"]] == [goal["id"]]
+    assert payload["goals"][0].get("source_note") is None
+    assert payload["goals"][0]["coach_private_note"] == ""
+    assert payload["goals"][0]["success_criteria"] == "Scans twice before three first-touch receptions."
+    assert payload["goals"][0]["target_date"] == "2026-05-20"
+    assert payload["goals"][0]["priority"] == "high"
+    assert "DO NOT LEAK GOAL CANARY" not in str(payload)
+    assert "GOAL PRIVATE NOTE CANARY" not in str(payload)
+    assert "COACH ONLY GOAL CANARY" not in str(payload)
+
+    reflected = await client.post(f"/api/my-feedback/goals/{goal['id']}/reflection", json={
+        "reflection": "I tried this in the second half.",
+    }, headers=linked_headers)
+    assert reflected.status_code == 200
+    assert reflected.json()["reflection"]["needs_coach_follow_up"] is True
+    assert "user_id" not in reflected.json()["reflection"]
+
+    second_linked_headers = await _login(client, "goal_family_sibling")
+    second_reflected = await client.post(f"/api/my-feedback/goals/{goal['id']}/reflection", json={
+        "reflection": "Sibling account reflection should stay private to this account.",
+    }, headers=second_linked_headers)
+    assert second_reflected.status_code == 200
+
+    first_feedback_after = (await client.get("/api/my-feedback", headers=linked_headers)).json()
+    first_goal_after = first_feedback_after["goals"][0]
+    assert [r["reflection"] for r in first_goal_after["reflections"]] == ["I tried this in the second half."]
+    assert "user_id" not in first_goal_after["reflections"][0]
+    assert first_goal_after["latest_reflection"]["reflection"] == "I tried this in the second half."
+    assert "user_id" not in first_goal_after["latest_reflection"]
+    assert "Sibling account reflection" not in str(first_feedback_after)
+
+    second_feedback_after = (await client.get("/api/my-feedback", headers=second_linked_headers)).json()
+    second_goal_after = second_feedback_after["goals"][0]
+    assert [r["reflection"] for r in second_goal_after["reflections"]] == ["Sibling account reflection should stay private to this account."]
+    assert "I tried this in the second half" not in str(second_feedback_after)
+
+    coach_goals = await client.get("/api/coach/goals", headers=auth_headers)
+    coach_goal = next(g for g in coach_goals.json()["goals"] if g["id"] == goal["id"])
+    assert coach_goal["latest_reflection"]["reflection"] == "Sibling account reflection should stay private to this account."
+    assert coach_goal["needs_coach_follow_up"] is True
+
+    unlinked_headers = await _login(client, "goal_unlinked")
+    assert (await client.get("/api/my-feedback", headers=unlinked_headers)).json()["goals"] == []
+    assert (await client.post(f"/api/my-feedback/goals/{goal['id']}/reflection", json={"reflection": "Nope"}, headers=unlinked_headers)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_goal_source_playlist_items_are_viewer_scrubbed(client, auth_headers):
+    viewer_resp = await client.post("/api/users", json={
+        "username": "goal_playlist_viewer",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    user_id = viewer_resp.json()["user"]["id"]
+    player_id = (await client.post("/api/coach/players", json={"display_name": "Playlist Goal Player"}, headers=auth_headers)).json()["player"]["id"]
+    await client.post("/api/coach/player-links", json={"player_id": player_id, "user_id": user_id, "relationship": "parent"}, headers=auth_headers)
+    match_id = (await client.post("/api/matches", json={"home_team": "Leak", "away_team": "Scrub", "date": "2026-05-09"}, headers=auth_headers)).json()["id"]
+    note_resp = await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 3,
+        "title": "Visible playlist item",
+        "visibility": "team",
+        "player_ids": [player_id],
+        "coach_private_note": "PHASE7_PLAYLIST_SECRET",
+    }, headers=auth_headers)
+    note_id = note_resp.json()["note"]["id"]
+    playlist_resp = await client.post("/api/coach/playlists", json={
+        "title": "Viewer scrubbed source playlist",
+        "visibility": "team",
+        "note_ids": [note_id],
+        "player_ids": [player_id],
+    }, headers=auth_headers)
+    playlist_id = playlist_resp.json()["playlist"]["id"]
+    goal_resp = await client.post("/api/coach/goals", json={
+        "player_id": player_id,
+        "title": "Review the playlist evidence",
+        "source_playlist_id": playlist_id,
+        "source_playlist_item_note_id": note_id,
+    }, headers=auth_headers)
+    assert goal_resp.status_code == 200
+
+    viewer_headers = await _login(client, "goal_playlist_viewer")
+    feedback = (await client.get("/api/my-feedback", headers=viewer_headers)).json()
+    assert feedback["goals"][0]["source_playlist"]["items"][0]["id"] == note_id
+    assert feedback["goals"][0]["source_playlist"]["items"][0]["coach_private_note"] == ""
+    assert "PHASE7_PLAYLIST_SECRET" not in str(feedback)
+
+
+@pytest.mark.asyncio
+async def test_goal_validation_and_source_cleanup_on_deletes(client, auth_headers):
+    player_id = (await client.post("/api/coach/players", json={"display_name": "Cleanup Goal Player"}, headers=auth_headers)).json()["player"]["id"]
+    match_id = (await client.post("/api/matches", json={"home_team": "Cleanup", "away_team": "Sources", "date": "2026-05-10"}, headers=auth_headers)).json()["id"]
+
+    assert (await client.post("/api/coach/goals", json={"player_id": player_id, "title": "   "}, headers=auth_headers)).status_code == 422
+    assert (await client.post("/api/coach/goals", json={"player_id": player_id, "title": "Bad visibility", "visibility": "team"}, headers=auth_headers)).status_code == 422
+    assert (await client.post("/api/coach/goals", json={"player_id": player_id, "title": "Bad priority", "priority": "urgent"}, headers=auth_headers)).status_code == 422
+    assert (await client.post("/api/coach/goals", json={"player_id": player_id, "title": "Bad date", "target_date": "05/10/2026"}, headers=auth_headers)).status_code == 422
+
+    note_id = (await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 4,
+        "title": "Goal source note",
+        "visibility": "team",
+        "player_ids": [player_id],
+    }, headers=auth_headers)).json()["note"]["id"]
+    clip_id = (await client.post("/api/coach/clips", json={
+        "match_id": match_id,
+        "slot": "full",
+        "start_seconds": 1,
+        "end_seconds": 5,
+        "title": "Goal source clip",
+        "visibility": "team",
+        "player_ids": [player_id],
+    }, headers=auth_headers)).json()["clip"]["id"]
+    playlist_id = (await client.post("/api/coach/playlists", json={
+        "title": "Goal source playlist",
+        "visibility": "team",
+        "note_ids": [note_id],
+        "player_ids": [player_id],
+    }, headers=auth_headers)).json()["playlist"]["id"]
+    assert (await client.post("/api/coach/goals", json={
+        "player_id": player_id,
+        "title": "Dangling playlist item rejected",
+        "source_playlist_item_note_id": note_id,
+    }, headers=auth_headers)).status_code == 400
+    goal = (await client.post("/api/coach/goals", json={
+        "player_id": player_id,
+        "title": "Cleanup source refs",
+        "source_note_id": note_id,
+        "source_clip_id": clip_id,
+        "source_playlist_id": playlist_id,
+        "source_playlist_item_note_id": note_id,
+    }, headers=auth_headers)).json()["goal"]
+    assert (await client.patch(f"/api/coach/goals/{goal['id']}", json={"title": "   "}, headers=auth_headers)).status_code == 422
+    viewer_resp = await client.post("/api/users", json={"username": "blank_reflection_viewer", "password": "password123", "role": "viewer"}, headers=auth_headers)
+    await client.post("/api/coach/player-links", json={"player_id": player_id, "user_id": viewer_resp.json()["user"]["id"], "relationship": "parent"}, headers=auth_headers)
+    viewer_headers = await _login(client, "blank_reflection_viewer")
+    assert (await client.post(f"/api/my-feedback/goals/{goal['id']}/reflection", json={"reflection": "   "}, headers=viewer_headers)).status_code == 422
+
+    assert (await client.delete(f"/api/coach/notes/{note_id}", headers=auth_headers)).status_code == 200
+    after_note = (await client.get("/api/coach/goals", headers=auth_headers)).json()["goals"][0]
+    assert after_note["source_note_id"] is None
+    assert after_note["source_playlist_item_note_id"] is None
+
+    assert (await client.delete(f"/api/coach/clips/{clip_id}", headers=auth_headers)).status_code == 200
+    after_clip = (await client.get("/api/coach/goals", headers=auth_headers)).json()["goals"][0]
+    assert after_clip["source_clip_id"] is None
+
+    assert (await client.delete(f"/api/coach/playlists/{playlist_id}", headers=auth_headers)).status_code == 200
+    after_playlist = (await client.get("/api/coach/goals", headers=auth_headers)).json()["goals"][0]
+    assert after_playlist["source_playlist_id"] is None
+    assert after_playlist["source_playlist"] is None
+
+    player_to_delete = (await client.post("/api/coach/players", json={"display_name": "Delete Goal Owner"}, headers=auth_headers)).json()["player"]["id"]
+    delete_goal = (await client.post("/api/coach/goals", json={"player_id": player_to_delete, "title": "Deleted with player"}, headers=auth_headers)).json()["goal"]
+    assert (await client.delete(f"/api/coach/players/{player_to_delete}", headers=auth_headers)).status_code == 200
+    assert delete_goal["id"] not in [g["id"] for g in (await client.get("/api/coach/goals", headers=auth_headers)).json()["goals"]]
+
+
+@pytest.mark.asyncio
 async def test_v2_drawing_validation(client, auth_headers):
     match_resp = await client.post("/api/matches", json={
         "home_team": "OSU Steel",
@@ -2116,7 +2383,7 @@ async def test_dev_profile_empty_player_returns_zero_counts(client, auth_headers
     )
     assert resp.status_code == 200
     profile = resp.json()["profile"]
-    assert profile["counts"] == {"notes": 0, "clips": 0, "playlists": 0}
+    assert profile["counts"] == {"notes": 0, "clips": 0, "playlists": 0, "goals": 0}
     assert profile["recent_notes"] == []
     assert profile["recent_clips"] == []
     assert profile["recent_playlists"] == []

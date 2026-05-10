@@ -59,6 +59,11 @@ Additional guidance for Claude in this repo:
 - Deployment and troubleshooting docs live in `docs/DEPLOYMENT.md` and `docs/TROUBLESHOOTING.md`.
 - Larger feature designs can live in `specs/`; the coaching MVP design note is `specs/coaching-platform-design.md`.
 
+## Recent coaching phase implementation notes
+
+- **Player goals (Phase 7)** are first-class action items in `player_goals`, with visibility (`player`/`coach`, default `player`), priority (`low`/`medium`/`high`, default `medium`), optional `target_date`, `success_criteria`, coach-only `coach_private_note`, status history, and viewer reflections. Coach/admin APIs can create and manage goals from player profile, note, clip, playlist item, and observation contexts. Viewer APIs expose only active `visibility=player` goals for players linked to the signed-in user AND only source evidence that passes the existing note/clip/playlist visibility filters. Viewer payloads must scrub goal/note `coach_private_note` and never include another linked account's reflection/user id; recompute `latest_reflection` from the viewer-scoped reflection list. Goal source playlists must hydrate from viewer-filtered, scrubbed note items — never raw `_db.list_coaching_notes()` — or private note text can leak through nested playlist evidence. Delete paths for players/notes/clips/playlists must explicitly delete/null goal references because SQLite FK actions are not assumed to run.
+
+
 After every code change, update the relevant markdown files to stay in sync:
 
 - `ROADMAP.md` — mark completed items, add descriptions of what was done.

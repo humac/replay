@@ -34,11 +34,12 @@ import streams as _streams
 import uploads as _uploads
 from models import (
     CreateCoachingClipRequest, CreateCoachingNoteRequest, CreateCoachingPlaylistRequest,
-    CreateMatchRequest, CreatePlayerRequest, CreatePlayerUserLinkRequest,
+    CreateMatchRequest, CreatePlayerGoalReflectionRequest, CreatePlayerGoalRequest,
+    CreatePlayerRequest, CreatePlayerUserLinkRequest,
     CreateUploadSessionRequest, CreateUserRequest, LiveAuthRequest, LoginRequest,
     MarkCoachingReviewRequest, StartCaptureRequest, UnblockStreamRequest,
     UpdateCoachingClipRequest, UpdateCoachingNoteRequest, UpdateCoachingPlaylistRequest,
-    UpdateMatchRequest, UpdatePlayerRequest, UpdateUserRequest,
+    UpdateMatchRequest, UpdatePlayerGoalRequest, UpdatePlayerRequest, UpdateUserRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -1496,6 +1497,98 @@ def _filter_clips_for_user(clips: list[dict], user: dict) -> list[dict]:
     return visible
 
 
+_ACTIVE_GOAL_STATUSES = {"open", "in_progress", "needs_follow_up"}
+
+
+def _validate_goal_source_links(data: dict, player_id: str):
+    if not _db.get_player(player_id):
+        raise HTTPException(404, "Player not found")
+    note_id = data.get("source_note_id")
+    if note_id is not None:
+        note = _db.get_coaching_note(note_id)
+        if not note:
+            raise HTTPException(404, "Source note not found")
+        if player_id not in (note.get("player_ids") or []):
+            raise HTTPException(400, "Source note is not linked to this player")
+    clip_id = data.get("source_clip_id")
+    if clip_id is not None:
+        clip = _db.get_coaching_clip(clip_id)
+        if not clip:
+            raise HTTPException(404, "Source clip not found")
+        if player_id not in (clip.get("player_ids") or []):
+            raise HTTPException(400, "Source clip is not linked to this player")
+    playlist_id = data.get("source_playlist_id")
+    if data.get("source_playlist_item_note_id") is not None and playlist_id is None:
+        raise HTTPException(400, "source_playlist_id is required for a playlist item source")
+    if playlist_id is not None:
+        playlist = _db.get_coaching_playlist(playlist_id)
+        if not playlist:
+            raise HTTPException(404, "Source playlist not found")
+        item_note_id = data.get("source_playlist_item_note_id")
+        if player_id not in (playlist.get("player_ids") or []) and item_note_id is None:
+            raise HTTPException(400, "Source playlist is not linked to this player")
+        if item_note_id is not None:
+            if item_note_id not in (playlist.get("note_ids") or []):
+                raise HTTPException(400, "Playlist item is not in source playlist")
+            note = _db.get_coaching_note(item_note_id)
+            if not note or player_id not in (note.get("player_ids") or []):
+                raise HTTPException(400, "Playlist item is not linked to this player")
+    target_match_id = data.get("target_match_id")
+    if target_match_id and not _db.get_match_by_id(target_match_id):
+        raise HTTPException(404, "Target match not found")
+
+
+def _filter_goals_for_user(goals: list[dict], user: dict) -> list[dict]:
+    if _auth.has_role(user, "admin", "coach"):
+        return goals
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    return [
+        g for g in goals
+        if g.get("player_id") in linked_players
+        and g.get("status") in _ACTIVE_GOAL_STATUSES
+        and g.get("visibility", "player") == "player"
+    ]
+
+
+def _strip_goal_private_fields(goal: dict) -> dict:
+    out = dict(goal)
+    out["coach_private_note"] = ""
+    return out
+
+
+def _goal_with_visible_sources(goal: dict, user: dict) -> dict:
+    out = dict(goal)
+    if not _auth.has_role(user, "admin", "coach"):
+        out = _strip_goal_private_fields(out)
+        user_id = user.get("user_id")
+        reflections = [
+            {k: v for k, v in r.items() if k != "user_id"}
+            for r in (out.get("reflections") or [])
+            if r.get("user_id") == user_id
+        ]
+        out["reflections"] = reflections
+        out["latest_reflection"] = reflections[0] if reflections else None
+        out["needs_coach_follow_up"] = any(r.get("needs_coach_follow_up") for r in reflections)
+    note = _db.get_coaching_note(goal.get("source_note_id")) if goal.get("source_note_id") is not None else None
+    clip = _db.get_coaching_clip(goal.get("source_clip_id")) if goal.get("source_clip_id") is not None else None
+    playlist = _db.get_coaching_playlist(goal.get("source_playlist_id")) if goal.get("source_playlist_id") is not None else None
+    visible_notes = _filter_notes_for_user([note], user) if note else []
+    visible_clips = _filter_clips_for_user([clip], user) if clip else []
+    visible_playlists = _filter_playlists_for_user([playlist], user) if playlist else []
+    viewer_notes_source = _filter_notes_for_user(_db.list_coaching_notes(), user)
+    if not _auth.has_role(user, "admin", "coach"):
+        viewer_notes_source = [_strip_private_fields(n) for n in viewer_notes_source]
+        visible_notes = [_strip_private_fields(n) for n in visible_notes]
+    out["source_note"] = visible_notes[0] if visible_notes else None
+    out["source_clip"] = visible_clips[0] if visible_clips else None
+    out["source_playlist"] = _playlists_with_items(visible_playlists, viewer_notes_source)[0] if visible_playlists else None
+    return out
+
+
+def _goals_with_visible_sources(goals: list[dict], user: dict) -> list[dict]:
+    return [_goal_with_visible_sources(g, user) for g in goals]
+
+
 def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None) -> list[dict]:
     notes_by_id = {note["id"]: note for note in (notes if notes is not None else _db.list_coaching_notes())}
     hydrated = []
@@ -2437,6 +2530,64 @@ async def coach_regenerate_clip_thumbnail(clip_id: int, request: Request):
     return {"ok": True, "generated": ok}
 
 
+@app.get("/api/coach/goals")
+async def coach_list_goals(request: Request, player_id: str | None = None):
+    user = _require_coach(request)
+    goals = _db.list_player_goals(player_id=player_id)
+    return {"goals": _goals_with_visible_sources(goals, user)}
+
+
+@app.post("/api/coach/goals")
+async def coach_create_goal(request: Request, body: CreatePlayerGoalRequest):
+    user = _require_coach(request)
+    data = body.model_dump()
+    _validate_goal_source_links(data, data["player_id"])
+    goal = _db.create_player_goal(data, actor=user["username"])
+    _log_activity("coach.goal_created", severity="info", message=f"Player goal created: {goal.get('title')}", actor=user["username"], metadata={"goal_id": goal.get("id"), "player_id": goal.get("player_id")})
+    return {"ok": True, "goal": _goal_with_visible_sources(goal, user)}
+
+
+@app.patch("/api/coach/goals/{goal_id}")
+async def coach_update_goal(goal_id: int, request: Request, body: UpdatePlayerGoalRequest):
+    user = _require_coach(request)
+    existing = _db.get_player_goal(goal_id)
+    if not existing:
+        raise HTTPException(404, "Goal not found")
+    updates = body.model_dump(exclude_unset=True)
+    merged = {**existing, **updates}
+    _validate_goal_source_links(merged, existing["player_id"])
+    goal = _db.update_player_goal(goal_id, updates, actor=user["username"])
+    _log_activity("coach.goal_updated", severity="info", message=f"Player goal updated: {goal.get('title')}", actor=user["username"], metadata={"goal_id": goal_id, "fields": sorted(updates.keys())})
+    return {"ok": True, "goal": _goal_with_visible_sources(goal, user)}
+
+
+@app.delete("/api/coach/goals/{goal_id}")
+async def coach_delete_goal(goal_id: int, request: Request):
+    user = _require_coach(request)
+    existing = _db.get_player_goal(goal_id)
+    if not _db.delete_player_goal(goal_id):
+        raise HTTPException(404, "Goal not found")
+    _log_activity("coach.goal_deleted", severity="warning", message=f"Player goal deleted: {existing.get('title', goal_id) if existing else goal_id}", actor=user["username"], metadata={"goal_id": goal_id})
+    return {"ok": True}
+
+
+@app.get("/api/my-feedback/goals")
+async def my_feedback_goals(request: Request):
+    user = _auth.require_auth(request)
+    goals = _filter_goals_for_user(_db.list_player_goals(), user)
+    return {"goals": _goals_with_visible_sources(goals, user)}
+
+
+@app.post("/api/my-feedback/goals/{goal_id}/reflection")
+async def my_feedback_goal_reflection(goal_id: int, request: Request, body: CreatePlayerGoalReflectionRequest):
+    user = _auth.require_auth(request)
+    goal = _db.get_player_goal(goal_id)
+    if not goal or goal not in _filter_goals_for_user([goal], user):
+        raise HTTPException(404, "Goal not found")
+    reflection = _db.add_player_goal_reflection(goal_id, user.get("user_id"), body.reflection)
+    return {"ok": True, "reflection": {k: v for k, v in reflection.items() if k != "user_id"}}
+
+
 @app.get("/api/my-feedback")
 async def my_feedback(request: Request):
     user = _auth.require_auth(request)
@@ -2466,9 +2617,10 @@ async def my_feedback(request: Request):
     # the source note's body. The clip itself never carries text from
     # the source note's private fields.
     clips = _filter_clips_for_user(_db.list_coaching_clips(), user)
+    goals = _filter_goals_for_user(_db.list_player_goals(), user)
     return {
         "players": players, "notes": notes, "playlists": playlists,
-        "reviews": reviews, "clips": clips,
+        "reviews": reviews, "clips": clips, "goals": _goals_with_visible_sources(goals, user),
     }
 
 
@@ -2681,6 +2833,7 @@ def _build_player_development_profile(
     all_notes = _db.list_coaching_notes()
     all_clips = _db.list_coaching_clips()
     all_playlists = _db.list_coaching_playlists()
+    all_goals = _db.list_player_goals()
     if viewer_scoped:
         # Defense-in-depth: `_filter_notes_for_user` short-circuits for
         # admin/coach callers and returns the raw list (with
@@ -2697,16 +2850,20 @@ def _build_player_development_profile(
         ]
         clips_source = _filter_clips_for_user(all_clips, user)
         playlists_source = _filter_playlists_for_user(all_playlists, user)
+        goals_source = _goals_with_visible_sources(_filter_goals_for_user(all_goals, user), user)
     else:
         notes_source = all_notes
         clips_source = all_clips
         playlists_source = all_playlists
+        goals_source = _goals_with_visible_sources(all_goals, user)
 
     pid = player["id"]
     notes = _notes_for_player(notes_source, pid)
     clips = _clips_for_player(clips_source, pid)
     note_ids = {n["id"] for n in notes}
     playlists = _playlists_for_player(playlists_source, pid, note_ids)
+    goals = [g for g in goals_source if g.get("player_id") == pid]
+    active_goals = [g for g in goals if g.get("status") in _ACTIVE_GOAL_STATUSES]
 
     # Reviews on the viewer surface are scoped to the signed-in user so
     # other linked-account reviews never leak. On the coach surface we
@@ -2740,6 +2897,7 @@ def _build_player_development_profile(
             "notes": len(notes),
             "clips": len(clips),
             "playlists": len(playlists),
+            "goals": len(active_goals),
         },
         "themes": _theme_counts(notes),
         "review_status": review_summary,
@@ -2747,6 +2905,7 @@ def _build_player_development_profile(
         "recent_positives": recent_positives,
         "recent_corrections": recent_corrections,
         "recent_clips": clips_recent[:_RECENT_LIMIT],
+        "active_goals": active_goals,
         "recent_playlists": [
             {
                 "id": p["id"], "title": p.get("title") or "",

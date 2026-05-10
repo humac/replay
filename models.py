@@ -1037,6 +1037,164 @@ class MarkCoachingReviewRequest(BaseModel):
         return v.strip()
 
 
+_VALID_GOAL_STATUSES = {"open", "in_progress", "needs_follow_up", "achieved", "archived"}
+_VALID_GOAL_CONTEXTS = {"next_match", "next_training", "season_goal", "other"}
+_VALID_GOAL_VISIBILITIES = {"player", "coach"}
+_VALID_GOAL_PRIORITIES = {"low", "medium", "high"}
+
+
+def _strip_optional_text(v: str | None) -> str | None:
+    return v.strip() if isinstance(v, str) else v
+
+
+class CreatePlayerGoalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    player_id: str = Field(..., min_length=1, max_length=120)
+    title: str = Field(..., min_length=1, max_length=160)
+    description: str = Field("", max_length=2000)
+    visibility: str = Field("player")
+    priority: str = Field("medium")
+    target_date: str = Field("", max_length=10)
+    success_criteria: str = Field("", max_length=2000)
+    coach_private_note: str = Field("", max_length=2000)
+    context: str = Field("next_match")
+    status: str = Field("open")
+    source_note_id: Optional[int] = None
+    source_clip_id: Optional[int] = None
+    source_playlist_id: Optional[int] = None
+    source_playlist_item_note_id: Optional[int] = None
+    target_match_id: Optional[str] = Field(default=None, max_length=120)
+
+    @field_validator("title", "description", "player_id", "target_match_id", "success_criteria", "coach_private_note")
+    @classmethod
+    def strip_goal_text(cls, v: str | None) -> str | None:
+        return _strip_optional_text(v)
+
+    @model_validator(mode="after")
+    def reject_blank_required_goal_text(self):
+        if not self.player_id:
+            raise ValueError("player_id is required")
+        if not self.title:
+            raise ValueError("title is required")
+        return self
+
+    @field_validator("status")
+    @classmethod
+    def validate_goal_status(cls, v: str) -> str:
+        if v not in _VALID_GOAL_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(sorted(_VALID_GOAL_STATUSES))}")
+        return v
+
+    @field_validator("context")
+    @classmethod
+    def validate_goal_context(cls, v: str) -> str:
+        if v not in _VALID_GOAL_CONTEXTS:
+            raise ValueError(f"context must be one of: {', '.join(sorted(_VALID_GOAL_CONTEXTS))}")
+        return v
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_goal_visibility(cls, v: str) -> str:
+        if v not in _VALID_GOAL_VISIBILITIES:
+            raise ValueError(f"visibility must be one of: {', '.join(sorted(_VALID_GOAL_VISIBILITIES))}")
+        return v
+
+    @field_validator("priority")
+    @classmethod
+    def validate_goal_priority(cls, v: str) -> str:
+        if v not in _VALID_GOAL_PRIORITIES:
+            raise ValueError(f"priority must be one of: {', '.join(sorted(_VALID_GOAL_PRIORITIES))}")
+        return v
+
+    @field_validator("target_date")
+    @classmethod
+    def validate_goal_target_date(cls, v: str) -> str:
+        v = v.strip()
+        if v and not _DATE_RE.match(v):
+            raise ValueError("target_date must be empty or YYYY-MM-DD")
+        return v
+
+
+class UpdatePlayerGoalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    visibility: Optional[str] = None
+    priority: Optional[str] = None
+    target_date: Optional[str] = Field(default=None, max_length=10)
+    success_criteria: Optional[str] = Field(default=None, max_length=2000)
+    coach_private_note: Optional[str] = Field(default=None, max_length=2000)
+    context: Optional[str] = None
+    status: Optional[str] = None
+    source_note_id: Optional[int] = None
+    source_clip_id: Optional[int] = None
+    source_playlist_id: Optional[int] = None
+    source_playlist_item_note_id: Optional[int] = None
+    target_match_id: Optional[str] = Field(default=None, max_length=120)
+
+    @field_validator("title", "description", "target_match_id", "target_date", "success_criteria", "coach_private_note")
+    @classmethod
+    def strip_goal_text(cls, v: str | None) -> str | None:
+        return _strip_optional_text(v)
+
+    @model_validator(mode="after")
+    def reject_blank_goal_title(self):
+        if self.title is not None and not self.title:
+            raise ValueError("title is required")
+        return self
+
+    @field_validator("status")
+    @classmethod
+    def validate_goal_status(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreatePlayerGoalRequest.validate_goal_status(v)
+
+    @field_validator("context")
+    @classmethod
+    def validate_goal_context(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreatePlayerGoalRequest.validate_goal_context(v)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_goal_visibility(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreatePlayerGoalRequest.validate_goal_visibility(v)
+
+    @field_validator("priority")
+    @classmethod
+    def validate_goal_priority(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreatePlayerGoalRequest.validate_goal_priority(v)
+
+    @field_validator("target_date")
+    @classmethod
+    def validate_goal_target_date(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return CreatePlayerGoalRequest.validate_goal_target_date(v)
+
+
+class CreatePlayerGoalReflectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reflection: str = Field(..., min_length=1, max_length=1000)
+
+    @field_validator("reflection")
+    @classmethod
+    def strip_reflection(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("reflection is required")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Phase 4a — Coaching clips
 #

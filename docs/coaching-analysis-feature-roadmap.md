@@ -64,14 +64,16 @@ Computer vision can later help Replay find candidate moments, player tracks, tac
 - ✅ Phase 3 — Per-note thumbnails and clip scanability — **complete**
 - ✅ Phase 4 — First-class clip builder (incl. per-clip thumbnails) — **complete**
 - ✅ Phase 5 — Player development profiles — **complete**
-- 🟢 Phase 6 — Coach observations and tactical board — **in progress**
+- ✅ Phase 6 — Coach observations and tactical board — **complete**
   - ✅ 6a — Observation note backend
   - ✅ 6b — Coach observation composer
   - ✅ 6c — Tactical board MVP
-  - ⏭️ 6d-1 — Unified Coach Review source modes and creation routing — **next**
-  - ⏳ 6d-2 — Tactical board authoring improvements and formations
-  - ⏳ 6e — Observation rendering polish in My Feedback and Player Development
-- ⏳ Phases 7–17 — not started
+  - ✅ 6d-1 — Unified Coach Review source modes and creation routing
+  - ✅ 6d-2 — Tactical board authoring improvements and formations
+  - ✅ 6e — Unified viewer review modal for My Feedback / Player Development
+- ✅ Phase 7 — Action items and next-match goals — **complete**
+- ⏭️ Phase 8 — Match coaching summaries — **next**
+- ⏳ Phases 8–17 — not started
 
 See `ROADMAP.md` for the per-PR completion log and exact dates.
 
@@ -502,11 +504,13 @@ Video notes still require `match_id`, `slot`, `timestamp_seconds`. Observation n
 - The MVP does not include drill libraries, multi-frame animations, PDF export, kit-color theming, or AI tactical analysis.
 - A board preview/thumbnail can be generated later for scanability in Coach Notes, My Feedback, and Player Development Profiles. The MVP only requires editable coach rendering and read-only viewer rendering; thumbnail generation can be deferred.
 
-### Subphase 6d-1 — Unified Coach Review source modes and creation routing ⏭️ NEXT
+### Subphase 6d-1 — Unified Coach Review source modes and creation routing ✅ COMPLETE
 
 > **Why 6d was split.** The original Phase 6d combined two large pieces of work: (a) the unified authoring routing (move all creation entry points into Coach Review) and (b) tactical-board tool parity + formations. Each is a substantial PR on its own. 6d-1 ships the routing correction with the existing Phase 6c board tools mostly as-is; 6d-2 evolves the board authoring tools afterwards.
 
 > **Why this subphase exists.** UX testing of 6a/6b/6c surfaced a creation-flow problem: New Note, New Observation, and New Clip all open list-management modals, and the tactical board editor inside the observation modal is cramped and disconnected from the existing Coach Review telestration mental model. The product correction is to make Coach Review the single creation workspace (video notes, video clips, tactical-board observations) and reduce the Coach > Notes / Clips / Playlists / Roster pages to **management surfaces** (view / edit / delete / route to Review). The Phase 6a backend, the Phase 6b composer-side fields, and the Phase 6c board schema + SVG renderer are all retained — 6d-1 is a workflow correction, not a rewrite.
+
+**Shipped:** Coach Review gained Video / Tactical Board source modes. Creation entry points for new notes, clips, and observations now route into Coach Review while list pages remain management surfaces.
 
 #### Goal
 
@@ -577,11 +581,13 @@ A new top-of-Review toggle picks the authoring source:
 - No new public board endpoint.
 - Privacy rules unchanged.
 
-### Subphase 6d-2 — Tactical board authoring improvements and formations
+### Subphase 6d-2 — Tactical board authoring improvements and formations ✅ COMPLETE
 
 #### Goal
 
 Now that the routing is fixed (6d-1), evolve the tactical board authoring tools so the surface feels closer to the existing video telestration mental model and ships formation presets that match youth game formats.
+
+**Shipped:** Tactical Board mode now supports drag-to-draw arrows/lines/zones, freehand strokes, resizeable zones, keyboard shortcuts, color and stroke-width parity with the video telestrator, and 7v7 / 9v9 / 11v11 formation presets with optional `game_format` / `formation` metadata in `tactical_board_json`.
 
 #### Tactical board tool parity
 
@@ -672,15 +678,15 @@ Implement the subphases in order; each one is a self-contained ship-target:
 - **6a** ✅ — backend model + API support for observation notes, no board UI yet.
 - **6b** ✅ — Coach observation composer, text-only observation notes (no tactical board yet).
 - **6c** ✅ — tactical board editor and read-only viewer.
-- **6d-1** ⏭️ — **next** — Unified Coach Review source modes and creation routing (creation moves to Coach Review for video notes, video clips, and tactical-board observations; Coach > Notes / Clips / Playlists / Roster become management surfaces; reuses existing Phase 6c board tools as-is — NO formation selector, NO tool-parity work).
-- **6d-2** — Tactical board authoring improvements and formations (drag-to-draw arrows, freehand, resizeable zone box; 7v7 / 9v9 / 11v11 game-format selector + per-format formation presets; persists `game_format` + `formation` in `tactical_board_json` metadata).
-- **6e** — Observation rendering polish in My Feedback and Player Development Profile (deferred until after 6d-1 + 6d-2 so polish targets the corrected creation flow + final tool set).
+- **6d-1** ✅ — Unified Coach Review source modes and creation routing (creation moved to Coach Review for video notes, video clips, and tactical-board observations; Coach > Notes / Clips / Playlists / Roster became management surfaces).
+- **6d-2** ✅ — Tactical board authoring improvements and formations (drag-to-draw arrows, freehand, resizeable zone box; 7v7 / 9v9 / 11v11 game-format selector + per-format formation presets; persists `game_format` + `formation` in `tactical_board_json` metadata).
+- **6e** ✅ — Unified viewer review modal for My Feedback / Player Development (one focused-feedback modal for video notes, observation notes, tactical-board observations, and clips; compact cards route into that modal).
 
-Phase 6a, 6b, and 6c have already shipped (see ROADMAP.md for completion entries). Use only the per-subphase prompts below when launching 6d-1 / 6d-2 / 6e — there is no longer a single all-in-one Phase 6 prompt because following one would re-implement work that's already merged. Individual implementation PRs should remain split by subphase. Do not bundle them.
+Phase 6a through 6e have shipped (see ROADMAP.md for completion entries). The 6d-1 / 6d-2 prompts below are retained as historical implementation references, not current handoff prompts. **Phase 7 is now the active next implementation target.**
 
 ### Phase 6d-1 coding agent prompt — Unified Coach Review source modes and creation routing
 
-> **Status: NEXT.** This is the only Phase 6 coding-agent prompt that should be handed off right now. 6a / 6b / 6c are merged. 6d-2 and 6e prompts below are FUTURE — do not start them yet.
+> **Status: COMPLETE / historical reference.** Do not hand this off as new work; the current next target is Phase 7.
 
 ```text
 - Start from latest main.
@@ -726,7 +732,7 @@ Phase 6a, 6b, and 6c have already shipped (see ROADMAP.md for completion entries
 
 ### Phase 6d-2 coding agent prompt — Tactical board authoring improvements and formations
 
-> **Status: FUTURE — do not start yet.** Wait until Phase 6d-1 is merged. Hand this prompt to a coding agent only after 6d-1 lands on main.
+> **Status: COMPLETE / historical reference.** Do not hand this off as new work; the current next target is Phase 7.
 
 ```text
 - Do not start until 6d-1 is merged. Start from latest main with the 6d-1 routing model already in place.
@@ -797,8 +803,14 @@ Turn feedback into practical next steps.
    - description
    - source_note_id optional
    - source_clip_id optional
+   - source_playlist_id / source_playlist_item_note_id optional
    - target_match_id optional
-   - status: open, in_progress, achieved, archived
+   - visibility: player, coach (default player)
+   - priority: low, medium, high (default medium)
+   - target_date: empty or YYYY-MM-DD
+   - success_criteria
+   - coach_private_note (coach/admin only; scrubbed from viewer payloads)
+   - status: open, in_progress, needs_follow_up, achieved, archived
    - due/context: next match, next training, season goal
 3. My Feedback shows current goals.
 4. Coach can mark achieved or needs follow-up.
@@ -811,10 +823,24 @@ Turn feedback into practical next steps.
 - Goals can be linked to video evidence.
 - Status changes are tracked.
 
+### Suggested PR split
+
+Keep Phase 7 small enough to validate in the existing test suite and browser QA flow:
+
+1. **PR 11a — Goals backend**
+   - Add `player_goals` persistence, source references, Pydantic models, and coach/admin + viewer-scoped endpoints.
+   - Cover role access, source-link validation, status transitions, and viewer privacy in tests.
+2. **PR 11b — Coach goal UI**
+   - Add goal creation from player profile, note, clip, playlist item, and observation contexts.
+   - Add coach-side active/archived goal lists and status controls.
+3. **PR 11c — My Feedback goals + reflections**
+   - Show active goals to linked players/families.
+   - Allow player/family reflection and surface reflections needing coach follow-up.
+
 ### Coding agent prompt
 
 ```text
-Implement player action items and next-match goals. Add a data model for player_goals with source note/clip references, status, title, description, and context such as next match or next training. Add Coach UI to create a goal from a note, clip, playlist item, or player profile. Add My Feedback display for active goals and allow player/family reflection. Add coach controls to mark goals achieved, needs follow-up, or archived. Add tests for role access and privacy.
+Implement Phase 7 in small PRs. Start with player action items and next-match goals. Add a data model for player_goals with source note/clip/playlist references, status, title, description, and context such as next match, next training, or season goal. Add Coach UI to create a goal from a note, clip, playlist item, observation note, or player profile. Add My Feedback display for active goals and allow player/family reflection. Add coach controls to mark goals achieved, needs follow-up, or archived. Keep privacy rules aligned with player-user links and source visibility. Add tests for role access, source-link validation, privacy, and status transitions.
 ```
 
 ---
@@ -1486,7 +1512,7 @@ Includes:
 - no drill libraries, animations, PDF export, or AI tactical analysis
 - tests / Playwright screenshots where applicable
 
-## PR 8: Unified Coach Review source modes and creation routing
+## PR 8: Unified Coach Review source modes and creation routing ✅ COMPLETE
 
 Includes:
 
@@ -1505,7 +1531,7 @@ Includes:
 - Privacy rules unchanged
 - tests / Playwright screenshots where applicable
 
-## PR 9: Tactical board authoring improvements and formations
+## PR 9: Tactical board authoring improvements and formations ✅ COMPLETE
 
 Includes:
 
@@ -1528,20 +1554,19 @@ Includes:
 - Privacy rules unchanged
 - tests / Playwright screenshots where applicable
 
-## PR 10: Observation rendering polish in My Feedback and Development Profiles
+## PR 10: Unified viewer review modal for My Feedback and Development Profiles ✅ COMPLETE
 
 Includes:
 
 - Phase 6e
-- My Feedback > Notes rendering polish for observation notes
-- Read-only tactical board display polish
-- Player Development Profile integration polish
-- clear observation labels:
-  - "Practice observation"
-  - "Tactical note"
-  - "Coach observation"
+- compact My Feedback Notes / Clips cards that open the focused-feedback modal
+- one unified review surface for video notes, observation notes, tactical-board observations, and clips
+- read-only tactical board display inside the modal for observation notes
+- Player Development Profile recent notes/clips routing into the same modal
+- clear modal titles and context labels for video notes, observations, tactical observations, clips, and playlists
 - tactical board sketches follow parent note visibility rules
-- privacy tests / browser QA
+- `coach_private_note` stays absent from the API payload and DOM for viewer surfaces
+- privacy tests / Playwright browser QA
 - No major My Feedback redesign (separate from issue #82 look-and-feel planning)
 - No changes to creation workflow
 
@@ -1550,9 +1575,9 @@ Includes:
 Includes:
 
 - Phase 7
-- player goals data model and endpoints
-- Coach UI to create goals from notes, clips, playlist items, observation notes, or player profile
-- My Feedback display for active goals and reflections
+- PR 11a: player goals data model, source references, endpoints, access-control tests
+- PR 11b: Coach UI to create goals from notes, clips, playlist items, observation notes, or player profile
+- PR 11c: My Feedback display for active goals, player/family reflections, and coach follow-up surfaces
 - coach controls for achieved / needs follow-up / archived
 - tests
 
