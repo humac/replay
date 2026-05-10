@@ -168,6 +168,7 @@ Default names:
 - Use `_migrate_v14` for additive tables/columns/backfill.
 - Create one default team and one default season.
 - Backfill users whose role contains `admin`, `coach`, `viewer`, or player/family capabilities into appropriate default memberships.
+- Goals and summaries are not ignored by this phase: membership/backfill helpers must account for Phase 7 `player_goals` and Phase 8 `coaching_match_summaries` in later PR 1.2 scope backfill.
 - Add helpers to fetch default team/season and user memberships.
 - Defer `organizations`; do not add `organization_id` yet.
 
@@ -196,11 +197,12 @@ Default names:
 
 **Player-link decision:**
 
-`player_user_links` are team-scoped and season-independent for the first implementation. If future season-specific guardianship is required, add nullable `season_id`; `NULL` means the link applies across seasons for that team.
+`player_user_links` are team-scoped and season-independent for the first implementation. If future season-specific guardianship is required, add nullable `season_id`; `NULL` means the link applies across seasons for that team. A guardian who needs to see two kids on different teams has two `player_user_links` rows, one per team/player relationship; uniqueness constraints must allow the same `user_id` to appear across multiple teams.
 
 **Backfill rules:**
 
 - Existing rows get default `team_id`.
+- Existing `player_user_links` rows get default `team_id`.
 - Existing matches get default `season_id`.
 - Existing players get default `season_id` unless the implementation intentionally leaves player season optional.
 - Coaching objects linked to a match inherit match team/season.
@@ -301,7 +303,7 @@ Default names:
 - Pass `team_id` into DB queries and visibility helpers.
 - Add optional `team_id` / `team` / `season_id` query parameters where needed.
 - Viewer/family endpoints return empty or `404` for unrelated scoped resources.
-- Direct object routes must validate the object belongs to the resolved team.
+- Direct object routes must validate the object belongs to the resolved team. Checklist includes, but is not limited to: `/api/coach/notes/{id}`, `/api/coach/notes/{id}/thumbnail`, `/api/coach/notes/{id}/thumbnail/regenerate`, `/api/coach/clips/{id}`, `/api/coach/clips/{id}/thumbnail`, `/api/coach/clips/{id}/thumbnail/regenerate`, `/api/coach/playlists/{id}`, `/api/coach/players/{id}/development`, `/api/coach/players/{id}/goals`, `/api/coach/match-summaries/{id}`, `/api/my-feedback/notes/{id}`, `/api/my-feedback/clips/{id}`, `/api/my-feedback/playlists/{id}`, and `/api/my-feedback/players/{id}/development`. Thumbnail GETs are canonical privacy-bypass routes and must be tested explicitly.
 
 **Tests:**
 
@@ -506,6 +508,7 @@ Default names:
 - Switching teams changes roster/content.
 - Switching seasons changes match/coaching content where season-scoped.
 - No stale cross-team data remains after switch.
+- Playwright assertion: after switching teams, no DOM element containing previous-team data remains visible for more than 100 ms after the switch action resolves.
 - Single-team default behavior remains unchanged.
 
 ---
@@ -563,6 +566,7 @@ Default names:
 - Keep one `window.app` assembly path.
 - Do not add Vite or any build tool.
 - Preserve inline handlers and templates.
+- Do not add a new Coach top-level Goals tab unless a later product decision says to. Keep goals surfaced through the current roster/player-development flow or document the exact existing placement before moving it.
 
 **Tests:**
 
@@ -610,6 +614,7 @@ Default names:
 - Keep SQLite as local/dev/single-laptop backend only if feasible.
 - Use Postgres with `psycopg` v3 and connection pooling for production.
 - Define how `_migrate_v0..v15` maps to a baseline.
+- Define the post-baseline migration contract: after Alembic adopts the baseline, `db.py`'s `_run_migrations` path is replaced by an Alembic invocation. The `_MIGRATIONS` list becomes a compatibility shim that runs Alembic to head rather than a parallel migration system. The SQLite dev lane uses the same Alembic invocation with a SQLite URL so the dev path does not drift.
 - Confirm no `pgvector` for drafting MVP.
 
 ### PR 6.2: Postgres Compose And Test Lane
@@ -649,7 +654,7 @@ Default names:
 **Key changes:**
 
 - Add durable job lifecycle helpers.
-- Keep existing transcode execution path initially, but record status where useful.
+- Transcodes get `background_jobs` rows and lifecycle status, but execution remains in-process for this PR; do not leave a half-migrated path where only some transcode types write job rows without a documented reason.
 - Reuse this table for AI drafting jobs instead of making an AI-only queue.
 - Make job access team-scoped.
 
@@ -712,11 +717,12 @@ Default names:
 - `ai.never_draft_for_visibilities`: array enum `private`, `player`.
 - `notes.default_visibility`: optional early coaching default if easy.
 - `summaries.default_visibility`: optional early coaching default if easy.
-- `goals.default_visibility`: optional early coaching default if easy.
+- `goals.default_visibility`: optional early coaching default if easy. Use the goal-specific enum from `_VALID_GOAL_VISIBILITIES` (`player`, `coach`), not the four-value coaching visibility enum.
 
 **Permanent exclusions:**
 
 - No setting may allow drafting or context inclusion for `coach_private_note`.
+- Phase 7 does not add self-serve family/player linking. Until Phase 9 ships invites/import/linking flows, family/player accounts continue to be created and linked by admins or existing user CRUD.
 
 **Tests:**
 
@@ -806,7 +812,7 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Support evidence references from notes, clips, playlists, goals, summaries, engagement, and development profile only when allowed.
 - Prefer compact evidence references over raw full dumps.
 - Exclude `coach_private_note` always.
-- Exclude private notes/playlist descriptions/tactical board JSON unless explicitly reviewed and allowed for a coach-private draft target.
+- Exclude private notes, private playlist descriptions, and tactical board JSON from AI context in the MVP. Do not add an escape hatch in Phase 8; if a later product decision wants this, it needs a separate policy setting, threat model, and canary tests.
 
 **Tests:**
 
@@ -974,7 +980,8 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Preview performs no DB writes.
 - Support duplicate detection, partial failures, re-import behavior.
 - Guardian emails create/link invites/accounts.
-- One guardian can link to multiple players.
+- One guardian can link to multiple players, including players on different teams via separate team-scoped links.
+- Until this phase ships, family/player accounts continue to be created by admins via existing user CRUD/linking flows; there is no self-serve linking path from Phase 7 alone.
 
 **Tests:**
 
@@ -1059,6 +1066,8 @@ npm run capture-phase-8
 npm run capture-phase-9
 ```
 
+Each new phase that ships UI changes must add a corresponding `capture-phase-NN` script in `tests/e2e/package.json` and a spec under `tests/e2e/`, or explicitly document why an existing capture covers it.
+
 On `main`, restore unintentional generated screenshot/capture diffs unless Huy explicitly asks to keep or commit them.
 
 ### Tenancy-Specific Validation
@@ -1138,6 +1147,7 @@ As phases land, update relevant living docs when behavior, commands, architectur
 - `docs/admin-guide.md`
 - `docs/coach-guide.md`
 - `docs/coaching-analysis-feature-roadmap.md`
+- `specs/coaching-platform-design.md`
 - this plan, if phase ordering changes
 
 Completion reports for each PR must state:
