@@ -493,6 +493,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Strict mode catches omitted `team_id` in representative helper calls.
 - Non-strict legacy fallback still works where needed for transition.
 
+**Implementation note (feat/platform-pr2-5-strict-tenancy):** Tests now default `REPLAY_STRICT_TENANCY=1` in `tests/conftest.py`. Tenant-aware DB helpers for users, players, and player links raise when called without `team_id` under strict mode unless the call site explicitly marks a documented global/legacy read with `allow_unscoped=True`; production keeps the legacy fallback unless the environment variable is enabled.
+
 ---
 
 ## Phase 3 — Backend Router And Service Split
