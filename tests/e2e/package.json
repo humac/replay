@@ -10,7 +10,8 @@
     "capture-phase-6d1": "playwright test phase-6d1-capture.spec.js --project=chromium --workers=2",
     "capture-phase-6d2": "playwright test phase-6d2-capture.spec.js --project=chromium --workers=1",
     "capture-phase-6e":  "playwright test phase-6e-capture.spec.js --project=chromium --workers=1",
-    "capture-phase-7":   "playwright test phase-7-goals.spec.js --project=chromium --workers=1"
+    "capture-phase-7":   "playwright test phase-7-goals.spec.js --project=chromium --workers=1",
+    "capture-phase-8":   "playwright test phase-8-match-summaries.spec.js --project=chromium --workers=1"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1"

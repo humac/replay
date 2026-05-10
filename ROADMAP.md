@@ -6,6 +6,19 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Coaching Analysis Phase 8 — Match Coaching Summaries ✅ COMPLETE (2026-05-09)
+
+Adds coach-authored match-level summaries that turn individual notes, clips, and playlists into a readable post-match coaching narrative for players and families.
+
+- **Schema/API** (`db.py`, `models.py`, `server.py`): match summaries persist structured text plus linked note/clip/playlist evidence tables. Create/update validation requires at least one meaningful text field after merging PATCH updates with the existing row.
+- **Cleanup**: summary child-reference tables are explicitly cleaned when referenced notes/clips/playlists are deleted, and summaries are cleaned with removed matches where applicable; this mirrors the repo's manual-cleanup pattern instead of relying on SQLite cascades.
+- **Privacy**: viewer summary endpoints surface only team/player-visible summaries and only scrubbed, visible source evidence. Seed/E2E canaries prove private linked source IDs/text do not appear in viewer surfaces.
+- **UI** (`index.html`, `js/api.js`, `js/coaching.js`): Coach match-summary list and edit modal support summary authoring; viewer My Feedback exposes a match-summaries list with source evidence rendered through the existing privacy-safe card primitives. The edit modal no longer advertises an ignored match selector.
+- **Evidence**: Playwright screenshots live in `docs/screenshots/phase-8-match-summaries/`.
+- **Validation**: `pytest -q -k "match_summary or summary"` → 5 passed; `npm run capture-phase-8` → 3 passed; `node --check` and backend `py_compile` clean.
+
+**Next**: Phase 9 — Coach engagement dashboard.
+
 ## Coaching Analysis Phase 7 — Player Goals and Action Plans ✅ COMPLETE (2026-05-09)
 
 Turns derived focus areas into first-class player action items. Coaches can create goals from player profiles, notes, clips, playlist items, and observation contexts; players/families see active goals in My Feedback and can add reflections for coach follow-up.
@@ -18,6 +31,7 @@ Turns derived focus areas into first-class player action items. Coaches can crea
 - **Validation**: `pytest -q tests/test_coaching.py` → 155 passed; `npm run capture-phase-7` → 3 passed; `node --check` and backend `py_compile` clean.
 
 **Next**: Phase 8 — Match coaching summaries.
+
 
 ---
 

@@ -694,10 +694,75 @@ def _migrate_v12(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_player_goal_reflections_user ON player_goal_reflections(user_id)")
 
 
+def _migrate_v13(conn: sqlite3.Connection):
+    """Add match-level coaching summaries (Phase 8)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_match_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            visibility TEXT NOT NULL DEFAULT 'private',
+            team_positives TEXT NOT NULL DEFAULT '',
+            team_improvements TEXT NOT NULL DEFAULT '',
+            training_focus TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_match_summaries_match "
+        "ON coaching_match_summaries(match_id, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coaching_match_summaries_visibility "
+        "ON coaching_match_summaries(visibility)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_match_summary_notes (
+            summary_id INTEGER NOT NULL,
+            note_id INTEGER NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(summary_id, note_id),
+            FOREIGN KEY(summary_id) REFERENCES coaching_match_summaries(id) ON DELETE CASCADE,
+            FOREIGN KEY(note_id) REFERENCES coaching_notes(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_match_summary_clips (
+            summary_id INTEGER NOT NULL,
+            clip_id INTEGER NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(summary_id, clip_id),
+            FOREIGN KEY(summary_id) REFERENCES coaching_match_summaries(id) ON DELETE CASCADE,
+            FOREIGN KEY(clip_id) REFERENCES coaching_clips(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_match_summary_playlists (
+            summary_id INTEGER NOT NULL,
+            playlist_id INTEGER NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(summary_id, playlist_id),
+            FOREIGN KEY(summary_id) REFERENCES coaching_match_summaries(id) ON DELETE CASCADE,
+            FOREIGN KEY(playlist_id) REFERENCES coaching_playlists(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
-    _migrate_v10, _migrate_v11, _migrate_v12,
+    _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13,
 ]
 
 
@@ -860,8 +925,47 @@ def save_matches_unlocked(matches: list[dict]):
 
         removed_ids = existing_ids - next_ids
         if removed_ids:
+            for match_id in removed_ids:
+                _delete_match_coaching_children(conn, match_id)
             conn.executemany("DELETE FROM matches WHERE id = ?", [(mid,) for mid in removed_ids])
 
+        conn.commit()
+
+
+def _delete_match_coaching_children(conn: sqlite3.Connection, match_id: str) -> None:
+    """Delete coaching rows tied to a match without relying on FK cascades."""
+    summary_rows = conn.execute("SELECT id FROM coaching_match_summaries WHERE match_id = ?", (match_id,)).fetchall()
+    for row in summary_rows:
+        summary_id = row["id"]
+        conn.execute("DELETE FROM coaching_match_summary_notes WHERE summary_id = ?", (summary_id,))
+        conn.execute("DELETE FROM coaching_match_summary_clips WHERE summary_id = ?", (summary_id,))
+        conn.execute("DELETE FROM coaching_match_summary_playlists WHERE summary_id = ?", (summary_id,))
+    conn.execute("DELETE FROM coaching_match_summaries WHERE match_id = ?", (match_id,))
+
+    clip_rows = conn.execute("SELECT id FROM coaching_clips WHERE match_id = ?", (match_id,)).fetchall()
+    for row in clip_rows:
+        clip_id = row["id"]
+        conn.execute("DELETE FROM coaching_match_summary_clips WHERE clip_id = ?", (clip_id,))
+        conn.execute("DELETE FROM coaching_clip_players WHERE clip_id = ?", (clip_id,))
+        conn.execute("UPDATE player_goals SET source_clip_id = NULL WHERE source_clip_id = ?", (clip_id,))
+    conn.execute("DELETE FROM coaching_clips WHERE match_id = ?", (match_id,))
+
+    note_rows = conn.execute("SELECT id FROM coaching_notes WHERE match_id = ?", (match_id,)).fetchall()
+    for row in note_rows:
+        note_id = row["id"]
+        conn.execute("DELETE FROM coaching_match_summary_notes WHERE note_id = ?", (note_id,))
+        conn.execute("DELETE FROM coaching_note_players WHERE note_id = ?", (note_id,))
+        conn.execute("DELETE FROM coaching_note_tags WHERE note_id = ?", (note_id,))
+        conn.execute("DELETE FROM coaching_playlist_items WHERE note_id = ?", (note_id,))
+        conn.execute("DELETE FROM coaching_reviews WHERE note_id = ?", (note_id,))
+        conn.execute("UPDATE player_goals SET source_note_id = NULL WHERE source_note_id = ?", (note_id,))
+        conn.execute("UPDATE player_goals SET source_playlist_item_note_id = NULL WHERE source_playlist_item_note_id = ?", (note_id,))
+    conn.execute("DELETE FROM coaching_notes WHERE match_id = ?", (match_id,))
+
+
+def delete_match_coaching_children(match_id: str) -> None:
+    with connect() as conn:
+        _delete_match_coaching_children(conn, match_id)
         conn.commit()
 
 
@@ -1391,6 +1495,7 @@ def delete_coaching_note(note_id: int) -> bool:
         conn.execute("DELETE FROM coaching_note_tags WHERE note_id = ?", (note_id,))
         conn.execute("DELETE FROM coaching_playlist_items WHERE note_id = ?", (note_id,))
         conn.execute("DELETE FROM coaching_reviews WHERE note_id = ?", (note_id,))
+        conn.execute("DELETE FROM coaching_match_summary_notes WHERE note_id = ?", (note_id,))
         # Phase 4a: clips reference notes via `source_note_id`. The
         # column has `ON DELETE SET NULL` declared, but SQLite needs
         # `PRAGMA foreign_keys = ON` for that to fire and the rest of
@@ -1530,6 +1635,7 @@ def delete_coaching_playlist(playlist_id: int) -> bool:
         conn.execute("DELETE FROM coaching_playlist_items WHERE playlist_id = ?", (playlist_id,))
         conn.execute("DELETE FROM coaching_playlist_players WHERE playlist_id = ?", (playlist_id,))
         conn.execute("DELETE FROM coaching_reviews WHERE playlist_id = ?", (playlist_id,))
+        conn.execute("DELETE FROM coaching_match_summary_playlists WHERE playlist_id = ?", (playlist_id,))
         conn.execute(
             "UPDATE player_goals SET source_playlist_id = NULL, source_playlist_item_note_id = NULL WHERE source_playlist_id = ?",
             (playlist_id,),
@@ -1743,6 +1849,7 @@ def update_coaching_clip(clip_id: int, data: dict) -> dict | None:
 def delete_coaching_clip(clip_id: int) -> bool:
     with connect() as conn:
         conn.execute("DELETE FROM coaching_clip_players WHERE clip_id = ?", (clip_id,))
+        conn.execute("DELETE FROM coaching_match_summary_clips WHERE clip_id = ?", (clip_id,))
         conn.execute(
             "UPDATE player_goals SET source_clip_id = NULL WHERE source_clip_id = ?",
             (clip_id,),
@@ -1894,6 +2001,175 @@ def add_player_goal_reflection(goal_id: int, user_id: str, reflection: str) -> d
         item = dict(row)
         item["needs_coach_follow_up"] = bool(item.get("needs_coach_follow_up"))
         return item
+
+
+# Match-level coaching summaries (Phase 8)
+# ---------------------------------------------------------------------------
+
+
+def _summary_child_data(conn: sqlite3.Connection, summary_ids: list[int]) -> tuple[dict[int, list[int]], dict[int, list[int]], dict[int, list[int]]]:
+    if not summary_ids:
+        return {}, {}, {}
+    placeholders = ",".join("?" for _ in summary_ids)
+    notes: dict[int, list[int]] = {summary_id: [] for summary_id in summary_ids}
+    clips: dict[int, list[int]] = {summary_id: [] for summary_id in summary_ids}
+    playlists: dict[int, list[int]] = {summary_id: [] for summary_id in summary_ids}
+    for row in conn.execute(
+        f"SELECT summary_id, note_id FROM coaching_match_summary_notes WHERE summary_id IN ({placeholders}) ORDER BY position",
+        summary_ids,
+    ).fetchall():
+        notes.setdefault(row["summary_id"], []).append(row["note_id"])
+    for row in conn.execute(
+        f"SELECT summary_id, clip_id FROM coaching_match_summary_clips WHERE summary_id IN ({placeholders}) ORDER BY position",
+        summary_ids,
+    ).fetchall():
+        clips.setdefault(row["summary_id"], []).append(row["clip_id"])
+    for row in conn.execute(
+        f"SELECT summary_id, playlist_id FROM coaching_match_summary_playlists WHERE summary_id IN ({placeholders}) ORDER BY position",
+        summary_ids,
+    ).fetchall():
+        playlists.setdefault(row["summary_id"], []).append(row["playlist_id"])
+    return notes, clips, playlists
+
+
+def _row_to_match_summary(
+    row: sqlite3.Row,
+    note_ids: list[int] | None = None,
+    clip_ids: list[int] | None = None,
+    playlist_ids: list[int] | None = None,
+) -> dict:
+    return {
+        "id": row["id"],
+        "match_id": row["match_id"],
+        "visibility": row["visibility"],
+        "team_positives": row["team_positives"] or "",
+        "team_improvements": row["team_improvements"] or "",
+        "training_focus": row["training_focus"] or "",
+        "body": row["body"] or "",
+        "created_by": row["created_by"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "note_ids": note_ids or [],
+        "clip_ids": clip_ids or [],
+        "playlist_ids": playlist_ids or [],
+    }
+
+
+def list_coaching_match_summaries(match_id: str | None = None) -> list[dict]:
+    with connect() as conn:
+        if match_id:
+            rows = conn.execute(
+                "SELECT * FROM coaching_match_summaries WHERE match_id = ? ORDER BY updated_at DESC, id DESC",
+                (match_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM coaching_match_summaries ORDER BY updated_at DESC, id DESC"
+            ).fetchall()
+        ids = [row["id"] for row in rows]
+        notes, clips, playlists = _summary_child_data(conn, ids)
+        return [
+            _row_to_match_summary(row, notes.get(row["id"], []), clips.get(row["id"], []), playlists.get(row["id"], []))
+            for row in rows
+        ]
+
+
+def get_coaching_match_summary(summary_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM coaching_match_summaries WHERE id = ?", (summary_id,)).fetchone()
+        if not row:
+            return None
+        notes, clips, playlists = _summary_child_data(conn, [summary_id])
+        return _row_to_match_summary(row, notes.get(summary_id, []), clips.get(summary_id, []), playlists.get(summary_id, []))
+
+
+def _replace_summary_children(
+    conn: sqlite3.Connection,
+    summary_id: int,
+    note_ids: list[int],
+    clip_ids: list[int],
+    playlist_ids: list[int],
+) -> None:
+    conn.execute("DELETE FROM coaching_match_summary_notes WHERE summary_id = ?", (summary_id,))
+    conn.execute("DELETE FROM coaching_match_summary_clips WHERE summary_id = ?", (summary_id,))
+    conn.execute("DELETE FROM coaching_match_summary_playlists WHERE summary_id = ?", (summary_id,))
+    if note_ids:
+        conn.executemany(
+            "INSERT OR IGNORE INTO coaching_match_summary_notes (summary_id, note_id, position) VALUES (?, ?, ?)",
+            [(summary_id, note_id, idx) for idx, note_id in enumerate(note_ids)],
+        )
+    if clip_ids:
+        conn.executemany(
+            "INSERT OR IGNORE INTO coaching_match_summary_clips (summary_id, clip_id, position) VALUES (?, ?, ?)",
+            [(summary_id, clip_id, idx) for idx, clip_id in enumerate(clip_ids)],
+        )
+    if playlist_ids:
+        conn.executemany(
+            "INSERT OR IGNORE INTO coaching_match_summary_playlists (summary_id, playlist_id, position) VALUES (?, ?, ?)",
+            [(summary_id, playlist_id, idx) for idx, playlist_id in enumerate(playlist_ids)],
+        )
+
+
+def create_coaching_match_summary(data: dict, *, actor: str | None = None) -> dict:
+    now = _now_iso()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO coaching_match_summaries (
+                match_id, visibility, team_positives, team_improvements,
+                training_focus, body, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["match_id"], data.get("visibility", "private"),
+                data.get("team_positives", ""), data.get("team_improvements", ""),
+                data.get("training_focus", ""), data.get("body", ""),
+                actor, now, now,
+            ),
+        )
+        summary_id = cur.lastrowid
+        _replace_summary_children(
+            conn,
+            summary_id,
+            data.get("note_ids") or [],
+            data.get("clip_ids") or [],
+            data.get("playlist_ids") or [],
+        )
+        conn.commit()
+    return get_coaching_match_summary(summary_id) or {}
+
+
+def update_coaching_match_summary(summary_id: int, data: dict) -> dict | None:
+    scalar_allowed = {"visibility", "team_positives", "team_improvements", "training_focus", "body"}
+    updates = {k: v for k, v in data.items() if k in scalar_allowed and v is not None}
+    join_changed = "note_ids" in data or "clip_ids" in data or "playlist_ids" in data
+    updates["updated_at"] = _now_iso()
+    with connect() as conn:
+        if len(updates) > 1 or join_changed:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [summary_id]
+            conn.execute(f"UPDATE coaching_match_summaries SET {set_clause} WHERE id = ?", values)
+        if join_changed:
+            existing = get_coaching_match_summary(summary_id) or {}
+            _replace_summary_children(
+                conn,
+                summary_id,
+                data.get("note_ids") if data.get("note_ids") is not None else existing.get("note_ids", []),
+                data.get("clip_ids") if data.get("clip_ids") is not None else existing.get("clip_ids", []),
+                data.get("playlist_ids") if data.get("playlist_ids") is not None else existing.get("playlist_ids", []),
+            )
+        conn.commit()
+    return get_coaching_match_summary(summary_id)
+
+
+def delete_coaching_match_summary(summary_id: int) -> bool:
+    with connect() as conn:
+        conn.execute("DELETE FROM coaching_match_summary_notes WHERE summary_id = ?", (summary_id,))
+        conn.execute("DELETE FROM coaching_match_summary_clips WHERE summary_id = ?", (summary_id,))
+        conn.execute("DELETE FROM coaching_match_summary_playlists WHERE summary_id = ?", (summary_id,))
+        cur = conn.execute("DELETE FROM coaching_match_summaries WHERE id = ?", (summary_id,))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------

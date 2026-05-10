@@ -400,15 +400,16 @@ export const apiMixin = {
         // clips endpoint is the same role-gated surface as notes /
         // playlists (PR #95), so this is one more parallel coach-only
         // GET in the same `Promise.all`.
-        const [playersResp, notesResp, playlistsResp, clipsResp, goalsResp, users] = await Promise.all([
+        const [playersResp, notesResp, playlistsResp, clipsResp, goalsResp, summariesResp, users] = await Promise.all([
             this.authFetch('/api/coach/players', { headers: this.getAuthHeaders() }),
             this.authFetch(`/api/coach/notes${suffix}`, { headers: this.getAuthHeaders() }),
             this.authFetch('/api/coach/playlists', { headers: this.getAuthHeaders() }),
             this.authFetch(`/api/coach/clips${suffix}`, { headers: this.getAuthHeaders() }),
             this.authFetch('/api/coach/goals', { headers: this.getAuthHeaders() }),
+            this.authFetch(`/api/coach/match-summaries${suffix}`, { headers: this.getAuthHeaders() }),
             this.authFetch('/api/coach/users', { headers: this.getAuthHeaders() }),
         ]);
-        if (!playersResp.ok || !notesResp.ok || !playlistsResp.ok || !clipsResp.ok || !goalsResp.ok || !users.ok) {
+        if (!playersResp.ok || !notesResp.ok || !playlistsResp.ok || !clipsResp.ok || !goalsResp.ok || !summariesResp.ok || !users.ok) {
             throw new Error('Failed to load coaching workspace');
         }
         return {
@@ -417,6 +418,7 @@ export const apiMixin = {
             playlists: (await playlistsResp.json()).playlists || [],
             clips: (await clipsResp.json()).clips || [],
             goals: (await goalsResp.json()).goals || [],
+            match_summaries: (await summariesResp.json()).summaries || [],
             users: (await users.json()).users || [],
         };
     },
@@ -506,6 +508,44 @@ export const apiMixin = {
             body: JSON.stringify(data),
         });
         if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update playlist');
+        return resp.json();
+    },
+
+    async listCoachMatchSummaries(matchId = null) {
+        const suffix = matchId ? `?match_id=${encodeURIComponent(matchId)}` : '';
+        const resp = await this.authFetch(`/api/coach/match-summaries${suffix}`, {
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load match summaries');
+        return (await resp.json()).summaries || [];
+    },
+
+    async createCoachMatchSummary(data) {
+        const resp = await this.authFetch('/api/coach/match-summaries', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save match summary');
+        return (await resp.json()).summary || null;
+    },
+
+    async updateCoachMatchSummary(summaryId, data) {
+        const resp = await this.authFetch(`/api/coach/match-summaries/${Number(summaryId)}`, {
+            method: 'PATCH',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update match summary');
+        return (await resp.json()).summary || null;
+    },
+
+    async deleteCoachMatchSummary(summaryId) {
+        const resp = await this.authFetch(`/api/coach/match-summaries/${Number(summaryId)}`, {
+            method: 'DELETE',
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete match summary');
         return resp.json();
     },
 

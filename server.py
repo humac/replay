@@ -34,12 +34,13 @@ import streams as _streams
 import uploads as _uploads
 from models import (
     CreateCoachingClipRequest, CreateCoachingNoteRequest, CreateCoachingPlaylistRequest,
-    CreateMatchRequest, CreatePlayerGoalReflectionRequest, CreatePlayerGoalRequest,
-    CreatePlayerRequest, CreatePlayerUserLinkRequest,
+    CreateMatchRequest, CreateMatchSummaryRequest, CreatePlayerGoalReflectionRequest,
+    CreatePlayerGoalRequest, CreatePlayerRequest, CreatePlayerUserLinkRequest,
     CreateUploadSessionRequest, CreateUserRequest, LiveAuthRequest, LoginRequest,
     MarkCoachingReviewRequest, StartCaptureRequest, UnblockStreamRequest,
     UpdateCoachingClipRequest, UpdateCoachingNoteRequest, UpdateCoachingPlaylistRequest,
-    UpdateMatchRequest, UpdatePlayerGoalRequest, UpdatePlayerRequest, UpdateUserRequest,
+    UpdateMatchRequest, UpdateMatchSummaryRequest, UpdatePlayerGoalRequest,
+    UpdatePlayerRequest, UpdateUserRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -1588,6 +1589,31 @@ def _goal_with_visible_sources(goal: dict, user: dict) -> dict:
 def _goals_with_visible_sources(goals: list[dict], user: dict) -> list[dict]:
     return [_goal_with_visible_sources(g, user) for g in goals]
 
+def _filter_match_summaries_for_user(summaries: list[dict], user: dict) -> list[dict]:
+    """Viewer-scoped match summary visibility.
+
+    Phase 8 summaries are team-level objects. Coaches/admins see all;
+    viewers see only `team`/`unlisted` summaries. Linked source ids are
+    filtered independently through the existing note/clip/playlist
+    visibility helpers so a team-visible summary cannot reveal the id or
+    body of a private source object.
+    """
+    if _auth.has_role(user, "admin", "coach"):
+        return summaries
+    visible_note_ids = {n["id"] for n in _filter_notes_for_user(_db.list_coaching_notes(), user)}
+    visible_clip_ids = {c["id"] for c in _filter_clips_for_user(_db.list_coaching_clips(), user)}
+    visible_playlist_ids = {p["id"] for p in _filter_playlists_for_user(_db.list_coaching_playlists(), user)}
+    visible = []
+    for summary in summaries:
+        if summary.get("visibility", "private") not in {"team", "unlisted"}:
+            continue
+        safe = dict(summary)
+        safe["note_ids"] = [nid for nid in summary.get("note_ids", []) if nid in visible_note_ids]
+        safe["clip_ids"] = [cid for cid in summary.get("clip_ids", []) if cid in visible_clip_ids]
+        safe["playlist_ids"] = [pid for pid in summary.get("playlist_ids", []) if pid in visible_playlist_ids]
+        visible.append(safe)
+    return visible
+
 
 def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None) -> list[dict]:
     notes_by_id = {note["id"]: note for note in (notes if notes is not None else _db.list_coaching_notes())}
@@ -2217,6 +2243,110 @@ async def coach_delete_playlist(playlist_id: int, request: Request):
     return {"ok": True}
 
 
+def _validate_match_summary_has_text(payload: dict) -> None:
+    if not any((payload.get(name) or "").strip() for name in ("team_positives", "team_improvements", "training_focus", "body")):
+        raise HTTPException(422, "match summary requires at least one text field")
+
+
+def _validate_match_summary_sources(match_id: str, payload: dict) -> None:
+    for note_id in payload.get("note_ids") or []:
+        note = _db.get_coaching_note(note_id)
+        if not note:
+            raise HTTPException(404, f"Note not found: {note_id}")
+        if note.get("match_id") != match_id:
+            raise HTTPException(422, f"Note {note_id} is not linked to match {match_id}")
+    for clip_id in payload.get("clip_ids") or []:
+        clip = _db.get_coaching_clip(clip_id)
+        if not clip:
+            raise HTTPException(404, f"Clip not found: {clip_id}")
+        if clip.get("match_id") != match_id:
+            raise HTTPException(422, f"Clip {clip_id} is not linked to match {match_id}")
+    for playlist_id in payload.get("playlist_ids") or []:
+        playlist = _db.get_coaching_playlist(playlist_id)
+        if not playlist:
+            raise HTTPException(404, f"Playlist not found: {playlist_id}")
+        for note_id in playlist.get("note_ids") or []:
+            note = _db.get_coaching_note(note_id)
+            if note and note.get("match_id") != match_id:
+                raise HTTPException(422, f"Playlist {playlist_id} contains a note from a different match")
+
+
+@app.get("/api/coach/match-summaries")
+async def coach_list_match_summaries(request: Request, match_id: str | None = None):
+    _require_coach(request)
+    return {"summaries": _db.list_coaching_match_summaries(match_id=match_id)}
+
+
+@app.get("/api/coach/match-summaries/{summary_id}")
+async def coach_get_match_summary(summary_id: int, request: Request):
+    _require_coach(request)
+    summary = _db.get_coaching_match_summary(summary_id)
+    if not summary:
+        raise HTTPException(404, "Match summary not found")
+    return {"summary": summary}
+
+
+@app.post("/api/coach/match-summaries")
+async def coach_create_match_summary(request: Request, body: CreateMatchSummaryRequest):
+    user = _require_coach(request)
+    if not _db.get_match_by_id(body.match_id):
+        raise HTTPException(404, "Match not found")
+    payload = body.model_dump()
+    _validate_match_summary_sources(body.match_id, payload)
+    summary = _db.create_coaching_match_summary(payload, actor=user["username"])
+    _log_activity(
+        "coach.match_summary_created",
+        severity="info",
+        message=f"Match coaching summary created for {summary.get('match_id')}",
+        match_id=summary.get("match_id"),
+        actor=user["username"],
+        metadata={"summary_id": summary.get("id"), "visibility": summary.get("visibility")},
+    )
+    return {"ok": True, "summary": summary}
+
+
+@app.patch("/api/coach/match-summaries/{summary_id}")
+async def coach_update_match_summary(summary_id: int, request: Request, body: UpdateMatchSummaryRequest):
+    user = _require_coach(request)
+    existing = _db.get_coaching_match_summary(summary_id)
+    if not existing:
+        raise HTTPException(404, "Match summary not found")
+    updates = body.model_dump(exclude_unset=True)
+    merged_payload = dict(existing)
+    merged_payload.update(updates)
+    _validate_match_summary_has_text(merged_payload)
+    source_payload = dict(existing)
+    source_payload.update({k: v for k, v in updates.items() if k in {"note_ids", "clip_ids", "playlist_ids"}})
+    _validate_match_summary_sources(existing["match_id"], source_payload)
+    summary = _db.update_coaching_match_summary(summary_id, updates) or existing
+    _log_activity(
+        "coach.match_summary_updated",
+        severity="info",
+        message=f"Match coaching summary updated for {summary.get('match_id')}",
+        match_id=summary.get("match_id"),
+        actor=user["username"],
+        metadata={"summary_id": summary_id, "fields": sorted(updates.keys())},
+    )
+    return {"ok": True, "summary": summary}
+
+
+@app.delete("/api/coach/match-summaries/{summary_id}")
+async def coach_delete_match_summary(summary_id: int, request: Request):
+    user = _require_coach(request)
+    summary = _db.get_coaching_match_summary(summary_id)
+    if not _db.delete_coaching_match_summary(summary_id):
+        raise HTTPException(404, "Match summary not found")
+    _log_activity(
+        "coach.match_summary_deleted",
+        severity="info",
+        message=f"Match coaching summary deleted for {summary.get('match_id') if summary else summary_id}",
+        match_id=summary.get("match_id") if summary else None,
+        actor=user["username"],
+        metadata={"summary_id": summary_id},
+    )
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Coaching clips (Phase 4a — backend only)
 #
@@ -2618,9 +2748,11 @@ async def my_feedback(request: Request):
     # the source note's private fields.
     clips = _filter_clips_for_user(_db.list_coaching_clips(), user)
     goals = _filter_goals_for_user(_db.list_player_goals(), user)
+    match_summaries = _filter_match_summaries_for_user(_db.list_coaching_match_summaries(), user)
     return {
         "players": players, "notes": notes, "playlists": playlists,
         "reviews": reviews, "clips": clips, "goals": _goals_with_visible_sources(goals, user),
+        "match_summaries": match_summaries,
     }
 
 
@@ -3779,13 +3911,6 @@ async def delete_match(match_id: str, request: Request):
         matches = [m for m in matches if m["id"] != match_id]
         _db.save_matches_unlocked(matches)
         with _db.connect() as conn:
-            note_rows = conn.execute("SELECT id FROM coaching_notes WHERE match_id = ?", (match_id,)).fetchall()
-            for row in note_rows:
-                conn.execute("DELETE FROM coaching_note_players WHERE note_id = ?", (row["id"],))
-                conn.execute("DELETE FROM coaching_note_tags WHERE note_id = ?", (row["id"],))
-                conn.execute("DELETE FROM coaching_playlist_items WHERE note_id = ?", (row["id"],))
-                conn.execute("DELETE FROM coaching_reviews WHERE note_id = ?", (row["id"],))
-            conn.execute("DELETE FROM coaching_notes WHERE match_id = ?", (match_id,))
             conn.execute("DELETE FROM upload_sessions WHERE match_id = ?", (match_id,))
             conn.execute("DELETE FROM video_errors WHERE match_id = ?", (match_id,))
             conn.commit()

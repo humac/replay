@@ -5650,12 +5650,161 @@ details.diag-row-details[open] > summary::after {
     line-height: 1.45;
 }
 
-.coach-row-actions {
+.coach-row-actions,
+.coach-list-actions {
     display: flex;
     align-items: center;
     gap: 0.4rem;
     flex-wrap: wrap;
     justify-content: flex-end;
+}
+
+.coach-list-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: start;
+    padding: 0.9rem;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+}
+
+.coach-list-main {
+    min-width: 0;
+    display: grid;
+    gap: 0.55rem;
+}
+
+.coach-summary-row-head strong {
+    display: block;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    letter-spacing: 0;
+}
+
+.coach-summary-meta,
+.coach-summary-source-meta {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+.coach-summary-preview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.55rem;
+}
+
+.coach-summary-preview-section {
+    min-width: 0;
+    padding: 0.65rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.16);
+}
+
+.coach-summary-preview-label,
+.coach-summary-form-kicker {
+    display: block;
+    margin-bottom: 0.3rem;
+    color: var(--accent, #298bed);
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.coach-summary-preview-section p {
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.86rem;
+    line-height: 1.45;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.coach-summary-form-card,
+.coach-summary-disclosure {
+    margin-top: 0.85rem;
+    padding: 0.85rem;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.coach-summary-disclosure {
+    padding: 0;
+    overflow: hidden;
+}
+
+.coach-summary-disclosure > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-weight: 700;
+}
+
+.coach-summary-disclosure > summary::-webkit-details-marker { display: none; }
+.coach-summary-disclosure > summary::marker { display: none; }
+
+.coach-summary-disclosure > summary::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+    color: var(--text-muted);
+}
+
+.coach-summary-disclosure[open] > summary::before {
+    transform: rotate(45deg);
+}
+
+.coach-summary-disclosure:not([open]) > .coach-summary-evidence-grid {
+    display: none;
+}
+
+.coach-summary-disclosure > summary small {
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 500;
+}
+
+.coach-summary-disclosure > summary:hover,
+.coach-summary-disclosure > summary:focus-visible {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.coach-summary-disclosure > summary:focus-visible {
+    outline: 2px solid rgba(56, 189, 248, 0.75);
+    outline-offset: -2px;
+}
+
+.coach-summary-evidence-grid {
+    padding: 0 0.85rem 0.85rem;
+}
+
+.form-label-like {
+    display: inline-block;
+    margin-bottom: 0.35rem;
+    color: var(--text-main);
+    font-size: 0.84rem;
+    font-weight: 700;
 }
 
 .coach-link-pill {
@@ -8123,6 +8272,128 @@ body.coach-focus-drawer-tb-mode .coach-focus-backdrop {
     -webkit-box-orient: vertical;
 }
 
+.feedback-summary-card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025));
+}
+
+.feedback-summary-card .feedback-card-body {
+    display: grid;
+    gap: 0.55rem;
+    min-width: 0;
+}
+
+.feedback-summary-preview {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.feedback-summary-section {
+    padding: 0.65rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.14);
+}
+
+.feedback-summary-section h4 {
+    margin: 0 0 0.25rem;
+    color: var(--accent, #298bed);
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.feedback-summary-section p {
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    line-height: 1.48;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.feedback-summary-sources {
+    padding-top: 0.25rem;
+}
+
+.feedback-summary-more {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+    overflow: hidden;
+}
+
+.feedback-summary-more > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.65rem;
+    color: var(--text-muted);
+    font-family: var(--font-heading);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.feedback-summary-more > summary::-webkit-details-marker { display: none; }
+.feedback-summary-more > summary::marker { display: none; }
+
+.feedback-summary-more > summary::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+
+.feedback-summary-more[open] > summary::before {
+    transform: rotate(45deg);
+}
+
+.feedback-summary-more:not([open]) > .feedback-summary-full {
+    display: none;
+}
+
+.feedback-summary-more > summary:hover,
+.feedback-summary-more > summary:focus-visible {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+}
+
+.feedback-summary-more > summary:focus-visible {
+    outline: 2px solid rgba(56, 189, 248, 0.75);
+    outline-offset: -2px;
+}
+
+.feedback-summary-full {
+    display: grid;
+    gap: 0.65rem;
+    padding: 0 0.65rem 0.65rem;
+}
+
+.feedback-summary-full h4 {
+    margin: 0 0 0.2rem;
+    color: var(--accent, #298bed);
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.feedback-summary-full p {
+    margin: 0;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
 .feedback-card-actions {
     display: flex;
     flex-wrap: wrap;
@@ -8155,6 +8426,46 @@ body.coach-focus-drawer-tb-mode .coach-focus-backdrop {
 
 [data-theme="light"] .coach-row {
     border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .coach-list-item {
+    border-color: rgba(0, 0, 0, 0.09);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.68));
+}
+
+[data-theme="light"] .coach-summary-preview-section {
+    border-color: rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.72);
+}
+
+[data-theme="light"] .coach-summary-form-card,
+[data-theme="light"] .coach-summary-disclosure {
+    border-color: rgba(0, 0, 0, 0.09);
+    background: rgba(255, 255, 255, 0.76);
+}
+
+[data-theme="light"] .coach-summary-disclosure > summary:hover,
+[data-theme="light"] .coach-summary-disclosure > summary:focus-visible {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .feedback-summary-card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.72));
+}
+
+[data-theme="light"] .feedback-summary-section {
+    border-color: rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.7);
+}
+
+[data-theme="light"] .feedback-summary-more {
+    border-color: rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.66);
+}
+
+[data-theme="light"] .feedback-summary-more > summary:hover,
+[data-theme="light"] .feedback-summary-more > summary:focus-visible {
+    background: rgba(0, 0, 0, 0.04);
 }
 
 [data-theme="light"] .coach-check-list {
@@ -8226,6 +8537,15 @@ body.coach-focus-drawer-tb-mode .coach-focus-backdrop {
 
     .coach-row {
         flex-direction: column;
+    }
+
+    .coach-list-item {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .coach-list-actions {
+        width: 100%;
+        justify-content: flex-start;
     }
 
     .coach-row-actions,
