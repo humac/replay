@@ -784,6 +784,14 @@ async def test_coach_engagement_dashboard_aggregates_completion_and_filters(clie
         "title": "Ava review playlist", "description": "playlist detail should not leak",
         "visibility": "player", "note_ids": [ava_note], "player_ids": [ava],
     }, headers=auth_headers)).json()["playlist"]["id"]
+    summary_resp = await client.post("/api/coach/match-summaries", json={
+        "match_id": match,
+        "visibility": "team",
+        "team_positives": "MATCH SUMMARY SHOULD NOT INFLATE ENGAGEMENT CANARY",
+        "note_ids": [ava_note],
+        "playlist_ids": [playlist],
+    }, headers=auth_headers)
+    assert summary_resp.status_code == 200
 
     ava_headers = await _login(client, "phase9_ava_family")
     resp = await client.post("/api/my-feedback/review", json={
@@ -796,6 +804,19 @@ async def test_coach_engagement_dashboard_aggregates_completion_and_filters(clie
     resp = await client.post("/api/my-feedback/review", json={"note_id": mia_note}, headers=mia_headers)
     assert resp.status_code == 200
 
+    goal_resp = await client.post("/api/coach/goals", json={
+        "player_id": ava,
+        "title": "Phase 9 goal reflection not counted",
+        "visibility": "player",
+    }, headers=auth_headers)
+    assert goal_resp.status_code == 200
+    goal_id = goal_resp.json()["goal"]["id"]
+    goal_reflection_resp = await client.post(f"/api/my-feedback/goals/{goal_id}/reflection", json={
+        "reflection": "GOAL REFLECTION FOLLOWUP CANARY",
+    }, headers=ava_headers)
+    assert goal_reflection_resp.status_code == 200
+    assert goal_reflection_resp.json()["reflection"]["needs_coach_follow_up"] is True
+
     dashboard_resp = await client.get(f"/api/coach/engagement?match_id={match}", headers=auth_headers)
     assert dashboard_resp.status_code == 200
     data = dashboard_resp.json()["engagement"]
@@ -804,6 +825,10 @@ async def test_coach_engagement_dashboard_aggregates_completion_and_filters(clie
     assert data["summary"]["reviewed_items"] == 2
     assert data["summary"]["completion_percentage"] == 67
     assert data["limitations"]["clip_reviews_supported"] is False
+    assert data["limitations"]["goal_reflections_supported"] is False
+    assert "feedback review reflections only" in data["limitations"]["goal_reflections_scope"]
+    assert "GOAL REFLECTION FOLLOWUP CANARY" not in str(data)
+    assert "MATCH SUMMARY SHOULD NOT INFLATE ENGAGEMENT CANARY" not in str(data)
     assert data["by_player"][0]["player_id"] == ava
     assert data["by_player"][0]["assigned_count"] == 3
     assert data["by_player"][0]["reviewed_count"] == 2

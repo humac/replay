@@ -61,6 +61,7 @@ test.describe('Phase 9 — engagement dashboard UI and privacy captures', () => 
         await expect(page.locator('#coach-engagement-dashboard')).toContainText('Review completion by player');
         await expect(page.locator('#coach-engagement-visibility')).toBeVisible();
         await expect(page.locator('#coach-engagement-dashboard')).toContainText('Reflections needing response');
+        await expect(page.locator('#coach-engagement-dashboard')).toContainText('feedback review reflections only');
         await expect(page.locator('#coach-engagement-visibility')).not.toContainText('Private');
         await page.screenshot({ path: path.join(OUT, '01-coach-engagement-dashboard.png'), fullPage: false });
     });

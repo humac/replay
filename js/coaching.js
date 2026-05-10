@@ -1647,6 +1647,7 @@ export const coachingMixin = {
             <div class="coach-engagement-kpis">${tiles.map(([label, value]) => `
                 <div class="coach-engagement-kpi"><span class="coach-engagement-kpi-label">${this.esc(label)}</span><strong class="coach-engagement-kpi-value">${this.esc(String(value))}</strong></div>
             `).join('')}</div>
+            <p class="coach-engagement-note">${this.esc(data.limitations?.goal_reflections_scope || 'Phase 9 tracks feedback review reflections only.')}</p>
             <div class="coach-engagement-grid">
                 <section class="coach-engagement-card coach-engagement-card--wide">
                     <h4>Review completion by player</h4>

@@ -3378,6 +3378,8 @@ def _build_coach_engagement_dashboard(
             "clip_reviews_supported": False,
             "most_watched_source": "coaching_reviews note_id/playlist_id counts; clip watch tracking is not yet supported.",
             "reflection_response_tracking_supported": False,
+            "goal_reflections_supported": False,
+            "goal_reflections_scope": "Phase 9 tracks feedback review reflections only; player goal reflections needing coach follow-up stay in player development/goals APIs for now.",
         },
     }
 
