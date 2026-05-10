@@ -1,0 +1,364 @@
+"""Tenancy migration and default-scope tests.
+
+Phase 1 PR 1.1/1.2 are intentionally additive: they create the team,
+season, and membership tables, add nullable tenant columns to core rows,
+and backfill legacy single-team deployments without changing user-visible
+behavior.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+import db as _db
+
+
+@pytest.fixture()
+def fresh_db(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    db_file = data_dir / "replay.db"
+    assets_dir = data_dir / "app_assets"
+    _db.close_thread_connection()
+    _db.init(data_dir, db_file, assets_dir)
+    yield _db
+    _db.close_thread_connection()
+
+
+def _cols(conn, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _count(conn, table: str) -> int:
+    return conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+
+
+def _seed_match(conn, match_id: str = "match-1") -> None:
+    now = "2026-01-01T00:00:00Z"
+    conn.execute(
+        """
+        INSERT INTO matches (
+            id, home_team, away_team, date, time, location, score_home, score_away,
+            format, videos_json, video_status_json, home_logo, away_logo, created_at,
+            slug, updated_at
+        ) VALUES (?, 'Home', 'Away', '2026-01-01', '', '', NULL, NULL,
+            'full', '{}', '{}', NULL, NULL, ?, ?, ?)
+        """,
+        (match_id, now, match_id, now),
+    )
+
+
+def _seed_legacy_v13_database(tmp_path: Path):
+    data_dir = tmp_path / "legacy"
+    db_file = data_dir / "replay.db"
+    assets_dir = data_dir / "app_assets"
+    _db.close_thread_connection()
+    _db.init(data_dir, db_file, assets_dir)
+    with _db.connect() as conn:
+        # Simulate a deployment whose schema_version predates Phase 1 tenancy.
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version(version) VALUES (13)")
+        # The repository migrator always applies the latest schema on init.
+        # To exercise the Phase 1 migrator idempotently, rewind the version,
+        # remove default tenancy rows, and clear scope values from core rows.
+        for table in ["team_user_memberships", "seasons", "teams"]:
+            conn.execute(f"DELETE FROM {table}")
+        for table in [
+            "matches", "players", "player_user_links", "coaching_notes", "coaching_clips",
+            "coaching_playlists", "player_goals", "coaching_match_summaries",
+        ]:
+            if "team_id" in _cols(conn, table):
+                conn.execute(f"UPDATE {table} SET team_id = NULL")
+            if "season_id" in _cols(conn, table):
+                conn.execute(f"UPDATE {table} SET season_id = NULL")
+        conn.commit()
+    return data_dir, db_file, assets_dir
+
+
+def test_tenancy_schema_creates_default_team_season_membership_tables(fresh_db):
+    with fresh_db.connect() as conn:
+        names = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        assert {"teams", "seasons", "team_user_memberships"}.issubset(names)
+        assert {"id", "name", "slug", "game_format", "created_at"}.issubset(_cols(conn, "teams"))
+        assert {"id", "team_id", "name", "starts_on", "ends_on", "created_at"}.issubset(_cols(conn, "seasons"))
+        assert {"id", "team_id", "user_id", "role", "created_at"}.issubset(_cols(conn, "team_user_memberships"))
+        assert "last_team_id" in _cols(conn, "users")
+
+        team = conn.execute("SELECT * FROM teams WHERE slug = 'default-team'").fetchone()
+        season = conn.execute("SELECT * FROM seasons WHERE team_id = ? AND name = 'Default Season'", (team["id"],)).fetchone()
+        assert team["name"] == "Default Team"
+        assert season is not None
+
+
+def test_tenancy_columns_exist_on_core_tables_with_expected_season_placement(fresh_db):
+    with fresh_db.connect() as conn:
+        expectations = {
+            "matches": {"team_id", "season_id"},
+            "players": {"team_id", "season_id"},
+            "player_user_links": {"team_id"},
+            "coaching_notes": {"team_id", "season_id"},
+            "coaching_clips": {"team_id"},
+            "coaching_playlists": {"team_id", "season_id"},
+            "player_goals": {"team_id", "season_id"},
+            "coaching_match_summaries": {"team_id"},
+        }
+        for table, expected in expectations.items():
+            assert expected.issubset(_cols(conn, table)), table
+
+        # Join/review/history tables inherit scope through parents in PR 1.2.
+        for table in [
+            "coaching_note_players",
+            "coaching_note_tags",
+            "coaching_clip_players",
+            "coaching_playlist_items",
+            "coaching_playlist_players",
+            "coaching_match_summary_notes",
+            "coaching_match_summary_clips",
+            "coaching_match_summary_playlists",
+            "coaching_reviews",
+            "player_goal_status_history",
+            "player_goal_reflections",
+        ]:
+            assert "team_id" not in _cols(conn, table), table
+
+
+def test_existing_users_backfill_to_expected_default_memberships(tmp_path):
+    data_dir, db_file, assets_dir = _seed_legacy_v13_database(tmp_path)
+    with _db.connect() as conn:
+        now = "2026-01-01T00:00:00Z"
+        users = [
+            ("admin-id", "legacy_admin", "admin"),
+            ("coach-id", "legacy_coach", "coach,uploader"),
+            ("viewer-id", "legacy_viewer", "viewer"),
+            ("uploader-id", "legacy_uploader", "uploader"),
+        ]
+        conn.executemany(
+            "INSERT INTO users (id, username, password_hash, role, display_name, enabled, created_at, updated_at) VALUES (?, ?, 'hash', ?, '', 1, ?, ?)",
+            [(uid, username, role, now, now) for uid, username, role in users],
+        )
+        conn.commit()
+
+    _db.close_thread_connection()
+    _db.init(data_dir, db_file, assets_dir)
+    with _db.connect() as conn:
+        team = conn.execute("SELECT * FROM teams WHERE slug = 'default-team'").fetchone()
+        memberships = conn.execute(
+            "SELECT user_id, role FROM team_user_memberships WHERE team_id = ? ORDER BY user_id, role",
+            (team["id"],),
+        ).fetchall()
+        assert {(row["user_id"], row["role"]) for row in memberships} == {
+            ("admin-id", "team_admin"),
+            ("coach-id", "coach"),
+            ("viewer-id", "guardian"),
+        }
+        assert _db.get_user_by_id("admin-id")["role"] == "admin"
+        assert _db.get_user_by_id("admin-id").get("last_team_id") is None
+
+
+def test_migration_backfills_legacy_rows_preserves_counts_and_is_idempotent(tmp_path):
+    data_dir, db_file, assets_dir = _seed_legacy_v13_database(tmp_path)
+    with _db.connect() as conn:
+        now = "2026-01-01T00:00:00Z"
+        conn.execute("INSERT INTO users (id, username, password_hash, role, display_name, enabled, created_at, updated_at) VALUES ('viewer-id', 'viewer', 'hash', 'viewer', '', 1, ?, ?)", (now, now))
+        _seed_match(conn, "match-1")
+        conn.execute("INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at) VALUES ('player-1', 'Player One', '9', 1, '', ?, ?)", (now, now))
+        conn.execute("INSERT INTO player_user_links (player_id, user_id, relationship, created_at) VALUES ('player-1', 'viewer-id', 'parent', ?)", (now,))
+        conn.execute("INSERT INTO coaching_notes (id, match_id, slot, timestamp_seconds, title, body, category, visibility, drawing_json, created_by, created_at, updated_at, note_context) VALUES (1, 'match-1', 'full', 12, 'Video note', '', 'other', 'team', '{}', 'coach', ?, ?, 'video')", (now, now))
+        conn.execute("INSERT INTO coaching_notes (id, match_id, slot, timestamp_seconds, title, body, category, visibility, drawing_json, created_by, created_at, updated_at, note_context, event_title) VALUES (2, NULL, NULL, NULL, 'Observation', '', 'other', 'player', '{}', 'coach', ?, ?, 'observation', 'Practice')", (now, now))
+        conn.execute("INSERT INTO coaching_clips (id, match_id, slot, start_seconds, end_seconds, title, description, category, visibility, drawing_json, created_by, created_at, updated_at) VALUES (1, 'match-1', 'full', 5, 10, 'Clip', '', 'other', 'team', '{}', 'coach', ?, ?)", (now, now))
+        conn.execute("INSERT INTO coaching_playlists (id, title, description, visibility, pre_roll_seconds, post_roll_seconds, created_by, created_at, updated_at) VALUES (1, 'Playlist', '', 'team', 5, 8, 'coach', ?, ?)", (now, now))
+        conn.execute("INSERT INTO player_goals (id, player_id, title, description, visibility, priority, target_date, success_criteria, coach_private_note, context, status, target_match_id, created_by, created_at, updated_at) VALUES (1, 'player-1', 'Goal', '', 'player', 'medium', '', '', '', 'season_goal', 'open', NULL, 'coach', ?, ?)", (now, now))
+        conn.execute("INSERT INTO coaching_match_summaries (id, match_id, visibility, team_positives, team_improvements, training_focus, body, created_by, created_at, updated_at) VALUES (1, 'match-1', 'team', '', '', '', 'Summary', 'coach', ?, ?)", (now, now))
+        before = {table: _count(conn, table) for table in ["matches", "players", "player_user_links", "coaching_notes", "coaching_clips", "coaching_playlists", "player_goals", "coaching_match_summaries"]}
+        conn.commit()
+
+    _db.close_thread_connection()
+    _db.init(data_dir, db_file, assets_dir)
+    _db.close_thread_connection()
+    _db.init(data_dir, db_file, assets_dir)
+
+    with _db.connect() as conn:
+        after = {table: _count(conn, table) for table in before}
+        assert after == before
+        assert _count(conn, "teams") == 1
+        assert _count(conn, "seasons") == 1
+        default_team = conn.execute("SELECT id FROM teams WHERE slug='default-team'").fetchone()["id"]
+        default_season = conn.execute("SELECT id FROM seasons WHERE team_id=?", (default_team,)).fetchone()["id"]
+        for table in ["matches", "players", "player_user_links", "coaching_notes", "coaching_clips", "coaching_playlists", "player_goals", "coaching_match_summaries"]:
+            assert conn.execute(f"SELECT COUNT(*) AS c FROM {table} WHERE team_id IS NULL").fetchone()["c"] == 0, table
+        assert conn.execute("SELECT COUNT(*) AS c FROM matches WHERE season_id = ?", (default_season,)).fetchone()["c"] == 1
+        assert conn.execute("SELECT COUNT(*) AS c FROM players WHERE season_id = ?", (default_season,)).fetchone()["c"] == 1
+        assert conn.execute("SELECT season_id FROM coaching_notes WHERE id = 1").fetchone()["season_id"] is None
+        assert conn.execute("SELECT season_id FROM coaching_notes WHERE id = 2").fetchone()["season_id"] == default_season
+        assert conn.execute("SELECT season_id FROM coaching_playlists WHERE id = 1").fetchone()["season_id"] == default_season
+        assert conn.execute("SELECT season_id FROM player_goals WHERE id = 1").fetchone()["season_id"] == default_season
+
+
+def test_observation_notes_linked_only_to_player_inherit_player_scope(fresh_db):
+    now = "2026-02-01T00:00:00Z"
+    with fresh_db.connect() as conn:
+        conn.execute(
+            "INSERT INTO teams (id, name, slug, game_format, created_at) VALUES ('team-two', 'Team Two', 'team-two', 'full', ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES ('season-two', 'team-two', 'Spring', '', '', ?)",
+            (now,),
+        )
+        conn.execute(
+            """
+            INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at, team_id, season_id)
+            VALUES ('player-two', 'Scoped Player Two', '2', 1, '', ?, ?, 'team-two', 'season-two')
+            """,
+            (now, now),
+        )
+        conn.commit()
+
+    note = fresh_db.create_coaching_note({
+        "note_context": "observation",
+        "title": "Player scoped observation",
+        "event_title": "Training",
+        "player_ids": ["player-two"],
+    })
+
+    with fresh_db.connect() as conn:
+        assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_notes WHERE id = ?", (note["id"],)).fetchone()) == ("team-two", "season-two")
+
+
+def test_observation_note_with_match_inherits_match_scope(fresh_db):
+    now = "2026-02-01T00:00:00Z"
+    with fresh_db.connect() as conn:
+        conn.execute(
+            "INSERT INTO teams (id, name, slug, game_format, created_at) VALUES ('match-team', 'Match Team', 'match-team', 'full', ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES ('match-season', 'match-team', 'Fall', '', '', ?)",
+            (now,),
+        )
+        conn.execute(
+            """
+            INSERT INTO matches (
+                id, home_team, away_team, date, time, location, score_home, score_away,
+                format, videos_json, video_status_json, home_logo, away_logo, created_at,
+                slug, updated_at, team_id, season_id
+            ) VALUES ('match-two', 'Match', 'Scope', '2026-02-01', '', '', NULL, NULL,
+                'full', '{}', '{}', NULL, NULL, ?, 'match-two', ?, 'match-team', 'match-season')
+            """,
+            (now, now),
+        )
+        conn.commit()
+
+    note = fresh_db.create_coaching_note({
+        "note_context": "observation",
+        "match_id": "match-two",
+        "title": "Match scoped observation",
+        "event_title": "Training",
+    })
+
+    with fresh_db.connect() as conn:
+        assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_notes WHERE id = ?", (note["id"],)).fetchone()) == ("match-team", "match-season")
+
+
+def test_observation_note_update_recomputes_player_scope(fresh_db):
+    now = "2026-02-01T00:00:00Z"
+    with fresh_db.connect() as conn:
+        conn.execute("INSERT INTO teams (id, name, slug, game_format, created_at) VALUES ('update-team', 'Update Team', 'update-team', 'full', ?)", (now,))
+        conn.execute("INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES ('update-season', 'update-team', 'Spring', '', '', ?)", (now,))
+        conn.execute(
+            """
+            INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at, team_id, season_id)
+            VALUES ('update-player', 'Update Player', '3', 1, '', ?, ?, 'update-team', 'update-season')
+            """,
+            (now, now),
+        )
+        conn.commit()
+
+    note = fresh_db.create_coaching_note({"note_context": "observation", "title": "Unscoped observation", "event_title": "Training"})
+    updated = fresh_db.update_coaching_note(note["id"], {"player_ids": ["update-player"]})
+    assert updated is not None
+
+    with fresh_db.connect() as conn:
+        assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_notes WHERE id = ?", (note["id"],)).fetchone()) == ("update-team", "update-season")
+
+
+def test_observation_note_update_preserves_explicit_scope_on_scalar_edit(fresh_db):
+    now = "2026-02-01T00:00:00Z"
+    with fresh_db.connect() as conn:
+        conn.execute("INSERT INTO teams (id, name, slug, game_format, created_at) VALUES ('explicit-team', 'Explicit Team', 'explicit-team', 'full', ?)", (now,))
+        conn.execute("INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES ('explicit-season', 'explicit-team', 'Spring', '', '', ?)", (now,))
+        conn.commit()
+
+    note = fresh_db.create_coaching_note({
+        "note_context": "observation",
+        "title": "Explicit observation",
+        "event_title": "Training",
+        "team_id": "explicit-team",
+        "season_id": "explicit-season",
+    })
+    updated = fresh_db.update_coaching_note(note["id"], {"title": "Edited explicit observation"})
+    assert updated is not None
+
+    with fresh_db.connect() as conn:
+        assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_notes WHERE id = ?", (note["id"],)).fetchone()) == ("explicit-team", "explicit-season")
+
+
+def test_player_user_link_backfill_inherits_player_team(tmp_path):
+    data_dir, db_file, assets_dir = _seed_legacy_v13_database(tmp_path)
+    now = "2026-02-01T00:00:00Z"
+    with _db.connect() as conn:
+        conn.execute("INSERT INTO teams (id, name, slug, game_format, created_at) VALUES ('link-team', 'Link Team', 'link-team', 'full', ?)", (now,))
+        conn.execute("INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES ('link-season', 'link-team', 'Spring', '', '', ?)", (now,))
+        conn.execute("INSERT INTO users (id, username, password_hash, role, display_name, enabled, created_at, updated_at) VALUES ('link-user', 'link_user', 'hash', 'viewer', '', 1, ?, ?)", (now, now))
+        conn.execute(
+            """
+            INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at, team_id, season_id)
+            VALUES ('link-player', 'Link Player', '4', 1, '', ?, ?, 'link-team', 'link-season')
+            """,
+            (now, now),
+        )
+        conn.execute("INSERT INTO player_user_links (player_id, user_id, relationship, created_at, team_id) VALUES ('link-player', 'link-user', 'parent', ?, NULL)", (now,))
+        conn.commit()
+
+    _db.close_thread_connection()
+    _db.init(data_dir, db_file, assets_dir)
+    with _db.connect() as conn:
+        assert conn.execute("SELECT team_id FROM player_user_links WHERE player_id='link-player' AND user_id='link-user'").fetchone()["team_id"] == "link-team"
+
+
+def test_db_helpers_create_rows_in_default_scope(fresh_db):
+    default_team = fresh_db.get_default_team()
+    default_season = fresh_db.get_default_season(default_team["id"])
+    match = {
+        "id": "helper-match",
+        "home_team": "Scope",
+        "away_team": "Default",
+        "date": "2026-02-01",
+        "created_at": "2026-02-01T00:00:00Z",
+        "updated_at": "2026-02-01T00:00:00Z",
+        "slug": "helper-match",
+    }
+    with fresh_db.connect() as conn:
+        fresh_db.upsert_match(conn, match)
+        conn.commit()
+    player = fresh_db.create_player("Scoped Player")
+    note = fresh_db.create_coaching_note({"match_id": match["id"], "slot": "full", "timestamp_seconds": 1.0, "title": "Scoped note"})
+    observation = fresh_db.create_coaching_note({"note_context": "observation", "title": "Scoped observation", "event_title": "Training"})
+    clip = fresh_db.create_coaching_clip({"match_id": match["id"], "slot": "full", "start_seconds": 1, "end_seconds": 4, "title": "Scoped clip"})
+    playlist = fresh_db.create_coaching_playlist({"title": "Scoped playlist"})
+    goal = fresh_db.create_player_goal({"player_id": player["id"], "title": "Scoped goal", "context": "season_goal"})
+    summary = fresh_db.create_coaching_match_summary({"match_id": match["id"], "body": "Scoped summary"})
+
+    with fresh_db.connect() as conn:
+        assert tuple(conn.execute("SELECT team_id, season_id FROM matches WHERE id = ?", (match["id"],)).fetchone()) == (default_team["id"], default_season["id"])
+        assert tuple(conn.execute("SELECT team_id, season_id FROM players WHERE id = ?", (player["id"],)).fetchone()) == (default_team["id"], default_season["id"])
+        assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_notes WHERE id = ?", (note["id"],)).fetchone()) == (default_team["id"], None)
+        assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_notes WHERE id = ?", (observation["id"],)).fetchone()) == (default_team["id"], default_season["id"])
+        assert conn.execute("SELECT team_id FROM coaching_clips WHERE id = ?", (clip["id"],)).fetchone()["team_id"] == default_team["id"]
+        assert tuple(conn.execute("SELECT team_id, season_id FROM coaching_playlists WHERE id = ?", (playlist["id"],)).fetchone()) == (default_team["id"], default_season["id"])
+        assert tuple(conn.execute("SELECT team_id, season_id FROM player_goals WHERE id = ?", (goal["id"],)).fetchone()) == (default_team["id"], default_season["id"])
+        assert conn.execute("SELECT team_id FROM coaching_match_summaries WHERE id = ?", (summary["id"],)).fetchone()["team_id"] == default_team["id"]
