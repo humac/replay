@@ -32,6 +32,7 @@ import log as _log
 import media as _media
 import settings as _settings
 import streams as _streams
+import tenancy as _tenancy
 import uploads as _uploads
 from routers.admin_teams import router as admin_teams_router
 from models import (
@@ -1453,8 +1454,82 @@ def _require_coach(request: Request) -> dict:
     return _auth.require_role(request, "admin", "coach")
 
 
-def _same_team(item: dict, team_id: str | None) -> bool:
-    return team_id is None or str(item.get("team_id")) == str(team_id)
+def _resolve_coach_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
+    user = _require_coach(request)
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        require_role=("team_admin", "coach"),
+        allow_global_admin_override=True,
+    )
+    return user, scope
+
+
+def _resolve_feedback_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
+    user = _auth.require_auth(request)
+    scope = _tenancy.resolve_scope(request, user, allow_global_admin_override=True)
+    return user, scope
+
+
+def _scope_team_id(scope: _tenancy.Scope) -> str:
+    return str(scope.team["id"])
+
+
+def _require_scoped_item(item: dict | None, team_id: str, detail: str):
+    if not item or not _same_team(item, team_id):
+        raise HTTPException(404, detail)
+    return item
+
+
+def _require_match_in_team(match_id: str | None, team_id: str) -> dict:
+    if not match_id:
+        raise HTTPException(404, "Match not found")
+    match = _db.get_match_by_id(match_id)
+    return _require_scoped_item(match, team_id, "Match not found")
+
+
+def _require_player_in_team(player_id: str, team_id: str) -> dict:
+    return _require_scoped_item(_db.get_player(player_id), team_id, "Player not found")
+
+
+def _require_note_in_team(note_id: int, team_id: str) -> dict:
+    return _require_scoped_item(_db.get_coaching_note(note_id), team_id, "Note not found")
+
+
+def _require_clip_in_team(clip_id: int, team_id: str) -> dict:
+    return _require_scoped_item(_db.get_coaching_clip(clip_id), team_id, "Clip not found")
+
+
+def _require_playlist_in_team(playlist_id: int, team_id: str) -> dict:
+    return _require_scoped_item(_db.get_coaching_playlist(playlist_id), team_id, "Playlist not found")
+
+
+def _require_summary_in_team(summary_id: int, team_id: str) -> dict:
+    return _require_scoped_item(_db.get_coaching_match_summary(summary_id), team_id, "Match summary not found")
+
+
+def _require_players_in_team(player_ids: list[str], team_id: str) -> None:
+    for player_id in player_ids:
+        _require_player_in_team(player_id, team_id)
+
+
+def _require_notes_in_team(note_ids: list[int], team_id: str) -> None:
+    for note_id in note_ids:
+        _require_note_in_team(note_id, team_id)
+
+
+def _require_clips_in_team(clip_ids: list[int], team_id: str) -> None:
+    for clip_id in clip_ids:
+        _require_clip_in_team(clip_id, team_id)
+
+
+def _require_playlists_in_team(playlist_ids: list[int], team_id: str) -> None:
+    for playlist_id in playlist_ids:
+        _require_playlist_in_team(playlist_id, team_id)
+
+
+def _same_team(item: dict | None, team_id: str | None) -> bool:
+    return item is not None and (team_id is None or str(item.get("team_id")) == str(team_id))
 
 
 def _team_scoped_items(items: list[dict], team_id: str | None) -> list[dict]:
@@ -1568,20 +1643,22 @@ def _filter_clips_for_user(clips: list[dict], user: dict, team_id: str | None = 
 _ACTIVE_GOAL_STATUSES = {"open", "in_progress", "needs_follow_up"}
 
 
-def _validate_goal_source_links(data: dict, player_id: str):
-    if not _db.get_player(player_id):
+def _validate_goal_source_links(data: dict, player_id: str, team_id: str | None = None):
+    if team_id is not None:
+        _require_player_in_team(player_id, team_id)
+    elif not _db.get_player(player_id):
         raise HTTPException(404, "Player not found")
     note_id = data.get("source_note_id")
     if note_id is not None:
         note = _db.get_coaching_note(note_id)
-        if not note:
+        if not note or (team_id and not _same_team(note, team_id)):
             raise HTTPException(404, "Source note not found")
         if player_id not in (note.get("player_ids") or []):
             raise HTTPException(400, "Source note is not linked to this player")
     clip_id = data.get("source_clip_id")
     if clip_id is not None:
         clip = _db.get_coaching_clip(clip_id)
-        if not clip:
+        if not clip or (team_id and not _same_team(clip, team_id)):
             raise HTTPException(404, "Source clip not found")
         if player_id not in (clip.get("player_ids") or []):
             raise HTTPException(400, "Source clip is not linked to this player")
@@ -1590,7 +1667,7 @@ def _validate_goal_source_links(data: dict, player_id: str):
         raise HTTPException(400, "source_playlist_id is required for a playlist item source")
     if playlist_id is not None:
         playlist = _db.get_coaching_playlist(playlist_id)
-        if not playlist:
+        if not playlist or (team_id and not _same_team(playlist, team_id)):
             raise HTTPException(404, "Source playlist not found")
         item_note_id = data.get("source_playlist_item_note_id")
         if player_id not in (playlist.get("player_ids") or []) and item_note_id is None:
@@ -1599,11 +1676,14 @@ def _validate_goal_source_links(data: dict, player_id: str):
             if item_note_id not in (playlist.get("note_ids") or []):
                 raise HTTPException(400, "Playlist item is not in source playlist")
             note = _db.get_coaching_note(item_note_id)
-            if not note or player_id not in (note.get("player_ids") or []):
+            if not note or (team_id and not _same_team(note, team_id)) or player_id not in (note.get("player_ids") or []):
                 raise HTTPException(400, "Playlist item is not linked to this player")
     target_match_id = data.get("target_match_id")
-    if target_match_id and not _db.get_match_by_id(target_match_id):
-        raise HTTPException(404, "Target match not found")
+    if target_match_id:
+        if team_id is not None:
+            _require_match_in_team(target_match_id, team_id)
+        elif not _db.get_match_by_id(target_match_id):
+            raise HTTPException(404, "Target match not found")
 
 
 def _filter_goals_for_user(goals: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
@@ -1713,29 +1793,35 @@ def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None
 
 @app.get("/api/coach/players")
 async def coach_list_players(request: Request):
-    _require_coach(request)
-    return {"players": _db.list_players(include_inactive=True)}
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    return {"players": _db.list_players(include_inactive=True, team_id=team_id)}
 
 
 @app.get("/api/coach/users")
 async def coach_list_linkable_users(request: Request):
-    _require_coach(request)
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
     return {
         "users": [
             {k: v for k, v in u.items() if k != "password_hash"}
-            for u in _db.list_users()
+            for u in _db.list_users(team_id=team_id)
         ]
     }
 
 
 @app.post("/api/coach/players")
 async def coach_create_player(request: Request, body: CreatePlayerRequest):
-    user = _require_coach(request)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    season_id = scope.season["id"] if scope.season else None
     player = _db.create_player(
         body.display_name,
         jersey_number=body.jersey_number,
         active=body.active,
         notes=body.notes,
+        team_id=team_id,
+        season_id=season_id,
     )
     _log_activity(
         "coach.player_created",
@@ -1749,11 +1835,13 @@ async def coach_create_player(request: Request, body: CreatePlayerRequest):
 
 @app.patch("/api/coach/players/{player_id}")
 async def coach_update_player(player_id: str, request: Request, body: UpdatePlayerRequest):
-    user = _require_coach(request)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    _require_player_in_team(player_id, team_id)
     updates = body.model_dump(exclude_unset=True)
     if updates and not _db.update_player(player_id, **updates):
         raise HTTPException(404, "Player not found")
-    player = _db.get_player(player_id)
+    player = _db.get_player(player_id, team_id=team_id)
     if not player:
         raise HTTPException(404, "Player not found")
     _log_activity(
@@ -1768,8 +1856,9 @@ async def coach_update_player(player_id: str, request: Request, body: UpdatePlay
 
 @app.delete("/api/coach/players/{player_id}")
 async def coach_delete_player(player_id: str, request: Request):
-    user = _require_coach(request)
-    player = _db.get_player(player_id)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    player = _require_player_in_team(player_id, team_id)
     if not _db.delete_player(player_id):
         raise HTTPException(404, "Player not found")
     _log_activity(
@@ -1784,10 +1873,10 @@ async def coach_delete_player(player_id: str, request: Request):
 
 @app.post("/api/coach/player-links")
 async def coach_link_player_user(request: Request, body: CreatePlayerUserLinkRequest):
-    user = _require_coach(request)
-    if not _db.get_player(body.player_id):
-        raise HTTPException(404, "Player not found")
-    if not _db.get_user_by_id(body.user_id):
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    _require_player_in_team(body.player_id, team_id)
+    if not _db.get_user_by_id(body.user_id) or not _db.user_has_team_membership(body.user_id, team_id):
         raise HTTPException(404, "User not found")
     player = _db.link_player_user(body.player_id, body.user_id, body.relationship)
     _log_activity(
@@ -1802,7 +1891,11 @@ async def coach_link_player_user(request: Request, body: CreatePlayerUserLinkReq
 
 @app.delete("/api/coach/player-links/{link_id}")
 async def coach_delete_player_user_link(link_id: int, request: Request):
-    user = _require_coach(request)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    link = _db.get_player_user_link(link_id)
+    if not link or (team_id is not None and link.get("team_id") != team_id):
+        raise HTTPException(404, "Link not found")
     if not _db.delete_player_user_link(link_id):
         raise HTTPException(404, "Link not found")
     _log_activity(
@@ -1817,8 +1910,11 @@ async def coach_delete_player_user_link(link_id: int, request: Request):
 
 @app.get("/api/coach/notes")
 async def coach_list_notes(request: Request, match_id: str | None = None):
-    _require_coach(request)
-    return {"notes": _db.list_coaching_notes(match_id=match_id)}
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    if match_id:
+        _require_match_in_team(match_id, team_id)
+    return {"notes": [n for n in _db.list_coaching_notes(match_id=match_id) if _same_team(n, team_id)]}
 
 
 def _coach_note_activity_label(note: dict | None) -> str:
@@ -1848,18 +1944,18 @@ def _coach_note_activity_label(note: dict | None) -> str:
 
 @app.post("/api/coach/notes")
 async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
-    user = _require_coach(request)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
     # Phase 6a — observation notes have no `match_id` so we only check
     # the match-exists invariant for video notes. Pydantic's
     # `validate_context_invariants` already rejects a video note with
     # missing match_id / slot / timestamp_seconds before we get here.
-    if body.note_context == "video":
-        if not _db.get_match_by_id(body.match_id):
-            raise HTTPException(404, "Match not found")
-    for player_id in body.player_ids:
-        if not _db.get_player(player_id):
-            raise HTTPException(404, f"Player not found: {player_id}")
-    note = _db.create_coaching_note(body.model_dump(), actor=user["username"])
+    if body.match_id:
+        _require_match_in_team(body.match_id, team_id)
+    _require_players_in_team(body.player_ids, team_id)
+    payload = body.model_dump()
+    payload["team_id"] = team_id
+    note = _db.create_coaching_note(payload, actor=user["username"])
     _log_activity(
         "coach.note_created",
         severity="info",
@@ -1889,14 +1985,11 @@ async def coach_create_note(request: Request, body: CreateCoachingNoteRequest):
 
 @app.patch("/api/coach/notes/{note_id}")
 async def coach_update_note(note_id: int, request: Request, body: UpdateCoachingNoteRequest):
-    user = _require_coach(request)
-    existing = _db.get_coaching_note(note_id)
-    if not existing:
-        raise HTTPException(404, "Note not found")
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    existing = _require_note_in_team(note_id, team_id)
     updates = body.model_dump(exclude_unset=True)
-    for player_id in updates.get("player_ids") or []:
-        if not _db.get_player(player_id):
-            raise HTTPException(404, f"Player not found: {player_id}")
+    _require_players_in_team(updates.get("player_ids") or [], team_id)
     # Phase 6a — validate the MERGED state so a partial PATCH can't
     # leave a video note in an invalid shape. Examples:
     #   - PATCH `note_context: "video"` on an observation row that has
@@ -1919,13 +2012,7 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
                 )
         if not (merged.get("title") or "").strip():
             raise HTTPException(422, "title must not be empty")
-        # If the merged match_id changed, double-check the match exists
-        # so a flip from observation→video doesn't reference a deleted
-        # / unknown match. (`existing.match_id == merged.match_id` is
-        # the cheap unchanged-match short-circuit.)
-        if merged.get("match_id") != existing.get("match_id"):
-            if not _db.get_match_by_id(merged["match_id"]):
-                raise HTTPException(404, "Match not found")
+        _require_match_in_team(merged["match_id"], team_id)
     else:
         # Phase 6b (#113) — observation notes do not require a title.
         # `_OBSERVATION_CONTENT_FIELDS` (in models.py) already enforces
@@ -1954,6 +2041,8 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
                 "player_summary, what_happened, why_it_matters, "
                 "what_to_do_next, event_title, or tactical_board_json",
             )
+    if merged_context != "video" and merged.get("match_id"):
+        _require_match_in_team(merged["match_id"], team_id)
     note = _db.update_coaching_note(note_id, updates) or existing
     _log_activity(
         "coach.note_updated",
@@ -2009,8 +2098,9 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
 
 @app.delete("/api/coach/notes/{note_id}")
 async def coach_delete_note(note_id: int, request: Request):
-    user = _require_coach(request)
-    note = _db.get_coaching_note(note_id)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    note = _require_note_in_team(note_id, team_id)
     if not _db.delete_coaching_note(note_id):
         raise HTTPException(404, "Note not found")
     label = _coach_note_activity_label(note) if note else ""
@@ -2186,7 +2276,7 @@ async def _spawn_coach_note_thumbnail(note: dict) -> None:
         )
 
 
-def _can_view_coach_note(user: dict, note: dict) -> bool:
+def _can_view_coach_note(user: dict, note: dict, team_id: str | None = None) -> bool:
     """Phase 3a — single-source visibility check shared by the thumbnail
     GET and any future per-note read surface. Reuses the existing
     `_filter_notes_for_user` so visibility logic does not drift.
@@ -2195,7 +2285,7 @@ def _can_view_coach_note(user: dict, note: dict) -> bool:
     survive the same filter that powers `/api/my-feedback`."""
     if _auth.has_role(user, "admin", "coach"):
         return True
-    visible = _filter_notes_for_user([note], user)
+    visible = _filter_notes_for_user([note], user, team_id=team_id)
     return bool(visible)
 
 
@@ -2211,10 +2301,17 @@ async def coach_get_note_thumbnail(note_id: int, request: Request):
       four cases so a probing viewer cannot distinguish them.
     """
     user = _auth.require_auth(request)
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        require_role=("team_admin", "coach") if _auth.has_role(user, "admin", "coach") else None,
+        allow_global_admin_override=True,
+    )
+    team_id = _scope_team_id(scope)
     note = _db.get_coaching_note(note_id)
-    if not note:
+    if not note or not _same_team(note, team_id):
         raise HTTPException(404, "Thumbnail not found")
-    if not _can_view_coach_note(user, note):
+    if not _can_view_coach_note(user, note, team_id=team_id):
         raise HTTPException(404, "Thumbnail not found")
     # Phase 6a — observation notes never have a video frame, so the
     # path resolution would only land on a missing-file 404 anyway.
@@ -2268,10 +2365,9 @@ async def coach_regenerate_note_thumbnail(note_id: int, request: Request):
     `{ok: bool, generated: bool}` so the frontend can distinguish
     "regen ran and produced a file" from "regen ran but the source
     video is still missing"."""
-    _require_coach(request)
-    note = _db.get_coaching_note(note_id)
-    if not note:
-        raise HTTPException(404, "Note not found")
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    note = _require_note_in_team(note_id, team_id)
     # Phase 6a — observation notes have no video frame to extract.
     # Return the same `generated: false` shape callers already handle
     # for the source-video-missing case so frontend code paths don't
@@ -2306,21 +2402,35 @@ async def coach_regenerate_note_thumbnail(note_id: int, request: Request):
 
 @app.get("/api/coach/playlists")
 async def coach_list_playlists(request: Request):
-    _require_coach(request)
-    return {"playlists": _playlists_with_items(_db.list_coaching_playlists())}
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    playlists = [p for p in _db.list_coaching_playlists() if _same_team(p, team_id)]
+    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
+    return {"playlists": _playlists_with_items(playlists, notes)}
+
+
+@app.get("/api/coach/playlists/{playlist_id}")
+async def coach_get_playlist(playlist_id: int, request: Request):
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    playlist = _require_playlist_in_team(playlist_id, team_id)
+    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
+    return {"playlist": _playlists_with_items([playlist], notes)[0]}
 
 
 @app.post("/api/coach/playlists")
 async def coach_create_playlist(request: Request, body: CreateCoachingPlaylistRequest):
-    user = _require_coach(request)
-    for note_id in body.note_ids:
-        if not _db.get_coaching_note(note_id):
-            raise HTTPException(404, f"Note not found: {note_id}")
-    for player_id in body.player_ids:
-        if not _db.get_player(player_id):
-            raise HTTPException(404, f"Player not found: {player_id}")
-    playlist = _db.create_coaching_playlist(body.model_dump(), actor=user["username"])
-    playlist = _playlists_with_items([playlist])[0]
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    season_id = scope.season["id"] if scope.season else None
+    _require_notes_in_team(body.note_ids, team_id)
+    _require_players_in_team(body.player_ids, team_id)
+    payload = body.model_dump()
+    payload["team_id"] = team_id
+    payload["season_id"] = season_id
+    playlist = _db.create_coaching_playlist(payload, actor=user["username"])
+    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
+    playlist = _playlists_with_items([playlist], notes)[0]
     _log_activity(
         "coach.playlist_created",
         severity="info",
@@ -2333,19 +2443,15 @@ async def coach_create_playlist(request: Request, body: CreateCoachingPlaylistRe
 
 @app.patch("/api/coach/playlists/{playlist_id}")
 async def coach_update_playlist(playlist_id: int, request: Request, body: UpdateCoachingPlaylistRequest):
-    user = _require_coach(request)
-    existing = _db.get_coaching_playlist(playlist_id)
-    if not existing:
-        raise HTTPException(404, "Playlist not found")
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    existing = _require_playlist_in_team(playlist_id, team_id)
     updates = body.model_dump(exclude_unset=True)
-    for note_id in updates.get("note_ids") or []:
-        if not _db.get_coaching_note(note_id):
-            raise HTTPException(404, f"Note not found: {note_id}")
-    for player_id in updates.get("player_ids") or []:
-        if not _db.get_player(player_id):
-            raise HTTPException(404, f"Player not found: {player_id}")
+    _require_notes_in_team(updates.get("note_ids") or [], team_id)
+    _require_players_in_team(updates.get("player_ids") or [], team_id)
     playlist = _db.update_coaching_playlist(playlist_id, updates) or existing
-    playlist = _playlists_with_items([playlist])[0]
+    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
+    playlist = _playlists_with_items([playlist], notes)[0]
     _log_activity(
         "coach.playlist_updated",
         severity="info",
@@ -2358,8 +2464,9 @@ async def coach_update_playlist(playlist_id: int, request: Request, body: Update
 
 @app.delete("/api/coach/playlists/{playlist_id}")
 async def coach_delete_playlist(playlist_id: int, request: Request):
-    user = _require_coach(request)
-    playlist = _db.get_coaching_playlist(playlist_id)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    playlist = _require_playlist_in_team(playlist_id, team_id)
     if not _db.delete_coaching_playlist(playlist_id):
         raise HTTPException(404, "Playlist not found")
     _log_activity(
@@ -2377,51 +2484,72 @@ def _validate_match_summary_has_text(payload: dict) -> None:
         raise HTTPException(422, "match summary requires at least one text field")
 
 
-def _validate_match_summary_sources(match_id: str, payload: dict) -> None:
+def _validate_match_summary_sources(match_id: str, payload: dict, team_id: str | None = None) -> None:
     for note_id in payload.get("note_ids") or []:
         note = _db.get_coaching_note(note_id)
-        if not note:
+        if not note or (team_id and not _same_team(note, team_id)):
             raise HTTPException(404, f"Note not found: {note_id}")
         if note.get("match_id") != match_id:
             raise HTTPException(422, f"Note {note_id} is not linked to match {match_id}")
     for clip_id in payload.get("clip_ids") or []:
         clip = _db.get_coaching_clip(clip_id)
-        if not clip:
+        if not clip or (team_id and not _same_team(clip, team_id)):
             raise HTTPException(404, f"Clip not found: {clip_id}")
         if clip.get("match_id") != match_id:
             raise HTTPException(422, f"Clip {clip_id} is not linked to match {match_id}")
     for playlist_id in payload.get("playlist_ids") or []:
         playlist = _db.get_coaching_playlist(playlist_id)
-        if not playlist:
+        if not playlist or (team_id and not _same_team(playlist, team_id)):
             raise HTTPException(404, f"Playlist not found: {playlist_id}")
         for note_id in playlist.get("note_ids") or []:
             note = _db.get_coaching_note(note_id)
-            if note and note.get("match_id") != match_id:
+            if note and (note.get("match_id") != match_id or (team_id and not _same_team(note, team_id))):
                 raise HTTPException(422, f"Playlist {playlist_id} contains a note from a different match")
+
+
+def _sanitize_match_summary_sources(summary: dict, team_id: str | None) -> dict:
+    out = dict(summary)
+    out["note_ids"] = [
+        note_id for note_id in (summary.get("note_ids") or [])
+        if _same_team(_db.get_coaching_note(note_id), team_id)
+    ]
+    out["clip_ids"] = [
+        clip_id for clip_id in (summary.get("clip_ids") or [])
+        if _same_team(_db.get_coaching_clip(clip_id), team_id)
+    ]
+    out["playlist_ids"] = [
+        playlist_id for playlist_id in (summary.get("playlist_ids") or [])
+        if _same_team(_db.get_coaching_playlist(playlist_id), team_id)
+    ]
+    return out
 
 
 @app.get("/api/coach/match-summaries")
 async def coach_list_match_summaries(request: Request, match_id: str | None = None):
-    _require_coach(request)
-    return {"summaries": _db.list_coaching_match_summaries(match_id=match_id)}
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    if match_id:
+        _require_match_in_team(match_id, team_id)
+    summaries = [s for s in _db.list_coaching_match_summaries(match_id=match_id) if _same_team(s, team_id)]
+    return {"summaries": [_sanitize_match_summary_sources(s, team_id) for s in summaries]}
 
 
 @app.get("/api/coach/match-summaries/{summary_id}")
 async def coach_get_match_summary(summary_id: int, request: Request):
-    _require_coach(request)
-    summary = _db.get_coaching_match_summary(summary_id)
-    if not summary:
-        raise HTTPException(404, "Match summary not found")
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    summary = _sanitize_match_summary_sources(_require_summary_in_team(summary_id, team_id), team_id)
     return {"summary": summary}
 
 
 @app.post("/api/coach/match-summaries")
 async def coach_create_match_summary(request: Request, body: CreateMatchSummaryRequest):
-    user = _require_coach(request)
-    if not _db.get_match_by_id(body.match_id):
-        raise HTTPException(404, "Match not found")
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    _require_match_in_team(body.match_id, team_id)
     payload = body.model_dump()
-    _validate_match_summary_sources(body.match_id, payload)
+    payload["team_id"] = team_id
+    _validate_match_summary_sources(body.match_id, payload, team_id)
     summary = _db.create_coaching_match_summary(payload, actor=user["username"])
     _log_activity(
         "coach.match_summary_created",
@@ -2436,17 +2564,16 @@ async def coach_create_match_summary(request: Request, body: CreateMatchSummaryR
 
 @app.patch("/api/coach/match-summaries/{summary_id}")
 async def coach_update_match_summary(summary_id: int, request: Request, body: UpdateMatchSummaryRequest):
-    user = _require_coach(request)
-    existing = _db.get_coaching_match_summary(summary_id)
-    if not existing:
-        raise HTTPException(404, "Match summary not found")
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    existing = _require_summary_in_team(summary_id, team_id)
     updates = body.model_dump(exclude_unset=True)
     merged_payload = dict(existing)
     merged_payload.update(updates)
     _validate_match_summary_has_text(merged_payload)
     source_payload = dict(existing)
     source_payload.update({k: v for k, v in updates.items() if k in {"note_ids", "clip_ids", "playlist_ids"}})
-    _validate_match_summary_sources(existing["match_id"], source_payload)
+    _validate_match_summary_sources(existing["match_id"], source_payload, team_id)
     summary = _db.update_coaching_match_summary(summary_id, updates) or existing
     _log_activity(
         "coach.match_summary_updated",
@@ -2461,8 +2588,9 @@ async def coach_update_match_summary(summary_id: int, request: Request, body: Up
 
 @app.delete("/api/coach/match-summaries/{summary_id}")
 async def coach_delete_match_summary(summary_id: int, request: Request):
-    user = _require_coach(request)
-    summary = _db.get_coaching_match_summary(summary_id)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    summary = _require_summary_in_team(summary_id, team_id)
     if not _db.delete_coaching_match_summary(summary_id):
         raise HTTPException(404, "Match summary not found")
     _log_activity(
@@ -2500,27 +2628,27 @@ async def coach_delete_match_summary(summary_id: int, request: Request):
 
 @app.get("/api/coach/clips")
 async def coach_list_clips(request: Request, match_id: str | None = None):
-    _require_coach(request)
-    return {"clips": _db.list_coaching_clips(match_id=match_id)}
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    if match_id:
+        _require_match_in_team(match_id, team_id)
+    return {"clips": [c for c in _db.list_coaching_clips(match_id=match_id) if _same_team(c, team_id)]}
 
 
 @app.get("/api/coach/clips/{clip_id}")
 async def coach_get_clip(clip_id: int, request: Request):
-    _require_coach(request)
-    clip = _db.get_coaching_clip(clip_id)
-    if not clip:
-        raise HTTPException(404, "Clip not found")
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    clip = _require_clip_in_team(clip_id, team_id)
     return {"clip": clip}
 
 
 @app.post("/api/coach/clips")
 async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
-    user = _require_coach(request)
-    if not _db.get_match_by_id(body.match_id):
-        raise HTTPException(404, "Match not found")
-    for player_id in body.player_ids:
-        if not _db.get_player(player_id):
-            raise HTTPException(404, f"Player not found: {player_id}")
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    _require_match_in_team(body.match_id, team_id)
+    _require_players_in_team(body.player_ids, team_id)
     payload = body.model_dump()
     # `source_note_id` is an OPTIONAL forward-compat reference. When the
     # coach provides one, this handler verifies the note exists and
@@ -2539,9 +2667,7 @@ async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
     # and silently re-publishing private text through a `team` /
     # `unlisted` clip would be a privacy leak.
     if payload.get("source_note_id") is not None:
-        source = _db.get_coaching_note(payload["source_note_id"])
-        if not source:
-            raise HTTPException(404, "Source note not found")
+        source = _require_note_in_team(payload["source_note_id"], team_id)
         # We trust the request body for `match_id` / `slot` / `category`
         # / window / title / etc. — the coach explicitly authored those.
         # Do NOT silently rewrite to the source's match (would surprise
@@ -2550,6 +2676,7 @@ async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
         # different slot of the same match).
         if not payload.get("drawing"):
             payload["drawing"] = source.get("drawing") or {}
+    payload["team_id"] = team_id
     clip = _db.create_coaching_clip(payload, actor=user["username"])
     _log_activity(
         "coach.clip_created",
@@ -2576,10 +2703,9 @@ async def coach_create_clip(request: Request, body: CreateCoachingClipRequest):
 
 @app.patch("/api/coach/clips/{clip_id}")
 async def coach_update_clip(clip_id: int, request: Request, body: UpdateCoachingClipRequest):
-    user = _require_coach(request)
-    existing = _db.get_coaching_clip(clip_id)
-    if not existing:
-        raise HTTPException(404, "Clip not found")
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    existing = _require_clip_in_team(clip_id, team_id)
     updates = body.model_dump(exclude_unset=True)
     # Window invariant when only one endpoint is being changed: merge
     # against the existing row before re-checking. The Pydantic model
@@ -2592,9 +2718,7 @@ async def coach_update_clip(clip_id: int, request: Request, body: UpdateCoaching
             raise HTTPException(422, "end_seconds must be greater than start_seconds")
         if new_end - new_start > 120.0:
             raise HTTPException(422, "clip duration must be 120 seconds or less")
-    for player_id in updates.get("player_ids") or []:
-        if not _db.get_player(player_id):
-            raise HTTPException(404, f"Player not found: {player_id}")
+    _require_players_in_team(updates.get("player_ids") or [], team_id)
     clip = _db.update_coaching_clip(clip_id, updates) or existing
     _log_activity(
         "coach.clip_updated",
@@ -2617,8 +2741,9 @@ async def coach_update_clip(clip_id: int, request: Request, body: UpdateCoaching
 
 @app.delete("/api/coach/clips/{clip_id}")
 async def coach_delete_clip(clip_id: int, request: Request):
-    user = _require_coach(request)
-    clip = _db.get_coaching_clip(clip_id)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    clip = _require_clip_in_team(clip_id, team_id)
     if not _db.delete_coaching_clip(clip_id):
         raise HTTPException(404, "Clip not found")
     # Phase 4e — clean up the per-clip thumbnail JPEG. Same defense-in-
@@ -2713,14 +2838,14 @@ async def _spawn_coach_clip_thumbnail(clip: dict) -> None:
         )
 
 
-def _can_view_coach_clip(user: dict, clip: dict) -> bool:
+def _can_view_coach_clip(user: dict, clip: dict, team_id: str | None = None) -> bool:
     """Phase 4e — single-source visibility check shared by the clip
     thumbnail GET. Reuses `_filter_clips_for_user` so visibility logic
     stays single-sourced. Coach/admin always pass; viewers must survive
     the same filter that powers `/api/my-feedback` clips."""
     if _auth.has_role(user, "admin", "coach"):
         return True
-    visible = _filter_clips_for_user([clip], user)
+    visible = _filter_clips_for_user([clip], user, team_id=team_id)
     return bool(visible)
 
 
@@ -2736,6 +2861,13 @@ async def coach_get_clip_thumbnail(clip_id: int, request: Request):
       across all four cases so a probing viewer cannot distinguish them.
     """
     user = _auth.require_auth(request)
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        require_role=("team_admin", "coach") if _auth.has_role(user, "admin", "coach") else None,
+        allow_global_admin_override=True,
+    )
+    team_id = _scope_team_id(scope)
     # PR #108 review fix-up — normalize the 404 detail across all four
     # not-servable cases (unknown clip / unauthorized / path-escape /
     # missing file) so a viewer cannot distinguish them by response
@@ -2744,9 +2876,9 @@ async def coach_get_clip_thumbnail(clip_id: int, request: Request):
     # compatibility; the clip GET is new in Phase 4e and ships with
     # the cleaner shape from day one.
     clip = _db.get_coaching_clip(clip_id)
-    if not clip:
+    if not clip or not _same_team(clip, team_id):
         raise HTTPException(404, "Thumbnail not found")
-    if not _can_view_coach_clip(user, clip):
+    if not _can_view_coach_clip(user, clip, team_id=team_id):
         raise HTTPException(404, "Thumbnail not found")
     try:
         thumb = _media.existing_clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id, team_id=clip.get("team_id"))
@@ -2775,10 +2907,9 @@ async def coach_regenerate_clip_thumbnail(clip_id: int, request: Request):
     when a coach edits start_seconds. Synchronous on purpose — the
     caller wants to know whether the refresh succeeded so the UI can
     re-fetch the image."""
-    _require_coach(request)
-    clip = _db.get_coaching_clip(clip_id)
-    if not clip:
-        raise HTTPException(404, "Clip not found")
+    _user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    clip = _require_clip_in_team(clip_id, team_id)
     try:
         src = _slot_mp4_path(clip["match_id"], clip.get("slot") or "full")
         dest = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id, team_id=clip.get("team_id"))
@@ -2804,39 +2935,48 @@ async def coach_regenerate_clip_thumbnail(clip_id: int, request: Request):
 
 @app.get("/api/coach/goals")
 async def coach_list_goals(request: Request, player_id: str | None = None):
-    user = _require_coach(request)
-    goals = _db.list_player_goals(player_id=player_id)
-    return {"goals": _goals_with_visible_sources(goals, user)}
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    if player_id:
+        _require_player_in_team(player_id, team_id)
+    goals = [g for g in _db.list_player_goals(player_id=player_id) if _same_team(g, team_id)]
+    return {"goals": _goals_with_visible_sources(goals, user, team_id=team_id)}
 
 
 @app.post("/api/coach/goals")
 async def coach_create_goal(request: Request, body: CreatePlayerGoalRequest):
-    user = _require_coach(request)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    season_id = scope.season["id"] if scope.season else None
     data = body.model_dump()
-    _validate_goal_source_links(data, data["player_id"])
+    _require_player_in_team(data["player_id"], team_id)
+    _validate_goal_source_links(data, data["player_id"], team_id)
+    data["team_id"] = team_id
+    data["season_id"] = season_id
     goal = _db.create_player_goal(data, actor=user["username"])
     _log_activity("coach.goal_created", severity="info", message=f"Player goal created: {goal.get('title')}", actor=user["username"], metadata={"goal_id": goal.get("id"), "player_id": goal.get("player_id")})
-    return {"ok": True, "goal": _goal_with_visible_sources(goal, user)}
+    return {"ok": True, "goal": _goal_with_visible_sources(goal, user, team_id=team_id)}
 
 
 @app.patch("/api/coach/goals/{goal_id}")
 async def coach_update_goal(goal_id: int, request: Request, body: UpdatePlayerGoalRequest):
-    user = _require_coach(request)
-    existing = _db.get_player_goal(goal_id)
-    if not existing:
-        raise HTTPException(404, "Goal not found")
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    existing = _require_scoped_item(_db.get_player_goal(goal_id), team_id, "Goal not found")
     updates = body.model_dump(exclude_unset=True)
     merged = {**existing, **updates}
-    _validate_goal_source_links(merged, existing["player_id"])
+    _require_player_in_team(merged["player_id"], team_id)
+    _validate_goal_source_links(merged, existing["player_id"], team_id)
     goal = _db.update_player_goal(goal_id, updates, actor=user["username"])
     _log_activity("coach.goal_updated", severity="info", message=f"Player goal updated: {goal.get('title')}", actor=user["username"], metadata={"goal_id": goal_id, "fields": sorted(updates.keys())})
-    return {"ok": True, "goal": _goal_with_visible_sources(goal, user)}
+    return {"ok": True, "goal": _goal_with_visible_sources(goal, user, team_id=team_id)}
 
 
 @app.delete("/api/coach/goals/{goal_id}")
 async def coach_delete_goal(goal_id: int, request: Request):
-    user = _require_coach(request)
-    existing = _db.get_player_goal(goal_id)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    existing = _require_scoped_item(_db.get_player_goal(goal_id), team_id, "Goal not found")
     if not _db.delete_player_goal(goal_id):
         raise HTTPException(404, "Goal not found")
     _log_activity("coach.goal_deleted", severity="warning", message=f"Player goal deleted: {existing.get('title', goal_id) if existing else goal_id}", actor=user["username"], metadata={"goal_id": goal_id})
@@ -2845,16 +2985,18 @@ async def coach_delete_goal(goal_id: int, request: Request):
 
 @app.get("/api/my-feedback/goals")
 async def my_feedback_goals(request: Request):
-    user = _auth.require_auth(request)
-    goals = _filter_goals_for_user(_db.list_player_goals(), user)
-    return {"goals": _goals_with_visible_sources(goals, user)}
+    user, scope = _resolve_feedback_scope(request)
+    team_id = _scope_team_id(scope)
+    goals = _filter_goals_for_user([g for g in _db.list_player_goals() if _same_team(g, team_id)], user)
+    return {"goals": _goals_with_visible_sources(goals, user, team_id=team_id)}
 
 
 @app.post("/api/my-feedback/goals/{goal_id}/reflection")
 async def my_feedback_goal_reflection(goal_id: int, request: Request, body: CreatePlayerGoalReflectionRequest):
-    user = _auth.require_auth(request)
+    user, scope = _resolve_feedback_scope(request)
+    team_id = _scope_team_id(scope)
     goal = _db.get_player_goal(goal_id)
-    if not goal or goal not in _filter_goals_for_user([goal], user):
+    if not goal or not _same_team(goal, team_id) or goal not in _filter_goals_for_user([goal], user):
         raise HTTPException(404, "Goal not found")
     reflection = _db.add_player_goal_reflection(goal_id, user.get("user_id"), body.reflection)
     return {"ok": True, "reflection": {k: v for k, v in reflection.items() if k != "user_id"}}
@@ -2862,13 +3004,14 @@ async def my_feedback_goal_reflection(goal_id: int, request: Request, body: Crea
 
 @app.get("/api/my-feedback")
 async def my_feedback(request: Request):
-    user = _auth.require_auth(request)
+    user, scope = _resolve_feedback_scope(request)
+    team_id = _scope_team_id(scope)
     players = []
     if user.get("user_id"):
-        linked = set(_db.linked_player_ids_for_user(user["user_id"]))
-        players = [p for p in _db.list_players(include_inactive=True) if p["id"] in linked]
-    all_notes = _db.list_coaching_notes()
-    notes = _filter_notes_for_user(all_notes, user)
+        linked = set(_db.linked_player_ids_for_user(user["user_id"], team_id=team_id))
+        players = [p for p in _db.list_players(include_inactive=True, team_id=team_id) if p["id"] in linked]
+    all_notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
+    notes = _filter_notes_for_user(all_notes, user, team_id=team_id)
     # Phase 1 privacy invariant: `coach_private_note` must never reach a
     # viewer. The top-level `notes[]` is already scrubbed by
     # `_filter_notes_for_user`, but `_playlists_with_items` embeds full
@@ -2878,8 +3021,14 @@ async def my_feedback(request: Request):
     # tests/test_coaching.py.
     is_privileged = _auth.has_role(user, "admin", "coach")
     items_source = all_notes if is_privileged else [_strip_private_fields(n) for n in all_notes]
-    playlists = _playlists_with_items(_filter_playlists_for_user(_db.list_coaching_playlists(), user), items_source)
-    reviews = _db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else []
+    playlists = _playlists_with_items(_filter_playlists_for_user([p for p in _db.list_coaching_playlists() if _same_team(p, team_id)], user, team_id=team_id), items_source)
+    visible_note_ids = {n["id"] for n in notes}
+    visible_playlist_ids = {p["id"] for p in playlists}
+    reviews = [
+        r for r in (_db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else [])
+        if (r.get("note_id") is None or r.get("note_id") in visible_note_ids)
+        and (r.get("playlist_id") is None or r.get("playlist_id") in visible_playlist_ids)
+    ]
     # Phase 4a: clips are first-class objects with the same visibility
     # ladder as notes / playlists. The clip's stored `drawing_json` is a
     # snapshot taken at clip-create time (not a live link to the source
@@ -2888,12 +3037,15 @@ async def my_feedback(request: Request):
     # text via `source_note_id` because the drawing is JSON metadata, not
     # the source note's body. The clip itself never carries text from
     # the source note's private fields.
-    clips = _filter_clips_for_user(_db.list_coaching_clips(), user)
-    goals = _filter_goals_for_user(_db.list_player_goals(), user)
-    match_summaries = _filter_match_summaries_for_user(_db.list_coaching_match_summaries(), user)
+    clips = _filter_clips_for_user([c for c in _db.list_coaching_clips() if _same_team(c, team_id)], user, team_id=team_id)
+    goals = _filter_goals_for_user([g for g in _db.list_player_goals() if _same_team(g, team_id)], user, team_id=team_id)
+    match_summaries = [
+        _sanitize_match_summary_sources(s, team_id)
+        for s in _filter_match_summaries_for_user([s for s in _db.list_coaching_match_summaries() if _same_team(s, team_id)], user, team_id=team_id)
+    ]
     return {
         "players": players, "notes": notes, "playlists": playlists,
-        "reviews": reviews, "clips": clips, "goals": _goals_with_visible_sources(goals, user),
+        "reviews": reviews, "clips": clips, "goals": _goals_with_visible_sources(goals, user, team_id=team_id),
         "match_summaries": match_summaries,
     }
 
@@ -3099,15 +3251,16 @@ def _build_player_development_profile(
     player: dict,
     user: dict,
     viewer_scoped: bool,
+    team_id: str | None = None,
 ) -> dict:
     """Single source of truth for both endpoints. When `viewer_scoped`
     is True, all source lists are filtered through the same helpers
     that gate `/api/my-feedback`; otherwise the raw lists are used so a
     coach/admin sees the full data set including private notes."""
-    all_notes = _db.list_coaching_notes()
-    all_clips = _db.list_coaching_clips()
-    all_playlists = _db.list_coaching_playlists()
-    all_goals = _db.list_player_goals()
+    all_notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
+    all_clips = [c for c in _db.list_coaching_clips() if _same_team(c, team_id)]
+    all_playlists = [p for p in _db.list_coaching_playlists() if _same_team(p, team_id)]
+    all_goals = [g for g in _db.list_player_goals() if _same_team(g, team_id)]
     if viewer_scoped:
         # Defense-in-depth: `_filter_notes_for_user` short-circuits for
         # admin/coach callers and returns the raw list (with
@@ -3120,16 +3273,16 @@ def _build_player_development_profile(
         # (PR #103 review fix — keeps the `viewer_scoped: true` payload
         # contract honest even for coach callers.)
         notes_source = [
-            _strip_private_fields(n) for n in _filter_notes_for_user(all_notes, user)
+            _strip_private_fields(n) for n in _filter_notes_for_user(all_notes, user, team_id=team_id)
         ]
-        clips_source = _filter_clips_for_user(all_clips, user)
-        playlists_source = _filter_playlists_for_user(all_playlists, user)
-        goals_source = _goals_with_visible_sources(_filter_goals_for_user(all_goals, user), user)
+        clips_source = _filter_clips_for_user(all_clips, user, team_id=team_id)
+        playlists_source = _filter_playlists_for_user(all_playlists, user, team_id=team_id)
+        goals_source = _goals_with_visible_sources(_filter_goals_for_user(all_goals, user, team_id=team_id), user, team_id=team_id)
     else:
         notes_source = all_notes
         clips_source = all_clips
         playlists_source = all_playlists
-        goals_source = _goals_with_visible_sources(all_goals, user)
+        goals_source = _goals_with_visible_sources(all_goals, user, team_id=team_id)
 
     pid = player["id"]
     notes = _notes_for_player(notes_source, pid)
@@ -3144,7 +3297,11 @@ def _build_player_development_profile(
     # report the full assigned-review set across all users so the coach
     # can see who has engaged with what.
     if viewer_scoped:
-        reviews = _db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else []
+        reviews = [
+            r for r in (_db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else [])
+            if (r.get("note_id") is None or r.get("note_id") in note_ids)
+            and (r.get("playlist_id") is None or r.get("playlist_id") in {p["id"] for p in playlists})
+        ]
     else:
         reviews = _db.list_coaching_reviews()
 
@@ -3238,6 +3395,7 @@ def _build_coach_engagement_dashboard(
     visibility: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    team_id: str | None = None,
 ) -> dict:
     """Phase 9 review-completion dashboard built from existing data.
 
@@ -3245,7 +3403,7 @@ def _build_coach_engagement_dashboard(
     counts). Note bodies, playlist descriptions, drawings, and
     `coach_private_note` are intentionally omitted from the payload.
     """
-    players = _db.list_players(include_inactive=True)
+    players = _db.list_players(include_inactive=True, team_id=team_id)
     linked_user_ids_by_player: dict[str, set[str]] = {
         p["id"]: {str(link.get("user_id")) for link in (p.get("links") or []) if link.get("user_id")}
         for p in players
@@ -3265,9 +3423,9 @@ def _build_coach_engagement_dashboard(
         for p in players
         if not player_id or p["id"] == player_id
     }
-    matches_by_id = {m["id"]: m for m in _db.load_matches_unlocked()}
-    all_notes = _db.list_coaching_notes()
-    all_playlists = _db.list_coaching_playlists()
+    matches_by_id = {m["id"]: m for m in _db.load_matches_unlocked() if _same_team(m, team_id)}
+    all_notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
+    all_playlists = [p for p in _db.list_coaching_playlists() if _same_team(p, team_id)]
     reviews = _db.list_coaching_reviews()
     note_by_id = {n["id"]: n for n in all_notes}
 
@@ -3535,30 +3693,33 @@ async def coach_engagement_dashboard(
     start_date: str | None = None,
     end_date: str | None = None,
 ):
-    _require_coach(request)
-    if player_id and not _db.get_player(player_id):
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    if player_id and not _db.get_player(player_id, team_id=team_id):
         raise HTTPException(404, "Player not found")
-    if playlist_id is not None and not _db.get_coaching_playlist(playlist_id):
+    if playlist_id is not None and not _same_team(_db.get_coaching_playlist(playlist_id) or {}, team_id):
         raise HTTPException(404, "Playlist not found")
-    if match_id and not _db.get_match_by_id(match_id):
+    if match_id and not _same_team(_db.get_match_by_id(match_id) or {}, team_id):
         raise HTTPException(404, "Match not found")
     if visibility and visibility not in {"player", "team"}:
         raise HTTPException(422, "Invalid visibility filter")
-    return {"engagement": _build_coach_engagement_dashboard(player_id=player_id, playlist_id=playlist_id, match_id=match_id, visibility=visibility, start_date=start_date, end_date=end_date)}
+    return {"engagement": _build_coach_engagement_dashboard(player_id=player_id, playlist_id=playlist_id, match_id=match_id, visibility=visibility, start_date=start_date, end_date=end_date, team_id=team_id)}
 
 
 @app.get("/api/coach/players/{player_id}/development")
 async def coach_player_development(player_id: str, request: Request):
-    user = _require_coach(request)
-    player = _db.get_player(player_id)
+    user, scope = _resolve_coach_scope(request)
+    team_id = _scope_team_id(scope)
+    player = _db.get_player(player_id, team_id=team_id)
     if not player:
         raise HTTPException(404, "Player not found")
-    return {"profile": _build_player_development_profile(player=player, user=user, viewer_scoped=False)}
+    return {"profile": _build_player_development_profile(player=player, user=user, viewer_scoped=False, team_id=team_id)}
 
 
 @app.get("/api/my-feedback/players/{player_id}/development")
 async def my_feedback_player_development(player_id: str, request: Request):
-    user = _auth.require_auth(request)
+    user, scope = _resolve_feedback_scope(request)
+    team_id = _scope_team_id(scope)
     # Coach/admin viewing their own /my-feedback profile would see the
     # raw set; defer to the dedicated coach endpoint instead so the two
     # surfaces don't quietly diverge in payload shape. Here we always
@@ -3567,24 +3728,25 @@ async def my_feedback_player_development(player_id: str, request: Request):
     # cannot probe whether a roster id exists.
     if not user.get("user_id"):
         raise HTTPException(404, "Player not found")
-    linked_player_ids = set(_db.linked_player_ids_for_user(user["user_id"]))
+    linked_player_ids = set(_db.linked_player_ids_for_user(user["user_id"], team_id=team_id))
     if player_id not in linked_player_ids:
         raise HTTPException(404, "Player not found")
-    player = _db.get_player(player_id)
+    player = _db.get_player(player_id, team_id=team_id)
     if not player:
         raise HTTPException(404, "Player not found")
-    return {"profile": _build_player_development_profile(player=player, user=user, viewer_scoped=True)}
+    return {"profile": _build_player_development_profile(player=player, user=user, viewer_scoped=True, team_id=team_id)}
 
 
 @app.post("/api/my-feedback/review")
 async def mark_my_feedback_review(request: Request, body: MarkCoachingReviewRequest):
-    user = _auth.require_auth(request)
+    user, scope = _resolve_feedback_scope(request)
+    team_id = _scope_team_id(scope)
     if not user.get("user_id"):
         raise HTTPException(403, "Feedback review tracking requires a database user")
     if not body.note_id and not body.playlist_id:
         raise HTTPException(422, "note_id or playlist_id is required")
-    visible_note_ids = {n["id"] for n in _filter_notes_for_user(_db.list_coaching_notes(), user)}
-    visible_playlist_ids = {p["id"] for p in _filter_playlists_for_user(_db.list_coaching_playlists(), user)}
+    visible_note_ids = {n["id"] for n in _filter_notes_for_user([n for n in _db.list_coaching_notes() if _same_team(n, team_id)], user, team_id=team_id)}
+    visible_playlist_ids = {p["id"] for p in _filter_playlists_for_user([p for p in _db.list_coaching_playlists() if _same_team(p, team_id)], user, team_id=team_id)}
     if body.note_id and body.note_id not in visible_note_ids:
         raise HTTPException(403, "Note is not visible to this user")
     if body.playlist_id and body.playlist_id not in visible_playlist_ids:
