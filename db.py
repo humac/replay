@@ -1618,14 +1618,20 @@ def delete_player_user_link(link_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def linked_player_ids_for_user(user_id: str | None) -> list[str]:
+def linked_player_ids_for_user(user_id: str | None, team_id: str | None = None) -> list[str]:
     if not user_id:
         return []
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT player_id FROM player_user_links WHERE user_id = ?",
-            (user_id,),
-        ).fetchall()
+        if team_id is not None:
+            rows = conn.execute(
+                "SELECT player_id FROM player_user_links WHERE user_id = ? AND team_id = ?",
+                (user_id, team_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT player_id FROM player_user_links WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
         return [row["player_id"] for row in rows]
 
 
@@ -1702,6 +1708,8 @@ def _row_to_note(row: sqlite3.Row, player_ids: list[str] | None = None, tags: li
         "what_to_do_next": _opt("what_to_do_next", ""),
         "player_summary": _opt("player_summary", ""),
         "coach_private_note": _opt("coach_private_note", ""),
+        "team_id": _opt("team_id", ""),
+        "season_id": _opt("season_id", ""),
         # Phase 6a — observation note fields. `note_context` defaults
         # to 'video' so legacy clients that ignore it keep behaving
         # as before. `tactical_board_json` is None (not {}) when unset.
@@ -1936,6 +1944,7 @@ def _playlist_child_data(conn: sqlite3.Connection, playlist_ids: list[int]) -> t
 
 
 def _row_to_playlist(row: sqlite3.Row, note_ids: list[int] | None = None, player_ids: list[str] | None = None) -> dict:
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
     return {
         "id": row["id"],
         "title": row["title"],
@@ -1946,6 +1955,8 @@ def _row_to_playlist(row: sqlite3.Row, note_ids: list[int] | None = None, player
         "created_by": row["created_by"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "team_id": row["team_id"] if "team_id" in keys else "",
+        "season_id": row["season_id"] if "season_id" in keys else "",
         "note_ids": note_ids or [],
         "player_ids": player_ids or [],
     }
@@ -2122,6 +2133,7 @@ def _row_to_clip(row: sqlite3.Row, player_ids: list[str] | None = None) -> dict:
         drawing = json.loads(row["drawing_json"] or "{}")
     except Exception:
         drawing = {}
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
     return {
         "id": row["id"],
         "match_id": row["match_id"],
@@ -2138,6 +2150,7 @@ def _row_to_clip(row: sqlite3.Row, player_ids: list[str] | None = None) -> dict:
         "created_by": row["created_by"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "team_id": row["team_id"] if "team_id" in keys else "",
         "player_ids": player_ids or [],
     }
 
@@ -2266,6 +2279,7 @@ def delete_coaching_clip(clip_id: int) -> bool:
 
 def _row_to_goal(row: sqlite3.Row, history: list[dict] | None = None, reflections: list[dict] | None = None) -> dict:
     refl = reflections or []
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
     return {
         "id": row["id"], "player_id": row["player_id"], "title": row["title"] or "",
         "description": row["description"] or "", "context": row["context"] or "next_match",
@@ -2276,6 +2290,8 @@ def _row_to_goal(row: sqlite3.Row, history: list[dict] | None = None, reflection
         "source_clip_id": row["source_clip_id"], "source_playlist_id": row["source_playlist_id"],
         "source_playlist_item_note_id": row["source_playlist_item_note_id"], "target_match_id": row["target_match_id"],
         "created_by": row["created_by"] or "", "created_at": row["created_at"], "updated_at": row["updated_at"],
+        "team_id": row["team_id"] if "team_id" in keys else "",
+        "season_id": row["season_id"] if "season_id" in keys else "",
         "status_history": history or [], "reflections": refl, "latest_reflection": refl[0] if refl else None,
         "needs_coach_follow_up": any(r.get("needs_coach_follow_up") for r in refl),
     }
@@ -2443,6 +2459,7 @@ def _row_to_match_summary(
     clip_ids: list[int] | None = None,
     playlist_ids: list[int] | None = None,
 ) -> dict:
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
     return {
         "id": row["id"],
         "match_id": row["match_id"],
@@ -2454,6 +2471,7 @@ def _row_to_match_summary(
         "created_by": row["created_by"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "team_id": row["team_id"] if "team_id" in keys else "",
         "note_ids": note_ids or [],
         "clip_ids": clip_ids or [],
         "playlist_ids": playlist_ids or [],

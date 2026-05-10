@@ -1453,10 +1453,52 @@ def _require_coach(request: Request) -> dict:
     return _auth.require_role(request, "admin", "coach")
 
 
-def _filter_notes_for_user(notes: list[dict], user: dict) -> list[dict]:
+def _same_team(item: dict, team_id: str | None) -> bool:
+    return team_id is None or str(item.get("team_id")) == str(team_id)
+
+
+def _team_scoped_items(items: list[dict], team_id: str | None) -> list[dict]:
+    if team_id is None:
+        return items
+    return [item for item in items if _same_team(item, team_id)]
+
+
+def _ids_for_team(items: list[dict], team_id: str | None) -> set:
+    return {item["id"] for item in _team_scoped_items(items, team_id)}
+
+
+def _sanitize_playlist_source_ids(playlists: list[dict], team_id: str | None) -> list[dict]:
+    if team_id is None:
+        return playlists
+    same_team_note_ids = _ids_for_team(_db.list_coaching_notes(), team_id)
+    return [
+        {**playlist, "note_ids": [note_id for note_id in playlist.get("note_ids", []) if note_id in same_team_note_ids]}
+        for playlist in playlists
+    ]
+
+
+def _sanitize_summary_source_ids(summaries: list[dict], team_id: str | None) -> list[dict]:
+    if team_id is None:
+        return summaries
+    same_team_note_ids = _ids_for_team(_db.list_coaching_notes(), team_id)
+    same_team_clip_ids = _ids_for_team(_db.list_coaching_clips(), team_id)
+    same_team_playlist_ids = _ids_for_team(_db.list_coaching_playlists(), team_id)
+    return [
+        {
+            **summary,
+            "note_ids": [note_id for note_id in summary.get("note_ids", []) if note_id in same_team_note_ids],
+            "clip_ids": [clip_id for clip_id in summary.get("clip_ids", []) if clip_id in same_team_clip_ids],
+            "playlist_ids": [playlist_id for playlist_id in summary.get("playlist_ids", []) if playlist_id in same_team_playlist_ids],
+        }
+        for summary in summaries
+    ]
+
+
+def _filter_notes_for_user(notes: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
+    notes = _team_scoped_items(notes, team_id)
     if _auth.has_role(user, "admin", "coach"):
         return notes
-    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     visible = []
     for note in notes:
         visibility = note.get("visibility", "private")
@@ -1479,10 +1521,12 @@ def _strip_private_fields(note: dict) -> dict:
     return safe
 
 
-def _filter_playlists_for_user(playlists: list[dict], user: dict) -> list[dict]:
+def _filter_playlists_for_user(playlists: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
+    playlists = _team_scoped_items(playlists, team_id)
+    playlists = _sanitize_playlist_source_ids(playlists, team_id)
     if _auth.has_role(user, "admin", "coach"):
         return playlists
-    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     visible = []
     for playlist in playlists:
         visibility = playlist.get("visibility", "private")
@@ -1494,7 +1538,7 @@ def _filter_playlists_for_user(playlists: list[dict], user: dict) -> list[dict]:
     return visible
 
 
-def _filter_clips_for_user(clips: list[dict], user: dict) -> list[dict]:
+def _filter_clips_for_user(clips: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
     """Phase 4a — same visibility ladder as notes/playlists. Coach/admin
     see everything; viewers see `team` + `unlisted` clips plus `player`
     clips for players they're linked to via `player_user_links`.
@@ -1506,9 +1550,10 @@ def _filter_clips_for_user(clips: list[dict], user: dict) -> list[dict]:
     phase needs clip-specific filter behavior (e.g. honoring playlist-
     grants-access for clips inside a visible playlist) it slots in
     here without leaking into note filtering."""
+    clips = _team_scoped_items(clips, team_id)
     if _auth.has_role(user, "admin", "coach"):
         return clips
-    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     visible = []
     for clip in clips:
         visibility = clip.get("visibility", "private")
@@ -1561,10 +1606,11 @@ def _validate_goal_source_links(data: dict, player_id: str):
         raise HTTPException(404, "Target match not found")
 
 
-def _filter_goals_for_user(goals: list[dict], user: dict) -> list[dict]:
+def _filter_goals_for_user(goals: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
+    goals = _team_scoped_items(goals, team_id)
     if _auth.has_role(user, "admin", "coach"):
         return goals
-    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id")))
+    linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     return [
         g for g in goals
         if g.get("player_id") in linked_players
@@ -1579,7 +1625,7 @@ def _strip_goal_private_fields(goal: dict) -> dict:
     return out
 
 
-def _goal_with_visible_sources(goal: dict, user: dict) -> dict:
+def _goal_with_visible_sources(goal: dict, user: dict, team_id: str | None = None) -> dict:
     out = dict(goal)
     if not _auth.has_role(user, "admin", "coach"):
         out = _strip_goal_private_fields(out)
@@ -1595,23 +1641,37 @@ def _goal_with_visible_sources(goal: dict, user: dict) -> dict:
     note = _db.get_coaching_note(goal.get("source_note_id")) if goal.get("source_note_id") is not None else None
     clip = _db.get_coaching_clip(goal.get("source_clip_id")) if goal.get("source_clip_id") is not None else None
     playlist = _db.get_coaching_playlist(goal.get("source_playlist_id")) if goal.get("source_playlist_id") is not None else None
-    visible_notes = _filter_notes_for_user([note], user) if note else []
-    visible_clips = _filter_clips_for_user([clip], user) if clip else []
-    visible_playlists = _filter_playlists_for_user([playlist], user) if playlist else []
-    viewer_notes_source = _filter_notes_for_user(_db.list_coaching_notes(), user)
+    visible_notes = _filter_notes_for_user([note], user, team_id=team_id) if note else []
+    visible_clips = _filter_clips_for_user([clip], user, team_id=team_id) if clip else []
+    visible_playlists = _filter_playlists_for_user([playlist], user, team_id=team_id) if playlist else []
+    viewer_notes_source = _filter_notes_for_user(_db.list_coaching_notes(), user, team_id=team_id)
     if not _auth.has_role(user, "admin", "coach"):
         viewer_notes_source = [_strip_private_fields(n) for n in viewer_notes_source]
         visible_notes = [_strip_private_fields(n) for n in visible_notes]
     out["source_note"] = visible_notes[0] if visible_notes else None
     out["source_clip"] = visible_clips[0] if visible_clips else None
     out["source_playlist"] = _playlists_with_items(visible_playlists, viewer_notes_source)[0] if visible_playlists else None
+    if team_id is not None:
+        same_team_note_ids = _ids_for_team(_db.list_coaching_notes(), team_id)
+        same_team_clip_ids = _ids_for_team(_db.list_coaching_clips(), team_id)
+        same_team_playlist_ids = _ids_for_team(_db.list_coaching_playlists(), team_id)
+        if out.get("source_note_id") not in same_team_note_ids:
+            out["source_note_id"] = None
+        if out.get("source_playlist_item_note_id") not in same_team_note_ids:
+            out["source_playlist_item_note_id"] = None
+        if out.get("source_clip_id") not in same_team_clip_ids:
+            out["source_clip_id"] = None
+        if out.get("source_playlist_id") not in same_team_playlist_ids:
+            out["source_playlist_id"] = None
+    out["source_context_notes"] = viewer_notes_source
     return out
 
 
-def _goals_with_visible_sources(goals: list[dict], user: dict) -> list[dict]:
-    return [_goal_with_visible_sources(g, user) for g in goals]
+def _goals_with_visible_sources(goals: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
+    goals = _team_scoped_items(goals, team_id)
+    return [_goal_with_visible_sources(g, user, team_id=team_id) for g in goals]
 
-def _filter_match_summaries_for_user(summaries: list[dict], user: dict) -> list[dict]:
+def _filter_match_summaries_for_user(summaries: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
     """Viewer-scoped match summary visibility.
 
     Phase 8 summaries are team-level objects. Coaches/admins see all;
@@ -1620,11 +1680,12 @@ def _filter_match_summaries_for_user(summaries: list[dict], user: dict) -> list[
     visibility helpers so a team-visible summary cannot reveal the id or
     body of a private source object.
     """
+    summaries = _team_scoped_items(summaries, team_id)
     if _auth.has_role(user, "admin", "coach"):
-        return summaries
-    visible_note_ids = {n["id"] for n in _filter_notes_for_user(_db.list_coaching_notes(), user)}
-    visible_clip_ids = {c["id"] for c in _filter_clips_for_user(_db.list_coaching_clips(), user)}
-    visible_playlist_ids = {p["id"] for p in _filter_playlists_for_user(_db.list_coaching_playlists(), user)}
+        return _sanitize_summary_source_ids(summaries, team_id)
+    visible_note_ids = {n["id"] for n in _filter_notes_for_user(_db.list_coaching_notes(), user, team_id=team_id)}
+    visible_clip_ids = {c["id"] for c in _filter_clips_for_user(_db.list_coaching_clips(), user, team_id=team_id)}
+    visible_playlist_ids = {p["id"] for p in _filter_playlists_for_user(_db.list_coaching_playlists(), user, team_id=team_id)}
     visible = []
     for summary in summaries:
         if summary.get("visibility", "private") not in {"team", "unlisted"}:
@@ -1646,7 +1707,7 @@ def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None
             for note_id in playlist.get("note_ids", [])
             if note_id in notes_by_id
         ]
-        hydrated.append({**playlist, "items": item_notes})
+        hydrated.append({**playlist, "note_ids": [note["id"] for note in item_notes], "items": item_notes})
     return hydrated
 
 

@@ -665,6 +665,232 @@ def test_pr_2_1_assistant_coach_capability_limits_are_centralized():
     assert not tenancy.role_has_capability("assistant_coach", "coach_object:delete_others")
 
 
+def test_pr_2_2_privileged_visibility_helpers_respect_explicit_team_scope(monkeypatch):
+    import server
+
+    monkeypatch.setattr(server._db, "list_coaching_notes", lambda: [])
+    monkeypatch.setattr(server._db, "list_coaching_clips", lambda: [])
+    monkeypatch.setattr(server._db, "list_coaching_playlists", lambda: [])
+    user = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    team_a_note = {"id": 1, "team_id": "team-a", "visibility": "private", "coach_private_note": "coach only"}
+    team_b_note = {"id": 2, "team_id": "team-b", "visibility": "team", "coach_private_note": "wrong team"}
+    team_a_clip = {"id": 10, "team_id": "team-a", "visibility": "private", "player_ids": []}
+    team_b_clip = {"id": 11, "team_id": "team-b", "visibility": "team", "player_ids": []}
+    team_a_playlist = {"id": 20, "team_id": "team-a", "visibility": "private", "player_ids": [], "note_ids": []}
+    team_b_playlist = {"id": 21, "team_id": "team-b", "visibility": "team", "player_ids": [], "note_ids": []}
+    team_a_goal = {"id": 30, "team_id": "team-a", "player_id": "p-a", "status": "open", "visibility": "player", "coach_private_note": "coach only"}
+    team_b_goal = {"id": 31, "team_id": "team-b", "player_id": "p-b", "status": "open", "visibility": "player", "coach_private_note": "wrong team"}
+    team_a_summary = {"id": 40, "team_id": "team-a", "visibility": "private", "note_ids": [], "clip_ids": [], "playlist_ids": []}
+    team_b_summary = {"id": 41, "team_id": "team-b", "visibility": "team", "note_ids": [], "clip_ids": [], "playlist_ids": []}
+
+    assert server._filter_notes_for_user([team_a_note, team_b_note], user, team_id="team-a") == [team_a_note]
+    assert server._filter_clips_for_user([team_a_clip, team_b_clip], user, team_id="team-a") == [team_a_clip]
+    assert server._filter_playlists_for_user([team_a_playlist, team_b_playlist], user, team_id="team-a") == [team_a_playlist]
+    assert server._filter_goals_for_user([team_a_goal, team_b_goal], user, team_id="team-a") == [team_a_goal]
+    assert [g["id"] for g in server._goals_with_visible_sources([team_a_goal, team_b_goal], user, team_id="team-a")] == [30]
+    assert server._filter_match_summaries_for_user([team_a_summary, team_b_summary], user, team_id="team-a") == [team_a_summary]
+
+
+def test_pr_2_2_viewer_visibility_helpers_use_team_scoped_player_links_and_scrub_private_fields(monkeypatch):
+    import server
+
+    user = {"user_id": "viewer-1", "username": "viewer_1", "role": "viewer"}
+
+    def linked_player_ids_for_user(user_id, team_id=None):
+        assert user_id == "viewer-1"
+        return ["player-a"] if team_id == "team-a" else ["player-b"]
+
+    monkeypatch.setattr(server._db, "linked_player_ids_for_user", linked_player_ids_for_user)
+    monkeypatch.setattr(server._db, "list_coaching_notes", lambda: [])
+
+    notes = [
+        {"id": 1, "team_id": "team-a", "visibility": "player", "player_ids": ["player-a"], "coach_private_note": "NOTE SECRET"},
+        {"id": 2, "team_id": "team-b", "visibility": "player", "player_ids": ["player-b"], "coach_private_note": "WRONG TEAM NOTE SECRET"},
+        {"id": 3, "team_id": "team-a", "visibility": "private", "player_ids": ["player-a"], "coach_private_note": "PRIVATE NOTE SECRET"},
+    ]
+    clips = [
+        {"id": 10, "team_id": "team-a", "visibility": "player", "player_ids": ["player-a"]},
+        {"id": 11, "team_id": "team-b", "visibility": "player", "player_ids": ["player-b"]},
+    ]
+    playlists = [
+        {"id": 20, "team_id": "team-a", "visibility": "player", "player_ids": ["player-a"]},
+        {"id": 21, "team_id": "team-b", "visibility": "player", "player_ids": ["player-b"]},
+    ]
+    goals = [
+        {"id": 30, "team_id": "team-a", "player_id": "player-a", "status": "open", "visibility": "player", "coach_private_note": "GOAL SECRET", "reflections": []},
+        {"id": 31, "team_id": "team-b", "player_id": "player-b", "status": "open", "visibility": "player", "coach_private_note": "WRONG TEAM GOAL SECRET", "reflections": []},
+    ]
+
+    visible_notes = server._filter_notes_for_user(notes, user, team_id="team-a")
+    assert [n["id"] for n in visible_notes] == [1]
+    assert visible_notes[0]["coach_private_note"] == ""
+    assert [c["id"] for c in server._filter_clips_for_user(clips, user, team_id="team-a")] == [10]
+    assert [p["id"] for p in server._filter_playlists_for_user(playlists, user, team_id="team-a")] == [20]
+
+    visible_goals = server._goals_with_visible_sources(
+        server._filter_goals_for_user(goals, user, team_id="team-a"),
+        user,
+        team_id="team-a",
+    )
+    assert [g["id"] for g in visible_goals] == [30]
+    assert visible_goals[0]["coach_private_note"] == ""
+    assert "WRONG TEAM" not in str(visible_notes + visible_goals)
+
+
+def test_pr_2_2_db_coaching_rows_include_team_scope_for_visibility_helpers(fresh_db):
+    import server
+
+    team = fresh_db.get_default_team()
+    season = fresh_db.get_default_season(team["id"])
+    with fresh_db.connect() as conn:
+        fresh_db.upsert_match(conn, {
+            "id": "scope-match", "home_team": "Team A", "away_team": "Team B",
+            "date": "2026-04-01", "created_at": "2026-04-01T00:00:00Z",
+            "slug": "scope-match", "updated_at": "2026-04-01T00:00:00Z",
+            "team_id": team["id"], "season_id": season["id"],
+        })
+        conn.commit()
+    player = fresh_db.create_player("Scoped Player")
+    note = fresh_db.create_coaching_note({
+        "match_id": "scope-match", "slot": "full", "timestamp_seconds": 12.0,
+        "title": "Scoped note", "body": "body", "category": "decision",
+        "visibility": "team", "player_ids": [player["id"]], "coach_private_note": "secret",
+    }, actor="coach")
+    clip = fresh_db.create_coaching_clip({
+        "match_id": "scope-match", "slot": "full", "start_seconds": 10.0,
+        "end_seconds": 15.0, "title": "Scoped clip", "category": "decision",
+        "visibility": "team", "player_ids": [player["id"]],
+    }, actor="coach")
+    playlist = fresh_db.create_coaching_playlist({
+        "title": "Scoped playlist", "visibility": "team",
+        "note_ids": [note["id"]], "player_ids": [player["id"]],
+    }, actor="coach")
+    goal = fresh_db.create_player_goal({
+        "player_id": player["id"], "title": "Scoped goal", "visibility": "player",
+        "status": "open", "coach_private_note": "goal secret",
+    }, actor="coach")
+    summary = fresh_db.create_coaching_match_summary({
+        "match_id": "scope-match", "visibility": "team",
+        "body": "Scoped summary", "note_ids": [note["id"]],
+        "clip_ids": [clip["id"]], "playlist_ids": [playlist["id"]],
+    }, actor="coach")
+
+    assert note["team_id"] == team["id"]
+    assert clip["team_id"] == team["id"]
+    assert playlist["team_id"] == team["id"]
+    assert goal["team_id"] == team["id"]
+    assert summary["team_id"] == team["id"]
+
+    user = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    assert server._filter_notes_for_user([note], user, team_id=team["id"]) == [note]
+    assert server._filter_clips_for_user([clip], user, team_id=team["id"]) == [clip]
+    assert server._filter_playlists_for_user([playlist], user, team_id=team["id"]) == [playlist]
+    assert server._goals_with_visible_sources([goal], user, team_id=team["id"])[0]["id"] == goal["id"]
+    assert server._filter_match_summaries_for_user([summary], user, team_id=team["id"]) == [summary]
+
+
+def test_pr_2_2_match_summary_sources_are_filtered_to_the_same_team(monkeypatch):
+    import server
+
+    user = {"user_id": "viewer-1", "username": "viewer_1", "role": "viewer"}
+    monkeypatch.setattr(server._db, "linked_player_ids_for_user", lambda user_id, team_id=None: ["player-a"])
+    monkeypatch.setattr(server._db, "list_coaching_notes", lambda: [
+        {"id": 1, "team_id": "team-a", "visibility": "team", "player_ids": [], "coach_private_note": ""},
+        {"id": 2, "team_id": "team-b", "visibility": "team", "player_ids": [], "coach_private_note": ""},
+    ])
+    monkeypatch.setattr(server._db, "list_coaching_clips", lambda: [
+        {"id": 10, "team_id": "team-a", "visibility": "team", "player_ids": []},
+        {"id": 11, "team_id": "team-b", "visibility": "team", "player_ids": []},
+    ])
+    monkeypatch.setattr(server._db, "list_coaching_playlists", lambda: [
+        {"id": 20, "team_id": "team-a", "visibility": "team", "player_ids": []},
+        {"id": 21, "team_id": "team-b", "visibility": "team", "player_ids": []},
+    ])
+
+    summaries = [
+        {"id": 40, "team_id": "team-a", "visibility": "team", "note_ids": [1, 2], "clip_ids": [10, 11], "playlist_ids": [20, 21]},
+        {"id": 41, "team_id": "team-b", "visibility": "team", "note_ids": [2], "clip_ids": [11], "playlist_ids": [21]},
+    ]
+
+    visible = server._filter_match_summaries_for_user(summaries, user, team_id="team-a")
+    assert [s["id"] for s in visible] == [40]
+    assert visible[0]["note_ids"] == [1]
+    assert visible[0]["clip_ids"] == [10]
+    assert visible[0]["playlist_ids"] == [20]
+
+
+def test_pr_2_2_scoped_playlist_and_summary_ids_do_not_leak_wrong_team_sources(monkeypatch):
+    import server
+
+    coach = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    team_a_note = {"id": 1, "team_id": "team-a", "visibility": "private", "player_ids": [], "coach_private_note": ""}
+    team_b_note = {"id": 2, "team_id": "team-b", "visibility": "team", "player_ids": [], "coach_private_note": ""}
+    monkeypatch.setattr(server._db, "list_coaching_notes", lambda: [team_a_note, team_b_note])
+    monkeypatch.setattr(server._db, "list_coaching_clips", lambda: [
+        {"id": 10, "team_id": "team-a", "visibility": "private", "player_ids": []},
+        {"id": 11, "team_id": "team-b", "visibility": "team", "player_ids": []},
+    ])
+    monkeypatch.setattr(server._db, "list_coaching_playlists", lambda: [
+        {"id": 20, "team_id": "team-a", "visibility": "private", "note_ids": [1, 2], "player_ids": []},
+        {"id": 21, "team_id": "team-b", "visibility": "team", "note_ids": [2], "player_ids": []},
+    ])
+
+    scoped_playlist = server._filter_playlists_for_user([
+        {"id": 20, "team_id": "team-a", "visibility": "private", "note_ids": [1, 2], "player_ids": []},
+    ], coach, team_id="team-a")[0]
+    assert scoped_playlist["note_ids"] == [1]
+
+    hydrated_playlist = server._playlists_with_items([scoped_playlist], [team_a_note])
+    assert hydrated_playlist[0]["note_ids"] == [1]
+    assert hydrated_playlist[0]["items"] == [team_a_note]
+
+    scoped_summary = server._filter_match_summaries_for_user([
+        {"id": 40, "team_id": "team-a", "visibility": "private", "note_ids": [1, 2], "clip_ids": [10, 11], "playlist_ids": [20, 21]},
+    ], coach, team_id="team-a")[0]
+    assert scoped_summary["note_ids"] == [1]
+    assert scoped_summary["clip_ids"] == [10]
+    assert scoped_summary["playlist_ids"] == [20]
+
+
+def test_pr_2_2_scoped_goal_source_ids_do_not_leak_wrong_team_sources(monkeypatch):
+    import server
+
+    coach = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    team_a_note = {"id": 1, "team_id": "team-a", "visibility": "private", "player_ids": [], "coach_private_note": ""}
+    team_b_note = {"id": 2, "team_id": "team-b", "visibility": "team", "player_ids": [], "coach_private_note": ""}
+    team_a_clip = {"id": 10, "team_id": "team-a", "visibility": "private", "player_ids": []}
+    team_b_clip = {"id": 11, "team_id": "team-b", "visibility": "team", "player_ids": []}
+    team_a_playlist = {"id": 20, "team_id": "team-a", "visibility": "private", "note_ids": [1], "player_ids": []}
+    team_b_playlist = {"id": 21, "team_id": "team-b", "visibility": "team", "note_ids": [2], "player_ids": []}
+    monkeypatch.setattr(server._db, "list_coaching_notes", lambda: [team_a_note, team_b_note])
+    monkeypatch.setattr(server._db, "list_coaching_clips", lambda: [team_a_clip, team_b_clip])
+    monkeypatch.setattr(server._db, "list_coaching_playlists", lambda: [team_a_playlist, team_b_playlist])
+    monkeypatch.setattr(server._db, "get_coaching_note", lambda note_id: {1: team_a_note, 2: team_b_note}.get(note_id))
+    monkeypatch.setattr(server._db, "get_coaching_clip", lambda clip_id: {10: team_a_clip, 11: team_b_clip}.get(clip_id))
+    monkeypatch.setattr(server._db, "get_coaching_playlist", lambda playlist_id: {20: team_a_playlist, 21: team_b_playlist}.get(playlist_id))
+
+    scoped = server._goal_with_visible_sources({
+        "id": 30,
+        "team_id": "team-a",
+        "player_id": "player-a",
+        "status": "open",
+        "visibility": "player",
+        "coach_private_note": "",
+        "source_note_id": 2,
+        "source_clip_id": 11,
+        "source_playlist_id": 21,
+        "source_playlist_item_note_id": 2,
+    }, coach, team_id="team-a")
+
+    assert scoped["source_note"] is None
+    assert scoped["source_clip"] is None
+    assert scoped["source_playlist"] is None
+    assert scoped["source_note_id"] is None
+    assert scoped["source_clip_id"] is None
+    assert scoped["source_playlist_id"] is None
+    assert scoped["source_playlist_item_note_id"] is None
+
+
 def test_pr_2_1_explicit_global_admin_override_is_not_implicit(fresh_db):
     import tenancy
     from fastapi import HTTPException
