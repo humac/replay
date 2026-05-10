@@ -1632,33 +1632,33 @@ export const coachingMixin = {
             </tr>
         `).join('') || '<tr><td colspan="5">No matches have assigned feedback for these filters.</td></tr>';
         const unreviewed = (data.unreviewed_assigned_items || []).map((item) => `
-            <li><strong>${this.esc(item.title || `${item.kind} ${item.item_id}`)}</strong><span>${this.esc(item.kind)} · ${this.esc(item.date || 'no date')}</span></li>
-        `).join('') || '<li>No unreviewed assigned items for these filters.</li>';
+            <li class="coach-engagement-list-item"><strong>${this.esc(item.title || `${item.kind} ${item.item_id}`)}</strong><span class="coach-engagement-meta-pill">${this.esc(item.kind)} · ${this.esc(item.date || 'no date')}</span></li>
+        `).join('') || '<li class="coach-engagement-list-item coach-engagement-list-item--empty">No unreviewed assigned items for these filters.</li>';
         const reflections = (data.reflections_needing_response || []).map((r) => `
-            <li><strong>${this.esc(r.reviewed_at ? this.formatDate(r.reviewed_at) : 'Reflection')}</strong><span>${this.esc(r.reflection || '')}</span></li>
-        `).join('') || '<li>No player reflections for these filters.</li>';
+            <li class="coach-engagement-list-item"><strong>${this.esc(r.reviewed_at ? this.formatDate(r.reviewed_at) : 'Reflection')}</strong><span class="coach-engagement-preview">${this.esc(r.reflection || '')}</span></li>
+        `).join('') || '<li class="coach-engagement-list-item coach-engagement-list-item--empty">No player reflections for these filters.</li>';
         const noRecent = (data.players_with_no_recent_feedback || []).map((p) => `
-            <li><strong>${this.esc(p.jersey_number ? `#${p.jersey_number} ${p.display_name}` : p.display_name)}</strong><span>No feedback in the current recent window.</span></li>
-        `).join('') || '<li>Every active filtered player has recent feedback.</li>';
+            <li class="coach-engagement-list-item"><strong>${this.esc(p.jersey_number ? `#${p.jersey_number} ${p.display_name}` : p.display_name)}</strong><span class="coach-engagement-meta-pill">No feedback in the current recent window.</span></li>
+        `).join('') || '<li class="coach-engagement-list-item coach-engagement-list-item--empty">Every active filtered player has recent feedback.</li>';
         const mostWatched = (data.most_watched || []).map((item) => `
-            <li><strong>${this.esc(item.title || `${item.kind} ${item.item_id}`)}</strong><span>${Number(item.review_count || 0)} review${Number(item.review_count || 0) === 1 ? '' : 's'} · ${this.esc(item.kind)}</span></li>
-        `).join('') || '<li>No review activity yet.</li>';
+            <li class="coach-engagement-list-item"><strong>${this.esc(item.title || `${item.kind} ${item.item_id}`)}</strong><span class="coach-engagement-meta-pill">${Number(item.review_count || 0)} review${Number(item.review_count || 0) === 1 ? '' : 's'} · ${this.esc(item.kind)}</span></li>
+        `).join('') || '<li class="coach-engagement-list-item coach-engagement-list-item--empty">No review activity yet.</li>';
         target.innerHTML = `
             <div class="coach-engagement-kpis">${tiles.map(([label, value]) => `
-                <div class="roster-kpi"><span class="roster-kpi-label">${this.esc(label)}</span><strong class="roster-kpi-value">${this.esc(String(value))}</strong></div>
+                <div class="coach-engagement-kpi"><span class="coach-engagement-kpi-label">${this.esc(label)}</span><strong class="coach-engagement-kpi-value">${this.esc(String(value))}</strong></div>
             `).join('')}</div>
             <div class="coach-engagement-grid">
                 <section class="coach-engagement-card coach-engagement-card--wide">
                     <h4>Review completion by player</h4>
-                    <table class="coach-engagement-table"><thead><tr><th>Player</th><th>Assigned</th><th>Reviewed</th><th>Complete</th><th>Latest</th><th>Reflections</th></tr></thead><tbody>${playerRows}</tbody></table>
+                    <div class="coach-engagement-table-wrap"><table class="coach-engagement-table"><thead><tr><th>Player</th><th>Assigned</th><th>Reviewed</th><th>Complete</th><th>Latest</th><th>Reflections</th></tr></thead><tbody>${playerRows}</tbody></table></div>
                 </section>
                 <section class="coach-engagement-card">
                     <h4>Review completion by playlist</h4>
-                    <table class="coach-engagement-table"><thead><tr><th>Playlist</th><th>Assigned</th><th>Reviewed</th><th>Complete</th><th>Latest</th></tr></thead><tbody>${playlistRows}</tbody></table>
+                    <div class="coach-engagement-table-wrap"><table class="coach-engagement-table"><thead><tr><th>Playlist</th><th>Assigned</th><th>Reviewed</th><th>Complete</th><th>Latest</th></tr></thead><tbody>${playlistRows}</tbody></table></div>
                 </section>
                 <section class="coach-engagement-card">
                     <h4>Review completion by match</h4>
-                    <table class="coach-engagement-table"><thead><tr><th>Match</th><th>Date</th><th>Assigned</th><th>Reviewed</th><th>Complete</th></tr></thead><tbody>${matchRows}</tbody></table>
+                    <div class="coach-engagement-table-wrap"><table class="coach-engagement-table"><thead><tr><th>Match</th><th>Date</th><th>Assigned</th><th>Reviewed</th><th>Complete</th></tr></thead><tbody>${matchRows}</tbody></table></div>
                 </section>
                 <section class="coach-engagement-card"><h4>Unreviewed assigned items</h4><ul class="coach-engagement-list">${unreviewed}</ul></section>
                 <section class="coach-engagement-card"><h4>Reflections needing response</h4><ul class="coach-engagement-list">${reflections}</ul></section>
