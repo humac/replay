@@ -297,8 +297,13 @@ export const playerMixin = {
 
     // ===== PLAYBACK =====
     getStreamUrls(matchId, slot) {
+        const match = (this.matches || []).find((m) => m.id === matchId);
+        const teamId = match?.team_id;
+        const hlsPath = teamId
+            ? `/api/matches/${matchId}/hls/teams/${teamId}/${slot}/master.m3u8`
+            : `/api/matches/${matchId}/hls/${slot}/master.m3u8`;
         return {
-            hlsUrl: `/api/matches/${matchId}/hls/${slot}/master.m3u8`,
+            hlsUrl: hlsPath,
             mp4Url: `/api/matches/${matchId}/video/${slot}`,
         };
     },

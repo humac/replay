@@ -629,30 +629,46 @@ async def _append_bytes_file(dest: Path, data: bytes):
 # HLS path helpers
 # ---------------------------------------------------------------------------
 
+def _team_id_for_match(match_or_id) -> str | None:
+    if isinstance(match_or_id, dict):
+        return match_or_id.get("team_id")
+    match = _db.get_match_by_id(str(match_or_id))
+    return match.get("team_id") if match else None
+
+
 def _slot_hls_dir(match_id: str, slot: str) -> Path:
-    return _media.slot_hls_dir(VIDEOS_DIR, match_id, slot)
+    return _media.existing_slot_hls_dir(VIDEOS_DIR, match_id, slot, team_id=_team_id_for_match(match_id))
+
+
+def _slot_hls_write_dir(match_id: str, slot: str) -> Path:
+    return _media.slot_hls_dir(VIDEOS_DIR, match_id, slot, team_id=_team_id_for_match(match_id))
 
 
 def _slot_hls_master_path(match_id: str, slot: str) -> Path:
-    return _media.slot_hls_master_path(VIDEOS_DIR, match_id, slot)
+    return _media.existing_slot_hls_master_path(VIDEOS_DIR, match_id, slot, team_id=_team_id_for_match(match_id))
 
 
 def _slot_mp4_path(match_id: str, slot: str) -> Path:
-    """Finished MP4 path. Lives on the cold pool (ORIGINALS_DIR) when tiered."""
-    return _media.slot_mp4_path(ORIGINALS_DIR, match_id, slot)
+    """Finished MP4 read path. Try team-aware storage, then legacy."""
+    return _media.existing_slot_mp4_path(ORIGINALS_DIR, match_id, slot, team_id=_team_id_for_match(match_id))
+
+
+def _slot_mp4_write_path(match_id: str, slot: str) -> Path:
+    """Finished MP4 write path. New transcodes land in team-aware storage."""
+    return _media.slot_mp4_path(ORIGINALS_DIR, match_id, slot, team_id=_team_id_for_match(match_id))
 
 
 def _slot_raw_path(match_id: str, slot: str, ext: str) -> Path:
     """Raw upload destination for a slot. Cold pool when tiered."""
-    return _media.slot_raw_path(ORIGINALS_DIR, match_id, slot, ext)
+    return _media.slot_raw_path(ORIGINALS_DIR, match_id, slot, ext, team_id=_team_id_for_match(match_id))
 
 
 def _find_slot_raw_path(match_id: str, slot: str) -> Path | None:
     """Existing raw upload (.mp4 then .mkv), or None."""
-    return _media.find_slot_raw_path(ORIGINALS_DIR, match_id, slot)
+    return _media.find_slot_raw_path(ORIGINALS_DIR, match_id, slot, team_id=_team_id_for_match(match_id))
 
 
-def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
+def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str, str | None]]:
     missing = []
     for match in matches:
         slots = ["full"] if match.get("format") != "two_halves" else ["first_half", "second_half"]
@@ -664,10 +680,10 @@ def _ready_slots_missing_hls(matches: list[dict]) -> list[tuple[str, str]]:
                 continue
             # Use verify_slot_assets so a partially-written master.m3u8 (from
             # a prior interrupted HLS build) is treated as missing, not complete.
-            report = _media.verify_slot_assets(VIDEOS_DIR, match["id"], slot, originals_dir=ORIGINALS_DIR)
+            report = _media.verify_slot_assets(VIDEOS_DIR, match["id"], slot, originals_dir=ORIGINALS_DIR, team_id=match.get("team_id"))
             if report["hls_complete"]:
                 continue
-            missing.append((match["id"], slot))
+            missing.append((match["id"], slot, match.get("team_id")))
     return missing
 
 
@@ -768,7 +784,9 @@ def _media_kwargs() -> dict:
 
 
 async def _build_hls_assets(source_mp4: Path, match_id: str, slot: str) -> bool:
-    return await _media.build_hls_assets(source_mp4, match_id, slot, **_media_kwargs())
+    return await _media.build_hls_assets(
+        source_mp4, match_id, slot, **_media_kwargs(), team_id=_team_id_for_match(match_id)
+    )
 
 
 async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
@@ -798,6 +816,7 @@ async def _transcode_video(match_id: str, slot: str, src: Path, dest: Path):
         transcode_semaphore=TRANSCODE_SEMAPHORE,
         transcode_concurrency=current_transcode_concurrency(),
         set_video_status=_set_video_status,
+        team_id=_team_id_for_match(match_id),
     )
 
 
@@ -1916,12 +1935,10 @@ async def coach_update_note(note_id: int, request: Request, body: UpdateCoaching
         prior_match_id = existing.get("match_id")
         if prior_match_id:
             try:
-                thumb = _media.coach_note_thumbnail_path(
-                    VIDEOS_DIR, prior_match_id, note_id
-                )
-                if _thumb_path_within_videos_dir(thumb):
-                    thumb.unlink(missing_ok=True)
-            except OSError as exc:
+                for thumb in _coach_note_thumbnail_candidates(existing, note_id):
+                    if _thumb_path_within_videos_dir(thumb):
+                        thumb.unlink(missing_ok=True)
+            except (OSError, ValueError) as exc:
                 _log.setup("replay").warning(
                     "Could not unlink stale coach note thumbnail for note %s: %s",
                     note_id, exc,
@@ -1955,14 +1972,10 @@ async def coach_delete_note(note_id: int, request: Request):
         # Phase 6a — observation notes have no `match_id`, so the
         # thumbnail path is meaningless. Skip the unlink attempt
         # entirely. Video notes still clean up their JPEG.
-        thumb = (
-            _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
-            if note and note.get("match_id") and (note.get("note_context") or "video") == "video"
-            else None
-        )
-        if thumb is not None and _thumb_path_within_videos_dir(thumb):
-            thumb.unlink(missing_ok=True)
-    except OSError as exc:
+        for thumb in _coach_note_thumbnail_candidates(note, note_id):
+            if _thumb_path_within_videos_dir(thumb):
+                thumb.unlink(missing_ok=True)
+    except (OSError, ValueError) as exc:
         _log.setup("replay").warning(
             "Could not unlink coach note thumbnail for note %s: %s", note_id, exc
         )
@@ -2024,6 +2037,45 @@ def _thumb_path_within_videos_dir(thumb: Path) -> bool:
         return False
 
 
+def _unique_thumbnail_candidates(paths: list[Path]) -> list[Path]:
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        try:
+            key = path.resolve(strict=False)
+        except OSError:
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _coach_note_thumbnail_candidates(note: dict | None, note_id: int) -> list[Path]:
+    if not note or not note.get("match_id") or (note.get("note_context") or "video") != "video":
+        return []
+    match_id = note["match_id"]
+    paths = [
+        _media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id, team_id=note.get("team_id"))
+    ]
+    if note.get("team_id"):
+        paths.append(_media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id))
+    return _unique_thumbnail_candidates(paths)
+
+
+def _coach_clip_thumbnail_candidates(clip: dict | None, clip_id: int) -> list[Path]:
+    if not clip or not clip.get("match_id"):
+        return []
+    match_id = clip["match_id"]
+    paths = [
+        _media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id, team_id=clip.get("team_id"))
+    ]
+    if clip.get("team_id"):
+        paths.append(_media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id))
+    return _unique_thumbnail_candidates(paths)
+
+
 async def _spawn_coach_note_thumbnail(note: dict) -> None:
     """Best-effort generator — never raises. Caller (note create / update /
     regenerate endpoint) should call this AFTER the DB row is written
@@ -2043,8 +2095,15 @@ async def _spawn_coach_note_thumbnail(note: dict) -> None:
     match_id = note["match_id"]
     slot = note.get("slot") or "full"
     timestamp_s = float(note.get("timestamp_seconds") or 0)
-    src = _slot_mp4_path(match_id, slot)
-    dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id)
+    try:
+        src = _slot_mp4_path(match_id, slot)
+        dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, match_id, note_id, team_id=note.get("team_id"))
+    except ValueError as exc:
+        _log.setup("replay").warning(
+            "Coach-note thumbnail spawn skipped for note %s: invalid path component (%s)",
+            note_id, exc,
+        )
+        return
     # Defense-in-depth: refuse to write outside the videos tree even if
     # the DB row's `match_id` somehow resolves to an escaping path.
     if not _thumb_path_within_videos_dir(dest):
@@ -2103,7 +2162,10 @@ async def coach_get_note_thumbnail(note_id: int, request: Request):
     # an observation note exists by polling the thumbnail endpoint.
     if (note.get("note_context") or "video") != "video" or not note.get("match_id"):
         raise HTTPException(404, "Thumbnail not found")
-    thumb = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
+    try:
+        thumb = _media.existing_coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id, team_id=note.get("team_id"))
+    except ValueError:
+        raise HTTPException(404, "Thumbnail not found")
     # Defense-in-depth: refuse to serve a path that escapes VIDEOS_DIR.
     # Same response shape as the missing-file branch so a viewer can't
     # use a probing match_id to distinguish containment-fail from
@@ -2155,8 +2217,11 @@ async def coach_regenerate_note_thumbnail(note_id: int, request: Request):
     # need a new branch.
     if (note.get("note_context") or "video") != "video" or not note.get("match_id"):
         return {"ok": True, "generated": False}
-    src = _slot_mp4_path(note["match_id"], note.get("slot") or "full")
-    dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id)
+    try:
+        src = _slot_mp4_path(note["match_id"], note.get("slot") or "full")
+        dest = _media.coach_note_thumbnail_path(VIDEOS_DIR, note["match_id"], note_id, team_id=note.get("team_id"))
+    except ValueError:
+        return {"ok": True, "generated": False}
     # Defense-in-depth: never write outside VIDEOS_DIR. Returns the
     # same `generated: false` shape as a successful-but-no-source run
     # so callers handle the result identically.
@@ -2505,10 +2570,10 @@ async def coach_delete_clip(clip_id: int, request: Request):
     # was already deleted (matches `coach_delete_note` exactly).
     if clip:
         try:
-            thumb = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id)
-            if _thumb_path_within_videos_dir(thumb):
-                thumb.unlink(missing_ok=True)
-        except OSError as exc:
+            for thumb in _coach_clip_thumbnail_candidates(clip, clip_id):
+                if _thumb_path_within_videos_dir(thumb):
+                    thumb.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
             _log.setup("replay").warning(
                 "Could not unlink coach clip thumbnail for clip %s: %s", clip_id, exc
             )
@@ -2564,8 +2629,15 @@ async def _spawn_coach_clip_thumbnail(clip: dict) -> None:
     # already clamps negative values to 0 and timestamps past the
     # video's duration to (duration - 1).
     start_s = float(clip.get("start_seconds") or 0)
-    src = _slot_mp4_path(match_id, slot)
-    dest = _media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id)
+    try:
+        src = _slot_mp4_path(match_id, slot)
+        dest = _media.clip_thumbnail_path(VIDEOS_DIR, match_id, clip_id, team_id=clip.get("team_id"))
+    except ValueError as exc:
+        _log.setup("replay").warning(
+            "Coach-clip thumbnail spawn skipped for clip %s: invalid path component (%s)",
+            clip_id, exc,
+        )
+        return
     if not _thumb_path_within_videos_dir(dest):
         _log.setup("replay").warning(
             "Coach-clip thumbnail spawn skipped for clip %s: dest path escapes VIDEOS_DIR (%s)",
@@ -2615,7 +2687,10 @@ async def coach_get_clip_thumbnail(clip_id: int, request: Request):
         raise HTTPException(404, "Thumbnail not found")
     if not _can_view_coach_clip(user, clip):
         raise HTTPException(404, "Thumbnail not found")
-    thumb = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id)
+    try:
+        thumb = _media.existing_clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id, team_id=clip.get("team_id"))
+    except ValueError:
+        raise HTTPException(404, "Thumbnail not found")
     if not _thumb_path_within_videos_dir(thumb):
         raise HTTPException(404, "Thumbnail not found")
     if not thumb.is_file():
@@ -2643,8 +2718,11 @@ async def coach_regenerate_clip_thumbnail(clip_id: int, request: Request):
     clip = _db.get_coaching_clip(clip_id)
     if not clip:
         raise HTTPException(404, "Clip not found")
-    src = _slot_mp4_path(clip["match_id"], clip.get("slot") or "full")
-    dest = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id)
+    try:
+        src = _slot_mp4_path(clip["match_id"], clip.get("slot") or "full")
+        dest = _media.clip_thumbnail_path(VIDEOS_DIR, clip["match_id"], clip_id, team_id=clip.get("team_id"))
+    except ValueError:
+        return {"ok": True, "generated": False}
     if not _thumb_path_within_videos_dir(dest):
         _log.setup("replay").warning(
             "Coach-clip thumbnail regenerate skipped for clip %s: dest path escapes VIDEOS_DIR (%s)",
@@ -3841,24 +3919,26 @@ async def admin_retry_transcode(match_id: str, slot: str, request: Request):
         match.setdefault("video_status", {})[slot] = "transcoding"
         _db.save_matches_unlocked(matches)
 
-    final_path = _slot_mp4_path(match_id, slot)
+    existing_final_path = _slot_mp4_path(match_id, slot)
+    final_path = _slot_mp4_write_path(match_id, slot)
 
     # Prefer raw upload file if it still exists; otherwise re-stage the
     # existing MP4 as a raw file. Both live on ORIGINALS_DIR.
     src = _find_slot_raw_path(match_id, slot)
-    if src is None and final_path.is_file():
+    if src is None and existing_final_path.is_file():
         # Re-transcode from the existing MP4. Promote it to a raw-named path
         # first so source and destination are distinct — transcode_video does
         # `dest.unlink(missing_ok=True)` before invoking ffmpeg, which would
         # otherwise delete its own input.
         raw_promoted = _slot_raw_path(match_id, slot, ".mp4")
         try:
-            final_path.rename(raw_promoted)
+            raw_promoted.parent.mkdir(parents=True, exist_ok=True)
+            existing_final_path.rename(raw_promoted)
         except OSError as exc:
             await _set_video_status(match_id, slot, "error", None, error_info={
                 "error_code": "retry_rename_failed",
                 "reason": str(exc),
-                "details": f"Failed to stage {final_path.name} → {raw_promoted.name} for retry",
+                "details": f"Failed to stage {existing_final_path.name} → {raw_promoted.name} for retry",
             })
             raise HTTPException(500, "Failed to stage source file for retry") from exc
         src = raw_promoted
@@ -4262,7 +4342,15 @@ async def delete_match(match_id: str, request: Request):
     # Remove both the hot-path tree (HLS, thumbnail) and the cold-path tree
     # (raw uploads + finished MP4). When tiered they're separate volumes;
     # when collapsed they're the same path and the second rmtree is a no-op.
-    for d in {VIDEOS_DIR / match_id, ORIGINALS_DIR / match_id}:
+    cleanup_dirs = {VIDEOS_DIR / match_id, ORIGINALS_DIR / match_id}
+    team_id = match.get("team_id") if match else None
+    if team_id:
+        try:
+            cleanup_dirs.add(_media.slot_hls_dir(VIDEOS_DIR, match_id, "full", team_id=team_id).parents[1])
+            cleanup_dirs.add(_media.match_originals_dir(ORIGINALS_DIR, match_id, team_id=team_id))
+        except ValueError:
+            pass
+    for d in cleanup_dirs:
         if d.exists():
             shutil.rmtree(str(d))
     logger.info("admin.action", extra={"action": "delete_match", "actor": user["username"], "target_id": match_id})
@@ -4322,6 +4410,7 @@ async def create_upload_session(match_id: str, request: Request, body: CreateUpl
     (ORIGINALS_DIR / match_id).mkdir(parents=True, exist_ok=True)
     (VIDEOS_DIR / match_id).mkdir(parents=True, exist_ok=True)
     raw_path = _slot_raw_path(match_id, slot, ext)
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.unlink(missing_ok=True)
 
     session_id = uuid.uuid4().hex
@@ -4508,7 +4597,7 @@ async def complete_upload_session(session_id: str, request: Request):
 
     match_id = row["match_id"]
     slot = row["slot"]
-    final_path = _slot_mp4_path(match_id, slot)
+    final_path = _slot_mp4_write_path(match_id, slot)
 
     # CAS: only the first concurrent /complete call wins; the conditional UPDATE
     # ensures exactly one caller transitions 'active' → 'completed' and spawns
@@ -4564,11 +4653,12 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
     (VIDEOS_DIR / match_id).mkdir(parents=True, exist_ok=True)
 
     raw_path = _slot_raw_path(match_id, slot, ext)
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
     max_upload = current_max_upload_size_bytes()
     logger.info(
         "Upload started: %s/%s filename=%s max_size_bytes=%d",
         match_id, slot, fname, max_upload,
-        extra={"match_id": match_id, "slot": slot, "filename": fname},
+        extra={"match_id": match_id, "slot": slot, "upload_filename": fname},
     )
     started_at = time.time()
     try:
@@ -4596,7 +4686,7 @@ async def upload_video(match_id: str, file: UploadFile, request: Request):
 
     await _set_video_status(match_id, slot, "transcoding", None)
 
-    final_path = _slot_mp4_path(match_id, slot)
+    final_path = _slot_mp4_write_path(match_id, slot)
     _spawn_transcode(match_id, slot, raw_path, final_path)
 
     return {"ok": True, "slot": slot, "size_mb": size_mb, "status": "transcoding"}
@@ -4724,14 +4814,32 @@ async def download_video(match_id: str, slot: str, request: Request):
 # HLS streaming
 # ---------------------------------------------------------------------------
 
+@app.get("/api/matches/{match_id}/hls/teams/{team_id}/{slot}/master.m3u8")
+async def stream_hls_master_team(match_id: str, team_id: str, slot: str, request: Request):
+    return await _stream_hls_master_common(match_id, slot, request, team_id=team_id)
+
+
+def _hls_response_headers(cache_control: str) -> dict[str, str]:
+    return {
+        "Cache-Control": cache_control,
+        "Access-Control-Allow-Origin": "*",
+    }
+
+
 @app.get("/api/matches/{match_id}/hls/{slot}/master.m3u8")
 async def stream_hls_master(match_id: str, slot: str, request: Request):
+    return await _stream_hls_master_common(match_id, slot, request)
+
+
+async def _stream_hls_master_common(match_id: str, slot: str, request: Request, *, team_id: str | None = None):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
 
     match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
+    if team_id is not None and str(match.get("team_id") or "") != team_id:
+        raise HTTPException(404, "HLS playlist not found")
 
     status = _get_video_status(match, slot)
     if status == "transcoding":
@@ -4739,7 +4847,7 @@ async def stream_hls_master(match_id: str, slot: str, request: Request):
     if status == "error":
         raise HTTPException(500, "Video processing failed")
 
-    master_path = _slot_hls_master_path(match_id, slot)
+    master_path = _media.existing_slot_hls_master_path(VIDEOS_DIR, match_id, slot, team_id=match.get("team_id"))
     if not master_path.is_file():
         raise HTTPException(404, "HLS playlist not found")
 
@@ -4755,18 +4863,33 @@ async def stream_hls_master(match_id: str, slot: str, request: Request):
         media_type="application/vnd.apple.mpegurl",
         # Playlists must NOT be `immutable` — re-transcode rewrites them.
         # 60s revalidation matches the live HLS proxy policy in live.py.
-        headers={"Cache-Control": "public, max-age=60, must-revalidate"},
+        headers=_hls_response_headers("public, max-age=60, must-revalidate"),
     )
+
+
+@app.get("/api/matches/{match_id}/hls/teams/{team_id}/{slot}/{asset_path:path}")
+async def stream_hls_asset_team(match_id: str, team_id: str, slot: str, asset_path: str, request: Request):
+    return await _stream_hls_asset_common(match_id, slot, asset_path, request, team_id=team_id)
 
 
 @app.get("/api/matches/{match_id}/hls/{slot}/{asset_path:path}")
 async def stream_hls_asset(match_id: str, slot: str, asset_path: str, request: Request):
+    return await _stream_hls_asset_common(match_id, slot, asset_path, request)
+
+
+async def _stream_hls_asset_common(match_id: str, slot: str, asset_path: str, request: Request, *, team_id: str | None = None):
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
     if not asset_path or ".." in asset_path:
         raise HTTPException(400, "Invalid asset path")
 
-    base_dir = _slot_hls_dir(match_id, slot).resolve()
+    match = _db.get_match_by_id(match_id)
+    if not match:
+        raise HTTPException(404, "Match not found")
+    if team_id is not None and str(match.get("team_id") or "") != team_id:
+        raise HTTPException(404, "HLS asset not found")
+
+    base_dir = _media.existing_slot_hls_dir(VIDEOS_DIR, match_id, slot, team_id=match.get("team_id")).resolve()
     target_path = (base_dir / asset_path).resolve()
     if base_dir not in target_path.parents:
         raise HTTPException(400, "Invalid asset path")
@@ -4800,7 +4923,7 @@ async def stream_hls_asset(match_id: str, slot: str, asset_path: str, request: R
     return FileResponse(
         str(target_path),
         media_type=media_type,
-        headers={"Cache-Control": cache_header},
+        headers=_hls_response_headers(cache_header),
     )
 
 

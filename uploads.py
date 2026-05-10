@@ -166,6 +166,7 @@ def cleanup_orphaned_raw_files(videos_dir: Path, originals_dir: Path | None = No
 
     removed: list[str] = []
     seen_roots: set = set()
+    raw_prefixes = ("full_raw", "first_half_raw", "second_half_raw")
     roots = [videos_dir]
     if originals_dir is not None and originals_dir != videos_dir:
         roots.append(originals_dir)
@@ -177,18 +178,21 @@ def cleanup_orphaned_raw_files(videos_dir: Path, originals_dir: Path | None = No
         if resolved in seen_roots or not root.is_dir():
             continue
         seen_roots.add(resolved)
-        for match_dir in root.iterdir():
-            if not match_dir.is_dir():
+        for f in root.rglob("*_raw.*"):
+            if not f.is_file() or not f.name.startswith(raw_prefixes):
                 continue
-            for f in match_dir.iterdir():
-                if f.name.startswith(("full_raw", "first_half_raw", "second_half_raw")):
-                    if str(f) not in active_raw_paths:
-                        try:
-                            f.unlink()
-                            removed.append(str(f))
-                            logger.info("Removed orphaned raw file: %s", f)
-                        except OSError:
-                            pass
+            try:
+                if resolved not in f.resolve(strict=False).parents:
+                    continue
+            except OSError:
+                continue
+            if str(f) not in active_raw_paths:
+                try:
+                    f.unlink()
+                    removed.append(str(f))
+                    logger.info("Removed orphaned raw file: %s", f)
+                except OSError:
+                    pass
     return removed
 
 
