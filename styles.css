@@ -11406,6 +11406,15 @@ body[data-coach-review-source="tactical_board"] > .coach-review-side .coach-revi
     min-width: 0;
 }
 
+.player-goal-meta {
+    display: block;
+    margin-top: 0.2rem;
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
 .player-goal-card h4 {
     margin: 0.15rem 0 0;
     font-size: 1rem;

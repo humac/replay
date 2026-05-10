@@ -53,6 +53,14 @@ const GOAL_CONTEXT_OPTIONS = [
 ];
 const GOAL_STATUS_LABELS = Object.fromEntries(GOAL_STATUS_OPTIONS);
 const GOAL_CONTEXT_LABELS = Object.fromEntries(GOAL_CONTEXT_OPTIONS);
+const GOAL_VISIBILITY_OPTIONS = [
+    ['player', 'Player/family'], ['coach', 'Coach/admin only'],
+];
+const GOAL_PRIORITY_OPTIONS = [
+    ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'],
+];
+const GOAL_VISIBILITY_LABELS = Object.fromEntries(GOAL_VISIBILITY_OPTIONS);
+const GOAL_PRIORITY_LABELS = Object.fromEntries(GOAL_PRIORITY_OPTIONS);
 
 // Phase 4b: pre/post-roll defaults for the Coach Review "Save Clip"
 // affordance. Match the existing playlist defaults so a coach who's
@@ -5755,6 +5763,8 @@ export const coachingMixin = {
 
     _goalStatusLabel(status) { return GOAL_STATUS_LABELS[status] || status || 'Open'; },
     _goalContextLabel(context) { return GOAL_CONTEXT_LABELS[context] || context || 'Goal'; },
+    _goalVisibilityLabel(visibility) { return GOAL_VISIBILITY_LABELS[visibility] || visibility || 'Player/family'; },
+    _goalPriorityLabel(priority) { return GOAL_PRIORITY_LABELS[priority] || priority || 'Medium'; },
 
     _goalSourceSummary(goal) {
         if (goal?.source_note) {
@@ -5774,16 +5784,24 @@ export const coachingMixin = {
         const latest = goal.latest_reflection || reflections[0] || null;
         const status = goal.status || 'open';
         const active = ACTIVE_GOAL_STATUSES.has(status);
+        const coachMeta = !viewer ? [
+            this._goalVisibilityLabel(goal.visibility || 'player'),
+            `${this._goalPriorityLabel(goal.priority || 'medium')} priority`,
+            goal.target_date ? `Target ${this.formatDate(goal.target_date)}` : '',
+        ].filter(Boolean).join(' · ') : '';
         return `
             <article class="player-goal-card${active ? '' : ' is-muted'}" data-goal-id="${Number(goal.id)}">
                 <div class="player-goal-card-head">
                     <div class="player-goal-card-title">
                         <span class="player-goal-kicker">${this.esc(this._goalContextLabel(goal.context))}${player && !viewer ? ` · ${this.esc(this.playerLabel(player))}` : ''}</span>
                         <h4>${this.esc(goal.title || 'Player goal')}</h4>
+                        ${coachMeta ? `<span class="player-goal-meta">${this.esc(coachMeta)}</span>` : ''}
                     </div>
                     <span class="player-goal-status" data-status="${this.esc(status)}">${this.esc(this._goalStatusLabel(status))}</span>
                 </div>
                 ${goal.description ? `<div class="player-goal-preview-block"><span>Action plan</span><p class="player-goal-desc">${this.esc(goal.description)}</p></div>` : ''}
+                ${goal.success_criteria ? `<div class="player-goal-preview-block"><span>Success criteria</span><p class="player-goal-desc">${this.esc(goal.success_criteria)}</p></div>` : ''}
+                ${!viewer && goal.coach_private_note ? `<div class="player-goal-preview-block player-goal-private-note"><span>Coach private note</span><p class="player-goal-desc">${this.esc(goal.coach_private_note)}</p></div>` : ''}
                 ${source ? `<div class="player-goal-source"><span>${this.esc(source.label)}</span><strong>${this.esc(source.text)}</strong></div>` : ''}
                 ${latest ? `<div class="player-goal-reflection"><span>Latest reflection</span><p>${this.esc(latest.reflection || '')}</p></div>` : ''}
                 <div class="player-goal-actions">
@@ -5808,19 +5826,31 @@ export const coachingMixin = {
                 <label>Player<select data-field="player_id" ${goal ? 'disabled' : ''}>${players.map((p) => `<option value="${this.esc(p.id)}">${this.esc(this.playerLabel(p))}</option>`).join('')}</select></label>
                 <label>Context<select data-field="context">${GOAL_CONTEXT_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}</select></label>
             </div>
+            <div class="form-grid two">
+                <label>Visibility<select data-field="visibility">${GOAL_VISIBILITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}</select></label>
+                <label>Priority<select data-field="priority">${GOAL_PRIORITY_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}</select></label>
+            </div>
             <label>Goal title<input type="text" data-field="title" maxlength="160" placeholder="Scan before receiving"></label>
             <label>Action plan<textarea data-field="description" rows="4" maxlength="2000" placeholder="What should the player try next?"></textarea></label>
             <div class="form-grid two">
                 <label>Status<select data-field="status">${GOAL_STATUS_OPTIONS.map(([v, l]) => `<option value="${v}">${this.esc(l)}</option>`).join('')}</select></label>
-                <label>Target match<select data-field="target_match_id"><option value="">— none —</option>${(this.matches || []).map((m) => `<option value="${this.esc(m.id)}">${this.esc(this.matchLabel(m.id))}</option>`).join('')}</select></label>
+                <label>Target date<input type="date" data-field="target_date"></label>
             </div>
+            <label>Success criteria<textarea data-field="success_criteria" rows="3" maxlength="2000" placeholder="How will we know this goal is working?"></textarea></label>
+            <label>Coach private note, not visible to family/player<textarea data-field="coach_private_note" rows="3" maxlength="2000" placeholder="Internal coaching context"></textarea></label>
+            <label>Target match<select data-field="target_match_id"><option value="">— none —</option>${(this.matches || []).map((m) => `<option value="${this.esc(m.id)}">${this.esc(this.matchLabel(m.id))}</option>`).join('')}</select></label>
             <input type="hidden" data-field="source_note_id"><input type="hidden" data-field="source_clip_id"><input type="hidden" data-field="source_playlist_id">
             <p class="form-help" data-field="source_help">Optional: create from a note/clip/list via its Create goal action.</p>`;
         body.querySelector('[data-field="player_id"]').value = goal?.player_id || playerId || players[0]?.id || '';
         body.querySelector('[data-field="context"]').value = goal?.context || 'next_match';
+        body.querySelector('[data-field="visibility"]').value = goal?.visibility || 'player';
+        body.querySelector('[data-field="priority"]').value = goal?.priority || 'medium';
         body.querySelector('[data-field="title"]').value = goal?.title || source?.title || '';
         body.querySelector('[data-field="description"]').value = goal?.description || source?.description || '';
         body.querySelector('[data-field="status"]').value = goal?.status || 'open';
+        body.querySelector('[data-field="target_date"]').value = goal?.target_date || '';
+        body.querySelector('[data-field="success_criteria"]').value = goal?.success_criteria || '';
+        body.querySelector('[data-field="coach_private_note"]').value = goal?.coach_private_note || '';
         body.querySelector('[data-field="target_match_id"]').value = goal?.target_match_id || '';
         for (const field of ['source_note_id', 'source_clip_id', 'source_playlist_id']) body.querySelector(`[data-field="${field}"]`).value = goal?.[field] || source?.[field] || '';
         if (source?.label || goal) {
@@ -5836,7 +5866,12 @@ export const coachingMixin = {
                     title: body.querySelector('[data-field="title"]').value.trim(),
                     description: body.querySelector('[data-field="description"]').value.trim(),
                     context: body.querySelector('[data-field="context"]').value,
+                    visibility: body.querySelector('[data-field="visibility"]').value,
+                    priority: body.querySelector('[data-field="priority"]').value,
                     status: body.querySelector('[data-field="status"]').value,
+                    target_date: body.querySelector('[data-field="target_date"]').value || null,
+                    success_criteria: body.querySelector('[data-field="success_criteria"]').value.trim(),
+                    coach_private_note: body.querySelector('[data-field="coach_private_note"]').value.trim(),
                     target_match_id: body.querySelector('[data-field="target_match_id"]').value || null,
                 };
                 for (const field of ['source_note_id', 'source_clip_id', 'source_playlist_id']) {
@@ -5909,11 +5944,10 @@ export const coachingMixin = {
     // visible structure stays consistent. Privacy lives entirely server-
     // side: the coach surface renders whatever the coach endpoint
     // returned (the coach payload includes `linked_accounts` — surfaced
-    // by `_renderDevHeader` — but `coach_private_note` is intentionally
-    // NOT templated even on the coach surface; see
-    // `_renderDevNoteItem`'s docstring for the rationale and Phase 6
-    // for when a coach-only block may surface that text). The viewer
-    // surface renders whatever the viewer endpoint returned (already
+    // by `_renderDevHeader`. Coach-only goal fields such as
+    // `coach_private_note` are rendered only when `viewer=false`; note
+    // private text is still intentionally NOT templated by `_renderDevNoteItem`).
+    // The viewer surface renders whatever the viewer endpoint returned (already
     // scrubbed by `_strip_private_fields`). No client-side
     // authorization decisions.
 
