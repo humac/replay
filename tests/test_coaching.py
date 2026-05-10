@@ -25,6 +25,345 @@ async def _drain_background_tasks() -> None:
         await asyncio.sleep(0)
 
 
+def _create_team_with_season(team_id: str, slug: str, season_id: str | None = None) -> str:
+    now = "2026-05-10T00:00:00Z"
+    season_id = season_id or f"{team_id}-season"
+    with _db.connect() as conn:
+        conn.execute(
+            "INSERT INTO teams (id, name, slug, game_format, created_at) VALUES (?, ?, ?, 'full', ?)",
+            (team_id, team_id.replace("-", " ").title(), slug, now),
+        )
+        conn.execute(
+            "INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES (?, ?, 'Default Season', '', '', ?)",
+            (season_id, team_id, now),
+        )
+        conn.commit()
+    return season_id
+
+
+def _grant_only_team_membership(user_id: str, team_id: str, role: str = "coach") -> None:
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM team_user_memberships WHERE user_id = ?", (user_id,))
+        conn.execute(
+            "INSERT INTO team_user_memberships (team_id, user_id, role, created_at) VALUES (?, ?, ?, '2026-05-10T00:00:00Z')",
+            (team_id, user_id, role),
+        )
+        conn.execute("UPDATE users SET last_team_id = ? WHERE id = ?", (team_id, user_id))
+        conn.commit()
+
+
+def _seed_scoped_match(match_id: str, team_id: str, season_id: str) -> None:
+    now = "2026-05-10T00:00:00Z"
+    with _db.connect() as conn:
+        _db.upsert_match(conn, {
+            "id": match_id,
+            "home_team": f"{team_id} Home",
+            "away_team": f"{team_id} Away",
+            "date": "2026-05-10",
+            "format": "full",
+            "created_at": now,
+            "updated_at": now,
+            "slug": match_id,
+            "team_id": team_id,
+            "season_id": season_id,
+        })
+        conn.commit()
+
+
+def _move_player_to_team(player_id: str, team_id: str, season_id: str) -> None:
+    with _db.connect() as conn:
+        conn.execute("UPDATE players SET team_id = ?, season_id = ? WHERE id = ?", (team_id, season_id, player_id))
+        conn.commit()
+
+
+async def _create_user(client, auth_headers, username: str, role: str = "coach") -> str:
+    resp = await client.post("/api/users", json={"username": username, "password": "password123", "role": role}, headers=auth_headers)
+    assert resp.status_code == 200
+    return resp.json()["user"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_pr_2_3_wrong_team_selection_requires_membership_for_coach_and_feedback(client, auth_headers):
+    team_b_season = _create_team_with_season("scope-team-b", "scope-team-b")
+    default_team = _db.get_default_team()
+    coach_id = await _create_user(client, auth_headers, "scope_coach_a", "coach")
+    viewer_id = await _create_user(client, auth_headers, "scope_viewer_a", "viewer")
+    _grant_only_team_membership(coach_id, default_team["id"], "coach")
+    _grant_only_team_membership(viewer_id, default_team["id"], "guardian")
+    _seed_scoped_match("scope-team-b-match", "scope-team-b", team_b_season)
+
+    coach_headers = await _login(client, "scope_coach_a")
+    coach_resp = await client.get("/api/coach/players?team=scope-team-b", headers=coach_headers)
+    assert coach_resp.status_code == 403
+
+    viewer_headers = await _login(client, "scope_viewer_a")
+    feedback_resp = await client.get("/api/my-feedback?team=scope-team-b", headers=viewer_headers)
+    assert feedback_resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_pr_2_3_direct_object_and_thumbnail_routes_reject_cross_team_access(client, auth_headers):
+    import server
+
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    team_b_season = _create_team_with_season("direct-team-b", "direct-team-b")
+    coach_id = await _create_user(client, auth_headers, "direct_coach_a", "coach")
+    _grant_only_team_membership(coach_id, default_team["id"], "coach")
+    _seed_scoped_match("direct-match-a", default_team["id"], default_season["id"])
+    _seed_scoped_match("direct-match-b", "direct-team-b", team_b_season)
+    player_b = _db.create_player("Direct Team B Player")
+    _move_player_to_team(player_b["id"], "direct-team-b", team_b_season)
+    note_b = _db.create_coaching_note({
+        "match_id": "direct-match-b",
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Wrong team note",
+        "visibility": "team",
+        "player_ids": [player_b["id"]],
+        "team_id": "direct-team-b",
+    }, actor="coach-b")
+    clip_b = _db.create_coaching_clip({
+        "match_id": "direct-match-b",
+        "slot": "full",
+        "start_seconds": 1,
+        "end_seconds": 4,
+        "title": "Wrong team clip",
+        "visibility": "team",
+        "player_ids": [player_b["id"]],
+        "team_id": "direct-team-b",
+    }, actor="coach-b")
+    playlist_b = _db.create_coaching_playlist({
+        "title": "Wrong team playlist",
+        "visibility": "team",
+        "note_ids": [note_b["id"]],
+        "player_ids": [player_b["id"]],
+        "team_id": "direct-team-b",
+        "season_id": team_b_season,
+    }, actor="coach-b")
+    summary_b = _db.create_coaching_match_summary({
+        "match_id": "direct-match-b",
+        "visibility": "team",
+        "body": "Wrong team summary",
+        "note_ids": [note_b["id"]],
+        "clip_ids": [clip_b["id"]],
+        "playlist_ids": [playlist_b["id"]],
+        "team_id": "direct-team-b",
+    }, actor="coach-b")
+    thumb = server._media.coach_note_thumbnail_path(server.VIDEOS_DIR, note_b["match_id"], note_b["id"], team_id="direct-team-b")
+    thumb.parent.mkdir(parents=True, exist_ok=True)
+    thumb.write_bytes(b"fake-jpeg")
+    clip_thumb = server._media.clip_thumbnail_path(server.VIDEOS_DIR, clip_b["match_id"], clip_b["id"], team_id="direct-team-b")
+    clip_thumb.parent.mkdir(parents=True, exist_ok=True)
+    clip_thumb.write_bytes(b"fake-jpeg")
+
+    coach_headers = await _login(client, "direct_coach_a")
+    query = f"?team_id={default_team['id']}"
+    checks = [
+        await client.get(f"/api/coach/match-summaries/{summary_b['id']}{query}", headers=coach_headers),
+        await client.get(f"/api/coach/clips/{clip_b['id']}{query}", headers=coach_headers),
+        await client.get(f"/api/coach/clips/{clip_b['id']}/thumbnail{query}", headers=coach_headers),
+        await client.get(f"/api/coach/notes/{note_b['id']}/thumbnail{query}", headers=coach_headers),
+        await client.get(f"/api/coach/playlists/{playlist_b['id']}{query}", headers=coach_headers),
+        await client.get(f"/api/coach/players/{player_b['id']}/development{query}", headers=coach_headers),
+        await client.get(f"/api/coach/engagement?team_id={default_team['id']}&player_id={player_b['id']}", headers=coach_headers),
+        await client.get(f"/api/coach/engagement?team_id={default_team['id']}&playlist_id={playlist_b['id']}", headers=coach_headers),
+        await client.get(f"/api/coach/engagement?team_id={default_team['id']}&match_id=direct-match-b", headers=coach_headers),
+    ]
+    assert [resp.status_code for resp in checks] == [404, 404, 404, 404, 404, 404, 404, 404, 404]
+
+
+@pytest.mark.asyncio
+async def test_pr_2_3_cross_team_playlist_write_fails_before_join_rows(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    team_b_season = _create_team_with_season("playlist-team-b", "playlist-team-b")
+    coach_id = await _create_user(client, auth_headers, "playlist_coach_a", "coach")
+    _grant_only_team_membership(coach_id, default_team["id"], "coach")
+    _seed_scoped_match("playlist-match-a", default_team["id"], default_season["id"])
+    _seed_scoped_match("playlist-match-b", "playlist-team-b", team_b_season)
+    note_b = _db.create_coaching_note({
+        "match_id": "playlist-match-b",
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Wrong team source note",
+        "visibility": "team",
+        "team_id": "playlist-team-b",
+    }, actor="coach-b")
+
+    coach_headers = await _login(client, "playlist_coach_a")
+    resp = await client.post(f"/api/coach/playlists?team_id={default_team['id']}", json={
+        "title": "Cross team playlist",
+        "visibility": "team",
+        "note_ids": [note_b["id"]],
+    }, headers=coach_headers)
+    assert resp.status_code in {403, 404, 422}
+    with _db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM coaching_playlist_items WHERE note_id = ?", (note_b["id"],)).fetchone()["c"] == 0
+        assert conn.execute("SELECT COUNT(*) AS c FROM coaching_playlists WHERE title = 'Cross team playlist'").fetchone()["c"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pr_2_3_cross_team_note_and_clip_player_writes_fail_before_join_rows(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    team_b_season = _create_team_with_season("player-team-b", "player-team-b")
+    coach_id = await _create_user(client, auth_headers, "player_comp_coach_a", "coach")
+    _grant_only_team_membership(coach_id, default_team["id"], "coach")
+    _seed_scoped_match("player-comp-match-a", default_team["id"], default_season["id"])
+    player_b = _db.create_player("Cross Team Player")
+    _move_player_to_team(player_b["id"], "player-team-b", team_b_season)
+    coach_headers = await _login(client, "player_comp_coach_a")
+
+    note_resp = await client.post(f"/api/coach/notes?team_id={default_team['id']}", json={
+        "match_id": "player-comp-match-a",
+        "slot": "full",
+        "timestamp_seconds": 25,
+        "title": "Cross team note player",
+        "visibility": "player",
+        "player_ids": [player_b["id"]],
+    }, headers=coach_headers)
+    assert note_resp.status_code in {403, 404, 422}
+
+    clip_resp = await client.post(f"/api/coach/clips?team_id={default_team['id']}", json={
+        "match_id": "player-comp-match-a",
+        "slot": "full",
+        "start_seconds": 1,
+        "end_seconds": 5,
+        "title": "Cross team clip player",
+        "visibility": "player",
+        "player_ids": [player_b["id"]],
+    }, headers=coach_headers)
+    assert clip_resp.status_code in {403, 404, 422}
+
+    with _db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM coaching_note_players WHERE player_id = ?", (player_b["id"],)).fetchone()["c"] == 0
+        assert conn.execute("SELECT COUNT(*) AS c FROM coaching_clip_players WHERE player_id = ?", (player_b["id"],)).fetchone()["c"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pr_2_3_player_link_writes_are_scoped_before_rows_change(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    team_b_season = _create_team_with_season("link-team-b", "link-team-b")
+    coach_id = await _create_user(client, auth_headers, "link_coach_a", "coach")
+    viewer_id = await _create_user(client, auth_headers, "link_viewer_b", "viewer")
+    _grant_only_team_membership(coach_id, default_team["id"], "coach")
+    _grant_only_team_membership(viewer_id, "link-team-b", "guardian")
+    player_a = _db.create_player("Scoped Link Player")
+    _move_player_to_team(player_a["id"], default_team["id"], default_season["id"])
+    player_b = _db.create_player("Cross Link Player")
+    _move_player_to_team(player_b["id"], "link-team-b", team_b_season)
+    link_b = _db.link_player_user(player_b["id"], viewer_id, "parent")
+
+    coach_headers = await _login(client, "link_coach_a")
+    users_resp = await client.get(f"/api/coach/users?team_id={default_team['id']}", headers=coach_headers)
+    assert users_resp.status_code == 200
+    assert viewer_id not in {u["id"] for u in users_resp.json()["users"]}
+    create_cross_user_resp = await client.post(f"/api/coach/player-links?team_id={default_team['id']}", json={
+        "player_id": player_a["id"],
+        "user_id": viewer_id,
+        "relationship": "parent",
+    }, headers=coach_headers)
+    assert create_cross_user_resp.status_code in {403, 404, 422}
+    create_resp = await client.post(f"/api/coach/player-links?team_id={default_team['id']}", json={
+        "player_id": player_b["id"],
+        "user_id": viewer_id,
+        "relationship": "parent",
+    }, headers=coach_headers)
+    assert create_resp.status_code in {403, 404, 422}
+    delete_resp = await client.delete(f"/api/coach/player-links/{link_b['links'][0]['id']}?team_id={default_team['id']}", headers=coach_headers)
+    assert delete_resp.status_code in {403, 404}
+    with _db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM player_user_links WHERE player_id = ?", (player_b["id"],)).fetchone()["c"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pr_2_3_goal_and_match_summary_sources_are_team_scoped(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    team_b_season = _create_team_with_season("source-team-b", "source-team-b")
+    coach_id = await _create_user(client, auth_headers, "source_coach_a", "coach")
+    _grant_only_team_membership(coach_id, default_team["id"], "coach")
+    _seed_scoped_match("source-match-a", default_team["id"], default_season["id"])
+    _seed_scoped_match("source-match-b", "source-team-b", team_b_season)
+    player_a = _db.create_player("Source Player A")
+    player_b = _db.create_player("Source Player B")
+    _move_player_to_team(player_a["id"], default_team["id"], default_season["id"])
+    _move_player_to_team(player_b["id"], "source-team-b", team_b_season)
+    note_b = _db.create_coaching_note({
+        "match_id": "source-match-b", "slot": "full", "timestamp_seconds": 4,
+        "title": "Wrong source note", "visibility": "team", "player_ids": [player_b["id"]],
+        "team_id": "source-team-b",
+    }, actor="coach-b")
+    clip_b = _db.create_coaching_clip({
+        "match_id": "source-match-b", "slot": "full", "start_seconds": 1, "end_seconds": 3,
+        "title": "Wrong source clip", "visibility": "team", "player_ids": [player_b["id"]],
+        "team_id": "source-team-b",
+    }, actor="coach-b")
+
+    coach_headers = await _login(client, "source_coach_a")
+    goal_resp = await client.post(f"/api/coach/goals?team_id={default_team['id']}", json={
+        "player_id": player_a["id"],
+        "title": "Cross source goal",
+        "source_note_id": note_b["id"],
+    }, headers=coach_headers)
+    assert goal_resp.status_code in {403, 404, 422}
+    summary_resp = await client.post(f"/api/coach/match-summaries?team_id={default_team['id']}", json={
+        "match_id": "source-match-a",
+        "body": "Cross source summary",
+        "note_ids": [note_b["id"]],
+        "clip_ids": [clip_b["id"]],
+    }, headers=coach_headers)
+    assert summary_resp.status_code in {403, 404, 422}
+    with _db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM player_goals WHERE title = 'Cross source goal'").fetchone()["c"] == 0
+        assert conn.execute("SELECT COUNT(*) AS c FROM coaching_match_summaries WHERE body = 'Cross source summary'").fetchone()["c"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pr_2_3_my_feedback_reviews_are_filtered_to_resolved_team(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    team_b_season = _create_team_with_season("review-team-b", "review-team-b")
+    viewer_id = await _create_user(client, auth_headers, "review_scope_viewer", "viewer")
+    _grant_only_team_membership(viewer_id, default_team["id"], "guardian")
+    _seed_scoped_match("review-match-a", default_team["id"], default_season["id"])
+    _seed_scoped_match("review-match-b", "review-team-b", team_b_season)
+    player_a = _db.create_player("Review Scope A")
+    player_b = _db.create_player("Review Scope B")
+    _move_player_to_team(player_a["id"], default_team["id"], default_season["id"])
+    _move_player_to_team(player_b["id"], "review-team-b", team_b_season)
+    _db.link_player_user(player_a["id"], viewer_id, "guardian")
+    note_a = _db.create_coaching_note({
+        "match_id": "review-match-a", "slot": "full", "timestamp_seconds": 1,
+        "title": "Team A review note", "visibility": "player", "player_ids": [player_a["id"]],
+        "team_id": default_team["id"],
+    }, actor="coach-a")
+    note_b = _db.create_coaching_note({
+        "match_id": "review-match-b", "slot": "full", "timestamp_seconds": 1,
+        "title": "Team B review note", "visibility": "team", "player_ids": [player_b["id"]],
+        "team_id": "review-team-b",
+    }, actor="coach-b")
+    with _db.connect() as conn:
+        conn.execute(
+            "INSERT INTO coaching_reviews (user_id, note_id, playlist_id, reflection, reviewed_at) VALUES (?, ?, NULL, ?, ?)",
+            (viewer_id, note_a["id"], "team-a-reflection", "2026-05-10T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO coaching_reviews (user_id, note_id, playlist_id, reflection, reviewed_at) VALUES (?, ?, NULL, ?, ?)",
+            (viewer_id, note_b["id"], "team-b-reflection", "2026-05-10T00:01:00Z"),
+        )
+        conn.commit()
+
+    viewer_headers = await _login(client, "review_scope_viewer")
+    resp = await client.get(f"/api/my-feedback?team_id={default_team['id']}", headers=viewer_headers)
+    assert resp.status_code == 200
+    reviews = resp.json()["reviews"]
+    assert [r["note_id"] for r in reviews] == [note_a["id"]]
+    assert "team-b-reflection" not in str(reviews)
+
+
 @pytest.mark.asyncio
 async def test_coach_role_can_use_coaching_workspace(client, auth_headers):
     resp = await client.post("/api/users", json={

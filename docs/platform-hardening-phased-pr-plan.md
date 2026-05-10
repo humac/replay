@@ -472,6 +472,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Playlist attribution invariant remains unchanged.
 - Existing Phase 9 tests still pass.
 
+**Implementation note (feat/platform-pr2-3-endpoint-scope):** PR 2.3 and PR 2.4 were completed together after controller privacy review identified `/api/coach/engagement` as a live `/api/coach/*` scope gap. Coach and my-feedback handlers now resolve a team scope, direct-object/thumbnail routes enforce same-team ownership, cross-team composition writes validate children before inserts, and the engagement dashboard accepts `team_id` and filters players, matches, notes, playlists, and review attribution to the resolved team while preserving Phase 9 privacy invariants.
+
 ### PR 2.5: Strict Tenancy Test Mode
 
 **Files:**

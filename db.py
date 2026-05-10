@@ -1351,9 +1351,32 @@ def get_user_by_id(user_id: str) -> dict | None:
         return _row_to_user(row) if row else None
 
 
-def list_users() -> list[dict]:
+def user_has_team_membership(user_id: str, team_id: str | None) -> bool:
+    if team_id is None:
+        return bool(get_user_by_id(user_id))
     with connect() as conn:
-        rows = conn.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+        row = conn.execute(
+            "SELECT 1 FROM team_user_memberships WHERE user_id = ? AND team_id = ? LIMIT 1",
+            (user_id, team_id),
+        ).fetchone()
+        return row is not None
+
+
+def list_users(team_id: str | None = None) -> list[dict]:
+    with connect() as conn:
+        if team_id is not None:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT users.*
+                FROM users
+                JOIN team_user_memberships tum ON tum.user_id = users.id
+                WHERE tum.team_id = ?
+                ORDER BY users.created_at ASC
+                """,
+                (team_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
         return [_row_to_user(r) for r in rows]
 
 
@@ -1472,6 +1495,7 @@ def _resolve_note_scope(
 
 
 def _row_to_player(row: sqlite3.Row, links: list[dict] | None = None) -> dict:
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
     return {
         "id": row["id"],
         "display_name": row["display_name"],
@@ -1480,6 +1504,8 @@ def _row_to_player(row: sqlite3.Row, links: list[dict] | None = None) -> dict:
         "notes": row["notes"] or "",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "team_id": row["team_id"] if "team_id" in keys else "",
+        "season_id": row["season_id"] if "season_id" in keys else "",
         "links": links or [],
     }
 
@@ -1513,32 +1539,43 @@ def _links_for_players(conn: sqlite3.Connection, player_ids: list[str]) -> dict[
     return grouped
 
 
-def list_players(*, include_inactive: bool = True) -> list[dict]:
+def list_players(*, include_inactive: bool = True, team_id: str | None = None) -> list[dict]:
     with connect() as conn:
-        where = "" if include_inactive else "WHERE active = 1"
+        where_parts = [] if include_inactive else ["active = 1"]
+        params: list = []
+        if team_id is not None:
+            where_parts.append("team_id = ?")
+            params.append(team_id)
+        where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         rows = conn.execute(
-            f"SELECT * FROM players {where} ORDER BY active DESC, jersey_number + 0 ASC, display_name COLLATE NOCASE"
+            f"SELECT * FROM players {where} ORDER BY active DESC, jersey_number + 0 ASC, display_name COLLATE NOCASE",
+            params,
         ).fetchall()
         ids = [row["id"] for row in rows]
         links = _links_for_players(conn, ids)
         return [_row_to_player(row, links.get(row["id"], [])) for row in rows]
 
 
-def get_player(player_id: str) -> dict | None:
+def get_player(player_id: str, team_id: str | None = None) -> dict | None:
     with connect() as conn:
-        row = conn.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
+        if team_id is not None:
+            row = conn.execute("SELECT * FROM players WHERE id = ? AND team_id = ?", (player_id, team_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
         if not row:
             return None
         links = _links_for_players(conn, [player_id])
         return _row_to_player(row, links.get(player_id, []))
 
 
-def create_player(display_name: str, jersey_number: str = "", active: bool = True, notes: str = "") -> dict:
+def create_player(display_name: str, jersey_number: str = "", active: bool = True, notes: str = "", *, team_id: str | None = None, season_id: str | None = None) -> dict:
     import uuid
     player_id = str(uuid.uuid4())
     now = _now_iso()
     with connect() as conn:
-        team_id, season_id = _default_scope(conn)
+        default_team_id, default_season_id = _default_scope(conn)
+        team_id = team_id or default_team_id
+        season_id = season_id or default_season_id
         conn.execute(
             """
             INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at, team_id, season_id)
@@ -1549,7 +1586,8 @@ def create_player(display_name: str, jersey_number: str = "", active: bool = Tru
         conn.commit()
     return get_player(player_id) or {
         "id": player_id, "display_name": display_name, "jersey_number": jersey_number,
-        "active": active, "notes": notes, "created_at": now, "updated_at": now, "links": [],
+        "active": active, "notes": notes, "created_at": now, "updated_at": now,
+        "team_id": team_id, "season_id": season_id, "links": [],
     }
 
 
@@ -1609,6 +1647,12 @@ def link_player_user(player_id: str, user_id: str, relationship: str) -> dict:
         conn.commit()
     player = get_player(player_id)
     return player or {}
+
+
+def get_player_user_link(link_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM player_user_links WHERE id = ?", (link_id,)).fetchone()
+        return dict(row) if row else None
 
 
 def delete_player_user_link(link_id: int) -> bool:
