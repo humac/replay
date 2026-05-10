@@ -17,6 +17,57 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=200)
 
 
+class CreateAdminTeamRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    slug: str = Field(..., min_length=1, max_length=64)
+    game_format: str = Field("full", min_length=1, max_length=32)
+
+    @field_validator("name", "slug", "game_format")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        return v.strip()
+
+
+class UpdateAdminTeamRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    game_format: Optional[str] = Field(None, min_length=1, max_length=32)
+
+    @field_validator("name", "game_format")
+    @classmethod
+    def strip_optional_whitespace(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+
+class CreateAdminSeasonRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    starts_on: str = Field("", max_length=10)
+    ends_on: str = Field("", max_length=10)
+
+    @field_validator("name", "starts_on", "ends_on")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("starts_on", "ends_on")
+    @classmethod
+    def validate_date(cls, v: str) -> str:
+        if v and not _DATE_RE.match(v):
+            raise ValueError("date must be empty or YYYY-MM-DD")
+        return v
+
+
+class CreateAdminMembershipRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=200)
+    role: str = Field(..., min_length=1, max_length=64)
+
+    @field_validator("user_id", "role")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        return v.strip()
+
+
 class CreateMatchRequest(BaseModel):
     home_team: str = Field(..., min_length=1, max_length=200)
     away_team: str = Field(..., min_length=1, max_length=200)
