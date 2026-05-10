@@ -6,6 +6,18 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Coaching Analysis Phase 9 — Coach Engagement Dashboard ✅ COMPLETE (2026-05-09)
+
+Adds a coach-facing engagement dashboard so coaches can see whether assigned feedback is being reviewed and reflected on, with filters by player, match, and visibility-safe evidence type.
+
+- **API/aggregation** (`server.py`): engagement metrics count assigned, reviewed, and reflected coaching items using the same viewer-link and source-visibility rules as My Feedback. Player-filtered counts are scoped to the selected player's linked users so another player's linked account cannot inflate completion or leak reflections.
+- **Privacy**: private/coach-only notes are excluded from engagement metrics by default. Shared/team items are attributed to a selected player only when that player/match truly matches the underlying note links, avoiding playlist over-counting from independent union filters.
+- **UI** (`index.html`, `js/api.js`, `js/coaching.js`): Coach workspace gets an Engagement dashboard with player, match, and visibility/evidence filters, KPI tiles, completion/reflection lists, and accessible tab wiring.
+- **Evidence**: seed data includes real Phase 9 privacy canaries and a viewer-denied scenario; screenshots live in `docs/screenshots/phase-9-engagement-dashboard/`.
+- **Validation**: `pytest -q -k "engagement"` → 3 passed; `npm run capture-phase-9` → 3 passed; `node --check` and backend `py_compile` clean.
+
+**Next**: continue with the next coaching-analysis roadmap target after Phase 9 merges.
+
 ## Coaching Analysis Phase 8 — Match Coaching Summaries ✅ COMPLETE (2026-05-09)
 
 Adds coach-authored match-level summaries that turn individual notes, clips, and playlists into a readable post-match coaching narrative for players and families.

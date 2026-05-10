@@ -73,8 +73,13 @@ Computer vision can later help Replay find candidate moments, player tracks, tac
   - ✅ 6e — Unified viewer review modal for My Feedback / Player Development
 - ✅ Phase 7 — Action items and next-match goals — **complete**
 - ✅ Phase 8 — Match coaching summaries — **complete**
-- ⏭️ Phase 9 — Coach engagement dashboard — **next**
-- ⏳ Phases 10–17 — not started
+- ✅ Phase 9 — Coach engagement dashboard — **complete**
+- ⏭️ Phase 10 — Saved searches / coach work queues — **next**
+- ⏳ Phases 11–17 — not started
+- ✅ Phase 9 — Coach engagement dashboard — **complete**
+- ⏭️ Phase 10+ — next roadmap target
+- ⏳ Phases 8–17 — not started
+
 
 See `ROADMAP.md` for the per-PR completion log and exact dates.
 

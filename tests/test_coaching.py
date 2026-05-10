@@ -737,6 +737,227 @@ async def test_match_summary_rejects_cross_match_sources_and_viewer_access(clien
 
 
 @pytest.mark.asyncio
+async def test_coach_engagement_dashboard_aggregates_completion_and_filters(client, auth_headers):
+    """Phase 9 — coach-only engagement dashboard aggregates existing
+    review/reflection rows without exposing private note bodies."""
+    ava_user = (await client.post("/api/users", json={
+        "username": "phase9_ava_family", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)).json()["user"]["id"]
+    mia_user = (await client.post("/api/users", json={
+        "username": "phase9_mia_family", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)).json()["user"]["id"]
+    ava = (await client.post("/api/coach/players", json={
+        "display_name": "Ava Phase9", "jersey_number": "9",
+    }, headers=auth_headers)).json()["player"]["id"]
+    mia = (await client.post("/api/coach/players", json={
+        "display_name": "Mia Phase9", "jersey_number": "4",
+    }, headers=auth_headers)).json()["player"]["id"]
+    for player_id, user_id in [(ava, ava_user), (mia, mia_user)]:
+        resp = await client.post("/api/coach/player-links", json={
+            "player_id": player_id, "user_id": user_id, "relationship": "parent",
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+    match = (await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Phase 9 FC", "date": "2026-05-20",
+    }, headers=auth_headers)).json()["id"]
+    other_match = (await client.post("/api/matches", json={
+        "home_team": "OSU Steel", "away_team": "Other FC", "date": "2026-04-20",
+    }, headers=auth_headers)).json()["id"]
+
+    ava_note = (await client.post("/api/coach/notes", json={
+        "match_id": match, "slot": "full", "timestamp_seconds": 15,
+        "title": "Ava scan", "body": "private-ish body should not be in aggregate",
+        "coach_private_note": "DO NOT LEAK", "category": "decision",
+        "visibility": "player", "player_ids": [ava],
+    }, headers=auth_headers)).json()["note"]["id"]
+    ava_note_unreviewed = (await client.post("/api/coach/notes", json={
+        "match_id": match, "slot": "full", "timestamp_seconds": 30,
+        "title": "Ava recovery", "category": "defending",
+        "visibility": "player", "player_ids": [ava],
+    }, headers=auth_headers)).json()["note"]["id"]
+    mia_note = (await client.post("/api/coach/notes", json={
+        "match_id": other_match, "slot": "full", "timestamp_seconds": 45,
+        "title": "Mia old note", "category": "shape",
+        "visibility": "player", "player_ids": [mia],
+    }, headers=auth_headers)).json()["note"]["id"]
+    playlist = (await client.post("/api/coach/playlists", json={
+        "title": "Ava review playlist", "description": "playlist detail should not leak",
+        "visibility": "player", "note_ids": [ava_note], "player_ids": [ava],
+    }, headers=auth_headers)).json()["playlist"]["id"]
+    summary_resp = await client.post("/api/coach/match-summaries", json={
+        "match_id": match,
+        "visibility": "team",
+        "team_positives": "MATCH SUMMARY SHOULD NOT INFLATE ENGAGEMENT CANARY",
+        "note_ids": [ava_note],
+        "playlist_ids": [playlist],
+    }, headers=auth_headers)
+    assert summary_resp.status_code == 200
+
+    ava_headers = await _login(client, "phase9_ava_family")
+    resp = await client.post("/api/my-feedback/review", json={
+        "note_id": ava_note, "reflection": "I will check my shoulder earlier.",
+    }, headers=ava_headers)
+    assert resp.status_code == 200
+    resp = await client.post("/api/my-feedback/review", json={"playlist_id": playlist}, headers=ava_headers)
+    assert resp.status_code == 200
+    mia_headers = await _login(client, "phase9_mia_family")
+    resp = await client.post("/api/my-feedback/review", json={"note_id": mia_note}, headers=mia_headers)
+    assert resp.status_code == 200
+
+    goal_resp = await client.post("/api/coach/goals", json={
+        "player_id": ava,
+        "title": "Phase 9 goal reflection not counted",
+        "visibility": "player",
+    }, headers=auth_headers)
+    assert goal_resp.status_code == 200
+    goal_id = goal_resp.json()["goal"]["id"]
+    goal_reflection_resp = await client.post(f"/api/my-feedback/goals/{goal_id}/reflection", json={
+        "reflection": "GOAL REFLECTION FOLLOWUP CANARY",
+    }, headers=ava_headers)
+    assert goal_reflection_resp.status_code == 200
+    assert goal_reflection_resp.json()["reflection"]["needs_coach_follow_up"] is True
+
+    dashboard_resp = await client.get(f"/api/coach/engagement?match_id={match}", headers=auth_headers)
+    assert dashboard_resp.status_code == 200
+    data = dashboard_resp.json()["engagement"]
+    assert data["filters"]["match_id"] == match
+    assert data["summary"]["assigned_items"] == 3
+    assert data["summary"]["reviewed_items"] == 2
+    assert data["summary"]["completion_percentage"] == 67
+    assert data["limitations"]["clip_reviews_supported"] is False
+    assert data["limitations"]["goal_reflections_supported"] is False
+    assert "feedback review reflections only" in data["limitations"]["goal_reflections_scope"]
+    assert "GOAL REFLECTION FOLLOWUP CANARY" not in str(data)
+    assert "MATCH SUMMARY SHOULD NOT INFLATE ENGAGEMENT CANARY" not in str(data)
+    assert data["by_player"][0]["player_id"] == ava
+    assert data["by_player"][0]["assigned_count"] == 3
+    assert data["by_player"][0]["reviewed_count"] == 2
+    assert data["by_player"][0]["reflection_count"] == 1
+    assert data["by_player"][0]["completion_percentage"] == 67
+    assert data["by_playlist"] == [{
+        "playlist_id": playlist,
+        "title": "Ava review playlist",
+        "player_ids": [ava],
+        "assigned_count": 1,
+        "reviewed_count": 1,
+        "reflection_count": 0,
+        "latest_reviewed_at": data["by_playlist"][0]["latest_reviewed_at"],
+        "completion_percentage": 100,
+    }]
+    assert data["by_match"] == [{
+        "match_id": match,
+        "label": "OSU Steel vs Phase 9 FC",
+        "date": "2026-05-20",
+        "assigned_count": 3,
+        "reviewed_count": 2,
+        "reflection_count": 1,
+        "latest_reviewed_at": data["by_match"][0]["latest_reviewed_at"],
+        "completion_percentage": 67,
+    }]
+    assert [item["item_id"] for item in data["unreviewed_assigned_items"]] == [ava_note_unreviewed]
+    assert data["unreviewed_assigned_items"][0]["kind"] == "note"
+    assert data["reflections_needing_response"][0]["reflection"] == "I will check my shoulder earlier."
+    assert "body" not in data["unreviewed_assigned_items"][0]
+    assert "coach_private_note" not in str(data)
+
+    by_player_resp = await client.get(f"/api/coach/engagement?player_id={ava}", headers=auth_headers)
+    assert by_player_resp.status_code == 200
+    assert [row["player_id"] for row in by_player_resp.json()["engagement"]["by_player"]] == [ava]
+
+    visibility_resp = await client.get("/api/coach/engagement?visibility=player", headers=auth_headers)
+    assert visibility_resp.status_code == 200
+    visibility_data = visibility_resp.json()["engagement"]
+    assert visibility_data["filters"]["visibility"] == "player"
+    assert visibility_data["summary"]["assigned_items"] >= 3
+
+    invalid_visibility_resp = await client.get("/api/coach/engagement?visibility=public", headers=auth_headers)
+    assert invalid_visibility_resp.status_code == 422
+    private_visibility_resp = await client.get("/api/coach/engagement?visibility=private", headers=auth_headers)
+    assert private_visibility_resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_engagement_dashboard_scopes_reviews_private_items_and_playlist_match_filters(client, auth_headers):
+    ava_user = (await client.post("/api/users", json={
+        "username": "phase9_scope_ava", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)).json()["user"]["id"]
+    mia_user = (await client.post("/api/users", json={
+        "username": "phase9_scope_mia", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)).json()["user"]["id"]
+    ava = (await client.post("/api/coach/players", json={"display_name": "Ava Scoped"}, headers=auth_headers)).json()["player"]["id"]
+    mia = (await client.post("/api/coach/players", json={"display_name": "Mia Scoped"}, headers=auth_headers)).json()["player"]["id"]
+    for player_id, user_id in [(ava, ava_user), (mia, mia_user)]:
+        resp = await client.post("/api/coach/player-links", json={
+            "player_id": player_id, "user_id": user_id, "relationship": "parent",
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+    match = (await client.post("/api/matches", json={
+        "home_team": "Scoped", "away_team": "Bugs", "date": "2026-05-21",
+    }, headers=auth_headers)).json()["id"]
+
+    shared_note = (await client.post("/api/coach/notes", json={
+        "match_id": match, "slot": "full", "timestamp_seconds": 12,
+        "title": "Shared coaching point", "category": "pressing", "visibility": "player",
+        "player_ids": [ava, mia],
+    }, headers=auth_headers)).json()["note"]["id"]
+    mia_match_note = (await client.post("/api/coach/notes", json={
+        "match_id": match, "slot": "full", "timestamp_seconds": 24,
+        "title": "Mia only in selected match", "category": "shape", "visibility": "player",
+        "player_ids": [mia],
+    }, headers=auth_headers)).json()["note"]["id"]
+    private_note = (await client.post("/api/coach/notes", json={
+        "match_id": match, "slot": "full", "timestamp_seconds": 36,
+        "title": "PRIVATE CANARY NOTE", "category": "other", "visibility": "private",
+        "player_ids": [ava],
+    }, headers=auth_headers)).json()["note"]["id"]
+    playlist = (await client.post("/api/coach/playlists", json={
+        "title": "Misattribution canary playlist", "visibility": "player",
+        "note_ids": [mia_match_note], "player_ids": [ava],
+    }, headers=auth_headers)).json()["playlist"]["id"]
+    private_playlist = (await client.post("/api/coach/playlists", json={
+        "title": "PRIVATE CANARY PLAYLIST", "visibility": "private",
+        "note_ids": [private_note], "player_ids": [ava],
+    }, headers=auth_headers)).json()["playlist"]["id"]
+
+    ava_headers = await _login(client, "phase9_scope_ava")
+    review_resp = await client.post("/api/my-feedback/review", json={
+        "note_id": shared_note, "reflection": "AVA ONLY REFLECTION CANARY",
+    }, headers=ava_headers)
+    assert review_resp.status_code == 200
+    assert review_resp.json()["review"]["reflection"] == "AVA ONLY REFLECTION CANARY"
+
+    mia_dashboard = (await client.get(f"/api/coach/engagement?player_id={mia}", headers=auth_headers)).json()["engagement"]
+    mia_row = mia_dashboard["by_player"][0]
+    assert mia_row["assigned_count"] == 3
+    assert mia_row["reviewed_count"] == 0
+    assert mia_row["reflection_count"] == 0
+    assert mia_dashboard["reflections_needing_response"] == []
+    assert "AVA ONLY REFLECTION CANARY" not in str(mia_dashboard)
+
+    ava_match_dashboard = (await client.get(
+        f"/api/coach/engagement?player_id={ava}&match_id={match}", headers=auth_headers,
+    )).json()["engagement"]
+    assert all(row["playlist_id"] != playlist for row in ava_match_dashboard["by_playlist"])
+    assert "Misattribution canary playlist" not in str(ava_match_dashboard)
+
+    default_dashboard = (await client.get("/api/coach/engagement", headers=auth_headers)).json()["engagement"]
+    default_text = str(default_dashboard)
+    assert "PRIVATE CANARY NOTE" not in default_text
+    assert "PRIVATE CANARY PLAYLIST" not in default_text
+    assert private_playlist not in [row["playlist_id"] for row in default_dashboard["by_playlist"]]
+
+
+@pytest.mark.asyncio
+async def test_engagement_dashboard_rejects_viewers(client, auth_headers):
+    await client.post("/api/users", json={
+        "username": "phase9_viewer_blocked", "password": "password123", "role": "viewer",
+    }, headers=auth_headers)
+    viewer_headers = await _login(client, "phase9_viewer_blocked")
+    resp = await client.get("/api/coach/engagement", headers=viewer_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_v2_drawing_validation(client, auth_headers):
     match_resp = await client.post("/api/matches", json={
         "home_team": "OSU Steel",
