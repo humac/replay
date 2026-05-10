@@ -759,10 +759,178 @@ def _migrate_v13(conn: sqlite3.Connection):
     )
 
 
+DEFAULT_TEAM_SLUG = "default-team"
+DEFAULT_TEAM_NAME = "Default Team"
+DEFAULT_TEAM_GAME_FORMAT = "11v11"
+DEFAULT_SEASON_NAME = "Default Season"
+
+# PR 1.1 only creates tenancy roots and memberships. The later PR 1.2
+# table-scope backfill should account for all scoped coaching parents,
+# including Phase 7/8 additions rather than only the older note/playlist set.
+_TENANCY_SCOPE_BACKFILL_TABLES = (
+    "matches",
+    "players",
+    "player_user_links",
+    "coaching_notes",
+    "coaching_clips",
+    "coaching_playlists",
+    "player_goals",
+    "coaching_match_summaries",
+)
+
+
+def _membership_roles_for_legacy_role(role: str | None) -> list[str]:
+    """Map legacy global/capability role strings to default team roles.
+
+    ``users.role`` remains unchanged and continues to power global recovery
+    paths. Team memberships are additive and deterministic for the initial
+    single-team backfill.
+    """
+    roles = {part.strip().lower() for part in (role or "").split(",") if part.strip()}
+    membership_roles: list[str] = []
+    if "admin" in roles:
+        membership_roles.append("team_admin")
+    if "coach" in roles:
+        membership_roles.append("coach")
+    if roles.intersection({"family", "guardian", "parent"}):
+        membership_roles.append("guardian")
+    if "player" in roles:
+        membership_roles.append("player")
+    if "viewer" in roles:
+        membership_roles.append("viewer")
+    return membership_roles
+
+
+def _ensure_default_team_and_season(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Ensure the deterministic default team/season rows exist."""
+    now = _now_iso()
+    conn.execute(
+        """
+        INSERT INTO teams (name, slug, game_format, created_at)
+        SELECT ?, ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM teams WHERE slug = ?)
+        """,
+        (DEFAULT_TEAM_NAME, DEFAULT_TEAM_SLUG, DEFAULT_TEAM_GAME_FORMAT, now, DEFAULT_TEAM_SLUG),
+    )
+    team = conn.execute("SELECT id FROM teams WHERE slug = ?", (DEFAULT_TEAM_SLUG,)).fetchone()
+    if team is None:
+        raise RuntimeError("default team was not created")
+    team_id = int(team["id"])
+
+    conn.execute(
+        """
+        INSERT INTO seasons (team_id, name, starts_on, ends_on, created_at)
+        SELECT ?, ?, NULL, NULL, ?
+        WHERE NOT EXISTS (SELECT 1 FROM seasons WHERE team_id = ? AND name = ?)
+        """,
+        (team_id, DEFAULT_SEASON_NAME, now, team_id, DEFAULT_SEASON_NAME),
+    )
+    season = conn.execute(
+        "SELECT id FROM seasons WHERE team_id = ? AND name = ? ORDER BY id LIMIT 1",
+        (team_id, DEFAULT_SEASON_NAME),
+    ).fetchone()
+    if season is None:
+        raise RuntimeError("default season was not created")
+    return team_id, int(season["id"])
+
+
+def _sync_default_memberships_for_legacy_role(
+    conn: sqlite3.Connection,
+    *,
+    team_id: int,
+    user_id: str,
+    role: str | None,
+    created_at: str,
+) -> None:
+    """Replace this user's default-team legacy-derived memberships."""
+    legacy_membership_roles = ("team_admin", "coach", "guardian", "player", "viewer")
+    placeholders = ",".join("?" for _ in legacy_membership_roles)
+    conn.execute(
+        f"""
+        DELETE FROM team_user_memberships
+        WHERE team_id = ? AND user_id = ? AND role IN ({placeholders})
+        """,
+        (team_id, user_id, *legacy_membership_roles),
+    )
+    for membership_role in _membership_roles_for_legacy_role(role):
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO team_user_memberships (team_id, user_id, role, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (team_id, user_id, membership_role, created_at),
+        )
+
+
+def _backfill_default_memberships(conn: sqlite3.Connection, team_id: int) -> None:
+    users = conn.execute("SELECT id, role, created_at FROM users ORDER BY created_at ASC, id ASC").fetchall()
+    for user in users:
+        _sync_default_memberships_for_legacy_role(
+            conn,
+            team_id=team_id,
+            user_id=user["id"],
+            role=user["role"],
+            created_at=user["created_at"] or _now_iso(),
+        )
+
+
+def _migrate_v14(conn: sqlite3.Connection):
+    """Add team/season tenancy roots and default user memberships."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS teams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            game_format TEXT NOT NULL DEFAULT '11v11',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS seasons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            starts_on TEXT,
+            ends_on TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_user_memberships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id INTEGER NOT NULL,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(team_id, user_id, role),
+            FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    user_cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "last_team_id" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN last_team_id INTEGER")
+
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_slug ON teams(slug)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_seasons_team ON seasons(team_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_user ON team_user_memberships(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_user_memberships_team ON team_user_memberships(team_id)")
+
+    team_id, _season_id = _ensure_default_team_and_season(conn)
+    _backfill_default_memberships(conn, team_id)
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
-    _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13,
+    _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
 ]
 
 
@@ -1033,6 +1201,7 @@ def backfill_slugs():
 # ---------------------------------------------------------------------------
 
 def _row_to_user(row: sqlite3.Row) -> dict:
+    keys = set(row.keys())
     return {
         "id": row["id"],
         "username": row["username"],
@@ -1042,6 +1211,7 @@ def _row_to_user(row: sqlite3.Row) -> dict:
         "enabled": bool(row["enabled"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "last_team_id": row["last_team_id"] if "last_team_id" in keys else None,
     }
 
 
@@ -1055,9 +1225,18 @@ def create_user(username: str, password_hash: str, role: str, display_name: str 
             " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
             (user_id, username, password_hash, role, display_name, now, now),
         )
+        default_team = conn.execute("SELECT id FROM teams WHERE slug = ?", (DEFAULT_TEAM_SLUG,)).fetchone()
+        if default_team:
+            _sync_default_memberships_for_legacy_role(
+                conn,
+                team_id=default_team["id"],
+                user_id=user_id,
+                role=role,
+                created_at=now,
+            )
         conn.commit()
     return {"id": user_id, "username": username, "role": role, "display_name": display_name,
-            "enabled": True, "created_at": now, "updated_at": now}
+            "enabled": True, "created_at": now, "updated_at": now, "last_team_id": None}
 
 
 def get_user_by_username(username: str) -> dict | None:
@@ -1078,6 +1257,74 @@ def list_users() -> list[dict]:
         return [_row_to_user(r) for r in rows]
 
 
+# ---------------------------------------------------------------------------
+# Tenancy helpers
+# ---------------------------------------------------------------------------
+
+def _row_to_team(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "slug": row["slug"],
+        "game_format": row["game_format"],
+        "created_at": row["created_at"],
+    }
+
+
+def _row_to_season(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "team_id": row["team_id"],
+        "name": row["name"],
+        "starts_on": row["starts_on"],
+        "ends_on": row["ends_on"],
+        "created_at": row["created_at"],
+    }
+
+
+def _row_to_membership(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "team_id": row["team_id"],
+        "user_id": row["user_id"],
+        "role": row["role"],
+        "created_at": row["created_at"],
+    }
+
+
+def get_default_team() -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM teams WHERE slug = ?", (DEFAULT_TEAM_SLUG,)).fetchone()
+        return _row_to_team(row) if row else None
+
+
+def get_default_season(team_id: int | None = None) -> dict | None:
+    with connect() as conn:
+        if team_id is None:
+            team = conn.execute("SELECT id FROM teams WHERE slug = ?", (DEFAULT_TEAM_SLUG,)).fetchone()
+            if team is None:
+                return None
+            team_id = int(team["id"])
+        row = conn.execute(
+            "SELECT * FROM seasons WHERE team_id = ? AND name = ? ORDER BY id LIMIT 1",
+            (team_id, DEFAULT_SEASON_NAME),
+        ).fetchone()
+        return _row_to_season(row) if row else None
+
+
+def list_user_memberships(user_id: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM team_user_memberships
+            WHERE user_id = ?
+            ORDER BY team_id ASC, role ASC, id ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [_row_to_membership(row) for row in rows]
+
+
 def update_user(user_id: str, **fields) -> bool:
     allowed = {"username", "password_hash", "role", "display_name", "enabled"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
@@ -1087,7 +1334,17 @@ def update_user(user_id: str, **fields) -> bool:
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     values = list(updates.values()) + [user_id]
     with connect() as conn:
-        conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
+        cur = conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
+        if cur.rowcount > 0 and "role" in updates:
+            default_team = conn.execute("SELECT id FROM teams WHERE slug = ?", (DEFAULT_TEAM_SLUG,)).fetchone()
+            if default_team:
+                _sync_default_memberships_for_legacy_role(
+                    conn,
+                    team_id=default_team["id"],
+                    user_id=user_id,
+                    role=updates["role"],
+                    created_at=updates["updated_at"],
+                )
         conn.commit()
     return True
 
@@ -1096,6 +1353,7 @@ def delete_user(user_id: str) -> bool:
     with connect() as conn:
         conn.execute("DELETE FROM player_user_links WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM coaching_reviews WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM team_user_memberships WHERE user_id = ?", (user_id,))
         cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return cursor.rowcount > 0

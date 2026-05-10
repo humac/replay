@@ -6,6 +6,14 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 1 PR 1.1 — Team, Season, Membership Tables ✅ COMPLETE (2026-05-10)
+
+Adds the first tenancy foundation with no route-enforcement behavior change.
+
+- **Schema** (`db.py` migration v14): creates `teams`, `seasons`, and `team_user_memberships`; adds nullable `users.last_team_id`; creates one deterministic `Default Team` / `Default Season`; preserves legacy `users.role` values for global/recovery paths.
+- **Backfill**: existing users with legacy roles are mapped into default memberships (`admin` → `team_admin`, `coach` → `coach`, `viewer` → `viewer`, `family`/`guardian`/`parent` → `guardian`, `player` → `player`); multi-capability users receive each applicable membership. New users created after migration and legacy role updates receive the same default memberships. Uploader-only users remain unscoped for this phase.
+- **Helpers/tests**: adds `get_default_team()`, `get_default_season()`, and `list_user_memberships()` plus `tests/test_tenancy.py` coverage for idempotency, default rows, membership backfill, global-admin role preservation, and nullable `last_team_id`.
+
 ## Coaching Analysis Phase 9 — Coach Engagement Dashboard ✅ COMPLETE (2026-05-09)
 
 Adds a coach-facing engagement dashboard so coaches can see whether assigned feedback is being reviewed and reflected on, with filters by player, match, and visibility-safe evidence type.
