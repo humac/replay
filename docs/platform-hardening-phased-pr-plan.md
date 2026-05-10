@@ -191,9 +191,31 @@ Default names:
 **Schema target:**
 
 - Add `team_id` to `matches`, `players`, `player_user_links`, `coaching_notes`, `coaching_clips`, `coaching_playlists`, `player_goals`, and `coaching_match_summaries`.
-- Add `season_id` to `matches` and `players`.
-- Add `season_id` to coaching objects that need explicit season filtering; otherwise derive via match/player where unambiguous.
+- Add `season_id` per the explicit table-by-table decision below. Principle: add `season_id` only where the object can outlive or precede a match it's anchored to, OR where season filtering can't be derived in O(1) from a foreign key. Everything else derives.
 - Do not add tenant columns to join tables that inherit scope through parent FK unless direct filtering requires it.
+
+**Season ownership table-by-table:**
+
+| Table | `season_id`? | Rationale |
+|---|---|---|
+| `matches` | **Yes** | Source of truth. |
+| `players` | **Yes** | Roster changes by season. |
+| `coaching_notes` (video, `note_context='video'`) | **No, derive** | `note.match_id → matches.season_id`. Fast join. |
+| `coaching_notes` (observation, `note_context='observation'`) | **Yes** | `match_id` is nullable on observation notes (Phase 6a `_migrate_v11`). Cannot derive. Without explicit `season_id`, observations are season-orphans. Column is nullable on the row but app-layer validation requires NOT NULL when `note_context='observation'`. Consider a CHECK constraint. |
+| `coaching_clips` | **No, derive** | `clip.match_id → matches.season_id`. `match_id` is NOT NULL on clips. |
+| `coaching_playlists` | **Yes** | Spans notes from possibly multiple matches; "Q3 2025 highlights" is a real use case. Cannot derive. |
+| `player_goals` | **Yes** | `context='season_goal'` is already a Phase 7 enum value (`_VALID_GOAL_CONTEXTS`). A season goal without `season_id` is meaningless. |
+| `player_goal_status_history` | **No, derive** | Inherit via `goal_id → player_goals.season_id`. |
+| `player_goal_reflections` | **No, derive** | Inherit via `goal_id`. |
+| `coaching_match_summaries` | **No, derive** | `summary.match_id → matches.season_id`. |
+| `coaching_match_summary_notes` / `_clips` / `_playlists` (joins) | **No** | Inherit via `summary_id`. |
+| `coaching_reviews` | **No, derive** | Inherit via `note_id` or `playlist_id`. |
+| `coaching_note_players` / `coaching_note_tags` (joins) | **No** | Inherit via `note_id`. |
+| `coaching_clip_players` (join) | **No** | Inherit via `clip_id`. |
+| `coaching_playlist_items` / `coaching_playlist_players` (joins) | **No** | Inherit via `playlist_id`. |
+| `player_user_links` | **No** | Already decided team-scoped, season-independent (see player-link decision below). |
+
+Net: three coaching objects get explicit `season_id` (observation notes, playlists, player goals). Everything else derives via parent FK.
 
 **Player-link decision:**
 
@@ -228,6 +250,97 @@ Default names:
 - Use `_migrate_v15` to enforce NOT NULL / rebuild tables where SQLite requires rebuilds.
 - Only enforce NOT NULL after tests prove all legacy rows backfill correctly.
 - Add indexes for frequent filters, e.g. `(team_id)`, `(team_id, season_id)`, `(team_id, player_id)`, `(team_id, match_id)` where relevant.
+
+### PR 1.4: Global-Admin Team/Season/Membership CRUD
+
+**Objective:** Provide an explicit, gated path for global admins to create and manage teams, seasons, and memberships before Phase 9 ships full onboarding/invites. Without this, second-team setup between Phase 1 and Phase 9 falls back to direct DB writes — fragile and easy to leak into runbooks.
+
+**Files:**
+
+- Create: `routers/admin_teams.py` (or include in `routers/admin.py` if already extracted)
+- Create: `services/teams.py`
+- Create: `tools/admin.py` CLI entry
+- Modify: `db.py` for any helper functions
+- Modify: `auth.py` for `_require_global_admin` (depends on PR 2.1; if 1.4 lands first, stub the gate inline and refactor in 2.1)
+- Test: `tests/test_admin_teams.py`
+
+**Endpoints (all gated by `_require_global_admin`):**
+
+- `GET  /api/admin/teams` — list teams
+- `POST /api/admin/teams` — create team `{name, slug, game_format}`
+- `PATCH /api/admin/teams/{team_id}` — rename / change game_format
+- `GET  /api/admin/teams/{team_id}/seasons` — list seasons for team
+- `POST /api/admin/teams/{team_id}/seasons` — create season `{name, starts_on, ends_on}`
+- `GET  /api/admin/teams/{team_id}/memberships` — list memberships
+- `POST /api/admin/teams/{team_id}/memberships` — grant `{user_id, role}` for an existing user
+- `DELETE /api/admin/teams/{team_id}/memberships/{membership_id}` — revoke
+
+**CLI:**
+
+- `python -m tools.admin teams list`
+- `python -m tools.admin teams create --name "..." --slug "..." --game-format 9v9`
+- `python -m tools.admin seasons create --team <slug> --name "..." --starts 2026-01-01 --ends 2026-06-30`
+- `python -m tools.admin memberships grant --team <slug> --user <username> --role coach`
+- `python -m tools.admin memberships revoke --team <slug> --user <username> --role coach`
+
+CLI writes through `services/teams.py` — the same code path as the API, never raw SQL.
+
+**Constraints:**
+
+- No UI in Phase 1. Admins enter via curl or CLI. Full member-management UI lives in Phase 9.3.
+- Cannot create a membership for a user who does not exist (`404` on `user_id`).
+- Cannot create a duplicate `(team_id, user_id, role)` row (handled by the unique index from PR 1.1).
+- Cannot revoke the last `team_admin` membership on a team (Phase 9.3 lifts this with explicit override; Phase 1 just rejects).
+- Slugs must be URL-safe and unique across all teams.
+
+**Tests:**
+
+- Only `_require_global_admin` callers can hit these endpoints; coach/team_admin/viewer all get 403.
+- Membership for unknown user returns 404, not 500.
+- Duplicate membership returns 409.
+- Last-admin protection blocks revoke.
+- CLI and API produce identical state given the same inputs.
+
+### PR 1.5: Tenant-Aware Media Path Adapter
+
+**Objective:** New media uploads write under team-aware paths so Phase 10's eventual storage migration is "swap the backend" rather than "swap the backend AND re-key 100% of existing media." Existing media stays in place.
+
+**Why now:** Match IDs are server-generated UUIDs and clip/note IDs are globally unique auto-increments, so cross-team filename collisions are statistically zero — existing flat paths are *safe*, just operationally awkward (no per-team `du`, no per-team backup partition, no per-team retention). Adding the prefix on writes only is cheap insurance against a much more expensive Phase 10.
+
+**Files:**
+
+- Modify: `media.py` (add team-aware path helpers; keep legacy helpers as read fallback)
+- Modify: `server.py` and any thumbnail spawn helpers (write through new path)
+- Create: `scripts/relocate_to_team_paths.py` (one-shot relocation, **not** run automatically)
+- Test: `tests/test_media.py` updates
+
+**New path scheme:**
+
+- New uploads: `<videos>/teams/<team_id>/matches/<match_id>/...`
+- New thumbnails: `<videos>/teams/<team_id>/matches/<match_id>/coach_thumbs/<note_id>.jpg`
+- New clip thumbnails: `<videos>/teams/<team_id>/matches/<match_id>/clip_thumbs/<clip_id>.jpg`
+- New HLS: `<videos>/teams/<team_id>/matches/<match_id>/hls/<slot>/master.m3u8`
+- Originals: `<originals>/teams/<team_id>/matches/<match_id>/<slot>.mp4`
+
+**Read fallback:**
+
+- Read helpers (`coach_note_thumbnail_path`, `clip_thumbnail_path`, `_slot_mp4_path`, `_slot_hls_dir`, `_slot_hls_master_path`) try team-aware path first; fall back to legacy `<videos>/<match_id>/...` for objects created before PR 1.5.
+- Path containment guard (`_thumb_path_within_videos_dir` and equivalents) extends to cover the new prefix — same defense in depth as today.
+- Caddy regex for VOD HLS sendfile must match BOTH path shapes during the legacy window. Update `Caddyfile` and the inlined Caddyfile in `docker-compose-intel.yml`.
+
+**One-shot relocation script (not auto-run):**
+
+- `scripts/relocate_to_team_paths.py --dry-run` walks every match and prints planned moves.
+- `scripts/relocate_to_team_paths.py --execute` performs `os.rename` per file (atomic on same filesystem) and updates any DB rows that store absolute paths.
+- Script is bundled with PR 1.5 but **not invoked by any deploy**. Run manually when Phase 10 lands or when ops needs per-team partitioning.
+
+**Tests:**
+
+- New uploads land under team-aware paths.
+- Reads fall back to legacy paths for pre-PR-1.5 objects.
+- Path containment rejects `..` / absolute-path tricks under both schemes.
+- Caddy regex matches both shapes (manual or via integration test).
+- Dry-run relocation script reports planned moves without touching disk.
 
 **Tests:**
 
@@ -641,29 +754,99 @@ Default names:
 
 ### PR 6.3: Durable Background Jobs
 
+**Objective:** A real queue with worker leases, idempotency, heartbeats, and stuck-job recovery — not a status-tracker. The Phase 8 AI drafting assistant is exactly the workload that wants retries; building these primitives in 6.3 means Phase 8 doesn't reinvent them under time pressure.
+
 **Files:**
 
 - Modify: `db.py` / Alembic migrations
+- Create: `services/jobs.py` (lease/enqueue/heartbeat/recover helpers)
 - Modify: `server.py` / services using background tasks
-- Test: new `tests/test_jobs.py` or equivalent
+- Test: new `tests/test_jobs.py`
 
 **Schema target:**
 
-- `background_jobs`: `id`, `kind`, `payload_json`, `status`, `attempts`, `scheduled_at`, `started_at`, `finished_at`, `error_text`, `team_id`, timestamps.
+```
+background_jobs:
+  id              BIGSERIAL PK            -- INTEGER PRIMARY KEY AUTOINCREMENT on SQLite
+  kind            TEXT NOT NULL           -- 'ai_draft', 'transcode', 'thumbnail', etc.
+  payload_json    TEXT NOT NULL
+  payload_version INTEGER NOT NULL DEFAULT 1   -- per-kind schema version, lets payload shape evolve
+  idempotency_key TEXT                    -- nullable
+  team_id         INTEGER NOT NULL
+  status          TEXT NOT NULL           -- 'pending'|'running'|'succeeded'|'failed'|'cancelled'
+  attempts        INTEGER NOT NULL DEFAULT 0
+  max_attempts    INTEGER NOT NULL DEFAULT 3
+  scheduled_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  locked_until    TIMESTAMP               -- nullable; lease expiry while running
+  locked_by       TEXT                    -- nullable; worker id (e.g. hostname:pid)
+  last_heartbeat  TIMESTAMP               -- updated by worker every N seconds
+  started_at      TIMESTAMP
+  finished_at     TIMESTAMP
+  error_text      TEXT
+  result_json     TEXT
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 
-**Key changes:**
+INDEX idx_jobs_due ON background_jobs(status, scheduled_at) WHERE status='pending'
+INDEX idx_jobs_lease ON background_jobs(status, locked_until) WHERE status='running'
+INDEX idx_jobs_team ON background_jobs(team_id, status)
+UNIQUE INDEX idx_jobs_idempotency ON background_jobs(kind, idempotency_key) WHERE idempotency_key IS NOT NULL
+```
 
-- Add durable job lifecycle helpers.
-- Transcodes get `background_jobs` rows and lifecycle status, but execution remains in-process for this PR; do not leave a half-migrated path where only some transcode types write job rows without a documented reason.
-- Reuse this table for AI drafting jobs instead of making an AI-only queue.
-- Make job access team-scoped.
+(SQLite supports partial indexes since 3.8.0. If the deployed SQLite is older, drop the `WHERE` clauses and accept the wider index.)
 
-**Tests:**
+**Required helpers in `services/jobs.py`:**
 
-- Job status lifecycle.
-- Retry/attempt fields update correctly.
-- Team A user cannot inspect Team B jobs.
-- Existing background transcode behavior still works.
+- `enqueue(kind, payload, *, team_id, idempotency_key=None, max_attempts=3, scheduled_at=None, payload_version=1) -> job_id`
+  - Postgres: `INSERT ... ON CONFLICT (kind, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id`. If conflict, `SELECT` the existing row's id.
+  - SQLite: equivalent via `INSERT OR IGNORE` + `SELECT`.
+  - Retry with the same key returns the existing job, never creates a duplicate.
+- `lease(kinds, worker_id, *, lease_seconds=60) -> job | None`
+  - Postgres: `SELECT ... FROM background_jobs WHERE status='pending' AND scheduled_at <= NOW() AND kind = ANY($1) ORDER BY scheduled_at LIMIT 1 FOR UPDATE SKIP LOCKED`, then `UPDATE` to set `status='running'`, `locked_by=worker_id`, `locked_until=NOW() + lease_seconds * interval '1 second'`, `started_at=NOW() if started_at IS NULL`, `attempts=attempts+1`, `last_heartbeat=NOW()`.
+  - SQLite: same logic inside a `BEGIN IMMEDIATE` transaction (no `SKIP LOCKED`, but the IMMEDIATE lock serializes contenders).
+- `heartbeat(job_id, worker_id, *, lease_seconds=60)`
+  - `UPDATE background_jobs SET locked_until=NOW() + lease_seconds, last_heartbeat=NOW() WHERE id=$1 AND locked_by=$2 AND status='running'` — affects 0 rows for stale workers; caller treats 0 as "lease lost, abandon."
+- `complete(job_id, worker_id, result_json)` / `fail(job_id, worker_id, error_text)`
+  - Both gated by `locked_by=worker_id AND status='running'`. Stale workers' completion writes are rejected (0 rows affected).
+- `recover_stuck(*, max_attempts_default=3)`
+  - Runs every 30s in a single supervisor task started via lifespan.
+  - For rows where `status='running' AND locked_until < NOW()`:
+    - If `attempts < max_attempts`: flip to `pending`, clear `locked_by`/`locked_until`.
+    - Else: flip to `failed` with `error_text='exceeded max_attempts after stuck recovery'`.
+
+**Worker pattern for callers:**
+
+```python
+worker_id = f"{socket.gethostname()}:{os.getpid()}"
+while True:
+    job = jobs.lease(['ai_draft'], worker_id)
+    if not job: await asyncio.sleep(1); continue
+    hb_task = asyncio.create_task(_heartbeat_loop(job.id, worker_id))
+    try:
+        result = await run_job(job)
+        jobs.complete(job.id, worker_id, result)
+    except Exception as e:
+        jobs.fail(job.id, worker_id, str(e))
+    finally:
+        hb_task.cancel()
+```
+
+**Key integration changes:**
+
+- Transcodes get `background_jobs` rows and lifecycle status. Execution remains in-process for this PR (the existing `_spawn_transcode` / `ResizableSemaphore` path stays); the job table is the durable record alongside it. Do not leave a half-migrated path where only some transcode types write job rows without a documented reason.
+- AI drafting (Phase 8) runs through the same queue — no AI-only queue.
+- Job access is team-scoped: every read endpoint requires `team_id` to match the user's resolved team.
+
+**Test contract (must all pass):**
+
+1. **Idempotency:** Two `enqueue(..., idempotency_key='X')` calls return the same `job_id`; only one row exists.
+2. **Concurrent lease exclusion:** Two `lease(...)` calls in parallel against one pending job — exactly one returns the job, the other returns `None`.
+3. **Stale worker rejection:** Worker A leases, Worker B's `complete(job.id, 'B', ...)` returns 0 rows affected; the job stays `running`.
+4. **Stuck recovery to pending:** Job with `status='running'`, `locked_until < NOW()`, `attempts=1, max_attempts=3` → `recover_stuck()` flips to `pending`.
+5. **Stuck recovery to failed:** Same as above but `attempts=3, max_attempts=3` → `recover_stuck()` flips to `failed` with the exceeded-attempts error.
+6. **Heartbeat extends lease:** `heartbeat()` from the holding worker bumps `locked_until`; from a non-holder, 0 rows affected.
+7. **Team scoping:** Team A user cannot enqueue, lease, or read jobs for Team B.
+8. **Existing transcode behavior:** All existing transcode integration tests still pass; new assertions confirm a corresponding `background_jobs` row exists.
 
 ### PR 6.4: SQLite To Postgres Migration Command
 
