@@ -600,6 +600,109 @@ async def test_match_summary_children_are_manually_cleaned_on_source_and_match_d
 
 
 @pytest.mark.asyncio
+async def test_delete_match_uses_save_matches_cleanup_once_for_phase8_children(client, auth_headers, monkeypatch):
+    import db as _db
+    import server as _server
+
+    match_resp = await client.post("/api/matches", json={
+        "home_team": "Single Owner FC",
+        "away_team": "Cleanup Path United",
+        "date": "2026-05-12",
+    }, headers=auth_headers)
+    assert match_resp.status_code == 200
+    match_id = match_resp.json()["id"]
+
+    player_id = (await client.post("/api/coach/players", json={
+        "display_name": "Cleanup Path Player",
+        "jersey_number": "12",
+    }, headers=auth_headers)).json()["player"]["id"]
+    note_id = (await client.post("/api/coach/notes", json={
+        "match_id": match_id,
+        "slot": "full",
+        "timestamp_seconds": 8,
+        "title": "Delete path note",
+        "body": "Delete path body",
+        "visibility": "team",
+        "player_ids": [player_id],
+        "tags": ["cleanup-path"],
+    }, headers=auth_headers)).json()["note"]["id"]
+    clip_id = (await client.post("/api/coach/clips", json={
+        "match_id": match_id,
+        "slot": "full",
+        "start_seconds": 7,
+        "end_seconds": 10,
+        "title": "Delete path clip",
+        "visibility": "team",
+        "player_ids": [player_id],
+    }, headers=auth_headers)).json()["clip"]["id"]
+    playlist_id = (await client.post("/api/coach/playlists", json={
+        "title": "Delete path playlist",
+        "visibility": "team",
+        "note_ids": [note_id],
+        "player_ids": [player_id],
+    }, headers=auth_headers)).json()["playlist"]["id"]
+    summary = (await client.post("/api/coach/match-summaries", json={
+        "match_id": match_id,
+        "team_positives": "Delete path summary",
+        "note_ids": [note_id],
+        "clip_ids": [clip_id],
+        "playlist_ids": [playlist_id],
+    }, headers=auth_headers)).json()["summary"]
+    goal = (await client.post("/api/coach/goals", json={
+        "player_id": player_id,
+        "title": "Delete path goal",
+        "source_note_id": note_id,
+        "source_clip_id": clip_id,
+        "source_playlist_id": playlist_id,
+        "source_playlist_item_note_id": note_id,
+    }, headers=auth_headers)).json()["goal"]
+    reviewer_resp = await client.post("/api/users", json={
+        "username": "delete_match_cleanup_reviewer",
+        "password": "password123",
+        "role": "viewer",
+    }, headers=auth_headers)
+    assert reviewer_resp.status_code == 200
+    with _db.connect() as conn:
+        user_id = reviewer_resp.json()["user"]["id"]
+        conn.execute(
+            "INSERT INTO coaching_reviews (user_id, note_id, playlist_id, reflection, reviewed_at) "
+            "VALUES (?, ?, NULL, ?, ?)",
+            (user_id, note_id, "Delete path review", "2026-05-12T10:00:00.000Z"),
+        )
+        conn.commit()
+
+    def fail_if_manual_second_cleanup_runs(match_id: str) -> None:  # pragma: no cover - should never run after fix
+        raise AssertionError("server.delete_match must not manually call db.delete_match_coaching_children")
+
+    monkeypatch.setattr(_server._db, "delete_match_coaching_children", fail_if_manual_second_cleanup_runs)
+
+    delete_match_resp = await client.delete(f"/api/matches/{match_id}", headers=auth_headers)
+    assert delete_match_resp.status_code == 200
+
+    assert _db.get_match_by_id(match_id) is None
+    assert _db.get_coaching_match_summary(summary["id"]) is None
+    goals = (await client.get("/api/coach/goals", headers=auth_headers)).json()["goals"]
+    cleaned_goal = next(g for g in goals if g["id"] == goal["id"])
+    assert cleaned_goal["source_note_id"] is None
+    assert cleaned_goal["source_clip_id"] is None
+    assert cleaned_goal["source_playlist_item_note_id"] is None
+    assert cleaned_goal["source_playlist_id"] == playlist_id
+
+    with _db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM coaching_match_summaries WHERE match_id = ?", (match_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_match_summary_notes WHERE note_id = ?", (note_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_match_summary_clips WHERE clip_id = ?", (clip_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_match_summary_playlists WHERE playlist_id = ?", (playlist_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_notes WHERE id = ?", (note_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_clips WHERE id = ?", (clip_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_note_players WHERE note_id = ?", (note_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_note_tags WHERE note_id = ?", (note_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_clip_players WHERE clip_id = ?", (clip_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_reviews WHERE note_id = ?", (note_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM coaching_playlist_items WHERE note_id = ?", (note_id,)).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
 async def test_match_summary_rejects_cross_match_sources_and_viewer_access(client, auth_headers):
     await client.post("/api/users", json={
         "username": "summary_viewer_blocked",

@@ -3910,7 +3910,6 @@ async def delete_match(match_id: str, request: Request):
         # find this match_id after this point, making the subsequent rmtree safe.
         matches = [m for m in matches if m["id"] != match_id]
         _db.save_matches_unlocked(matches)
-        _db.delete_match_coaching_children(match_id)
         with _db.connect() as conn:
             conn.execute("DELETE FROM upload_sessions WHERE match_id = ?", (match_id,))
             conn.execute("DELETE FROM video_errors WHERE match_id = ?", (match_id,))
