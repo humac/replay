@@ -3843,6 +3843,9 @@ export const coachingMixin = {
     },
 
     renderCoachAIDraftPanel() {
+        // UX-only: these client-side ai.drafting_enabled / allowed_draft_targets / visibility checks
+        // are for UX hygiene (avoiding visible-but-non-functional buttons). routers/coach_ai.py is the
+        // authoritative gate — server enforcement is the actual access control.
         const settings = this._teamSettings?.settings || {};
         const enabled = !!settings['ai.drafting_enabled'];
         const allowedTargets = this._coachAIAllowedDraftTargets(settings);
