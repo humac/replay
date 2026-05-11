@@ -40,6 +40,7 @@ from routers.admin_teams import router as admin_teams_router
 from routers.auth import router as auth_router
 from routers.coach_ai import router as coach_ai_router
 from routers.coach_clips import router as coach_clips_router
+from routers.coach_engagement import router as coach_engagement_router
 from routers.coach_goals import router as coach_goals_router
 from routers.coach_notes import router as coach_notes_router
 from routers.coach_playlists import router as coach_playlists_router
@@ -380,6 +381,7 @@ app.include_router(team_members_router)
 app.include_router(team_settings_router)
 app.include_router(coach_ai_router)
 app.include_router(coach_clips_router)
+app.include_router(coach_engagement_router)
 app.include_router(coach_goals_router)
 app.include_router(coach_notes_router)
 app.include_router(coach_playlists_router)
@@ -2004,37 +2006,10 @@ def _build_player_development_profile(
     return profile
 
 
-@app.get("/api/coach/engagement")
-async def coach_engagement_dashboard(
-    request: Request,
-    player_id: str | None = None,
-    playlist_id: int | None = None,
-    match_id: str | None = None,
-    visibility: str | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    if player_id and not _db.get_player(player_id, team_id=team_id):
-        raise HTTPException(404, "Player not found")
-    if playlist_id is not None and not _same_team(_db.get_coaching_playlist(playlist_id) or {}, team_id):
-        raise HTTPException(404, "Playlist not found")
-    if match_id and not _same_team(_db.get_match_by_id(match_id) or {}, team_id):
-        raise HTTPException(404, "Match not found")
-    if visibility and visibility not in {"player", "team"}:
-        raise HTTPException(422, "Invalid visibility filter")
-    return {"engagement": _engagement.build_coach_engagement_dashboard(player_id=player_id, playlist_id=playlist_id, match_id=match_id, visibility=visibility, start_date=start_date, end_date=end_date, team_id=team_id)}
-
-
-@app.get("/api/coach/players/{player_id}/development")
-async def coach_player_development(player_id: str, request: Request):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    player = _db.get_player(player_id, team_id=team_id)
-    if not player:
-        raise HTTPException(404, "Player not found")
-    return {"profile": _build_player_development_profile(player=player, user=user, viewer_scoped=False, team_id=team_id)}
+# ---------------------------------------------------------------------------
+# Coach engagement + per-player development routes have moved to
+# ``routers/coach_engagement.py`` (PR-BE 9/N).
+# ---------------------------------------------------------------------------
 
 
 @app.get("/api/my-feedback/players/{player_id}/development")
