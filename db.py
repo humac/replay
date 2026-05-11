@@ -1034,11 +1034,16 @@ def _migrate_v15(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_coaching_match_summaries_team_match ON coaching_match_summaries(team_id, match_id)")
 
 
+def _migrate_v16(conn: sqlite3.Connection):
+    """Add active season persistence for Phase 4 scope selection."""
+    _add_column_if_missing(conn, "users", "last_season_id", "TEXT")
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
-    _migrate_v15,
+    _migrate_v15, _migrate_v16,
 ]
 
 
@@ -1334,6 +1339,8 @@ def _row_to_user(row: sqlite3.Row) -> dict:
     }
     if "last_team_id" in keys:
         result["last_team_id"] = row["last_team_id"]
+    if "last_season_id" in keys:
+        result["last_season_id"] = row["last_season_id"]
     return result
 
 
@@ -1351,7 +1358,7 @@ def create_user(username: str, password_hash: str, role: str, display_name: str 
         _backfill_user_memberships(conn, team_id)
         conn.commit()
     return {"id": user_id, "username": username, "role": role, "display_name": display_name,
-            "enabled": True, "created_at": now, "updated_at": now, "last_team_id": None}
+            "enabled": True, "created_at": now, "updated_at": now, "last_team_id": None, "last_season_id": None}
 
 
 def get_user_by_username(username: str) -> dict | None:
@@ -1417,6 +1424,15 @@ def delete_user(user_id: str) -> bool:
         cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return cursor.rowcount > 0
+
+
+def set_user_active_scope(user_id: str, team_id: str, season_id: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE users SET last_team_id = ?, last_season_id = ?, updated_at = ? WHERE id = ?",
+            (team_id, season_id, _now_iso(), user_id),
+        )
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------

@@ -262,14 +262,17 @@ def resolve_scope(
         if user_id:
             memberships = _memberships_for_user(conn, str(user_id))
 
-        if selected_team is None and user_id:
-            user_row = conn.execute("SELECT last_team_id FROM users WHERE id = ?", (user_id,)).fetchone()
-            last_team_id = user_row["last_team_id"] if user_row else None
-            if last_team_id:
-                selected_team = _team_by_slug_or_id(conn, team_id=last_team_id)
-                membership = _membership_for_team(conn, str(user_id), last_team_id) if selected_team else None
-                if selected_team is not None and membership is None:
-                    raise HTTPException(409, "Team selection required")
+        saved_last_team_id = None
+        saved_last_season_id = None
+        if user_id:
+            user_row = conn.execute("SELECT last_team_id, last_season_id FROM users WHERE id = ?", (user_id,)).fetchone()
+            saved_last_team_id = user_row["last_team_id"] if user_row else None
+            saved_last_season_id = user_row["last_season_id"] if user_row else None
+        if selected_team is None and saved_last_team_id:
+            selected_team = _team_by_slug_or_id(conn, team_id=saved_last_team_id)
+            membership = _membership_for_team(conn, str(user_id), saved_last_team_id) if selected_team else None
+            if selected_team is not None and membership is None:
+                raise HTTPException(409, "Team selection required")
 
         if selected_team is None and len({m["team_id"] for m in memberships}) == 1:
             selected_team = _team_by_slug_or_id(conn, team_id=memberships[0]["team_id"])
@@ -296,7 +299,15 @@ def resolve_scope(
         if require_role is not None and not role_satisfies_any(effective_role, require_role):
             raise HTTPException(403, "Insufficient team permissions")
 
-        selected_season = _season_for_team(conn, selected_team["id"], explicit_season_id)
+        selected_season_id = explicit_season_id
+        if not selected_season_id and saved_last_team_id == selected_team["id"]:
+            selected_season_id = saved_last_season_id
+        try:
+            selected_season = _season_for_team(conn, selected_team["id"], selected_season_id)
+        except HTTPException as exc:
+            if selected_season_id and not explicit_season_id and exc.status_code == 403:
+                raise HTTPException(409, "Team selection required") from exc
+            raise
         return Scope(
             user=user,
             team=selected_team,
@@ -371,7 +382,7 @@ def build_me_scope_summary(request: Request | Any | None, user: dict[str, Any]) 
 
     with _db.connect() as conn:
         db_user = conn.execute(
-            "SELECT id, username, role, display_name, enabled, last_team_id FROM users WHERE id = ?",
+            "SELECT id, username, role, display_name, enabled, last_team_id, last_season_id FROM users WHERE id = ?",
             (user_id,),
         ).fetchone() if user_id else None
         if db_user is not None:
@@ -385,6 +396,7 @@ def build_me_scope_summary(request: Request | Any | None, user: dict[str, Any]) 
                 "roles": roles,
                 "is_global_admin": "admin" in roles,
                 "last_team_id": db_user["last_team_id"],
+                "last_season_id": db_user["last_season_id"],
             }
         else:
             user_payload = {
@@ -395,6 +407,7 @@ def build_me_scope_summary(request: Request | Any | None, user: dict[str, Any]) 
                 "roles": roles,
                 "is_global_admin": is_global_admin,
                 "last_team_id": None,
+                "last_season_id": None,
             }
 
         membership_rows = conn.execute(
@@ -484,6 +497,16 @@ def build_me_scope_summary(request: Request | Any | None, user: dict[str, Any]) 
         else:
             raise
 
+    saved_team_id = user_payload.get("last_team_id")
+    saved_season_id = user_payload.get("last_season_id")
+    saved_season_is_eligible = any(
+        season.get("id") == saved_season_id
+        for season in seasons_by_team.get(str(saved_team_id), [])
+    )
+    if saved_team_id not in by_team or (saved_season_id and not saved_season_is_eligible):
+        user_payload["last_team_id"] = None
+        user_payload["last_season_id"] = None
+
     return {
         "user": user_payload,
         "memberships": membership_payload,
@@ -492,6 +515,22 @@ def build_me_scope_summary(request: Request | Any | None, user: dict[str, Any]) 
         "active_scope": active_scope,
         "selection_required": selection_required,
     }
+
+
+def save_active_scope(request: Request | Any | None, user: dict[str, Any], *, team_id: str, season_id: str) -> dict[str, Any]:
+    """Validate and persist the caller's active team/season selection."""
+    user_id = str(user.get("user_id") or user.get("id") or "")
+    if not user_id:
+        raise HTTPException(401, "Authentication required")
+    try:
+        scope = resolve_scope(request, user, team_id=team_id, season_id=season_id)
+    except HTTPException as exc:
+        if exc.status_code in {403, 404, 409}:
+            raise HTTPException(403, "Scope selection is not available") from exc
+        raise
+    _db.set_user_active_scope(user_id, scope.team["id"], scope.season["id"] if scope.season else "")
+    return build_me_scope_summary(request, user)
+
 
 
 def require_team_role(

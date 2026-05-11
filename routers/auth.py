@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import auth as _auth
 import tenancy as _tenancy
-from models import LoginRequest
+from models import LoginRequest, UpdateActiveScopeRequest
 
 router = APIRouter()
 
@@ -32,6 +32,12 @@ async def logout(request: Request):
 async def me(request: Request):
     user = _auth.require_auth(request)
     return _tenancy.build_me_scope_summary(request, user)
+
+
+@router.put("/api/me/scope")
+async def update_me_scope(request: Request, body: UpdateActiveScopeRequest):
+    user = _auth.require_auth(request)
+    return _tenancy.save_active_scope(request, user, team_id=body.team_id, season_id=body.season_id)
 
 
 @router.get("/api/auth/check")
