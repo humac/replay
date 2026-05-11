@@ -1782,7 +1782,7 @@ def _call_roster_import(func, *args, **kwargs):
 async def coach_preview_roster_import(request: Request, body: RosterImportRequest):
     user, scope = _resolve_roster_import_scope(request)
     team_id = _scope_team_id(scope)
-    season_id = scope.season["id"] if scope.season else None
+    season_id = request.query_params.get("season_id") or None
     return _call_roster_import(
         _roster_import.preview_roster_import,
         csv_text=body.csv_text,
@@ -1796,7 +1796,7 @@ async def coach_preview_roster_import(request: Request, body: RosterImportReques
 async def coach_commit_roster_import(request: Request, body: RosterImportRequest):
     user, scope = _resolve_roster_import_scope(request)
     team_id = _scope_team_id(scope)
-    season_id = scope.season["id"] if scope.season else None
+    season_id = request.query_params.get("season_id") or None
     result = _call_roster_import(
         _roster_import.commit_roster_import,
         csv_text=body.csv_text,
