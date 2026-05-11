@@ -1128,6 +1128,14 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - No provider call occurs when drafting is disabled, provider config is absent, or provider secret is missing.
 - Logs/job rows do not contain provider secrets or raw prompt text in failure paths.
 
+**Implementation closeout:**
+
+- Added `services/ai_providers.py` with provider config/request/result dataclasses, provider protocol, deterministic `MockAIProvider`, environment resolver (`REPLAY_AI_PROVIDER`, `REPLAY_AI_PROVIDER_API_KEY`, `REPLAY_AI_PROVIDER_MODEL`, `REPLAY_AI_PROVIDER_TIMEOUT_SECONDS`), adapter-enforced timeout contract, and the service-only `generate_draft(...)` orchestration function.
+- Provider execution now composes `services.ai_context.build_context(...)` with `services.ai_drafting` run lifecycle helpers. Draft text is returned to the caller but is not persisted; audit rows store only provider/model, token counts, compact evidence refs, and safe status/error codes/messages.
+- Calls fail closed before provider invocation when team drafting is disabled/not allowed, no provider is configured, non-mock secrets are missing, or a non-mock provider is requested before provider-specific implementation/data-handling review. Mock remains secretless for tests/local smoke only.
+- Failure paths redact raw instructions/prompts, provider exception text/output, private source text, and provider secrets from responses, logs, and DB rows. No API route, UI, streaming infrastructure, chat/messages, or raw prompt/output persistence was added.
+- Deployment docs and `.env.example` now document provider configuration plus data-handling/retention expectations that must be satisfied before enabling any non-mock provider.
+
 ### PR 8.4: Drafting API
 
 **Files:**
