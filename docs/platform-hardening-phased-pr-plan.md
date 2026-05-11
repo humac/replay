@@ -761,22 +761,29 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 
 **Objective:** Move database/job architecture to the target shape before AI drafting assistant launches.
 
-### PR 6.1: Database Backend ADR And Alembic Plan
+### PR 6.1: Database Backend ADR And Alembic Plan ✅ COMPLETE (2026-05-10)
 
 **Files:**
 
-- Create: `docs/postgres-migration-adr.md` or similar
-- Modify: `docs/DEPLOYMENT.md`
-- Test/validation: documentation review plus existing SQLite tests
+- Created: `docs/postgres-migration-adr.md`
+- Modified: `docs/DEPLOYMENT.md`
+- Added: `tests/test_postgres_migration_adr_static.py`
+- Updated: `ROADMAP.md`
 
-**Key decisions to document:**
+**Key decisions documented:**
 
-- Adopt Alembic for migrations going forward or define why not.
-- Keep SQLite as local/dev/single-laptop backend only if feasible.
-- Use Postgres with `psycopg` v3 and connection pooling for production.
-- Define how `_migrate_v0..v15` maps to a baseline.
-- Define the post-baseline migration contract: after Alembic adopts the baseline, `db.py`'s `_run_migrations` path is replaced by an Alembic invocation. The `_MIGRATIONS` list becomes a compatibility shim that runs Alembic to head rather than a parallel migration system. The SQLite dev lane uses the same Alembic invocation with a SQLite URL so the dev path does not drift.
-- Confirm no `pgvector` for drafting MVP.
+- Adopt Postgres as the production database backend.
+- Adopt Alembic as the forward migration runner.
+- Keep SQLite for local/dev and single-laptop validation where practical.
+- Map current `db.py` `_migrate_v0` through `_migrate_v16` to a first Alembic baseline such as `0001_sqlite_v16_baseline`.
+- After baseline, stop adding new `_migrate_v*` functions; startup should invoke Alembic to head and keep the homegrown path only as a legacy compatibility shim.
+- Confirm no `pgvector` for the AI drafting MVP.
+
+**Tests:**
+
+- `pytest tests/test_postgres_migration_adr_static.py -q`
+- Existing SQLite tests continue to run in later implementation PRs.
+
 
 ### PR 6.2: Postgres Compose And Test Lane
 

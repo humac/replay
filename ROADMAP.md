@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 6.1 — Postgres Migration ADR ✅ COMPLETE (2026-05-10)
+
+Defines the production database target before durable jobs and AI drafting introduce concurrency-sensitive workloads.
+
+- **ADR** (`docs/postgres-migration-adr.md`): adopts Postgres for production, Alembic for forward migrations, SQLite for local/dev where practical, and no `pgvector` for the drafting MVP.
+- **Baseline contract**: maps current `db.py` `_migrate_v0` through `_migrate_v16` to the first Alembic baseline revision, after which new schema changes must be Alembic revisions.
+- **Deployment docs** (`docs/DEPLOYMENT.md`): documents planned `DATABASE_URL` / `REPLAY_DB_BACKEND` direction and warns those switches are not live until Phase 6.2/6.4 implementation lands.
+- **Validation**: `pytest tests/test_postgres_migration_adr_static.py -q` plus existing Phase 5 static guards.
+
+**Next**: Phase 6.2 — Postgres Compose And Test Lane.
+
 ## Platform Hardening Phase 5.3 — Safe CSS Split ✅ COMPLETE (2026-05-10)
 
 Splits a self-contained Coach Engagement stylesheet without introducing build tooling or disturbing the wider monolithic CSS cascade.
