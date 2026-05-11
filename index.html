@@ -303,6 +303,7 @@
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="clips" onclick="app.setCoachTab('clips')">Clips</button>
                 <button type="button" id="coach-subnav-summaries" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="summaries" onclick="app.setCoachTab('summaries')">Match Summaries</button>
                 <button type="button" id="coach-subnav-engagement" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="engagement" onclick="app.setCoachTab('engagement')">Engagement</button>
+                <button type="button" id="coach-subnav-settings" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="settings" onclick="app.setCoachTab('settings')">Settings</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="review" onclick="app.setCoachTab('review')">Review</button>
             </nav>
 
@@ -553,6 +554,21 @@
                     </div>
                     <div id="coach-engagement-dashboard" class="coach-engagement-dashboard mt-4">
                         <div class="session-empty">Loading engagement dashboard...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Team settings sub-tab (Platform Phase 7.2) -->
+            <div id="coach-tab-settings" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-settings" hidden>
+                <div class="options-card">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>AI governance &amp; defaults</h3>
+                            <p class="admin-card-sub">Review active-team defaults and team-admin-only AI drafting controls.</p>
+                        </div>
+                    </div>
+                    <div id="coach-team-settings-content" class="team-settings-content">
+                        <div class="session-empty">Loading team settings…</div>
                     </div>
                 </div>
             </div>

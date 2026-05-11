@@ -5,6 +5,13 @@ from __future__ import annotations
 import pytest
 
 import db as _db
+import auth as _auth
+
+
+async def _login(client, username: str, password: str = "password123") -> dict:
+    resp = await client.post("/api/login", json={"username": username, "password": password})
+    assert resp.status_code == 200
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
 
 
 def _now() -> str:
@@ -21,12 +28,25 @@ def _create_team(team_id: str) -> None:
 
 
 def _create_member(team_id: str, username: str, *, role: str = "team_admin") -> dict:
-    user = _db.create_user(username, "hash", "viewer", username.title())
+    user = _db.create_user(username, _auth.hash_password("password123"), "coach", username.title())
     with _db.connect() as conn:
         conn.execute(
             "INSERT INTO team_user_memberships (team_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
             (team_id, user["id"], role, _now()),
         )
+        conn.execute("UPDATE users SET last_team_id = ? WHERE id = ?", (team_id, user["id"]))
+        conn.commit()
+    return user
+
+
+def _create_api_user(team_id: str, username: str, *, team_role: str, app_role: str = "coach") -> dict:
+    user = _db.create_user(username, _auth.hash_password("password123"), app_role, username.title())
+    with _db.connect() as conn:
+        conn.execute(
+            "INSERT INTO team_user_memberships (team_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
+            (team_id, user["id"], team_role, _now()),
+        )
+        conn.execute("UPDATE users SET last_team_id = ? WHERE id = ?", (team_id, user["id"]))
         conn.commit()
     return user
 
@@ -182,3 +202,105 @@ def test_raw_json_cannot_smuggle_unsupported_ai_targets(client):
             ("settings-team-smuggle", "ai.allowed_draft_targets"),
         ).fetchall()
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_api_coach_can_read_active_team_settings(client):
+    _create_team("api-settings-read-team")
+    coach = _create_api_user("api-settings-read-team", "api_settings_reader", team_role="coach")
+    headers = await _login(client, coach["username"])
+
+    resp = await client.get("/api/coach/team/settings", headers=headers)
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["team_id"] == "api-settings-read-team"
+    assert payload["can_edit"] is False
+    assert payload["settings"]["ai.drafting_enabled"] is False
+    assert payload["settings"]["ai.never_draft_for_visibilities"] == ["private", "player"]
+
+
+@pytest.mark.asyncio
+async def test_api_team_admin_can_patch_ai_governance_controls(client):
+    _create_team("api-settings-admin-team")
+    admin = _create_api_user("api-settings-admin-team", "api_settings_admin", team_role="team_admin")
+    headers = await _login(client, admin["username"])
+
+    resp = await client.patch(
+        "/api/coach/team/settings",
+        json={
+            "settings": {
+                "ai.drafting_enabled": True,
+                "ai.allowed_draft_targets": ["player_summary", "what_happened"],
+                "ai.tone": "technical",
+                "ai.never_draft_for_visibilities": ["private"],
+            }
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200
+    settings = resp.json()["settings"]
+    assert settings["ai.drafting_enabled"] is True
+    assert settings["ai.allowed_draft_targets"] == ["player_summary", "what_happened"]
+    assert settings["ai.tone"] == "technical"
+    assert settings["ai.never_draft_for_visibilities"] == ["private"]
+
+
+@pytest.mark.asyncio
+async def test_api_coach_cannot_toggle_ai_or_relax_never_draft(client):
+    _create_team("api-settings-coach-denied-team")
+    coach = _create_api_user("api-settings-coach-denied-team", "api_settings_coach_denied", team_role="coach")
+    headers = await _login(client, coach["username"])
+
+    toggle_resp = await client.patch(
+        "/api/coach/team/settings",
+        json={"settings": {"ai.drafting_enabled": True}},
+        headers=headers,
+    )
+    relax_resp = await client.patch(
+        "/api/coach/team/settings",
+        json={"settings": {"ai.never_draft_for_visibilities": ["private"]}},
+        headers=headers,
+    )
+
+    assert toggle_resp.status_code == 403
+    assert relax_resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_api_patch_validates_each_key_with_structured_422(client):
+    _create_team("api-settings-validation-team")
+    admin = _create_api_user("api-settings-validation-team", "api_settings_validation_admin", team_role="team_admin")
+    headers = await _login(client, admin["username"])
+
+    resp = await client.patch(
+        "/api/coach/team/settings",
+        json={"settings": {"ai.tone": "cheerful", "goals.default_visibility": "private"}},
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "team_settings_validation_failed"
+    errors = detail["errors"]
+    assert {error["key"] for error in errors} == {"ai.tone", "goals.default_visibility"}
+    assert all(error["code"] == "invalid_enum" for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_api_cross_team_settings_access_rejected(client):
+    _create_team("api-settings-team-a")
+    _create_team("api-settings-team-b")
+    actor = _create_api_user("api-settings-team-a", "api_settings_wrong_team", team_role="team_admin")
+    headers = await _login(client, actor["username"])
+
+    read_resp = await client.get("/api/coach/team/settings?team_id=api-settings-team-b", headers=headers)
+    patch_resp = await client.patch(
+        "/api/coach/team/settings?team_id=api-settings-team-b",
+        json={"settings": {"ai.tone": "technical"}},
+        headers=headers,
+    )
+
+    assert read_resp.status_code in {403, 404}
+    assert patch_resp.status_code in {403, 404}
