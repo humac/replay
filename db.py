@@ -153,6 +153,7 @@ def _set_schema_version(conn: sqlite3.Connection, version: int):
     conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    conn.execute(f"PRAGMA user_version = {int(version)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1149,11 +1150,52 @@ def _migrate_v18(conn: sqlite3.Connection):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_team_settings_team_key ON team_settings(team_id, key)")
 
 
+def _migrate_v19(conn: sqlite3.Connection):
+    """Add Phase 8.1 team-scoped AI drafting run audit rows."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ai_drafting_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id TEXT NOT NULL,
+            season_id TEXT,
+            created_by_user_id TEXT,
+            draft_target TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued',
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            error_code TEXT,
+            error_message TEXT,
+            evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            background_job_id INTEGER,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(background_job_id) REFERENCES background_jobs(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_drafting_runs_team_status "
+        "ON ai_drafting_runs(team_id, status, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_drafting_runs_team_created "
+        "ON ai_drafting_runs(team_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_drafting_runs_background_job "
+        "ON ai_drafting_runs(background_job_id) WHERE background_job_id IS NOT NULL"
+    )
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
-    _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18,
+    _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18, _migrate_v19,
 ]
 
 
