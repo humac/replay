@@ -9,6 +9,7 @@ private source text.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Callable
 
 import db as _db
@@ -17,7 +18,10 @@ from services import visibility as _visibility
 from services.team_settings import can_generate_draft, list_settings
 
 
-SUPPORTED_EVIDENCE_TYPES = {"note", "clip", "playlist", "goal", "match_summary", "player", "review", "engagement"}
+SUPPORTED_EVIDENCE_TYPES = {"note", "clip", "playlist", "goal", "match_summary", "player", "development_profile", "review", "engagement"}
+_NUMERIC_REF_TYPES = {"note", "clip", "playlist", "goal", "match_summary", "review"}
+_SAFE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_MAX_EVIDENCE_REFS = 50
 
 
 @dataclass
@@ -30,12 +34,17 @@ class AIContextValidationError(ValueError):
         return self.detail
 
 
+def _safe_token(value: Any, *, fallback: str = "redacted") -> str:
+    text = str(value or "").strip()
+    return text if _SAFE_REF_RE.fullmatch(text) else fallback
+
+
 def _safe_ref(ref_type: str, ref_id: Any, *, reason: str, status: str = "excluded") -> dict[str, str]:
-    return {"type": str(ref_type), "id": str(ref_id), "status": status, "reason": reason}
+    return {"type": _safe_token(ref_type, fallback="unknown"), "id": _safe_token(ref_id), "status": status, "reason": reason}
 
 
 def _included_ref(ref_type: str, ref_id: Any) -> dict[str, str]:
-    return {"type": str(ref_type), "id": str(ref_id), "status": "included", "reason": "selected_by_coach"}
+    return {"type": _safe_token(ref_type, fallback="unknown"), "id": _safe_token(ref_id), "status": "included", "reason": "selected_by_coach"}
 
 
 def _empty_audit() -> dict[str, list[dict[str, str]]]:
@@ -60,15 +69,25 @@ def _normalize_refs(evidence_refs: list[dict[str, Any]] | None) -> list[dict[str
     if not isinstance(evidence_refs, list):
         raise AIContextValidationError("invalid_evidence_refs", "evidence_refs must be a list")
     normalized: list[dict[str, str]] = []
-    for ref in evidence_refs:
+    for ref in evidence_refs[:_MAX_EVIDENCE_REFS]:
         if not isinstance(ref, dict):
             raise AIContextValidationError("invalid_evidence_ref", "Evidence refs must be objects")
         ref_type = str(ref.get("type") or "").strip()
         ref_id = ref.get("id")
-        if ref_type not in SUPPORTED_EVIDENCE_TYPES or ref_id in (None, ""):
-            normalized.append({"type": ref_type or "unknown", "id": str(ref_id or "")})
+        if ref_type not in SUPPORTED_EVIDENCE_TYPES:
+            normalized.append({"type": "unknown", "id": "redacted", "invalid": "unsupported_ref"})
             continue
-        normalized.append({"type": ref_type, "id": str(ref_id)})
+        if ref_id in (None, ""):
+            normalized.append({"type": ref_type, "id": "redacted", "invalid": "invalid_ref_id"})
+            continue
+        text_id = str(ref_id).strip()
+        if not _SAFE_REF_RE.fullmatch(text_id):
+            normalized.append({"type": ref_type, "id": "redacted", "invalid": "invalid_ref_id"})
+            continue
+        if ref_type in _NUMERIC_REF_TYPES and not text_id.isdigit():
+            normalized.append({"type": ref_type, "id": "redacted", "invalid": "invalid_ref_id"})
+            continue
+        normalized.append({"type": ref_type, "id": text_id})
     return normalized
 
 
@@ -189,14 +208,32 @@ def _safe_player(player: dict) -> dict[str, Any]:
     }
 
 
+def _safe_development_profile(player: dict) -> dict[str, Any]:
+    out = _safe_player(player)
+    out["type"] = "development_profile"
+    return out
+
+
 def _safe_engagement(payload: dict, ref_id: str) -> dict[str, Any]:
     return {
         "type": "engagement",
         "id": ref_id,
         "summary": payload.get("summary") or {},
-        "players": payload.get("players") or [],
-        "matches": payload.get("matches") or [],
-        "unreviewed": payload.get("unreviewed") or [],
+        "by_player": payload.get("by_player") or [],
+        "by_match": payload.get("by_match") or [],
+        "unreviewed_assigned_items": payload.get("unreviewed_assigned_items") or [],
+        "players_with_no_recent_feedback": payload.get("players_with_no_recent_feedback") or [],
+        "most_watched": payload.get("most_watched") or [],
+    }
+
+
+def _safe_review(review: dict) -> dict[str, Any]:
+    return {
+        "type": "review",
+        "id": str(review["id"]),
+        "note_id": review.get("note_id"),
+        "playlist_id": review.get("playlist_id"),
+        "reviewed_at": review.get("reviewed_at"),
     }
 
 
@@ -208,7 +245,24 @@ def _player_intersects(item: dict, target_player_ids: set[str]) -> bool:
     item_players = {str(pid) for pid in item.get("player_ids", [])}
     if item_players:
         return bool(item_players.intersection(target_player_ids))
+    if item.get("id") is not None and item.get("display_name") is not None:
+        return str(item.get("id")) in target_player_ids
     return True
+
+
+
+def _exists_unscoped(ref_type: str, ref_id: int) -> bool:
+    return _db.coaching_source_exists(ref_type, ref_id)
+
+
+def _review_scope_item(review: dict, team_id: str) -> dict | None:
+    note_id = review.get("note_id")
+    if note_id is not None:
+        return _db.get_coaching_note(int(note_id), team_id=team_id)
+    playlist_id = review.get("playlist_id")
+    if playlist_id is not None:
+        return _db.get_coaching_playlist(int(playlist_id), team_id=team_id)
+    return None
 
 
 def build_context(
@@ -238,6 +292,9 @@ def build_context(
     for ref in _normalize_refs(evidence_refs):
         ref_type = ref["type"]
         ref_id = ref["id"]
+        if ref.get("invalid"):
+            _add_policy_exclusion(audit, _safe_ref(ref_type, ref_id, reason=ref["invalid"]))
+            continue
         if ref_type not in SUPPORTED_EVIDENCE_TYPES or not ref_id:
             _add_policy_exclusion(audit, _safe_ref(ref_type, ref_id, reason="unsupported_ref"))
             continue
@@ -248,34 +305,73 @@ def build_context(
         filter_fn: Callable[[list[dict], dict[str, Any], str | None], list[dict]] | None = None
 
         if ref_type == "note":
-            item = _db.get_coaching_note(int(ref_id))
+            numeric_id = int(ref_id)
+            item = _db.get_coaching_note(numeric_id, team_id=team_id)
+            if item is None:
+                status_reason = "cross_team_scope" if _exists_unscoped(ref_type, numeric_id) else "not_found"
             filter_fn = _visibility.filter_notes_for_user
             safe_builder = _safe_note
         elif ref_type == "clip":
-            item = _db.get_coaching_clip(int(ref_id))
+            numeric_id = int(ref_id)
+            item = _db.get_coaching_clip(numeric_id, team_id=team_id)
+            if item is None:
+                status_reason = "cross_team_scope" if _exists_unscoped(ref_type, numeric_id) else "not_found"
             filter_fn = _visibility.filter_clips_for_user
             safe_builder = _safe_clip
         elif ref_type == "playlist":
-            item = _db.get_coaching_playlist(int(ref_id))
+            numeric_id = int(ref_id)
+            item = _db.get_coaching_playlist(numeric_id, team_id=team_id)
+            if item is None:
+                status_reason = "cross_team_scope" if _exists_unscoped(ref_type, numeric_id) else "not_found"
             filter_fn = _visibility.filter_playlists_for_user
             safe_builder = _safe_playlist
         elif ref_type == "goal":
-            item = _db.get_player_goal(int(ref_id))
+            numeric_id = int(ref_id)
+            item = _db.get_player_goal(numeric_id, team_id=team_id)
+            if item is None:
+                status_reason = "cross_team_scope" if _exists_unscoped(ref_type, numeric_id) else "not_found"
             filter_fn = _visibility.filter_goals_for_user
             safe_builder = _safe_goal
         elif ref_type == "match_summary":
-            item = _db.get_coaching_match_summary(int(ref_id))
+            numeric_id = int(ref_id)
+            item = _db.get_coaching_match_summary(numeric_id, team_id=team_id)
+            if item is None:
+                status_reason = "cross_team_scope" if _exists_unscoped(ref_type, numeric_id) else "not_found"
             filter_fn = _visibility.filter_match_summaries_for_user
             safe_builder = _safe_summary
-        elif ref_type == "player":
+        elif ref_type in {"player", "development_profile"}:
             item = _db.get_player(ref_id, team_id=team_id)
             if item is None:
                 # Determine whether it exists elsewhere without exposing content.
-                cross = _db.get_player(ref_id, allow_unscoped=True)
-                status_reason = "cross_team_scope" if cross is not None else "not_found"
+                status_reason = "cross_team_scope" if _db.player_exists(ref_id) else "not_found"
             filter_fn = None
-            safe_builder = _safe_player
+            safe_builder = _safe_development_profile if ref_type == "development_profile" else _safe_player
+        elif ref_type == "review":
+            numeric_id = int(ref_id)
+            review = _db.get_coaching_review_for_ai_context(numeric_id, team_id)
+            if review is None:
+                status_reason = "not_found"
+            else:
+                source_item = _review_scope_item(review, team_id)
+                if source_item is None:
+                    status_reason = "cross_team_scope"
+                elif source_item.get("visibility") == "private":
+                    status_reason = "private_source_excluded"
+                else:
+                    # Apply the source item's draft visibility and player scope to
+                    # review metadata before including the compact review row.
+                    item = {
+                        **review,
+                        "visibility": source_item.get("visibility"),
+                        "player_id": source_item.get("player_id"),
+                        "player_ids": source_item.get("player_ids", []),
+                    }
+            filter_fn = None
+            safe_builder = _safe_review
         elif ref_type == "engagement":
+            if target_players:
+                _add_policy_exclusion(audit, _safe_ref(ref_type, ref_id, reason="target_player_scope_required"))
+                continue
             item = _engagement.build_coach_engagement_dashboard(team_id=team_id)
             safe_item = _safe_engagement(item, ref_id)
             items.append(safe_item)
@@ -285,7 +381,7 @@ def build_context(
             _add_policy_exclusion(audit, _safe_ref(ref_type, ref_id, reason="unsupported_ref"))
             continue
 
-        if ref_type != "player":
+        if status_reason is None and ref_type not in {"player", "development_profile", "review"}:
             item, status_reason = _team_visible_item(
                 item=item,
                 team_id=team_id,
@@ -296,11 +392,18 @@ def build_context(
         if status_reason == "cross_team_scope":
             audit["excluded_by_cross_team_scope"].append(_safe_ref(ref_type, ref_id, reason="cross_team_scope"))
             continue
+        if status_reason == "private_source_excluded":
+            _add_policy_exclusion(audit, _safe_ref(ref_type, ref_id, reason="private_source_excluded"))
+            continue
         if status_reason == "visibility_denied":
             audit["excluded_by_visibility"].append(_safe_ref(ref_type, ref_id, reason="visibility_denied"))
             continue
         if status_reason == "not_found" or item is None:
             _add_policy_exclusion(audit, _safe_ref(ref_type, ref_id, reason="not_found"))
+            continue
+
+        if ref_type == "note" and item.get("visibility") == "private":
+            _add_policy_exclusion(audit, _safe_ref(ref_type, ref_id, reason="private_source_excluded"))
             continue
 
         if not _source_visibility_allowed(item, never_draft_visibilities):

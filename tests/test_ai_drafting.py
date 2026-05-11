@@ -435,6 +435,7 @@ def test_ai_context_cross_team_and_unlinked_player_data_never_appear(client):
             {"type": "playlist", "id": other["playlist"]["id"]},
             {"type": "goal", "id": other["goal"]["id"]},
             {"type": "match_summary", "id": other["summary"]["id"]},
+            {"type": "player", "id": other["player"]["id"]},
             {"type": "goal", "id": unlinked_goal["id"]},
         ],
     )
@@ -442,7 +443,7 @@ def test_ai_context_cross_team_and_unlinked_player_data_never_appear(client):
     serialized = json.dumps(result, sort_keys=True)
     assert "ai-context-other" not in serialized
     assert "UNLINKED PLAYER CANARY" not in serialized
-    assert [ref["type"] for ref in result["audit"]["excluded_by_cross_team_scope"]] == ["note", "clip", "playlist", "goal", "match_summary"]
+    assert [ref["type"] for ref in result["audit"]["excluded_by_cross_team_scope"]] == ["note", "clip", "playlist", "goal", "match_summary", "player"]
     assert result["audit"]["excluded_by_policy"] == [{"type": "goal", "id": str(unlinked_goal["id"]), "status": "excluded", "reason": "unlinked_player"}]
 
 
@@ -500,3 +501,239 @@ def test_ai_context_default_never_draft_excludes_player_visibility_source_and_op
     )
     assert optin_result["context"]["items"][0]["type"] == "note"
     assert optin_result["audit"]["excluded_by_visibility"] == []
+
+
+def test_ai_context_private_note_is_permanently_excluded_even_when_setting_allows_private(client):
+    from services import ai_context
+
+    _create_team("ai-context-private-permanent")
+    actor = _create_member("ai-context-private-permanent", "ai_context_private_permanent_admin")
+    _enable_ai_context("ai-context-private-permanent", actor, never_draft=[])
+    data = _seed_ai_context_objects("ai-context-private-permanent", actor, prefix="ai-context-private-permanent")
+    _db.update_coaching_note(data["note"]["id"], {"visibility": "private", "body": "PRIVATE NOTE POLICY CANARY"})
+
+    result = ai_context.build_context(
+        team_id="ai-context-private-permanent",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[{"type": "note", "id": data["note"]["id"]}],
+    )
+
+    serialized = json.dumps(result, sort_keys=True)
+    assert "PRIVATE NOTE POLICY CANARY" not in serialized
+    assert result["context"]["items"] == []
+    assert result["audit"]["excluded_by_permanent_policy"] == [
+        {"type": "note", "id": str(data["note"]["id"]), "status": "excluded", "reason": "private_source_excluded"}
+    ]
+
+
+def test_ai_context_target_player_filter_applies_to_player_profile_refs(client):
+    from services import ai_context
+
+    _create_team("ai-context-player-filter")
+    actor = _create_member("ai-context-player-filter", "ai_context_player_filter_admin")
+    _enable_ai_context("ai-context-player-filter", actor, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-context-player-filter", actor, prefix="ai-context-player-filter")
+    unlinked_player = _db.create_player("UNLINKED PROFILE CANARY", team_id="ai-context-player-filter", season_id=data["season_id"])
+
+    result = ai_context.build_context(
+        team_id="ai-context-player-filter",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        target_player_ids=[data["player"]["id"]],
+        evidence_refs=[{"type": "player", "id": unlinked_player["id"]}],
+    )
+
+    assert result["context"]["items"] == []
+    assert "UNLINKED PROFILE CANARY" not in json.dumps(result, sort_keys=True)
+    assert result["audit"]["excluded_by_policy"] == [
+        {"type": "player", "id": unlinked_player["id"], "status": "excluded", "reason": "unlinked_player"}
+    ]
+
+
+def test_ai_context_development_profile_alias_is_compact_and_safe(client):
+    from services import ai_context
+
+    _create_team("ai-context-dev-profile")
+    actor = _create_member("ai-context-dev-profile", "ai_context_dev_profile_admin")
+    _enable_ai_context("ai-context-dev-profile", actor, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-context-dev-profile", actor, prefix="ai-context-dev-profile")
+    _db.update_player(data["player"]["id"], notes="PLAYER PRIVATE NOTES CANARY")
+
+    result = ai_context.build_context(
+        team_id="ai-context-dev-profile",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        target_player_ids=[data["player"]["id"]],
+        evidence_refs=[{"type": "development_profile", "id": data["player"]["id"]}],
+    )
+
+    assert result["context"]["items"] == [
+        {
+            "type": "development_profile",
+            "id": data["player"]["id"],
+            "display_name": data["player"]["display_name"],
+            "jersey_number": data["player"].get("jersey_number", ""),
+            "active": True,
+            "team_id": "ai-context-dev-profile",
+        }
+    ]
+    assert "PLAYER PRIVATE NOTES CANARY" not in json.dumps(result, sort_keys=True)
+
+
+def test_ai_context_engagement_ref_uses_actual_compact_payload_keys(client):
+    from services import ai_context
+
+    _create_team("ai-context-engagement")
+    actor = _create_member("ai-context-engagement", "ai_context_engagement_admin")
+    _enable_ai_context("ai-context-engagement", actor, never_draft=["private"])
+    _seed_ai_context_objects("ai-context-engagement", actor, prefix="ai-context-engagement")
+
+    result = ai_context.build_context(
+        team_id="ai-context-engagement",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[{"type": "engagement", "id": "dashboard"}],
+    )
+
+    item = result["context"]["items"][0]
+    assert item["type"] == "engagement"
+    assert item["id"] == "dashboard"
+    assert set(item) == {"type", "id", "summary", "by_player", "by_match", "unreviewed_assigned_items", "players_with_no_recent_feedback", "most_watched"}
+    assert isinstance(item["by_player"], list)
+    assert isinstance(item["by_match"], list)
+
+
+def test_ai_context_engagement_ref_is_excluded_for_player_targeted_context(client):
+    from services import ai_context
+
+    _create_team("ai-context-engagement-targeted")
+    actor = _create_member("ai-context-engagement-targeted", "ai_context_engagement_targeted_admin")
+    _enable_ai_context("ai-context-engagement-targeted", actor, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-context-engagement-targeted", actor, prefix="ai-context-engagement-targeted")
+
+    result = ai_context.build_context(
+        team_id="ai-context-engagement-targeted",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        target_player_ids=[data["player"]["id"]],
+        evidence_refs=[{"type": "engagement", "id": "dashboard"}],
+    )
+
+    assert result["context"]["items"] == []
+    assert result["audit"]["excluded_by_policy"] == [
+        {"type": "engagement", "id": "dashboard", "status": "excluded", "reason": "target_player_scope_required"}
+    ]
+
+
+def test_ai_context_malformed_numeric_and_unsafe_audit_refs_are_safely_excluded(client):
+    from services import ai_context
+
+    _create_team("ai-context-bad-refs")
+    actor = _create_member("ai-context-bad-refs", "ai_context_bad_refs_admin")
+    _enable_ai_context("ai-context-bad-refs", actor, never_draft=["private"])
+    canary = "PRIVATE_PROMPT_CANARY should never reflect in audit"
+
+    result = ai_context.build_context(
+        team_id="ai-context-bad-refs",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[
+            {"type": "note", "id": "not-a-number"},
+            {"type": "unsupported:" + canary, "id": canary},
+            {"type": "unsupportedSafeType", "id": "SafeLookingCanary"},
+        ],
+    )
+
+    serialized = json.dumps(result, sort_keys=True)
+    assert canary not in serialized
+    assert "SafeLookingCanary" not in serialized
+    assert result["context"]["items"] == []
+    assert result["audit"]["excluded_by_policy"] == [
+        {"type": "note", "id": "redacted", "status": "excluded", "reason": "invalid_ref_id"},
+        {"type": "unknown", "id": "redacted", "status": "excluded", "reason": "unsupported_ref"},
+        {"type": "unknown", "id": "redacted", "status": "excluded", "reason": "unsupported_ref"},
+    ]
+
+
+def test_ai_context_review_ref_is_compact_and_safe(client, monkeypatch):
+    from services import ai_context
+
+    _create_team("ai-context-review")
+    actor = _create_member("ai-context-review", "ai_context_review_admin")
+    player_user = _create_member("ai-context-review", "ai_context_review_player", role="player")
+    _enable_ai_context("ai-context-review", actor, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-context-review", actor, prefix="ai-context-review")
+    _db.link_player_user(data["player"]["id"], player_user["id"], "self")
+    _db.mark_coaching_review(player_user["id"], data["note"]["id"], None, reflection="PRIVATE REFLECTION CANARY")
+    review = _db.list_coaching_reviews(user_id=player_user["id"])[0]
+    monkeypatch.setattr(ai_context._db, "list_coaching_reviews", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unscoped review list should not be used")))
+
+    result = ai_context.build_context(
+        team_id="ai-context-review",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[{"type": "review", "id": review["id"]}],
+    )
+
+    assert result["context"]["items"] == [
+        {
+            "type": "review",
+            "id": str(review["id"]),
+            "note_id": data["note"]["id"],
+            "playlist_id": None,
+            "reviewed_at": review["reviewed_at"],
+        }
+    ]
+    assert "PRIVATE REFLECTION CANARY" not in json.dumps(result, sort_keys=True)
+
+
+def test_ai_context_review_ref_obeys_source_visibility_and_target_player_scope(client):
+    from services import ai_context
+
+    _create_team("ai-context-review-scope")
+    actor = _create_member("ai-context-review-scope", "ai_context_review_scope_admin")
+    player_user = _create_member("ai-context-review-scope", "ai_context_review_scope_player", role="player")
+    _enable_ai_context("ai-context-review-scope", actor)  # default excludes player-visible context
+    data = _seed_ai_context_objects("ai-context-review-scope", actor, prefix="ai-context-review-scope")
+    _db.update_coaching_note(data["note"]["id"], {"visibility": "player"})
+    other_player = _db.create_player("Review Other Player", team_id="ai-context-review-scope", season_id=data["season_id"])
+    _db.link_player_user(data["player"]["id"], player_user["id"], "self")
+    _db.mark_coaching_review(player_user["id"], data["note"]["id"], None, reflection="REVIEW SCOPE CANARY")
+    review = _db.list_coaching_reviews(user_id=player_user["id"])[0]
+
+    player_visibility_result = ai_context.build_context(
+        team_id="ai-context-review-scope",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        target_player_ids=[data["player"]["id"]],
+        evidence_refs=[{"type": "review", "id": review["id"]}],
+    )
+    assert player_visibility_result["context"]["items"] == []
+    assert player_visibility_result["audit"]["excluded_by_visibility"] == [
+        {"type": "review", "id": str(review["id"]), "status": "excluded", "reason": "visibility_excluded"}
+    ]
+
+    _enable_ai_context("ai-context-review-scope", actor, never_draft=["private"])
+    wrong_player_result = ai_context.build_context(
+        team_id="ai-context-review-scope",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        target_player_ids=[other_player["id"]],
+        evidence_refs=[{"type": "review", "id": review["id"]}],
+    )
+    serialized = json.dumps(wrong_player_result, sort_keys=True)
+    assert "REVIEW SCOPE CANARY" not in serialized
+    assert wrong_player_result["context"]["items"] == []
+    assert wrong_player_result["audit"]["excluded_by_policy"] == [
+        {"type": "review", "id": str(review["id"]), "status": "excluded", "reason": "unlinked_player"}
+    ]

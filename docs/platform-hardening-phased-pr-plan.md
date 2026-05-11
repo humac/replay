@@ -1091,6 +1091,14 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - **Opt-in path:** with `ai.never_draft_for_visibilities = ["private"]`, the same player-visibility note IS included in provider context.
 - Audit metadata records excluded source refs without leaking raw private text.
 
+**Implementation closeout:**
+
+- Added `services/ai_context.py` as a service-only context builder; no provider calls, API routes, chat/message tables, or prompt persistence were added.
+- Context refs now cover notes, clips, playlists, goals, match summaries, player/development profile refs, reviews, and engagement aggregates with compact safe shapes.
+- Team-scoped DB reads and `services/visibility.py` gate source inclusion; cross-team checks use existence-only helpers for audit classification without hydrating source content.
+- Private notes remain permanently excluded regardless of settings, and safe context omits `coach_private_note`, playlist descriptions, tactical-board JSON, review reflection text, unsupported raw refs, and unlinked-player refs.
+- Validation: `pytest tests/test_ai_drafting.py -q -k ai_context`; `pytest tests/test_ai_drafting.py -q`; reviewer rerun included `pytest tests/test_coaching.py tests/test_strict_tenancy.py -q`.
+
 ### PR 8.3: Provider Interface And Mock Provider
 
 **Files:**
