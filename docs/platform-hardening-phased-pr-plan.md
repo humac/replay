@@ -585,6 +585,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 
 **Implementation note (feat/platform-pr3-3-router-split):** Began the domain router split with the lowest-risk route groups: `routers/auth.py` owns `/api/login`, `/api/logout`, and `/api/auth/check`; `routers/admin.py` owns admin-only `/api/users*`; `server.py` mounts both plus the existing `routers/admin_teams.py`. This preserves endpoint paths and response shapes while shrinking `server.py` before larger match/live/coach router moves. Focused auth/users/tenancy tests and the full suite passed.
 
+**Phase 3 closeout note (docs/phase3-closeout):** Phase 3 completed the planned service extractions plus the first router split slice. `AGENTS.md`, `CLAUDE.md`, this plan, and `README.md` now document the new router/service boundaries and the UI/UX merge gate (frontend design skill + `docs/screenshots/<phase-or-feature>/` evidence). Remaining match/live/coach router moves are intentionally future slices; do not infer that every route domain has moved out of `server.py`.
+
 ---
 
 ## Phase 4 — Active Team/Season Selection
