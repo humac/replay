@@ -554,3 +554,57 @@ def require_team_role(
 def current_team(request: Request, user: dict[str, Any]) -> dict[str, Any]:
     """Return the resolved current team for compatibility with the PR 2.1 contract."""
     return resolve_scope(request, user).team
+
+
+# ---------------------------------------------------------------------------
+# Coach-object delete authorization (PR-AUTH)
+#
+# Centralizes the "can this membership delete this coach object?" check across
+# notes / clips / playlists / goals / match_summaries. Routes already enforce
+# team-scope ownership separately via `_require_*_in_team`; this helper layers
+# creator-vs-other-coach gating on top so an assistant_coach cannot delete a
+# different coach's object.
+# ---------------------------------------------------------------------------
+
+_VALID_COACH_OBJECT_TYPES = frozenset({
+    "note", "clip", "playlist", "goal", "match_summary",
+})
+
+
+def assert_can_delete_coach_object(
+    scope: Scope,
+    obj_type: str,
+    *,
+    created_by_user_id: str | None,
+) -> None:
+    """Raise HTTPException if the actor in ``scope`` cannot delete a coach
+    object of type ``obj_type`` whose creator is ``created_by_user_id``.
+
+    Policy:
+    - Unknown ``obj_type`` → 422 (closed enum, defense in depth).
+    - Actor whose effective role has ``coach_object:delete_others`` →
+      allowed for any creator (still inside the same team scope, which
+      the caller has already verified via ``_require_*_in_team``).
+    - Actor with only ``coach_object:delete_own`` → allowed only when
+      ``created_by_user_id`` matches the actor's identity. ``created_by``
+      on coach objects stores the actor's ``username`` (not user_id), so
+      we compare against ``scope.user["username"]``. A creator with no
+      recorded username (``None``/empty) is treated as "not owned by the
+      actor" so a missing audit field cannot grant deletion.
+    - Otherwise → 403.
+    """
+    if obj_type not in _VALID_COACH_OBJECT_TYPES:
+        raise HTTPException(status_code=422, detail=f"Unsupported coach object type: {obj_type}")
+    caps = ROLE_CAPABILITIES.get(normalize_team_role(scope.effective_role), set())
+    if "coach_object:delete_others" in caps:
+        return
+    actor_username = (scope.user.get("username") if scope.user else None) or ""
+    creator = (created_by_user_id or "").strip()
+    if (
+        "coach_object:delete_own" in caps
+        and creator
+        and actor_username
+        and str(creator) == str(actor_username)
+    ):
+        return
+    raise HTTPException(status_code=403, detail="You do not have permission to delete this coach object")

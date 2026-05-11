@@ -1611,7 +1611,18 @@ async def admin_unblock_stream(payload: UnblockStreamRequest, request: Request):
 # ---------------------------------------------------------------------------
 
 def _require_coach(request: Request) -> dict:
-    return _auth.require_role(request, "admin", "coach")
+    """Authenticate a coach-route caller.
+
+    Phase PR-AUTH: legacy ``users.role`` is no longer a precondition for
+    reaching ``/api/coach/*``. Membership-based gating happens in
+    ``_resolve_coach_scope`` via ``_tenancy.resolve_scope``, which
+    requires a team-scoped ``coach``/``team_admin`` membership row (or
+    explicit global-admin override). A signed-in user without a relevant
+    membership still gets 403, but a viewer-role user WITH a coach
+    membership now passes — fixing the regression where invite-only
+    coaches could not access their own Coach workspace.
+    """
+    return _auth.require_auth(request)
 
 
 def _resolve_coach_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
@@ -2091,6 +2102,7 @@ async def coach_delete_note(note_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     note = _require_note_in_team(note_id, team_id)
+    _tenancy.assert_can_delete_coach_object(scope, "note", created_by_user_id=note.get("created_by"))
     if not _db.delete_coaching_note(note_id):
         raise HTTPException(404, "Note not found")
     label = _coach_note_activity_label(note) if note else ""
@@ -2285,6 +2297,7 @@ async def coach_delete_playlist(playlist_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     playlist = _require_playlist_in_team(playlist_id, team_id)
+    _tenancy.assert_can_delete_coach_object(scope, "playlist", created_by_user_id=playlist.get("created_by"))
     if not _db.delete_coaching_playlist(playlist_id):
         raise HTTPException(404, "Playlist not found")
     _log_activity(
@@ -2409,6 +2422,7 @@ async def coach_delete_match_summary(summary_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     summary = _require_summary_in_team(summary_id, team_id)
+    _tenancy.assert_can_delete_coach_object(scope, "match_summary", created_by_user_id=summary.get("created_by"))
     if not _db.delete_coaching_match_summary(summary_id):
         raise HTTPException(404, "Match summary not found")
     _log_activity(
@@ -2562,6 +2576,7 @@ async def coach_delete_clip(clip_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     clip = _require_clip_in_team(clip_id, team_id)
+    _tenancy.assert_can_delete_coach_object(scope, "clip", created_by_user_id=clip.get("created_by"))
     if not _db.delete_coaching_clip(clip_id):
         raise HTTPException(404, "Clip not found")
     # Phase 4e — clean up the per-clip thumbnail JPEG. Same defense-in-
@@ -2708,6 +2723,7 @@ async def coach_delete_goal(goal_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     existing = _require_scoped_item(_db.get_player_goal(goal_id), team_id, "Goal not found")
+    _tenancy.assert_can_delete_coach_object(scope, "goal", created_by_user_id=existing.get("created_by"))
     if not _db.delete_player_goal(goal_id):
         raise HTTPException(404, "Goal not found")
     _log_activity("coach.goal_deleted", severity="warning", message=f"Player goal deleted: {existing.get('title', goal_id) if existing else goal_id}", actor=user["username"], metadata={"goal_id": goal_id})
