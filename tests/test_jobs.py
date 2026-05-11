@@ -273,64 +273,76 @@ async def test_user_job_api_is_team_scoped_and_worker_routes_absent(client, auth
     default_team = _db.get_default_team()
     _user_id, default_headers = _create_member(default_team["id"], username="jobs-default-coach")
     _viewer_id, viewer_headers = _create_member(default_team["id"], username="jobs-viewer", role="viewer")
+    # Internal enqueue (via the service, NOT the user route) is still allowed for
+    # ai_draft — the user route is the only thing we lock down. This row stands
+    # in for an ai_draft job belonging to a different team.
     other_job_id = jobs.enqueue("ai_draft", {"draft": "secret"}, team_id=other_team["id"])
+    # User-route enqueue must use a real (transcode/thumbnail) kind backed by a
+    # match the team owns. ai_draft via the user route is rejected at 422 — see
+    # test_user_route_rejects_ai_draft_enqueue below.
+    transcode_match_id = "job-api-match"
+    other_match_id = "job-api-match-other"
+    with _db.connect() as conn:
+        _db.upsert_match(conn, {"id": transcode_match_id, "slug": transcode_match_id, "home_team": "Home", "away_team": "Away", "team_id": default_team["id"]})
+        _db.upsert_match(conn, {"id": other_match_id, "slug": other_match_id, "home_team": "Home", "away_team": "Away", "team_id": other_team["id"]})
+        conn.commit()
     transcode_job_id = jobs.enqueue(
         "transcode",
-        {"match_id": "job-match", "slot": "full", "src": "/srv/replay/private/raw.mp4", "dest": "/srv/replay/private/out.mp4"},
+        {"match_id": transcode_match_id, "slot": "full", "src": "/srv/replay/private/raw.mp4", "dest": "/srv/replay/private/out.mp4"},
         team_id=default_team["id"],
     )
 
     denied_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": other_team["id"], "kind": "ai_draft", "payload": {"draft": "x"}},
+        json={"team_id": other_team["id"], "kind": "transcode", "payload": {"match_id": other_match_id, "slot": "full"}},
     )
     assert denied_create.status_code == 403
 
     unsupported_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": default_team["id"], "kind": "unknown_job", "payload": {"draft": "x"}},
+        json={"team_id": default_team["id"], "kind": "unknown_job", "payload": {"match_id": transcode_match_id}},
     )
     assert unsupported_create.status_code == 422
 
     invalid_payload_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": default_team["id"], "kind": "ai_draft", "payload": ["not", "an", "object"]},
+        json={"team_id": default_team["id"], "kind": "transcode", "payload": ["not", "an", "object"]},
     )
     assert invalid_payload_create.status_code == 422
 
     invalid_attempts_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": default_team["id"], "kind": "ai_draft", "payload": {}, "max_attempts": 0},
+        json={"team_id": default_team["id"], "kind": "transcode", "payload": {"match_id": transcode_match_id}, "max_attempts": 0},
     )
     assert invalid_attempts_create.status_code == 422
 
     invalid_schedule_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": default_team["id"], "kind": "ai_draft", "payload": {}, "scheduled_at": "not-a-date"},
+        json={"team_id": default_team["id"], "kind": "transcode", "payload": {"match_id": transcode_match_id}, "scheduled_at": "not-a-date"},
     )
     assert invalid_schedule_create.status_code == 422
 
     oversized_payload_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": default_team["id"], "kind": "ai_draft", "payload": {"body": "x" * 10001}},
+        json={"team_id": default_team["id"], "kind": "transcode", "payload": {"match_id": transcode_match_id, "slot": "x" * 10001}},
     )
     assert oversized_payload_create.status_code == 422
 
     allowed_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": default_team["id"], "kind": "ai_draft", "payload": {"draft": "x"}, "idempotency_key": "draft:x"},
+        json={"team_id": default_team["id"], "kind": "thumbnail", "payload": {"match_id": transcode_match_id}, "idempotency_key": "thumb:x"},
     )
     assert allowed_create.status_code == 200, allowed_create.text
     created_job = allowed_create.json()
     assert created_job["team_id"] == default_team["id"]
-    assert created_job["payload"] == {"draft": "x"}
+    assert created_job["payload"] == {"match_id": transcode_match_id}
 
     denied_list = await client.get(f"/api/jobs?team_id={other_team['id']}", headers=default_headers)
     assert denied_list.status_code == 403
@@ -347,14 +359,14 @@ async def test_user_job_api_is_team_scoped_and_worker_routes_absent(client, auth
 
     transcode_read = await client.get(f"/api/jobs/{transcode_job_id}?team_id={default_team['id']}", headers=default_headers)
     assert transcode_read.status_code == 200
-    assert transcode_read.json()["payload"] == {"match_id": "job-match", "slot": "full"}
+    assert transcode_read.json()["payload"] == {"match_id": transcode_match_id, "slot": "full"}
 
-    running_job_id = jobs.enqueue("ai_draft", {"draft": "running"}, team_id=default_team["id"])
+    running_job_id = jobs.enqueue("transcode", {"match_id": transcode_match_id, "slot": "half2"}, team_id=default_team["id"])
     assert jobs.start(running_job_id, "worker-running") is not None
     running_cancel = await client.post(f"/api/jobs/{running_job_id}/cancel?team_id={default_team['id']}", headers=default_headers)
     assert running_cancel.status_code == 409
 
-    race_job_id = jobs.enqueue("ai_draft", {"draft": "race"}, team_id=default_team["id"])
+    race_job_id = jobs.enqueue("transcode", {"match_id": transcode_match_id, "slot": "half1"}, team_id=default_team["id"])
     monkeypatch.setattr("server._jobs.cancel", lambda job_id, *, team_id: 0)
     raced_cancel = await client.post(f"/api/jobs/{race_job_id}/cancel?team_id={default_team['id']}", headers=default_headers)
     assert raced_cancel.status_code == 409
@@ -378,3 +390,39 @@ async def test_user_job_api_is_team_scoped_and_worker_routes_absent(client, auth
     ]:
         resp = await client.post(path, headers=default_headers)
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_user_route_rejects_ai_draft_enqueue(client):
+    """POST /api/jobs with kind=ai_draft must NOT persist any raw payload to
+    background_jobs.payload_json. The only AI draft API is POST /api/coach/ai/draft,
+    and raw prompts / private source text must never land in the durable jobs
+    table where ops / future workers can read them.
+    """
+    import db as _db
+
+    default_team = _db.get_default_team()
+    _user_id, headers = _create_member(default_team["id"], username="jobs-canary-coach")
+
+    canary = "CANARY_RAW_PROMPT_AbC123_xyz789"
+    resp = await client.post(
+        "/api/jobs",
+        headers=headers,
+        json={
+            "team_id": default_team["id"],
+            "kind": "ai_draft",
+            "payload": {"prompt": canary, "private_source_text": canary},
+            "idempotency_key": f"draft:{canary}",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    body_text = resp.text
+    # Server must not echo the canary in its 422 response body.
+    assert canary not in body_text
+
+    # And nothing must have landed in background_jobs.payload_json.
+    with _db.connect() as conn:
+        rows = conn.execute("SELECT payload_json, idempotency_key FROM background_jobs").fetchall()
+    for row in rows:
+        assert canary not in (row["payload_json"] or "")
+        assert canary not in (row["idempotency_key"] or "")
