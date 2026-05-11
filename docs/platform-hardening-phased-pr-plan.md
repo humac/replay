@@ -1269,7 +1269,9 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Existing-user and new-user invite acceptance.
 - Last-admin protection.
 
-### PR 9.4: CSV Roster Import And Guardian Linking
+### PR 9.4: CSV Roster Import And Guardian Linking ✅ IMPLEMENTED
+
+**Status (2026-05-11):** Added team-admin scoped preview/commit endpoints, `services/roster_import.py`, Coach > Roster CSV import UI, and regression coverage in `tests/test_roster_import.py`.
 
 **Files:**
 

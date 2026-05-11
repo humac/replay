@@ -856,6 +856,135 @@ export const coachingMixin = {
         return '';
     },
 
+    _rosterImportSampleCsv() {
+        return [
+            'display_name,jersey_number,position,guardian_email,relationship,active',
+            'Avery Lopez,4,Defender,parent@example.com,guardian,true',
+            'Mika Chen,9,Forward,parent@example.com,guardian,true',
+        ].join('\n');
+    },
+
+    _renderRosterImportResult(target, result) {
+        if (!target || !result) return;
+        const summary = result.summary || {};
+        const rows = result.rows || [];
+        const metric = (label, value) => `
+            <div class="roster-import-metric">
+                <span>${this.esc(label)}</span>
+                <strong>${Number(value || 0)}</strong>
+            </div>`;
+        const rowHtml = rows.slice(0, 12).map((row) => {
+            const player = row.player || row.input || {};
+            const isError = row.status === 'error';
+            const detail = isError
+                ? (row.errors || []).join('; ')
+                : [row.player_action, row.guardian_action].filter(Boolean).join(' · ');
+            const warnings = (row.warnings || []).length
+                ? `<span class="roster-import-row-warning">${this.esc(row.warnings.join('; '))}</span>`
+                : '';
+            return `
+                <div class="roster-import-row ${isError ? 'is-error' : 'is-ready'}">
+                    <span class="roster-import-row-num">${this.esc(row.row_number || '—')}</span>
+                    <span class="roster-import-row-player">
+                        <strong>${this.esc(player.display_name || '(missing name)')}</strong>
+                        <small>${this.esc([player.jersey_number ? `#${player.jersey_number}` : '', row.guardian_email || player.guardian_email || ''].filter(Boolean).join(' · '))}</small>
+                    </span>
+                    <span class="roster-import-row-detail">${this.esc(detail || row.status || 'ready')}${warnings}</span>
+                </div>`;
+        }).join('');
+        target.innerHTML = `
+            <div class="roster-import-summary" data-mode="${this.esc(result.mode || 'preview')}">
+                ${metric('Rows', summary.rows)}
+                ${metric('Errors', summary.errors)}
+                ${result.mode === 'commit'
+                    ? `${metric('Players created', summary.created_players)}${metric('Existing players', summary.existing_players)}${metric('Guardian invites', summary.guardian_invites)}${metric('Existing guardians linked', summary.linked_existing_users)}`
+                    : `${metric('Players to create', summary.create_players)}${metric('Players to update', summary.update_players)}${metric('Guardian invites', summary.guardian_invites)}${metric('Existing guardians', summary.linked_existing_users)}`}
+            </div>
+            ${rows.length ? `<div class="roster-import-rows" aria-label="Roster import ${this.esc(result.mode || 'preview')} rows">${rowHtml}${rows.length > 12 ? `<div class="roster-import-more">${this.esc(rows.length - 12)} more rows not shown</div>` : ''}</div>` : ''}
+        `;
+    },
+
+    async openCoachRosterImportModal() {
+        const body = document.createElement('div');
+        body.className = 'roster-import-modal';
+        body.innerHTML = `
+            <div class="roster-import-help">
+                <strong>CSV columns</strong>
+                <span>display_name is required. Optional: player_id, jersey_number, position/notes, guardian_email, relationship, active.</span>
+            </div>
+            <label class="roster-import-field">
+                <span>Paste CSV</span>
+                <textarea id="coach-roster-import-csv" spellcheck="false" rows="9"></textarea>
+            </label>
+            <div class="roster-import-actions">
+                <button type="button" class="btn-secondary" id="coach-roster-import-sample">Use sample</button>
+                <button type="button" class="btn-head" id="coach-roster-import-preview">Preview import</button>
+            </div>
+            <div id="coach-roster-import-result" class="roster-import-result" aria-live="polite"></div>
+        `;
+        const csvEl = body.querySelector('#coach-roster-import-csv');
+        const previewBtn = body.querySelector('#coach-roster-import-preview');
+        const sampleBtn = body.querySelector('#coach-roster-import-sample');
+        const resultEl = body.querySelector('#coach-roster-import-result');
+        let lastPreview = null;
+        const preview = async () => {
+            const csv_text = csvEl.value.trim();
+            if (!csv_text) { this.showError('Paste roster CSV first.'); return null; }
+            const restore = this.btnLoading(previewBtn, 'Previewing…');
+            try {
+                const result = await this.previewCoachRosterImport({ csv_text });
+                result.csv_text = csv_text;
+                lastPreview = result;
+                this._renderRosterImportResult(resultEl, result);
+                if (result.summary?.errors) this.showError('Fix CSV errors before committing.');
+                return result;
+            } catch (err) {
+                this.showError(err.message || 'Roster preview failed.');
+                return null;
+            } finally {
+                restore('Preview import');
+            }
+        };
+        sampleBtn.addEventListener('click', () => {
+            csvEl.value = this._rosterImportSampleCsv();
+            csvEl.focus();
+        });
+        previewBtn.addEventListener('click', preview);
+
+        const committed = await this.formModal({
+            title: 'Import roster CSV',
+            kicker: 'Roster import',
+            message: 'Preview is read-only. Commit creates or updates players, links guardians with existing accounts by email, and creates/reuses pending guardian invites for new emails.',
+            body,
+            confirmLabel: 'Commit import',
+            size: 'wide',
+            onMount: () => { csvEl.focus(); },
+            onSubmit: async (close) => {
+                const csv_text = csvEl.value.trim();
+                if (!csv_text) { this.showError('Paste roster CSV first.'); return; }
+                if (!lastPreview || lastPreview.summary?.errors || lastPreview.csv_text !== csv_text) {
+                    const previewResult = await preview();
+                    if (!previewResult || previewResult.summary?.errors) return;
+                    previewResult.csv_text = csv_text;
+                    lastPreview = previewResult;
+                }
+                try {
+                    const result = await this.commitCoachRosterImport({ csv_text });
+                    this._renderRosterImportResult(resultEl, result);
+                    if (!result.ok || result.summary?.errors) {
+                        this.showError('Roster import was not committed. Fix the reported rows and retry.');
+                        return;
+                    }
+                    this.showSuccess(`Roster import committed: ${result.summary?.rows || 0} rows.`);
+                    close(true);
+                } catch (err) {
+                    this.showError(err.message || 'Roster import failed.');
+                }
+            },
+        });
+        if (committed) await this.renderCoachWorkspace();
+    },
+
     async handleCoachAddPlayer() {
         const display_name = document.getElementById('coach-player-name')?.value.trim();
         const jersey_number = document.getElementById('coach-player-number')?.value.trim() || '';

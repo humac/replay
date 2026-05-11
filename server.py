@@ -44,6 +44,8 @@ from routers.team_settings import router as team_settings_router
 from services import activity as _activity
 from services import engagement as _engagement
 from services import jobs as _jobs
+from services import roster_import as _roster_import
+from services import teams as _teams
 from services import thumbnails as _thumbs
 from services.visibility import (
     ACTIVE_GOAL_STATUSES as _ACTIVE_GOAL_STATUSES,
@@ -63,7 +65,7 @@ from models import (
     CreateMatchRequest, CreateMatchSummaryRequest, CreatePlayerGoalReflectionRequest,
     CreatePlayerGoalRequest, CreatePlayerRequest, CreatePlayerUserLinkRequest,
     CreateUploadSessionRequest, EnqueueJobRequest, LiveAuthRequest,
-    MarkCoachingReviewRequest, StartCaptureRequest, UnblockStreamRequest,
+    MarkCoachingReviewRequest, RosterImportRequest, StartCaptureRequest, UnblockStreamRequest,
     UpdateCoachingClipRequest, UpdateCoachingNoteRequest, UpdateCoachingPlaylistRequest,
     UpdateMatchRequest, UpdateMatchSummaryRequest, UpdatePlayerGoalRequest,
     UpdatePlayerRequest,
@@ -1752,6 +1754,63 @@ async def coach_list_linkable_users(request: Request):
             for u in _db.list_users(team_id=team_id)
         ]
     }
+
+
+def _resolve_roster_import_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
+    user = _auth.require_auth(request)
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        require_role=("team_admin",),
+        allow_global_admin_override=False,
+    )
+    return user, scope
+
+
+def _call_roster_import(func, *args, **kwargs):
+    try:
+        return func(*args, **kwargs)
+    except _roster_import.RosterImportError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    except _teams.TeamServiceError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+
+
+@app.post("/api/coach/players/import/preview")
+async def coach_preview_roster_import(request: Request, body: RosterImportRequest):
+    user, scope = _resolve_roster_import_scope(request)
+    team_id = _scope_team_id(scope)
+    season_id = scope.season["id"] if scope.season else None
+    return _call_roster_import(
+        _roster_import.preview_roster_import,
+        csv_text=body.csv_text,
+        team_id=team_id,
+        season_id=season_id,
+        actor=user,
+    )
+
+
+@app.post("/api/coach/players/import/commit")
+async def coach_commit_roster_import(request: Request, body: RosterImportRequest):
+    user, scope = _resolve_roster_import_scope(request)
+    team_id = _scope_team_id(scope)
+    season_id = scope.season["id"] if scope.season else None
+    result = _call_roster_import(
+        _roster_import.commit_roster_import,
+        csv_text=body.csv_text,
+        team_id=team_id,
+        season_id=season_id,
+        actor=user,
+    )
+    if result.get("ok"):
+        _log_activity(
+            "coach.roster_imported",
+            severity="info",
+            message="Roster CSV import committed",
+            actor=user["username"],
+            metadata={"team_id": team_id, "summary": result.get("summary", {})},
+        )
+    return result
 
 
 @app.post("/api/coach/players")
