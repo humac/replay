@@ -730,25 +730,30 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - `pytest tests/test_phase5_frontend_modularization_static.py tests/test_active_scope_ui_static.py tests/test_me_scope.py -q`
 - Static guard verifies all `index.html` inline `app.*` handlers still have a method definition in assembled modules.
 
-### PR 5.3: CSS Split Only If Safe
+### PR 5.3: CSS Split Only If Safe ✅ COMPLETE (2026-05-10)
 
 **Files:**
 
-- Modify/split: `styles.css`
-- Potential creates: `styles/base.css`, `styles/admin.css`, `styles/coaching.css`, `styles/feedback.css`, `styles/tactical-board.css`
-- Modify: `index.html`
-- Test: visual captures
+- Modified: `index.html`
+- Modified: `styles.css`
+- Created: `styles/coaching-engagement.css`
+- Modified: `server.py`
+- Added: `tests/test_phase5_css_split_static.py`
+- Updated: `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`
 
 **Key changes:**
 
-- Split CSS only if it can be done without build tooling.
-- Preserve dark/light theme support.
-- Avoid unthemed controls, raw browser chrome, and horizontal overflow regressions.
+- Split only the contiguous, self-contained Coach Engagement dashboard block; left cross-cutting/global/coach-shell CSS in `styles.css` to avoid cascade regressions.
+- Loaded the split stylesheet immediately after the main stylesheet in `index.html`, preserving order.
+- Added the `styles/` directory to the static-export allowlist so Caddy/exported-static deployments serve the split CSS.
+- Preserved dark/light theme support and responsive engagement-dashboard rules.
 
 **Tests:**
 
-- Playwright captures for admin, coach, feedback, review/tactical board.
-- Manual light/dark smoke when UI changed.
+- `python -m py_compile server.py`
+- `node --check script.js js/coaching.js js/coaching/*.js`
+- `pytest tests/test_phase5_css_split_static.py tests/test_phase5_frontend_modularization_static.py tests/test_active_scope_ui_static.py tests/test_me_scope.py -q`
+- Live curl of `/static/styles/coaching-engagement.css`
 
 ---
 
