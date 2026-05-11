@@ -6,6 +6,19 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Phase 8.4 — Drafting API ✅ COMPLETE (2026-05-11)
+
+Adds the narrow backend/API drafting endpoint on top of the Phase 8.3 mock-provider boundary.
+
+- **Route** (`routers/coach_ai.py`): registers `POST /api/coach/ai/draft`, resolves active team scope through `tenancy`, allows only coach/team-admin team memberships, accepts draft target/resource refs/visibility plus optional prompt, and returns draft text synchronously without saving it to player/family-visible coaching objects.
+- **Privacy gates**: derives target visibility from scoped DB reads for visibility-bearing coaching resources, rejects client visibility mismatches, enforces `ai.drafting_enabled`, `ai.allowed_draft_targets`, and `ai.never_draft_for_visibilities` before provider context generation, and rejects missing/cross-team evidence refs with tenant-neutral `resource_reference_unavailable` errors.
+- **Long prompts**: return a safe 413 until a privacy-preserving async job path exists; raw prompts/provider outputs are not written to `background_jobs`, `ai_drafting_runs`, logs, or team settings.
+- **Validation**: `pytest tests/test_ai_drafting.py -q -k 'api or coach_ai or draft_endpoint'`; `pytest tests/test_ai_drafting.py -q`; Python compile; `git diff --check`.
+
+**Next**: Phase 8.5 — Drafting UI.
+
+---
+
 ## Platform Phase 8.3 — Provider Interface And Mock Provider ✅ COMPLETE (2026-05-11)
 
 Adds the service-only draft-generation boundary on top of the Phase 8.2 context builder.
@@ -16,7 +29,7 @@ Adds the service-only draft-generation boundary on top of the Phase 8.2 context 
 - **Docs/config**: `.env.example` and deployment docs now document provider env vars plus provider data-handling/retention expectations before enabling non-mock providers.
 - **Validation**: `pytest tests/test_ai_drafting.py -q -k 'provider or ai_provider or ai_draft_provider'`; `pytest tests/test_ai_drafting.py -q`; Python compile; `git diff --check`.
 
-**Next**: Phase 8.4 — Drafting API.
+**Next**: Phase 8.5 — Drafting UI.
 
 ## Platform Phase 8.2 — Privacy-Safe AI Context Builder ✅ COMPLETE (2026-05-11)
 

@@ -145,6 +145,10 @@ def provider_from_config(config: ProviderConfig) -> AIProvider:
     raise ProviderConfigError("provider_unsupported")
 
 
+def _actor_user_id(actor_user: dict[str, Any]) -> str:
+    return str(actor_user.get("id") or actor_user.get("user_id") or "")
+
+
 def _config_failure_run(
     *,
     team_id: str,
@@ -161,7 +165,7 @@ def _config_failure_run(
         draft_target=draft_target,
         provider=provider_name,
         model=model,
-        created_by_user_id=str(actor_user.get("id") or ""),
+        created_by_user_id=_actor_user_id(actor_user),
         evidence_refs=[],
         actor_user=actor_user,
     )
@@ -267,7 +271,7 @@ def generate_draft(
         draft_target=draft_target,
         provider=config.name,
         model=config.model,
-        created_by_user_id=str(actor_user.get("id") or ""),
+        created_by_user_id=_actor_user_id(actor_user),
         evidence_refs=_flatten_audit_refs(context_payload.get("audit") or {}),
         actor_user=actor_user,
     )
