@@ -1218,12 +1218,61 @@ def _migrate_v20(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v21(conn: sqlite3.Connection):
+    """Add durable hashed session and password reset token tables."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            user_agent TEXT,
+            ip_address TEXT,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            revoked_at REAL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, revoked_at, expires_at)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            used_at REAL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, used_at, expires_at)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_verification_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            used_at REAL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id, used_at, expires_at)")
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
     _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18, _migrate_v19,
-    _migrate_v20,
+    _migrate_v20, _migrate_v21,
 ]
 
 
@@ -1651,7 +1700,10 @@ def upsert_user_profile(user_id: str, fields: dict[str, Any]) -> dict:
         if not updates:
             updates = {}
         merged = _row_to_profile(existing, user_id)
+        previous_normalized_email = merged.get("normalized_email")
         merged.update(updates)
+        if "normalized_email" in updates and updates.get("normalized_email") != previous_normalized_email:
+            merged["email_verified_at"] = None
         merged["created_at"] = merged.get("created_at") or now
         merged["updated_at"] = now
         try:
@@ -1664,6 +1716,7 @@ def upsert_user_profile(user_id: str, fields: dict[str, Any]) -> dict:
                 ON CONFLICT(user_id) DO UPDATE SET
                     email = excluded.email,
                     normalized_email = excluded.normalized_email,
+                    email_verified_at = excluded.email_verified_at,
                     first_name = excluded.first_name,
                     last_name = excluded.last_name,
                     phone = excluded.phone,
@@ -1694,6 +1747,131 @@ def upsert_user_profile(user_id: str, fields: dict[str, Any]) -> dict:
         conn.commit()
         row = conn.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)).fetchone()
         return _row_to_profile(row, user_id)
+
+
+def create_user_session(user_id: str, token_hash: str, *, ttl: float, user_agent: str = "", ip_address: str = "") -> dict:
+    now = time.time()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_sessions (user_id, token_hash, user_agent, ip_address, created_at, expires_at, revoked_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (user_id, token_hash, user_agent, ip_address, now, now + ttl),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM user_sessions WHERE token_hash = ?", (token_hash,)).fetchone()
+        return dict(row)
+
+
+def get_active_session_by_hash(token_hash: str) -> dict | None:
+    now = time.time()
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT s.*, u.username, u.role, u.enabled
+            FROM user_sessions AS s
+            JOIN users AS u ON u.id = s.user_id
+            WHERE s.token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if row is None:
+            return None
+        session = dict(row)
+        if session.get("revoked_at") is not None or float(session["expires_at"]) <= now or not bool(session.get("enabled")):
+            return None
+        return session
+
+
+def revoke_session_by_hash(token_hash: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE user_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE token_hash = ?",
+            (time.time(), token_hash),
+        )
+        conn.commit()
+
+
+def revoke_user_sessions(user_id: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE user_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ? AND revoked_at IS NULL",
+            (time.time(), user_id),
+        )
+        conn.commit()
+
+
+def create_password_reset_token(user_id: str, token_hash: str, *, ttl: float) -> dict:
+    now = time.time()
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO password_reset_tokens (user_id, token_hash, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, NULL)",
+            (user_id, token_hash, now, now + ttl),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM password_reset_tokens WHERE token_hash = ?", (token_hash,)).fetchone()
+        return dict(row)
+
+
+def consume_password_reset_token(token_hash: str) -> dict | None:
+    now = time.time()
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT prt.*, u.enabled
+            FROM password_reset_tokens AS prt
+            JOIN users AS u ON u.id = prt.user_id
+            WHERE prt.token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if row is None:
+            return None
+        token = dict(row)
+        if token.get("used_at") is not None or float(token["expires_at"]) <= now or not bool(token.get("enabled")):
+            return None
+        conn.execute("UPDATE password_reset_tokens SET used_at = ? WHERE id = ?", (now, token["id"]))
+        conn.commit()
+        return token
+
+
+def create_email_verification_token(user_id: str, token_hash: str, email: str, *, ttl: float) -> dict:
+    now = time.time()
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO email_verification_tokens (user_id, token_hash, email, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)",
+            (user_id, token_hash, email, now, now + ttl),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM email_verification_tokens WHERE token_hash = ?", (token_hash,)).fetchone()
+        return dict(row)
+
+
+def consume_email_verification_token(token_hash: str) -> dict | None:
+    now = time.time()
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT evt.*, u.enabled
+            FROM email_verification_tokens AS evt
+            JOIN users AS u ON u.id = evt.user_id
+            WHERE evt.token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if row is None:
+            return None
+        token = dict(row)
+        if token.get("used_at") is not None or float(token["expires_at"]) <= now or not bool(token.get("enabled")):
+            return None
+        conn.execute("UPDATE email_verification_tokens SET used_at = ? WHERE id = ?", (now, token["id"]))
+        conn.execute(
+            "UPDATE user_profiles SET email_verified_at = ?, updated_at = ? WHERE user_id = ? AND normalized_email = ?",
+            (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), token["user_id"], _normalize_profile_email(token["email"])),
+        )
+        conn.commit()
+        return token
 
 
 def user_has_team_membership(user_id: str, team_id: str | None) -> bool:
@@ -1745,6 +1923,9 @@ def delete_user(user_id: str) -> bool:
         conn.execute("DELETE FROM player_user_links WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM coaching_reviews WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM user_profiles WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM password_reset_tokens WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM email_verification_tokens WHERE user_id = ?", (user_id,))
         cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return cursor.rowcount > 0

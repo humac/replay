@@ -14,14 +14,19 @@ import db as _db
 # In-memory token store: {token_string: {created, user_id, role, username}}
 _active_tokens: dict[str, dict] = {}
 TOKEN_TTL = 86400  # 24 hours
+PASSWORD_RESET_TTL = 3600  # 1 hour
+EMAIL_VERIFICATION_TTL = 86400  # 24 hours
 _MAX_ACTIVE_TOKENS = max(1, int(os.environ.get("MAX_ACTIVE_TOKENS", "1000")))
 _last_token_sweep: float = 0.0
 _TOKEN_SWEEP_INTERVAL = 60.0  # seconds
 
 # Login rate limiting: {ip: [timestamps]}
 _login_attempts: dict[str, list[float]] = {}
+_password_reset_attempts: dict[str, list[float]] = {}
 _LOGIN_RATE_LIMIT = 5
 _LOGIN_RATE_WINDOW = 60.0  # seconds
+_PASSWORD_RESET_RATE_LIMIT = 5
+_PASSWORD_RESET_RATE_WINDOW = 300.0  # seconds
 
 # Origin validation (comma-separated hostnames, optional)
 _ALLOWED_ORIGINS_RAW = os.environ.get("ALLOWED_ORIGINS", "")
@@ -85,6 +90,10 @@ def verify_password(password: str, stored_hash: str) -> bool:
 # Token management
 # ---------------------------------------------------------------------------
 
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def sweep_expired_tokens():
     """Bulk-remove expired tokens at most once per sweep interval."""
     global _last_token_sweep
@@ -100,6 +109,10 @@ def sweep_expired_tokens():
                  if not any(now - ts < _LOGIN_RATE_WINDOW for ts in timestamps)]
     for ip in stale_ips:
         del _login_attempts[ip]
+    stale_reset_keys = [key for key, timestamps in _password_reset_attempts.items()
+                        if not any(now - ts < _PASSWORD_RESET_RATE_WINDOW for ts in timestamps)]
+    for key in stale_reset_keys:
+        del _password_reset_attempts[key]
 
 
 def require_auth(request: Request) -> dict:
@@ -110,10 +123,33 @@ def require_auth(request: Request) -> dict:
         raise HTTPException(401, "Authentication required")
     token = auth_header[7:]
     info = _active_tokens.get(token)
+    session = None
+    if info and info.get("persisted_session"):
+        session = _db.get_active_session_by_hash(token_hash(token))
+        if session is None:
+            _active_tokens.pop(token, None)
+            raise HTTPException(401, "Invalid or expired token")
+    elif info and info.get("user_id"):
+        db_user = _db.get_user_by_id(info["user_id"])
+        if db_user is not None and not db_user.get("enabled"):
+            _active_tokens.pop(token, None)
+            raise HTTPException(401, "Invalid or expired token")
     if info is None:
-        raise HTTPException(401, "Invalid or expired token")
+        session = _db.get_active_session_by_hash(token_hash(token))
+        if session is None:
+            raise HTTPException(401, "Invalid or expired token")
+        info = {
+            "created": session["created_at"],
+            "user_id": session["user_id"],
+            "role": session["role"],
+            "username": session["username"],
+            "persisted_session": True,
+        }
+        _active_tokens[token] = info
     if time.time() - info["created"] > TOKEN_TTL:
-        del _active_tokens[token]
+        _active_tokens.pop(token, None)
+        if info.get("user_id"):
+            _db.revoke_session_by_hash(token_hash(token))
         raise HTTPException(401, "Token expired")
     roles = sorted(role_set(info.get("role")))
     return {
@@ -172,6 +208,21 @@ def check_login_rate_limit(request: Request):
     _login_attempts[ip] = attempts
 
 
+def check_password_reset_rate_limit(request: Request, username: str):
+    """Limit reset-token generation by IP and normalized username."""
+    import streams as _streams
+
+    ip = _streams.client_ip(request)
+    key = f"{ip}:{username.strip().lower()}"
+    now = time.time()
+    attempts = _password_reset_attempts.get(key, [])
+    attempts = [t for t in attempts if now - t < _PASSWORD_RESET_RATE_WINDOW]
+    if len(attempts) >= _PASSWORD_RESET_RATE_LIMIT:
+        raise HTTPException(429, "Too many password reset attempts. Try again later.")
+    attempts.append(now)
+    _password_reset_attempts[key] = attempts
+
+
 def validate_login_origin(request: Request):
     """Validate Origin header on login if ALLOWED_ORIGINS is configured."""
     if _ALLOWED_ORIGINS is None:
@@ -184,18 +235,36 @@ def validate_login_origin(request: Request):
         raise HTTPException(403, "Origin not allowed")
 
 
-def create_token(user_id: str | None, role: str, username: str) -> str:
+def create_token(user_id: str | None, role: str, username: str, request: Request | None = None) -> str:
     """Create a new auth token with associated user info."""
     sweep_expired_tokens()
     if len(_active_tokens) >= _MAX_ACTIVE_TOKENS:
         oldest_token = min(_active_tokens, key=lambda t: _active_tokens[t]["created"])
-        del _active_tokens[oldest_token]
+        oldest_info = _active_tokens.pop(oldest_token)
+        if oldest_info.get("user_id"):
+            _db.revoke_session_by_hash(token_hash(oldest_token))
     token = secrets.token_hex(32)
+    now = time.time()
+    persisted_session = False
+    if user_id:
+        db_user = _db.get_user_by_id(user_id)
+        if db_user and db_user.get("enabled"):
+            user_agent = request.headers.get("user-agent", "")[:500] if request else ""
+            ip_address = ""
+            if request:
+                try:
+                    import streams as _streams
+                    ip_address = _streams.client_ip(request)
+                except Exception:
+                    ip_address = ""
+            _db.create_user_session(user_id, token_hash(token), ttl=TOKEN_TTL, user_agent=user_agent, ip_address=ip_address)
+            persisted_session = True
     _active_tokens[token] = {
-        "created": time.time(),
+        "created": now,
         "user_id": user_id,
         "role": role,
         "username": username,
+        "persisted_session": persisted_session,
     }
     return token
 
@@ -204,7 +273,9 @@ def revoke_token(request: Request):
     """Remove the token from the active set."""
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
-        _active_tokens.pop(auth_header[7:], None)
+        token = auth_header[7:]
+        _active_tokens.pop(token, None)
+        _db.revoke_session_by_hash(token_hash(token))
 
 
 def active_token_count() -> int:
@@ -214,6 +285,54 @@ def active_token_count() -> int:
 # ---------------------------------------------------------------------------
 # Multi-user authentication
 # ---------------------------------------------------------------------------
+
+def change_password(user_id: str, current_password: str, new_password: str) -> bool:
+    user = _db.get_user_by_id(user_id)
+    if not user or not user.get("enabled") or not verify_password(current_password, user["password_hash"]):
+        return False
+    _db.update_user(user_id, password_hash=hash_password(new_password))
+    _db.revoke_user_sessions(user_id)
+    for token, info in list(_active_tokens.items()):
+        if info.get("user_id") == user_id:
+            _active_tokens.pop(token, None)
+    return True
+
+
+def create_password_reset_token_for_username(username: str) -> str | None:
+    user = _db.get_user_by_username(username)
+    if not user or not user.get("enabled"):
+        return None
+    token = secrets.token_urlsafe(32)
+    _db.create_password_reset_token(user["id"], token_hash(token), ttl=PASSWORD_RESET_TTL)
+    return token
+
+
+def reset_password_with_token(token: str, new_password: str) -> bool:
+    reset = _db.consume_password_reset_token(token_hash(token))
+    if reset is None:
+        return False
+    user_id = reset["user_id"]
+    _db.update_user(user_id, password_hash=hash_password(new_password))
+    _db.revoke_user_sessions(user_id)
+    for active_token, info in list(_active_tokens.items()):
+        if info.get("user_id") == user_id:
+            _active_tokens.pop(active_token, None)
+    return True
+
+
+def create_email_verification_token_for_user(user_id: str) -> str | None:
+    profile = _db.get_user_profile(user_id)
+    email = profile.get("email")
+    if not email:
+        return None
+    token = secrets.token_urlsafe(32)
+    _db.create_email_verification_token(user_id, token_hash(token), email, ttl=EMAIL_VERIFICATION_TTL)
+    return token
+
+
+def verify_email_with_token(token: str) -> bool:
+    return _db.consume_email_verification_token(token_hash(token)) is not None
+
 
 def authenticate_user(username: str, password: str) -> dict | None:
     """Authenticate against env-var admin first, then DB users.
