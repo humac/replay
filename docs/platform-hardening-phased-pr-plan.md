@@ -138,6 +138,7 @@ Default names:
 - Keep current single-team default behavior working through every PR.
 - Every token-like feature must store hashes only, never raw tokens.
 - Every behavior PR must update relevant docs/roadmaps/helper notes before merge.
+- UI/UX PRs must load/use a frontend design skill, match the existing Replay design language, avoid raw/browser-default controls, and capture screenshot evidence under `docs/screenshots/<phase-or-feature>/` before merge.
 - Validation-only runs on `main` must restore unintended screenshot/capture drift before reporting completion.
 
 ---
@@ -581,6 +582,8 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Run full pytest after each router move or small batch.
 - Route path compatibility tests remain green.
 - Playwright phase captures still pass after frontend-visible route moves.
+
+**Implementation note (feat/platform-pr3-3-router-split):** Began the domain router split with the lowest-risk route groups: `routers/auth.py` owns `/api/login`, `/api/logout`, and `/api/auth/check`; `routers/admin.py` owns admin-only `/api/users*`; `server.py` mounts both plus the existing `routers/admin_teams.py`. This preserves endpoint paths and response shapes while shrinking `server.py` before larger match/live/coach router moves. Focused auth/users/tenancy tests and the full suite passed.
 
 ---
 

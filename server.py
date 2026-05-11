@@ -34,7 +34,9 @@ import settings as _settings
 import streams as _streams
 import tenancy as _tenancy
 import uploads as _uploads
+from routers.admin import router as admin_router
 from routers.admin_teams import router as admin_teams_router
+from routers.auth import router as auth_router
 from services import activity as _activity
 from services import engagement as _engagement
 from services import thumbnails as _thumbs
@@ -55,11 +57,11 @@ from models import (
     CreateCoachingClipRequest, CreateCoachingNoteRequest, CreateCoachingPlaylistRequest,
     CreateMatchRequest, CreateMatchSummaryRequest, CreatePlayerGoalReflectionRequest,
     CreatePlayerGoalRequest, CreatePlayerRequest, CreatePlayerUserLinkRequest,
-    CreateUploadSessionRequest, CreateUserRequest, LiveAuthRequest, LoginRequest,
+    CreateUploadSessionRequest, LiveAuthRequest,
     MarkCoachingReviewRequest, StartCaptureRequest, UnblockStreamRequest,
     UpdateCoachingClipRequest, UpdateCoachingNoteRequest, UpdateCoachingPlaylistRequest,
     UpdateMatchRequest, UpdateMatchSummaryRequest, UpdatePlayerGoalRequest,
-    UpdatePlayerRequest, UpdateUserRequest,
+    UpdatePlayerRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -277,6 +279,8 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(title="Replay", lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(admin_teams_router)
 
 # Shared secret MediaMTX sends in X-Internal-Secret when calling /api/live/auth.
@@ -1320,116 +1324,6 @@ async def admin_unblock_stream(payload: UnblockStreamRequest, request: Request):
             metadata={"ip": payload.ip, "kind": payload.kind},
         )
     return {"ok": True, "cleared": cleared}
-
-
-# ---------------------------------------------------------------------------
-# Auth endpoints
-# ---------------------------------------------------------------------------
-
-@app.post("/api/login")
-async def login(request: Request, body: LoginRequest):
-    _auth.check_login_rate_limit(request)
-    _auth.validate_login_origin(request)
-    user = _auth.authenticate_user(body.username, body.password)
-    if not user:
-        raise HTTPException(401, "Invalid credentials")
-    token = _auth.create_token(user["user_id"], user["role"], user["username"])
-    return {"token": token, "role": user["role"], "roles": sorted(_auth.role_set(user["role"])), "username": user["username"]}
-
-
-@app.post("/api/logout")
-async def logout(request: Request):
-    _auth.revoke_token(request)
-    return {"ok": True}
-
-
-@app.get("/api/auth/check")
-async def auth_check(request: Request):
-    try:
-        user = _auth.require_auth(request)
-        return {"authenticated": True, "role": user["role"], "roles": user.get("roles", []), "username": user["username"]}
-    except HTTPException:
-        return {"authenticated": False}
-
-
-# ---------------------------------------------------------------------------
-# User management (admin only)
-# ---------------------------------------------------------------------------
-
-@app.get("/api/users")
-async def list_users(request: Request):
-    _auth.require_role(request, "admin")
-    users = _db.list_users(allow_unscoped=True)
-    # Strip password hashes from response
-    return [
-        {k: v for k, v in u.items() if k != "password_hash"}
-        for u in users
-    ]
-
-
-@app.post("/api/users")
-async def create_user(request: Request, body: CreateUserRequest):
-    actor = _auth.require_role(request, "admin")
-    existing = _db.get_user_by_username(body.username)
-    if existing:
-        raise HTTPException(409, "Username already exists")
-    password_hash = _auth.hash_password(body.password)
-    user = _db.create_user(body.username, password_hash, body.role, body.display_name)
-    _log_activity(
-        "user.created",
-        severity="info",
-        message=f"User created: {body.username}",
-        actor=actor["username"],
-        metadata={"target_user_id": user.get("id"), "role": body.role},
-    )
-    return {"ok": True, "user": user}
-
-
-@app.patch("/api/users/{user_id}")
-async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
-    actor = _auth.require_role(request, "admin")
-    user = _db.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(404, "User not found")
-    updates = {}
-    if body.password is not None:
-        updates["password_hash"] = _auth.hash_password(body.password)
-    if body.role is not None:
-        updates["role"] = body.role
-    if body.display_name is not None:
-        updates["display_name"] = body.display_name
-    if body.enabled is not None:
-        updates["enabled"] = 1 if body.enabled else 0
-    if not updates:
-        return {"ok": True}
-    _db.update_user(user_id, **updates)
-    updated = _db.get_user_by_id(user_id)
-    logger.info("admin.action", extra={"action": "update_user", "actor": actor["username"], "target_id": user_id, "fields": list(updates)})
-    _log_activity(
-        "user.updated",
-        severity="info",
-        message=f"User updated: {updated.get('username', user_id)}",
-        actor=actor["username"],
-        metadata={"target_user_id": user_id, "fields": list(updates)},
-    )
-    return {"ok": True, "user": {k: v for k, v in updated.items() if k != "password_hash"}}
-
-
-@app.delete("/api/users/{user_id}")
-async def delete_user(user_id: str, request: Request):
-    user = _auth.require_role(request, "admin")
-    target = _db.get_user_by_id(user_id)
-    if not _db.delete_user(user_id):
-        raise HTTPException(404, "User not found")
-    logger.info("admin.action", extra={"action": "delete_user", "actor": user["username"], "target_id": user_id})
-    _log_activity(
-        "user.deleted",
-        severity="warning",
-        message=f"User deleted: {target.get('username', user_id) if target else user_id}",
-        actor=user["username"],
-        metadata={"target_user_id": user_id},
-    )
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
