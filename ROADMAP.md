@@ -844,10 +844,11 @@ On phones the season header stacked the team badge, title/intro block and Watch 
 - **Coach workspace UI** (`js/coaching.js`, `index.html`, `styles.css`): `/coach` supports adding roster players, linking players to user accounts, creating timestamped notes, assigning linked players/tags/visibility, listing notes, and creating playlists from note selections.
 - **In-player note capture** (`js/coaching.js`, `js/views.js`, `index.html`): coaches watching a match get a Coach Notes panel in the match sidebar. They can save a note at the current video time, link players, choose visibility, and use a canvas overlay to capture freehand drawing metadata. Existing playback controls are not blocked unless drawing mode is active. _Superseded by **Coaching Platform — UX Restructure** (line 562 below): the in-match panel was deleted and the Coach > Review tab is now the single authoring surface._
 - **Player/family feedback view** (`js/coaching.js`, `index.html`): `/feedback` shows linked roster players, published review playlists, and visible coaching notes. Users can jump from a note to the match timestamp and mark notes/playlists reviewed.
+- **Roster import follow-up** (`services/roster_import.py`, `tests/test_roster_import.py`): Coach team admins can preview/commit CSV rosters from Coach > Roster. Preview is read-only, commit reuses existing players/pending guardian invites, links existing guardian accounts by normalized email, and blocks stale/wrong-team player ids.
 - **Design note** (`specs/coaching-platform-design.md`): captures the MVP scope, role/privacy model, backend tables, frontend ownership, and validation approach for future coaching work.
 - **Tests** (`tests/test_coaching.py`): covers coach role access, viewer denial, roster account links, player-specific feedback visibility, drawing JSON persistence, team-visible notes, and review tracking. Full suite: `260 passed`.
 
-**Remaining coaching follow-ups:** richer drawing tools (arrows, circles, zones, labels, undo stack), playlist auto-play sequencing with pre/post-roll, roster import/export, coach-facing review-completion dashboards, and rendered clip export.
+**Remaining coaching follow-ups:** richer drawing tools (arrows, circles, zones, labels, undo stack), playlist auto-play sequencing with pre/post-roll, roster export, coach-facing review-completion dashboards, and rendered clip export.
 
 ---
 

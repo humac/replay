@@ -639,6 +639,10 @@ class UpdatePlayerRequest(BaseModel):
         return v.strip() if v is not None else v
 
 
+class RosterImportRequest(BaseModel):
+    csv_text: str = Field(..., min_length=1, max_length=256_000)
+
+
 class CreatePlayerUserLinkRequest(BaseModel):
     player_id: str = Field(..., min_length=1, max_length=80)
     user_id: str = Field(..., min_length=1, max_length=80)

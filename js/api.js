@@ -476,6 +476,26 @@ export const apiMixin = {
         return resp.json();
     },
 
+    async previewCoachRosterImport(data) {
+        const resp = await this.authFetch('/api/coach/players/import/preview', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to preview roster import');
+        return resp.json();
+    },
+
+    async commitCoachRosterImport(data) {
+        const resp = await this.authFetch('/api/coach/players/import/commit', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to commit roster import');
+        return resp.json();
+    },
+
     async createCoachNote(data) {
         const resp = await this.authFetch('/api/coach/notes', {
             method: 'POST',
