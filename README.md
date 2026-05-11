@@ -95,6 +95,16 @@ Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the
 
 Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1935` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8090` origin via a reverse proxy.
 
+The Intel compose stack also includes an optional Phase 6.2 Postgres smoke-test lane. SQLite remains the app runtime until the later Alembic/runtime migration PRs, but you can start the Postgres service and run the focused lane with:
+
+```bash
+docker compose -f docker-compose-intel.yml --profile postgres up -d postgres
+REPLAY_DB_BACKEND=postgres \
+REPLAY_RUN_LIVE_POSTGRES_TESTS=1 \
+DATABASE_URL=postgresql://replay:replay-local-dev@localhost:5432/replay \
+pytest tests/test_postgres_lane.py -q -m postgres
+```
+
 Build/run with plain Docker (without the live stream):
 
 ```bash

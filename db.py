@@ -16,10 +16,64 @@ import log as _log
 logger = _log.setup("replay")
 
 _STRICT_TENANCY_TRUE_VALUES = {"1", "true", "yes", "on"}
+_VALID_DB_BACKENDS = {"sqlite", "postgres"}
+_POSTGRES_URL_PREFIXES = ("postgresql://", "postgresql+psycopg://")
 
 
 def strict_tenancy_enabled() -> bool:
     return os.getenv("REPLAY_STRICT_TENANCY", "").strip().lower() in _STRICT_TENANCY_TRUE_VALUES
+
+
+def configured_database_url() -> str | None:
+    """Return the configured database URL, if one was provided."""
+    value = os.getenv("DATABASE_URL", "").strip()
+    return value or None
+
+
+def configured_db_backend() -> str:
+    """Return the requested DB backend for Phase 6 Postgres lane configuration.
+
+    Phase 6.2 introduces a Postgres compose/test lane but does not switch the
+    application runtime away from SQLite. Callers that need a real Postgres
+    connection should use connect_postgres() explicitly.
+    """
+    explicit = os.getenv("REPLAY_DB_BACKEND", "").strip().lower()
+    if explicit:
+        if explicit not in _VALID_DB_BACKENDS:
+            allowed = ", ".join(sorted(_VALID_DB_BACKENDS))
+            raise RuntimeError(f"REPLAY_DB_BACKEND must be one of: {allowed}")
+        return explicit
+
+    url = configured_database_url()
+    if url and url.startswith(_POSTGRES_URL_PREFIXES):
+        return "postgres"
+    return "sqlite"
+
+
+def postgres_runtime_requested() -> bool:
+    """Whether env config requests Postgres for the future runtime path."""
+    return configured_db_backend() == "postgres"
+
+
+def connect_postgres(database_url: str | None = None):
+    """Open an explicit psycopg connection for the Phase 6.2 Postgres lane.
+
+    This helper is intentionally separate from connect(), which remains the
+    SQLite runtime connection until the later Alembic/runtime migration PRs.
+    """
+    url = (database_url or configured_database_url() or "").strip()
+    if not url:
+        raise RuntimeError("DATABASE_URL is required for Postgres connections")
+    if url.startswith("postgresql+psycopg://"):
+        url = "postgresql://" + url.removeprefix("postgresql+psycopg://")
+
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+    except ImportError as exc:  # pragma: no cover - exercised only when dependency missing
+        raise RuntimeError("psycopg is required for Postgres support") from exc
+
+    return psycopg.connect(url, row_factory=dict_row)
 
 
 def _require_team_scope_for_strict(helper: str, team_id: str | None, *, allow_unscoped: bool = False) -> None:
@@ -45,6 +99,12 @@ def init(data_dir: Path, db_file: Path, app_assets_dir: Path):
     APP_ASSETS_DIR = app_assets_dir
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     APP_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    if postgres_runtime_requested():
+        logger.warning(
+            "Postgres database configuration detected; Phase 6.2 provides the "
+            "Postgres compose/test lane only, and app runtime migrations still "
+            "use SQLite until the Alembic/runtime migration PRs land"
+        )
     with connect() as conn:
         _run_migrations(conn)
 

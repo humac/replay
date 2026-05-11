@@ -5,3 +5,4 @@ aiofiles>=23.2
 httpx>=0.27
 geoip2>=4.8
 psutil>=5.9
+psycopg[binary]>=3.2

@@ -49,8 +49,40 @@ jobs:
         # .coveragerc. Raise once media.py / server.py grow more coverage.
         run: pytest tests/ -v --cov --cov-report=term-missing --cov-fail-under=60
 
+  postgres-lane:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: replay_test
+          POSTGRES_USER: replay
+          POSTGRES_PASSWORD: replay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U replay -d replay_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Run Postgres lane smoke tests
+        env:
+          REPLAY_DB_BACKEND: postgres
+          REPLAY_RUN_LIVE_POSTGRES_TESTS: "1"
+          DATABASE_URL: postgresql://replay:replay_test@localhost:5432/replay_test
+        run: pytest tests/test_postgres_lane.py tests/test_postgres_compose_static.py -q -m "postgres or not postgres"
+
   build-and-push:
-    needs: test
+    needs: [test, postgres-lane]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
