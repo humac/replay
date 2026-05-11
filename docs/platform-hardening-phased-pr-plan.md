@@ -695,7 +695,7 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - `pytest tests/test_phase5_frontend_modularization_static.py tests/test_me_scope.py tests/test_active_scope_ui_static.py -q`
 - Phase 4 active-scope Playwright smoke/captures
 
-### PR 5.2: Split Coaching Domain Modules ✅ COMPLETE (2026-05-10)
+### PR 5.2: Split Coaching Domain Modules ✅ COMPLETE (2026-05-10; full extraction landed 2026-05-11 via PR-FE)
 
 **Files:**
 
@@ -729,6 +729,10 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - `node --check script.js js/coaching.js js/coaching/*.js`
 - `pytest tests/test_phase5_frontend_modularization_static.py tests/test_active_scope_ui_static.py tests/test_me_scope.py -q`
 - Static guard verifies all `index.html` inline `app.*` handlers still have a method definition in assembled modules.
+
+**PR 5.2 closeout (2026-05-11):**
+
+Completed in the PR-FE platform-hardening follow-up. 13 domain mixins extracted from `js/coaching.js` (roster, notes, clips, playlists, thumbnails, observations, goals, match-summaries, development, feedback, feedback-player, review, ai). `js/coaching.js` went from 7,280 lines to 674 lines (a 90.7% reduction); the remaining shell now holds top-level routing, team-settings rendering, shared utility helpers (`playerLabel`, `noteLabel`, `formatClock`, `matchLabel`), and exported constants imported by the domain mixins. Each mixin spreads into `window.app` in `script.js` so peer methods continue to call each other as `this.x()` without any build step.
 
 ### PR 5.3: CSS Split Only If Safe ✅ COMPLETE (2026-05-10)
 

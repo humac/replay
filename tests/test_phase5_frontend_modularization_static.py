@@ -93,6 +93,25 @@ def test_phase5_engagement_dashboard_lives_in_domain_module():
         assert f"    async {method}(" not in core
 
 
+def test_pr_fe_ai_mixin_exists_and_is_populated():
+    ai_path = ROOT / "js" / "coaching" / "ai.js"
+    assert ai_path.is_file(), "js/coaching/ai.js must exist after PR-FE 13/13"
+    src = ai_path.read_text()
+    # Find the mixin body
+    match = re.search(r"export\s+const\s+coachingAIMixin\s*=\s*\{(.+?)\n\}\s*;?", src, re.DOTALL)
+    assert match, "coachingAIMixin export must be present"
+    body = match.group(1)
+    # Count top-level method declarations (best-effort: lines that look like `name(...) {`)
+    method_count = len(re.findall(r"\n\s{4}\w+\s*\([^)]*\)\s*\{", body))
+    assert method_count >= 4, f"coachingAIMixin must contain a non-trivial set of methods; found {method_count}"
+
+
+def test_pr_fe_ai_mixin_wired_into_script():
+    script_src = (ROOT / "script.js").read_text()
+    assert "from './js/coaching/ai.js'" in script_src, "script.js must import from './js/coaching/ai.js'"
+    assert "...coachingAIMixin" in script_src, "script.js must spread ...coachingAIMixin into the window.app assembly"
+
+
 def test_index_inline_app_handlers_still_have_a_mixin_method_definition():
     html = (ROOT / "index.html").read_text()
     script = (ROOT / "script.js").read_text()

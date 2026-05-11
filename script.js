@@ -24,6 +24,7 @@ import { coachingEngagementMixin } from './js/coaching/engagement.js';
 import { coachingFeedbackMixin } from './js/coaching/feedback.js';
 import { coachingFeedbackPlayerMixin } from './js/coaching/feedback-player.js';
 import { coachingThumbnailsMixin } from './js/coaching/thumbnails.js';
+import { coachingAIMixin } from './js/coaching/ai.js';
 import { coachingMixin } from './js/coaching.js';
 import { tacticalBoardMixin } from './js/tactical-board.js';
 
@@ -423,6 +424,7 @@ const app = {
     ...coachingFeedbackMixin,
     ...coachingFeedbackPlayerMixin,
     ...coachingThumbnailsMixin,
+    ...coachingAIMixin,
     ...tacticalBoardMixin,
 };
 
