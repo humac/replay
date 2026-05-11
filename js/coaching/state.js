@@ -58,7 +58,8 @@ export const coachingStateMixin = {
         const seasonSelect = document.getElementById('nav-scope-season');
         const help = document.getElementById('nav-scope-help');
         const teams = this.scopeTeamOptions();
-        const shouldShow = !!this.authToken && teams.length > 1 && (this.canCoach?.() || this.isAdmin?.());
+        const seasonCount = teams.reduce((count, team) => count + (Array.isArray(team.seasons) ? team.seasons.length : 0), 0);
+        const shouldShow = !!this.authToken && (teams.length > 1 || seasonCount > 1) && (this.canCoach?.() || this.isAdmin?.());
         root.hidden = !shouldShow;
         if (!shouldShow) {
             if (panel) panel.hidden = true;
@@ -135,6 +136,8 @@ export const coachingStateMixin = {
     },
 
     clearScopedViewData() {
+        this.matches = [];
+        this._matchLoadErrorShown = false;
         this._coachBundle = null;
         this._feedbackData = null;
         this._feedbackDevCache = null;

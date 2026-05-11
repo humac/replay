@@ -365,7 +365,31 @@ async def test_matches_endpoint_filters_by_authorized_active_scope(client):
         _insert_user(conn, "matches-user", "matches_user", "coach")
         _grant_membership(conn, "matches-a", "matches-user", "coach")
         conn.commit()
+    noisy_unrelated_matches = [
+        {
+            "id": f"match-scope-b-noise-{idx}",
+            "home_team": "Matches B",
+            "away_team": f"Visitors {idx}",
+            "date": "2026-04-02",
+            "time": "10:00",
+            "location": "Field B",
+            "score_home": "2",
+            "score_away": "0",
+            "format": "full",
+            "videos": {"full": None, "first_half": None, "second_half": None},
+            "video_status": {"full": "none", "first_half": "none", "second_half": "none"},
+            "home_logo": None,
+            "away_logo": None,
+            "created_at": f"2026-04-02T00:{idx // 60:02d}:{idx % 60:02d}Z",
+            "updated_at": now,
+            "slug": f"match-scope-b-noise-{idx}",
+            "team_id": "matches-b",
+            "season_id": "matches-b-season",
+        }
+        for idx in range(501)
+    ]
     _db.save_matches_unlocked([
+        *noisy_unrelated_matches,
         {
             "id": "match-scope-a",
             "home_team": "Matches A",

@@ -785,27 +785,27 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - Existing SQLite tests continue to run in later implementation PRs.
 
 
-### PR 6.2: Postgres Compose And Test Lane
+### PR 6.2: Postgres Compose And Test Lane ✅ COMPLETE (2026-05-10)
 
 **Files:**
 
-- Modify: `docker-compose-intel.yml`
-- Modify: CI config if present
-- Modify: `pytest.ini` or test configuration
-- Modify: `db.py` / config as needed
-- Test: SQLite + Postgres lanes where practical
+- Modified: `docker-compose-intel.yml` with an optional `postgres` profile service and healthcheck.
+- Modified: `.github/workflows/ci.yml` with a narrow Postgres smoke lane.
+- Modified: `pytest.ini` with a `postgres` marker.
+- Modified: `db.py`, `.env.example`, `README.md`, `docs/DEPLOYMENT.md`, `AGENTS.md`, and `CLAUDE.md` for explicit backend-selection helpers and lane documentation.
+- Added: `tests/test_postgres_lane.py` and `tests/test_postgres_compose_static.py`.
 
 **Key changes:**
 
-- Add optional Postgres service.
-- Add `REPLAY_DB_BACKEND=sqlite|postgres` or `DATABASE_URL` design.
-- Add test lane for core DB behavior against Postgres where practical.
+- Added optional Postgres service for smoke testing while keeping SQLite as the application runtime.
+- Added `configured_database_url()`, `configured_db_backend()`, and explicit `connect_postgres()` helpers for the Postgres lane.
+- Added static CI/compose coverage plus opt-in live Postgres tests gated by `REPLAY_DB_BACKEND=postgres`, `REPLAY_RUN_LIVE_POSTGRES_TESTS=1`, and `DATABASE_URL=postgresql://...`.
 
 **Tests:**
 
-- Existing SQLite tests remain green.
-- Core DB tests pass against Postgres lane.
-- Dialect-specific behavior is documented.
+- `pytest tests/test_postgres_lane.py tests/test_postgres_compose_static.py tests/test_postgres_migration_adr_static.py -q`
+- Full SQLite suite remains the primary app-runtime gate until the later Alembic/runtime migration PRs.
+- Dialect-specific smoke behavior is documented in `docs/DEPLOYMENT.md` and `docs/postgres-migration-adr.md`.
 
 ### PR 6.3: Durable Background Jobs
 

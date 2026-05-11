@@ -179,6 +179,20 @@ def test_search_matches_pagination(fresh_db):
     assert {m["id"] for m in page1}.isdisjoint({m["id"] for m in page2})
 
 
+def test_search_matches_applies_scope_before_pagination(fresh_db):
+    with fresh_db.connect() as conn:
+        for i in range(3):
+            fresh_db.upsert_match(conn, _make_match(f"other-{i}", team_id="team-other", date=f"2026-05-0{i + 1}"))
+        fresh_db.upsert_match(conn, _make_match("team-a-1", team_id="team-a", season_id="season-a", date="2026-04-30"))
+        fresh_db.upsert_match(conn, _make_match("team-a-2", team_id="team-a", season_id="season-b", date="2026-04-29"))
+        conn.commit()
+
+    matches, total = fresh_db.search_matches(page=1, limit=1, team_id="team-a", season_id="season-a")
+
+    assert total == 1
+    assert [m["id"] for m in matches] == ["team-a-1"]
+
+
 def test_save_matches_unlocked_deletes_removed_records(fresh_db):
     with fresh_db.connect() as conn:
         fresh_db.upsert_match(conn, _make_match("keep"))

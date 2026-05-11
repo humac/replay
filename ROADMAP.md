@@ -6,6 +6,19 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Post-merge stack audit follow-up — PRs #146–#151 ✅ COMPLETE (2026-05-10)
+
+Follow-up after auditing the merged platform-hardening stack for missed review/fix/docs/screenshot gates.
+
+- **Scoped frontend safety** (`js/coaching/state.js`): the active-scope switcher now appears for single-team users with multiple seasons, and scope changes clear stale match data before reload so previous-team rows cannot reappear after a failed refresh.
+- **Scoped search correctness** (`db.py`, `server.py`): `/api/matches` applies team/season filters inside `search_matches()` before pagination and total-count calculation.
+- **Static asset cache busting** (`settings.py`): rendered HTML now versions `/static/styles/coaching-engagement.css` the same way it versions `styles.css` and `script.js`.
+- **Postgres smoke isolation** (`tests/test_postgres_lane.py`): live Postgres JSONB/SKIP LOCKED smoke tests use a unique disposable table per run.
+- **Docs closeout** (`docs/platform-hardening-phased-pr-plan.md`): PR 6.2 is marked complete in the detailed platform-hardening plan.
+- **Validation**: static syntax checks, targeted PR #146–#151 tests, screenshot recaptures, and full test suite with coverage gate.
+
+**Next**: Phase 6.3 — Durable Background Jobs.
+
 ## Platform Hardening Phase 6.2 — Postgres Compose And Test Lane ✅ COMPLETE (2026-05-10)
 
 Adds a real but narrow Postgres readiness lane without pretending the full app runtime has been ported.

@@ -43,6 +43,8 @@ import settings as _settings
 
 SEEDED_USERS = ("uploader1", "viewer1", "coach1", "family1", "family2")
 DEMO_PASSWORD = "Replay!Demo123"
+DEFAULT_TEAM_ID = "default-team"
+DEFAULT_SEASON_ID = "default-season"
 
 LOGO_DIR = Path(__file__).parent / "logos"
 
@@ -308,9 +310,9 @@ def _seed_roster() -> dict[str, str]:
         for jersey, name, active in SEED_ROSTER:
             pid = uuid.uuid4().hex
             conn.execute(
-                "INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (pid, name, jersey, 1 if active else 0, "", now, now),
+                "INSERT INTO players (id, display_name, jersey_number, active, notes, created_at, updated_at, team_id, season_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (pid, name, jersey, 1 if active else 0, "", now, now, DEFAULT_TEAM_ID, DEFAULT_SEASON_ID),
             )
             by_jersey[jersey] = pid
         conn.commit()
@@ -327,9 +329,9 @@ def _seed_player_user_links(roster: dict[str, str], users: dict[str, str]) -> in
     with _db.connect() as conn:
         for player_id, user_id, relationship in links:
             conn.execute(
-                "INSERT INTO player_user_links (player_id, user_id, relationship, created_at)"
-                " VALUES (?, ?, ?, ?)",
-                (player_id, user_id, relationship, now),
+                "INSERT INTO player_user_links (player_id, user_id, relationship, created_at, team_id)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (player_id, user_id, relationship, now, DEFAULT_TEAM_ID),
             )
         conn.commit()
     return len(links)
@@ -570,8 +572,8 @@ def _seed_coaching_notes(
                     match_id, slot, timestamp_seconds, title, body, category, visibility,
                     drawing_json, created_by, created_at, updated_at,
                     note_type, player_summary, what_happened, why_it_matters,
-                    what_to_do_next, coach_private_note
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    what_to_do_next, coach_private_note, team_id, season_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     spec["match_id"], spec["slot"], spec["timestamp_seconds"],
@@ -579,6 +581,7 @@ def _seed_coaching_notes(
                     json.dumps(spec["drawing"]), "coach1", now, now,
                     spec["note_type"], spec["player_summary"], spec["what_happened"],
                     spec["why_it_matters"], spec["what_to_do_next"], spec["coach_private_note"],
+                    DEFAULT_TEAM_ID, DEFAULT_SEASON_ID,
                 ),
             )
             note_id = cur.lastrowid
@@ -714,8 +717,9 @@ def _seed_observation_notes(
                     drawing_json, created_by, created_at, updated_at,
                     note_type, player_summary, what_happened, why_it_matters,
                     what_to_do_next, coach_private_note,
-                    note_context, event_title, event_date, event_type, tactical_board_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    note_context, event_title, event_date, event_type, tactical_board_json,
+                    team_id, season_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     spec["match_id"], spec["slot"], spec["timestamp_seconds"],
@@ -725,6 +729,7 @@ def _seed_observation_notes(
                     spec["why_it_matters"], spec["what_to_do_next"], spec["coach_private_note"],
                     spec["note_context"], spec["event_title"], spec["event_date"],
                     spec["event_type"], spec["tactical_board_json"],
+                    DEFAULT_TEAM_ID, DEFAULT_SEASON_ID,
                 ),
             )
             note_id = cur.lastrowid
@@ -768,15 +773,15 @@ def _seed_clips(
             INSERT INTO coaching_clips (
                 match_id, slot, start_seconds, end_seconds, title, description,
                 category, visibility, source_note_id, drawing_json,
-                created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_by, created_at, updated_at, team_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 m1, "first_half", 4.0, 18.0,
                 "Player #7 — defensive recovery (clip)",
                 "Short clip from the Northgate match showing the recovery angle. Watch how she cuts the passing lane instead of chasing the ball.",
                 "defending", "player", note_player7, "{}",
-                "coach1", now, now,
+                "coach1", now, now, DEFAULT_TEAM_ID,
             ),
         )
         clip_id = cur.lastrowid
@@ -801,10 +806,10 @@ def _seed_playlists(note_ids_by_key: dict[str, int], roster: dict[str, str]) -> 
     with _db.connect() as conn:
         cur = conn.execute(
             "INSERT INTO coaching_playlists (title, description, visibility, pre_roll_seconds,"
-            " post_roll_seconds, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " post_roll_seconds, created_by, created_at, updated_at, team_id, season_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("First-half tactical lessons",
              "Two clips on pressing triggers and first-touch in the build-up.",
-             "team", 5.0, 8.0, "coach1", now, now),
+             "team", 5.0, 8.0, "coach1", now, now, DEFAULT_TEAM_ID, DEFAULT_SEASON_ID),
         )
         playlist_a = cur.lastrowid
         for position, key in enumerate(("press_trigger", "first_touch_pressure")):
@@ -815,10 +820,10 @@ def _seed_playlists(note_ids_by_key: dict[str, int], roster: dict[str, str]) -> 
 
         cur = conn.execute(
             "INSERT INTO coaching_playlists (title, description, visibility, pre_roll_seconds,"
-            " post_roll_seconds, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " post_roll_seconds, created_by, created_at, updated_at, team_id, season_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("Player #7 development",
              "Defensive recovery moments to review for the week.",
-             "player", 5.0, 8.0, "coach1", now, now),
+             "player", 5.0, 8.0, "coach1", now, now, DEFAULT_TEAM_ID, DEFAULT_SEASON_ID),
         )
         playlist_b = cur.lastrowid
         conn.execute(
@@ -900,8 +905,8 @@ def _seed_match_summaries(matches_by_key: dict[tuple[str, str, str], str], note_
             "SELECT id FROM coaching_playlists WHERE visibility IN ('team', 'unlisted') ORDER BY id LIMIT 1"
         ).fetchone()
         cur = conn.execute(
-            "INSERT INTO coaching_match_summaries (match_id, visibility, team_positives, team_improvements, training_focus, body, created_by, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO coaching_match_summaries (match_id, visibility, team_positives, team_improvements, training_focus, body, created_by, created_at, updated_at, team_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 match_id,
                 "team",
@@ -912,6 +917,7 @@ def _seed_match_summaries(matches_by_key: dict[tuple[str, str, str], str], note_
                 "coach1",
                 now,
                 now,
+                DEFAULT_TEAM_ID,
             ),
         )
         summary_id = cur.lastrowid
@@ -932,8 +938,8 @@ def _seed_match_summaries(matches_by_key: dict[tuple[str, str, str], str], note_
             )
 
         conn.execute(
-            "INSERT INTO coaching_match_summaries (match_id, visibility, team_positives, team_improvements, training_focus, body, created_by, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO coaching_match_summaries (match_id, visibility, team_positives, team_improvements, training_focus, body, created_by, created_at, updated_at, team_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 match_id,
                 "private",
@@ -944,6 +950,7 @@ def _seed_match_summaries(matches_by_key: dict[tuple[str, str, str], str], note_
                 "coach1",
                 now,
                 now,
+                DEFAULT_TEAM_ID,
             ),
         )
         conn.commit()
