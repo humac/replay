@@ -41,6 +41,7 @@ from routers.auth import router as auth_router
 from routers.coach_ai import router as coach_ai_router
 from routers.coach_clips import router as coach_clips_router
 from routers.coach_notes import router as coach_notes_router
+from routers.coach_playlists import router as coach_playlists_router
 from routers.live import router as live_router
 from routers.matches import router as matches_router
 from routers.team_members import router as team_members_router
@@ -378,6 +379,7 @@ app.include_router(team_settings_router)
 app.include_router(coach_ai_router)
 app.include_router(coach_clips_router)
 app.include_router(coach_notes_router)
+app.include_router(coach_playlists_router)
 app.include_router(live_router)
 app.include_router(matches_router)
 app.include_router(uploads_router)
@@ -1549,86 +1551,6 @@ def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None
         hydrated.append({**playlist, "note_ids": [note["id"] for note in item_notes], "items": item_notes})
     return hydrated
 
-
-
-@app.get("/api/coach/playlists")
-async def coach_list_playlists(request: Request):
-    _user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    playlists = [p for p in _db.list_coaching_playlists() if _same_team(p, team_id)]
-    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
-    return {"playlists": _playlists_with_items(playlists, notes)}
-
-
-@app.get("/api/coach/playlists/{playlist_id}")
-async def coach_get_playlist(playlist_id: int, request: Request):
-    _user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    playlist = _require_playlist_in_team(playlist_id, team_id)
-    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
-    return {"playlist": _playlists_with_items([playlist], notes)[0]}
-
-
-@app.post("/api/coach/playlists")
-async def coach_create_playlist(request: Request, body: CreateCoachingPlaylistRequest):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    season_id = scope.season["id"] if scope.season else None
-    _require_notes_in_team(body.note_ids, team_id)
-    _require_players_in_team(body.player_ids, team_id)
-    payload = body.model_dump()
-    payload["team_id"] = team_id
-    payload["season_id"] = season_id
-    playlist = _db.create_coaching_playlist(payload, actor=user["username"])
-    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
-    playlist = _playlists_with_items([playlist], notes)[0]
-    _log_activity(
-        "coach.playlist_created",
-        severity="info",
-        message=f"Coaching playlist created: {playlist.get('title')}",
-        actor=user["username"],
-        metadata={"playlist_id": playlist.get("id"), "visibility": playlist.get("visibility")},
-    )
-    return {"ok": True, "playlist": playlist}
-
-
-@app.patch("/api/coach/playlists/{playlist_id}")
-async def coach_update_playlist(playlist_id: int, request: Request, body: UpdateCoachingPlaylistRequest):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    existing = _require_playlist_in_team(playlist_id, team_id)
-    updates = body.model_dump(exclude_unset=True)
-    _require_notes_in_team(updates.get("note_ids") or [], team_id)
-    _require_players_in_team(updates.get("player_ids") or [], team_id)
-    playlist = _db.update_coaching_playlist(playlist_id, updates) or existing
-    notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
-    playlist = _playlists_with_items([playlist], notes)[0]
-    _log_activity(
-        "coach.playlist_updated",
-        severity="info",
-        message=f"Coaching playlist updated: {playlist.get('title')}",
-        actor=user["username"],
-        metadata={"playlist_id": playlist_id, "fields": sorted(updates.keys())},
-    )
-    return {"ok": True, "playlist": playlist}
-
-
-@app.delete("/api/coach/playlists/{playlist_id}")
-async def coach_delete_playlist(playlist_id: int, request: Request):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    playlist = _require_playlist_in_team(playlist_id, team_id)
-    _tenancy.assert_can_delete_coach_object(scope, "playlist", created_by_user_id=playlist.get("created_by"))
-    if not _db.delete_coaching_playlist(playlist_id):
-        raise HTTPException(404, "Playlist not found")
-    _log_activity(
-        "coach.playlist_deleted",
-        severity="warning",
-        message=f"Coaching playlist deleted: {playlist.get('title', playlist_id) if playlist else playlist_id}",
-        actor=user["username"],
-        metadata={"playlist_id": playlist_id},
-    )
-    return {"ok": True}
 
 
 def _validate_match_summary_has_text(payload: dict) -> None:
