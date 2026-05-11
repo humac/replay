@@ -32,6 +32,26 @@ class UpdateActiveScopeRequest(BaseModel):
         return cleaned
 
 
+class PatchMeProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: Optional[str] = Field(None, max_length=320)
+    first_name: Optional[str] = Field(None, max_length=120)
+    last_name: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=64)
+    timezone: Optional[str] = Field(None, max_length=120)
+    locale: Optional[str] = Field(None, max_length=32)
+    preferred_contact_method: Optional[Literal["email", "phone", "none"]] = None
+
+    @field_validator("email", "first_name", "last_name", "phone", "timezone", "locale")
+    @classmethod
+    def strip_optional_text(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+
 class EnqueueJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -5,8 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 import auth as _auth
+import db as _db
 import tenancy as _tenancy
-from models import LoginRequest, UpdateActiveScopeRequest
+from models import LoginRequest, PatchMeProfileRequest, UpdateActiveScopeRequest
 
 router = APIRouter()
 
@@ -32,6 +33,19 @@ async def logout(request: Request):
 async def me(request: Request):
     user = _auth.require_auth(request)
     return _tenancy.build_me_scope_summary(request, user)
+
+
+@router.patch("/api/me/profile")
+async def update_me_profile(request: Request, body: PatchMeProfileRequest):
+    user = _auth.require_auth(request)
+    user_id = str(user.get("user_id") or user.get("id") or "")
+    if not user_id:
+        raise HTTPException(401, "Authentication required")
+    try:
+        profile = _db.upsert_user_profile(user_id, body.model_dump(exclude_unset=True))
+    except _db.DuplicateEmailError as exc:
+        raise HTTPException(409, "Email is already in use") from exc
+    return {"profile": _db.public_user_profile(profile)}
 
 
 @router.put("/api/me/scope")
