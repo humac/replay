@@ -15,8 +15,9 @@ def test_nav_shell_contains_active_scope_switcher_mount_points():
     assert 'id="nav-scope-season"' in html
 
 
-def test_api_mixin_exposes_active_scope_lifecycle_methods():
-    js = (ROOT / "js" / "api.js").read_text()
+def test_scope_state_mixin_exposes_active_scope_lifecycle_methods():
+    state_js = (ROOT / "js" / "coaching" / "state.js").read_text()
+    api_js = (ROOT / "js" / "api.js").read_text()
 
     for method in [
         "loadMeScope(",
@@ -27,17 +28,17 @@ def test_api_mixin_exposes_active_scope_lifecycle_methods():
         "saveActiveScope(",
         "clearScopedViewData(",
     ]:
-        assert method in js
-    assert "const shouldShow = !!this.authToken && teams.length > 1 && (this.canCoach?.() || this.isAdmin?.());" in js
-    assert "params.set('team_id', this.activeScope.team.id);" in js
-    assert "params.set('season_id', this.activeScope.season.id);" in js
+        assert method in state_js
+    assert "const shouldShow = !!this.authToken && teams.length > 1 && (this.canCoach?.() || this.isAdmin?.());" in state_js
+    assert "params.set('team_id', this.activeScope.team.id);" in api_js
+    assert "params.set('season_id', this.activeScope.season.id);" in api_js
     for stale_placeholder_id in [
         "coach-roster-list",
         "coach-engagement-dashboard",
         "feedback-development-content",
         "library-table-wrap",
     ]:
-        assert stale_placeholder_id in js
+        assert stale_placeholder_id in state_js
 
 
 def test_scope_switcher_styles_cover_dark_and_light_themes():

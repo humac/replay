@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 5.1 — Frontend API/State Modularization ✅ COMPLETE (2026-05-10)
+
+Extracts the active Team/Season scope lifecycle out of the large frontend API mixin while preserving the zero-build `window.app` assembly.
+
+- **State module** (`js/coaching/state.js`): owns `loadMeScope()`, nav scope rendering, scope persistence, stale scoped-DOM clearing, and scoped surface reloads.
+- **Mixin assembly** (`script.js`): imports `coachingStateMixin` after `apiMixin` so state helpers can keep using `authFetch()` / `getAuthHeaders()` while leaving public `app.*` handlers unchanged.
+- **API boundary** (`js/api.js`): keeps auth/data loaders and continues to apply active `team_id` / `season_id` query params when `activeScope` is present.
+- **Validation**: `pytest tests/test_phase5_frontend_modularization_static.py tests/test_me_scope.py tests/test_active_scope_ui_static.py -q`; `node --check script.js js/api.js js/coaching/state.js`; Phase 4 active-scope Playwright capture smoke.
+
+**Next**: Phase 5.2 — Split Coaching Domain Modules.
+
 ## Platform Hardening Phase 4 — Active Team/Season Selection ✅ COMPLETE (2026-05-10)
 
 Adds an explicit active workspace selector before more scoped coaching/admin UX depends on implicit team defaults.

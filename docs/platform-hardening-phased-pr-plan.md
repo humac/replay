@@ -673,26 +673,27 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 
 **Objective:** Split the coach/frontend code before adding AI UI. Preserve `window.app` mixin behavior and keep zero build step.
 
-### PR 5.1: API And Shared State Extraction
+### PR 5.1: API And Shared State Extraction ✅ COMPLETE (2026-05-10)
 
 **Files:**
 
-- Modify: `js/coaching.js`
-- Modify: `js/api.js`
-- Create: `js/coaching/state.js` if useful
-- Test: `node --check`, Playwright smoke/captures
+- Modified: `script.js`
+- Modified: `js/api.js`
+- Created: `js/coaching/state.js`
+- Added: `tests/test_phase5_frontend_modularization_static.py`
+- Updated: `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`
 
 **Key changes:**
 
-- Move shared coaching API wrappers and active scope helpers into smaller modules.
-- Preserve existing `app.*` handlers and route behavior.
-- No behavior changes.
+- Moved active Team/Season scope lifecycle (`loadMeScope`, nav rendering, scope persistence, stale-DOM clearing, scoped surface reloads) into `coachingStateMixin`.
+- Kept auth/data wrappers in `apiMixin`; `loadMatches()` still consumes `activeScope` to add `team_id` / `season_id` query params.
+- Preserved existing `app.*` handlers and route behavior through the same `window.app` mixin assembly; no build tooling added.
 
 **Tests:**
 
-- `node --check` for all touched JS.
-- No missing `app.*` handlers.
-- Existing coach workspace smoke tests pass.
+- `node --check script.js js/api.js js/coaching/state.js`
+- `pytest tests/test_phase5_frontend_modularization_static.py tests/test_me_scope.py tests/test_active_scope_ui_static.py -q`
+- Phase 4 active-scope Playwright smoke/captures
 
 ### PR 5.2: Split Coaching Domain Modules
 
