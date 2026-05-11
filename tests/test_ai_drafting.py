@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -737,3 +738,235 @@ def test_ai_context_review_ref_obeys_source_visibility_and_target_player_scope(c
     assert wrong_player_result["audit"]["excluded_by_policy"] == [
         {"type": "review", "id": str(review["id"]), "status": "excluded", "reason": "unlinked_player"}
     ]
+
+
+def _enable_ai_provider(team_id: str, actor: dict, *, targets: list[str] | None = None, never_draft: list[str] | None = None) -> None:
+    from services import team_settings
+
+    team_settings.set_setting(team_id, "ai.drafting_enabled", True, actor_user=actor)
+    team_settings.set_setting(team_id, "ai.allowed_draft_targets", targets or ["player_summary", "what_happened"], actor_user=actor)
+    team_settings.set_setting(team_id, "ai.never_draft_for_visibilities", never_draft or ["private"], actor_user=actor)
+
+
+def test_ai_provider_successful_mock_draft_records_succeeded_run(client, monkeypatch):
+    from services import ai_providers
+
+    _create_team("ai-provider-success")
+    actor = _create_member("ai-provider-success", "ai_provider_success_admin")
+    _enable_ai_provider("ai-provider-success", actor)
+    data = _seed_ai_context_objects("ai-provider-success", actor, prefix="ai-provider-success")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER_MODEL", "mock-model-test")
+
+    result = ai_providers.generate_draft(
+        team_id="ai-provider-success",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[{"type": "note", "id": data["note"]["id"]}],
+    )
+
+    assert result["ok"] is True
+    assert "Mock draft" in result["text"]
+    assert result["run"]["status"] == "succeeded"
+    assert result["run"]["provider"] == "mock"
+    assert result["run"]["model"] == "mock-model-test"
+    assert result["run"]["input_tokens"] >= 1
+    assert result["run"]["output_tokens"] >= 1
+
+    with _db.connect() as conn:
+        row = conn.execute("SELECT * FROM ai_drafting_runs WHERE id = ?", (result["run"]["id"],)).fetchone()
+    assert row["status"] == "succeeded"
+    assert row["error_message"] is None
+
+
+def test_ai_provider_failure_is_recorded_without_raw_response_or_prompt(client, monkeypatch, caplog):
+    from services import ai_providers
+
+    _create_team("ai-provider-failure")
+    actor = _create_member("ai-provider-failure", "ai_provider_failure_admin")
+    _enable_ai_provider("ai-provider-failure", actor)
+    canary = "PRIVATE_RAW_PROMPT_PROVIDER_SECRET_CANARY"
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER_MODEL", "mock-model-test")
+    provider = ai_providers.MockAIProvider(fail_with=f"provider_output:{canary}")
+
+    result = ai_providers.generate_draft(
+        team_id="ai-provider-failure",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[],
+        instruction=canary,
+        provider=provider,
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "provider_error"
+    assert result["text"] == ""
+    assert result["run"]["status"] == "failed"
+    serialized = json.dumps(result, sort_keys=True)
+    assert canary not in serialized
+    assert "provider_output" not in serialized
+    with _db.connect() as conn:
+        raw_rows = [dict(row) for row in conn.execute("SELECT * FROM ai_drafting_runs")]
+    assert canary not in json.dumps(raw_rows, sort_keys=True)
+    assert canary not in caplog.text
+
+
+def test_ai_provider_timeout_returns_safe_response_and_records_failure(client, monkeypatch):
+    from services import ai_providers
+
+    _create_team("ai-provider-timeout")
+    actor = _create_member("ai-provider-timeout", "ai_provider_timeout_admin")
+    _enable_ai_provider("ai-provider-timeout", actor)
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER_TIMEOUT_SECONDS", "0.01")
+
+    started = time.monotonic()
+    result = ai_providers.generate_draft(
+        team_id="ai-provider-timeout",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[],
+        provider=ai_providers.MockAIProvider(delay_seconds=0.1),
+    )
+    elapsed = time.monotonic() - started
+
+    assert result["ok"] is False
+    assert result["error_code"] == "provider_timeout"
+    assert result["text"] == ""
+    assert result["run"]["status"] == "failed"
+    assert result["run"]["error_message"] == "AI provider timed out"
+    assert elapsed < 0.05
+
+
+def test_ai_provider_passes_timeout_to_adapter_without_background_thread(client, monkeypatch):
+    from services import ai_providers
+
+    class TimeoutAwareProvider:
+        def __init__(self):
+            self.timeout_seconds = None
+
+        def generate(self, request, *, timeout_seconds=None):
+            self.timeout_seconds = timeout_seconds
+            raise ai_providers.AIProviderTimeout("adapter timeout")
+
+    _create_team("ai-provider-timeout-contract")
+    actor = _create_member("ai-provider-timeout-contract", "ai_provider_timeout_contract_admin")
+    _enable_ai_provider("ai-provider-timeout-contract", actor)
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER_TIMEOUT_SECONDS", "0.75")
+    provider = TimeoutAwareProvider()
+
+    result = ai_providers.generate_draft(
+        team_id="ai-provider-timeout-contract",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[],
+        provider=provider,
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "provider_timeout"
+    assert provider.timeout_seconds == 0.75
+
+
+def test_ai_provider_preserves_development_profile_audit_refs(client, monkeypatch):
+    from services import ai_providers
+
+    _create_team("ai-provider-development-profile")
+    actor = _create_member("ai-provider-development-profile", "ai_provider_development_profile_admin")
+    _enable_ai_provider("ai-provider-development-profile", actor)
+    data = _seed_ai_context_objects("ai-provider-development-profile", actor, prefix="ai-provider-development-profile")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    result = ai_providers.generate_draft(
+        team_id="ai-provider-development-profile",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[{"type": "development_profile", "id": data["player"]["id"]}],
+    )
+
+    assert result["ok"] is True
+    assert {ref["type"] for ref in result["run"]["evidence_refs"]} == {"development_profile"}
+
+
+def test_ai_provider_fail_closed_without_provider_calls_for_disabled_absent_or_missing_secret(client, monkeypatch):
+    from services import ai_providers
+
+    class CountingProvider(ai_providers.MockAIProvider):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def generate(self, request):
+            self.calls += 1
+            return super().generate(request)
+
+    _create_team("ai-provider-gates")
+    actor = _create_member("ai-provider-gates", "ai_provider_gates_admin")
+    provider = CountingProvider()
+    monkeypatch.delenv("REPLAY_AI_PROVIDER", raising=False)
+    monkeypatch.delenv("REPLAY_AI_PROVIDER_API_KEY", raising=False)
+
+    disabled = ai_providers.generate_draft(
+        team_id="ai-provider-gates",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[],
+        provider=provider,
+    )
+    assert disabled["ok"] is False
+    assert disabled["error_code"] == "drafting_disabled"
+
+    _enable_ai_provider("ai-provider-gates", actor)
+    absent = ai_providers.generate_draft(
+        team_id="ai-provider-gates",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[],
+        provider=provider,
+    )
+    assert absent["ok"] is False
+    assert absent["error_code"] == "provider_not_configured"
+
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "openai")
+    missing_secret = ai_providers.generate_draft(
+        team_id="ai-provider-gates",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[],
+        provider=provider,
+    )
+    assert missing_secret["ok"] is False
+    assert missing_secret["error_code"] == "provider_secret_missing"
+    assert provider.calls == 0
+
+
+def test_ai_provider_unknown_non_mock_provider_fails_closed_without_call(client, monkeypatch):
+    from services import ai_providers
+
+    _create_team("ai-provider-unknown")
+    actor = _create_member("ai-provider-unknown", "ai_provider_unknown_admin")
+    _enable_ai_provider("ai-provider-unknown", actor)
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "future-provider")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER_API_KEY", "SECRET_AI_KEY_CANARY")
+
+    result = ai_providers.generate_draft(
+        team_id="ai-provider-unknown",
+        actor_user=actor,
+        draft_target="player_summary",
+        target_visibility="team",
+        evidence_refs=[],
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "provider_unsupported"
+    assert "SECRET_AI_KEY_CANARY" not in json.dumps(result, sort_keys=True)

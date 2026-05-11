@@ -23,7 +23,18 @@ RUN_STATUSES = {"queued", "running", "succeeded", "failed"}
 MAX_EVIDENCE_REFS = 50
 MAX_REF_STRING_LENGTH = 128
 _ALLOWED_EVIDENCE_KEYS = ("type", "id", "visibility", "status", "reason")
-_ALLOWED_EVIDENCE_TYPES = {"note", "clip", "playlist", "match", "match_summary", "goal", "player", "review", "background_job"}
+_ALLOWED_EVIDENCE_TYPES = {
+    "note",
+    "clip",
+    "playlist",
+    "match",
+    "match_summary",
+    "goal",
+    "player",
+    "development_profile",
+    "review",
+    "background_job",
+}
 _ALLOWED_EVIDENCE_VISIBILITIES = {"private", "team", "player", "unlisted", "public"}
 _ALLOWED_EVIDENCE_STATUSES = {"included", "excluded", "redacted", "unavailable"}
 _ALLOWED_EVIDENCE_REASONS = {

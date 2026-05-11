@@ -53,6 +53,10 @@ seeds the setting, then the env var is ignored. Edit through the UI thereafter.
 | `LIVE_AUTH_ALLOW_INSECURE` | `0` | Set to `1` to allow `/api/live/auth` to accept publish requests when `LIVE_AUTH_SECRET` is unset. **Dev-only.** A warning is logged on first use. Never enable in production or on a publicly reachable MediaMTX. |
 | `MAX_ACTIVE_TOKENS` | `1000` | Hard cap on concurrent admin/uploader sessions in the in-memory token store. Oldest tokens are evicted when the cap is hit. |
 | `REPLAY_STATIC_EXPORT_DIR` | (empty) | Optional path the replay container populates at startup with the SPA's static assets (`script.js`, `styles.css`, split `styles/`, `js/`, `logo.png`) so Caddy can serve `/static/*` directly via `sendfile()`. Leave unset for the single-container layout where uvicorn serves static. |
+| `REPLAY_AI_PROVIDER` | (empty) | Phase 8.3 AI drafting provider selector. Empty fails closed. `mock` enables the deterministic test/local provider only. Non-mock providers remain fail-closed until a provider-specific PR documents data handling and implements the adapter. |
+| `REPLAY_AI_PROVIDER_API_KEY` | (empty) | Provider secret for non-mock providers. Must come from env/secret config only; never store in team settings JSON, DB rows, logs, or job payloads. Mock does not require this. |
+| `REPLAY_AI_PROVIDER_MODEL` | `mock-model-v1` for mock | Provider model identifier stored in audit metadata; do not put secrets in this value. |
+| `REPLAY_AI_PROVIDER_TIMEOUT_SECONDS` | `15` | Per-call provider timeout. Timeout failures record a safe `provider_timeout` run state without raw prompt/provider output text. |
 | `DATABASE_URL` | (empty) | Phase 6.2 Postgres lane URL. Use `postgresql://` / `postgresql+psycopg://` for explicit Postgres smoke tests. SQLite remains the live app runtime until the later Alembic/runtime migration PRs land. |
 | `REPLAY_DB_BACKEND` | `sqlite` | Phase 6.2 selector for `sqlite` vs `postgres` lane configuration. `postgres` enables explicit Postgres lane helpers/tests but does not switch the app runtime yet. |
 | `POSTGRES_DB` | `replay` | Optional `docker-compose-intel.yml --profile postgres` database name for the local Postgres lane. |
@@ -133,6 +137,36 @@ DATABASE_URL=postgresql://replay:replay-local-dev@localhost:5432/replay \
 ```
 
 `db.connect()` and app startup still run the SQLite migration chain. `db.connect_postgres()` is an explicit Phase 6.2 lane helper for connection/config smoke tests and target-dialect checks such as JSONB plus `FOR UPDATE SKIP LOCKED`; full runtime cutover remains future Phase 6 work.
+
+## AI Drafting Provider Configuration (Phase 8.3)
+
+AI drafting remains service-only in Phase 8.3: there are no browser/API routes, no streaming, no chat/message persistence, and no storage of raw prompts or provider outputs. Team admins must still explicitly enable drafting in team settings before any provider call can occur.
+
+Provider calls fail closed when any of the following is true:
+
+- `ai.drafting_enabled` is false for the target team.
+- The requested draft target/visibility is not allowed by team settings.
+- `REPLAY_AI_PROVIDER` is empty.
+- A non-mock provider is selected without `REPLAY_AI_PROVIDER_API_KEY`.
+- A non-mock provider is selected before its adapter and data-handling review have shipped.
+
+Privacy/data-handling expectations before enabling a non-mock provider:
+
+- Provider secrets must come only from environment or secret-manager injection. Do not store them in `team_settings`, job payloads, app logs, or DB rows.
+- Normal logs and `ai_drafting_runs` rows must contain only bounded status/error codes, provider/model labels, token counts, and compact audit refs. Never log or persist raw prompts, provider responses, private source text, `coach_private_note`, or secrets.
+- Provider adapters must enforce `REPLAY_AI_PROVIDER_TIMEOUT_SECONDS` at the network/client layer. The orchestration service passes the timeout into the adapter and records `provider_timeout` safely, but it does not dispatch provider calls into cancellable background threads.
+- Review the provider's retention, training, regional processing, and subprocessors terms before use. If the provider can retain prompts/responses, update the team consent/settings language before enabling it.
+- Keep secure debug modes off by default; any future debug capture must be explicit, access-controlled, time-bounded, and documented separately.
+
+Local mock smoke configuration:
+
+```bash
+REPLAY_AI_PROVIDER=mock
+REPLAY_AI_PROVIDER_MODEL=mock-model-v1
+REPLAY_AI_PROVIDER_TIMEOUT_SECONDS=15
+```
+
+The mock provider is deterministic and requires no secret. It is intended for tests/local validation only.
 
 ## Reverse Proxy (Caddy — bundled)
 

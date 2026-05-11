@@ -6,6 +6,18 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Phase 8.3 — Provider Interface And Mock Provider ✅ COMPLETE (2026-05-11)
+
+Adds the service-only draft-generation boundary on top of the Phase 8.2 context builder.
+
+- **Provider service** (`services/ai_providers.py`): defines provider config/result/request dataclasses, provider protocol, deterministic `MockAIProvider`, environment-based config resolution, adapter-enforced timeout handling, and `generate_draft(...)` orchestration.
+- **Fail-closed gates**: no provider call occurs unless the target team has explicitly enabled drafting, the requested target/visibility is allowed, and `REPLAY_AI_PROVIDER` is configured. Mock requires no secret; non-mock providers require `REPLAY_AI_PROVIDER_API_KEY` and remain unsupported/fail-closed until a later provider-specific PR.
+- **Privacy-safe audit**: `generate_draft(...)` creates/starts/succeeds/fails `ai_drafting_runs` around real provider execution, returns draft text to the caller, and persists only provider/model, bounded token counts, safe error codes/messages, and compact audit refs — never raw prompts, instructions, provider responses, private source text, or secrets.
+- **Docs/config**: `.env.example` and deployment docs now document provider env vars plus provider data-handling/retention expectations before enabling non-mock providers.
+- **Validation**: `pytest tests/test_ai_drafting.py -q -k 'provider or ai_provider or ai_draft_provider'`; `pytest tests/test_ai_drafting.py -q`; Python compile; `git diff --check`.
+
+**Next**: Phase 8.4 — Drafting API.
+
 ## Platform Phase 8.2 — Privacy-Safe AI Context Builder ✅ COMPLETE (2026-05-11)
 
 Adds the service-only context assembly layer needed before provider-backed AI drafting.
@@ -15,7 +27,7 @@ Adds the service-only context assembly layer needed before provider-backed AI dr
 - **Audit metadata**: returns source refs included, excluded by visibility, excluded by cross-team scope, or excluded by permanent policy using type/id/status/reason only.
 - **Validation**: `pytest tests/test_ai_drafting.py -q -k ai_context`; focused ai drafting suite, Python compile, and `git diff --check` before commit.
 
-**Next**: Phase 8.3 — Provider wiring / draft generation boundary.
+**Next**: Phase 8.3 — Provider wiring / draft generation boundary. ✅ complete
 
 ## Platform Hardening Phase 6.4 — SQLite To Postgres Migration Command ✅ COMPLETE (2026-05-11)
 
