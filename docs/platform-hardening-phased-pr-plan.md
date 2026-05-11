@@ -1212,6 +1212,8 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Preserve username-only legacy accounts.
 - Extend `/api/me` profile payload without exposing sensitive data.
 
+**Closeout (2026-05-11):** Implemented `user_profiles` as a companion table in migration v20 with nullable email/contact/name/preferences fields and partial unique `normalized_email` enforcement. `/api/me` now includes a safe `profile` payload (no password hashes or normalized email), and `PATCH /api/me/profile` lets the signed-in user update only allowed profile contact fields while Pydantic forbids role/membership escalation attempts. Legacy username-only accounts remain valid with an all-null public profile until users add contact data.
+
 **Tests:**
 
 - Email normalization and uniqueness.

@@ -509,6 +509,7 @@ def build_me_scope_summary(request: Request | Any | None, user: dict[str, Any]) 
 
     return {
         "user": user_payload,
+        "profile": _db.public_user_profile(_db.get_user_profile(user_id)) if user_id else _db.public_user_profile({}),
         "memberships": membership_payload,
         "teams": teams_payload,
         "seasons": [season for team_id in sorted(seasons_by_team) for season in seasons_by_team[team_id]],

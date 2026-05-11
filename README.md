@@ -17,6 +17,7 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **Coaching workspace** — coaches can create roster players, link family/player accounts, save timestamped notes with telestrator overlays, build playable review playlists, and publish feedback to linked viewers
 - **Active team/season scope** — multi-team coaches/admins can switch the active workspace from the navigation bar; scoped coach/admin/feedback data reloads without showing stale previous-team content
 - **AI drafting MVP** — team-scoped settings gate coach-only draft generation, bounded provider calls use privacy-safe context/audit rows, and the Coach Review composer exposes review-only insert controls so output is never published until a coach saves it
+- **Account profile foundation** — `/api/me` includes a safe self-profile companion payload with nullable legacy email support, normalized email uniqueness, and a self-service profile patch endpoint that cannot mutate roles or memberships
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
 - **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
 - **Public downloads** — optional direct MP4 download buttons for ready games with normal browser resume support for large files
@@ -247,7 +248,8 @@ Keep new backend behavior in the appropriate router/service module instead of ad
 | `/api/live/status` | GET | Whether a live stream is currently active |
 | `/api/live/hls/{path}` | GET | Same-origin reverse proxy for the LL-HLS playlist + segments |
 | `/api/live/auth` | POST | Webhook MediaMTX calls to authorise an RTMP publish |
-| `/api/me` | GET | Signed-in user scope summary with eligible teams/seasons and active scope |
+| `/api/me` | GET | Signed-in user scope summary with safe profile payload, eligible teams/seasons, and active scope |
+| `/api/me/profile` | PATCH | Signed-in user: update nullable profile contact fields; roles and memberships are not editable here |
 | `/api/me/scope` | PUT | Persist the signed-in user's active team/season selection |
 | `/api/admin/live/config` | GET | Admin: view stream key, RTMP path, and live config |
 | `/api/admin/live/rotate-key` | POST | Admin: rotate the stream key (invalidates current publisher) |

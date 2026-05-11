@@ -1191,11 +1191,39 @@ def _migrate_v19(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v20(conn: sqlite3.Connection):
+    """Add Phase 9.1 companion user profile rows."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id TEXT PRIMARY KEY,
+            email TEXT,
+            normalized_email TEXT,
+            email_verified_at TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            phone TEXT,
+            timezone TEXT,
+            locale TEXT,
+            preferred_contact_method TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_normalized_email "
+        "ON user_profiles(normalized_email) WHERE normalized_email IS NOT NULL"
+    )
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
     _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18, _migrate_v19,
+    _migrate_v20,
 ]
 
 
@@ -1547,6 +1575,127 @@ def get_user_by_id(user_id: str) -> dict | None:
         return _row_to_user(row) if row else None
 
 
+class DuplicateEmailError(ValueError):
+    """Raised when a profile email is already assigned to another account."""
+
+
+_PROFILE_FIELDS = {
+    "email",
+    "first_name",
+    "last_name",
+    "phone",
+    "timezone",
+    "locale",
+    "preferred_contact_method",
+}
+
+
+def _normalize_profile_email(email: str | None) -> str | None:
+    if email is None:
+        return None
+    cleaned = email.strip()
+    return cleaned.lower() or None
+
+
+def _row_to_profile(row: sqlite3.Row | None, user_id: str) -> dict:
+    if row is None:
+        return {
+            "user_id": user_id,
+            "email": None,
+            "normalized_email": None,
+            "email_verified_at": None,
+            "first_name": None,
+            "last_name": None,
+            "phone": None,
+            "timezone": None,
+            "locale": None,
+            "preferred_contact_method": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+    return dict(row)
+
+
+def public_user_profile(profile: dict) -> dict:
+    return {
+        "email": profile.get("email"),
+        "email_verified_at": profile.get("email_verified_at"),
+        "first_name": profile.get("first_name"),
+        "last_name": profile.get("last_name"),
+        "phone": profile.get("phone"),
+        "timezone": profile.get("timezone"),
+        "locale": profile.get("locale"),
+        "preferred_contact_method": profile.get("preferred_contact_method"),
+    }
+
+
+def get_user_profile(user_id: str) -> dict:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)).fetchone()
+        return _row_to_profile(row, user_id)
+
+
+def upsert_user_profile(user_id: str, fields: dict[str, Any]) -> dict:
+    updates = {key: fields[key] for key in _PROFILE_FIELDS if key in fields}
+    if "email" in updates:
+        email = (updates["email"] or "").strip() or None
+        updates["email"] = email
+        updates["normalized_email"] = _normalize_profile_email(email)
+    now = _now_iso()
+    with connect() as conn:
+        if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+            raise ValueError("Unknown user")
+        existing = conn.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)).fetchone()
+        if not updates and existing is not None:
+            return dict(existing)
+        if not updates:
+            updates = {}
+        merged = _row_to_profile(existing, user_id)
+        merged.update(updates)
+        merged["created_at"] = merged.get("created_at") or now
+        merged["updated_at"] = now
+        try:
+            conn.execute(
+                """
+                INSERT INTO user_profiles (
+                    user_id, email, normalized_email, email_verified_at, first_name, last_name,
+                    phone, timezone, locale, preferred_contact_method, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    email = excluded.email,
+                    normalized_email = excluded.normalized_email,
+                    first_name = excluded.first_name,
+                    last_name = excluded.last_name,
+                    phone = excluded.phone,
+                    timezone = excluded.timezone,
+                    locale = excluded.locale,
+                    preferred_contact_method = excluded.preferred_contact_method,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    merged.get("email"),
+                    merged.get("normalized_email"),
+                    merged.get("email_verified_at"),
+                    merged.get("first_name"),
+                    merged.get("last_name"),
+                    merged.get("phone"),
+                    merged.get("timezone"),
+                    merged.get("locale"),
+                    merged.get("preferred_contact_method"),
+                    merged.get("created_at"),
+                    merged.get("updated_at"),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "user_profiles.normalized_email" in str(exc) or "idx_user_profiles_normalized_email" in str(exc):
+                raise DuplicateEmailError(str(exc)) from exc
+            raise
+        conn.commit()
+        row = conn.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)).fetchone()
+        return _row_to_profile(row, user_id)
+
+
 def user_has_team_membership(user_id: str, team_id: str | None) -> bool:
     if team_id is None:
         return bool(get_user_by_id(user_id))
@@ -1595,6 +1744,7 @@ def delete_user(user_id: str) -> bool:
     with connect() as conn:
         conn.execute("DELETE FROM player_user_links WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM coaching_reviews WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM user_profiles WHERE user_id = ?", (user_id,))
         cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return cursor.rowcount > 0
