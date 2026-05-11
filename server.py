@@ -43,6 +43,7 @@ from routers.coach_clips import router as coach_clips_router
 from routers.coach_goals import router as coach_goals_router
 from routers.coach_notes import router as coach_notes_router
 from routers.coach_playlists import router as coach_playlists_router
+from routers.coach_summaries import router as coach_summaries_router
 from routers.live import router as live_router
 from routers.matches import router as matches_router
 from routers.team_members import router as team_members_router
@@ -382,6 +383,7 @@ app.include_router(coach_clips_router)
 app.include_router(coach_goals_router)
 app.include_router(coach_notes_router)
 app.include_router(coach_playlists_router)
+app.include_router(coach_summaries_router)
 app.include_router(live_router)
 app.include_router(matches_router)
 app.include_router(uploads_router)
@@ -1600,85 +1602,10 @@ def _sanitize_match_summary_sources(summary: dict, team_id: str | None) -> dict:
     return out
 
 
-@app.get("/api/coach/match-summaries")
-async def coach_list_match_summaries(request: Request, match_id: str | None = None):
-    _user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    if match_id:
-        _require_match_in_team(match_id, team_id)
-    summaries = [s for s in _db.list_coaching_match_summaries(match_id=match_id) if _same_team(s, team_id)]
-    return {"summaries": [_sanitize_match_summary_sources(s, team_id) for s in summaries]}
-
-
-@app.get("/api/coach/match-summaries/{summary_id}")
-async def coach_get_match_summary(summary_id: int, request: Request):
-    _user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    summary = _sanitize_match_summary_sources(_require_summary_in_team(summary_id, team_id), team_id)
-    return {"summary": summary}
-
-
-@app.post("/api/coach/match-summaries")
-async def coach_create_match_summary(request: Request, body: CreateMatchSummaryRequest):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    _require_match_in_team(body.match_id, team_id)
-    payload = body.model_dump()
-    payload["team_id"] = team_id
-    _validate_match_summary_sources(body.match_id, payload, team_id)
-    summary = _db.create_coaching_match_summary(payload, actor=user["username"])
-    _log_activity(
-        "coach.match_summary_created",
-        severity="info",
-        message=f"Match coaching summary created for {summary.get('match_id')}",
-        match_id=summary.get("match_id"),
-        actor=user["username"],
-        metadata={"summary_id": summary.get("id"), "visibility": summary.get("visibility")},
-    )
-    return {"ok": True, "summary": summary}
-
-
-@app.patch("/api/coach/match-summaries/{summary_id}")
-async def coach_update_match_summary(summary_id: int, request: Request, body: UpdateMatchSummaryRequest):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    existing = _require_summary_in_team(summary_id, team_id)
-    updates = body.model_dump(exclude_unset=True)
-    merged_payload = dict(existing)
-    merged_payload.update(updates)
-    _validate_match_summary_has_text(merged_payload)
-    source_payload = dict(existing)
-    source_payload.update({k: v for k, v in updates.items() if k in {"note_ids", "clip_ids", "playlist_ids"}})
-    _validate_match_summary_sources(existing["match_id"], source_payload, team_id)
-    summary = _db.update_coaching_match_summary(summary_id, updates) or existing
-    _log_activity(
-        "coach.match_summary_updated",
-        severity="info",
-        message=f"Match coaching summary updated for {summary.get('match_id')}",
-        match_id=summary.get("match_id"),
-        actor=user["username"],
-        metadata={"summary_id": summary_id, "fields": sorted(updates.keys())},
-    )
-    return {"ok": True, "summary": summary}
-
-
-@app.delete("/api/coach/match-summaries/{summary_id}")
-async def coach_delete_match_summary(summary_id: int, request: Request):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    summary = _require_summary_in_team(summary_id, team_id)
-    _tenancy.assert_can_delete_coach_object(scope, "match_summary", created_by_user_id=summary.get("created_by"))
-    if not _db.delete_coaching_match_summary(summary_id):
-        raise HTTPException(404, "Match summary not found")
-    _log_activity(
-        "coach.match_summary_deleted",
-        severity="info",
-        message=f"Match coaching summary deleted for {summary.get('match_id') if summary else summary_id}",
-        match_id=summary.get("match_id") if summary else None,
-        actor=user["username"],
-        metadata={"summary_id": summary_id},
-    )
-    return {"ok": True}
+# ---------------------------------------------------------------------------
+# Coach match summary routes have moved to ``routers/coach_summaries.py``
+# (PR-BE 8/N).
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
