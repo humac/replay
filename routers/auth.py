@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 import auth as _auth
+import tenancy as _tenancy
 from models import LoginRequest
 
 router = APIRouter()
@@ -25,6 +26,12 @@ async def login(request: Request, body: LoginRequest):
 async def logout(request: Request):
     _auth.revoke_token(request)
     return {"ok": True}
+
+
+@router.get("/api/me")
+async def me(request: Request):
+    user = _auth.require_auth(request)
+    return _tenancy.build_me_scope_summary(request, user)
 
 
 @router.get("/api/auth/check")

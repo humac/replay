@@ -307,6 +307,193 @@ def resolve_scope(
         )
 
 
+def _serialize_team(team: dict[str, Any] | None) -> dict[str, Any] | None:
+    if team is None:
+        return None
+    return {
+        "id": team.get("id"),
+        "slug": team.get("slug") or "",
+        "name": team.get("name") or "",
+        "game_format": team.get("game_format") or "full",
+    }
+
+
+def _serialize_season(season: dict[str, Any] | None) -> dict[str, Any] | None:
+    if season is None:
+        return None
+    return {
+        "id": season.get("id"),
+        "team_id": season.get("team_id"),
+        "name": season.get("name") or "",
+        "starts_on": season.get("starts_on") or "",
+        "ends_on": season.get("ends_on") or "",
+        "created_at": season.get("created_at") or "",
+    }
+
+
+def _serialize_membership(membership: dict[str, Any] | None) -> dict[str, Any] | None:
+    if membership is None:
+        return None
+    role = normalize_team_role(membership.get("role"))
+    return {
+        "id": membership.get("id"),
+        "team_id": membership.get("team_id"),
+        "role": role,
+        "capabilities": sorted(ROLE_CAPABILITIES.get(role, set())),
+        "created_at": membership.get("created_at") or "",
+    }
+
+
+def _serialize_scope(scope: Scope | None) -> dict[str, Any] | None:
+    if scope is None:
+        return None
+    return {
+        "team": _serialize_team(scope.team),
+        "season": _serialize_season(scope.season),
+        "membership": _serialize_membership(scope.membership),
+        "effective_role": scope.effective_role,
+        "capabilities": sorted(ROLE_CAPABILITIES.get(scope.effective_role, set())),
+        "is_global_admin": scope.is_global_admin,
+    }
+
+
+def build_me_scope_summary(request: Request | Any | None, user: dict[str, Any]) -> dict[str, Any]:
+    """Return the authenticated user's safe team/season scope summary.
+
+    This is intentionally read-only and self-scoped. It lists only the
+    caller's memberships and eligible teams/seasons; it never exposes other
+    users, player links, password hashes, or admin membership-list fields.
+    """
+    user_id = str(user.get("user_id") or user.get("id") or "")
+    role_value = user.get("role") or ""
+    roles = sorted({part.strip().lower() for part in role_value.split(",") if part.strip()})
+    is_global_admin = _is_global_admin(user)
+
+    with _db.connect() as conn:
+        db_user = conn.execute(
+            "SELECT id, username, role, display_name, enabled, last_team_id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone() if user_id else None
+        if db_user is not None:
+            role_value = db_user["role"] or role_value
+            roles = sorted({part.strip().lower() for part in role_value.split(",") if part.strip()})
+            user_payload = {
+                "id": db_user["id"],
+                "username": db_user["username"],
+                "display_name": db_user["display_name"] or "",
+                "role": role_value,
+                "roles": roles,
+                "is_global_admin": "admin" in roles,
+                "last_team_id": db_user["last_team_id"],
+            }
+        else:
+            user_payload = {
+                "id": user_id,
+                "username": user.get("username") or "",
+                "display_name": user.get("display_name") or "",
+                "role": role_value,
+                "roles": roles,
+                "is_global_admin": is_global_admin,
+                "last_team_id": None,
+            }
+
+        membership_rows = conn.execute(
+            """
+            SELECT
+                m.id, m.team_id, m.user_id, m.role, m.created_at,
+                t.slug AS team_slug, t.name AS team_name, t.game_format AS team_game_format,
+                t.created_at AS team_created_at
+            FROM team_user_memberships AS m
+            JOIN teams AS t ON t.id = m.team_id
+            WHERE m.user_id = ?
+            ORDER BY t.name COLLATE NOCASE ASC, m.team_id ASC, m.role ASC, m.id ASC
+            """,
+            (user_id,),
+        ).fetchall() if user_id else []
+        memberships = [dict(row) for row in membership_rows]
+
+        by_team: dict[str, dict[str, Any]] = {}
+        for membership in memberships:
+            by_team.setdefault(membership["team_id"], {
+                "id": membership["team_id"],
+                "slug": membership.get("team_slug") or "",
+                "name": membership.get("team_name") or "",
+                "game_format": membership.get("team_game_format") or "full",
+                "created_at": membership.get("team_created_at") or "",
+                "memberships": [],
+            })["memberships"].append(membership)
+
+        seasons_by_team: dict[str, list[dict[str, Any]]] = {team_id: [] for team_id in by_team}
+        if by_team:
+            placeholders = ",".join("?" for _ in by_team)
+            season_rows = conn.execute(
+                f"""
+                SELECT * FROM seasons
+                WHERE team_id IN ({placeholders})
+                ORDER BY team_id ASC, starts_on ASC, created_at ASC, name COLLATE NOCASE ASC
+                """,
+                tuple(by_team.keys()),
+            ).fetchall()
+            for row in season_rows:
+                season = _serialize_season(dict(row))
+                if season is not None:
+                    seasons_by_team.setdefault(season["team_id"], []).append(season)
+
+    membership_payload = []
+    for membership in memberships:
+        role = normalize_team_role(membership.get("role"))
+        membership_payload.append({
+            "id": membership.get("id"),
+            "team_id": membership.get("team_id"),
+            "team_slug": membership.get("team_slug") or "",
+            "team_name": membership.get("team_name") or "",
+            "role": role,
+            "capabilities": sorted(ROLE_CAPABILITIES.get(role, set())),
+            "created_at": membership.get("created_at") or "",
+        })
+
+    teams_payload = []
+    for team in by_team.values():
+        best = _best_membership(team["memberships"])
+        role = normalize_team_role(best.get("role") if best else None)
+        teams_payload.append({
+            "id": team["id"],
+            "slug": team["slug"],
+            "name": team["name"],
+            "game_format": team["game_format"],
+            "membership_role": role,
+            "capabilities": sorted(ROLE_CAPABILITIES.get(role, set())),
+            "seasons": seasons_by_team.get(team["id"], []),
+        })
+
+    active_scope = None
+    selection_required = False
+    has_explicit_selector = any(
+        _query_value(request, name)
+        for name in ("team", "team_id", "season_id")
+    )
+    try:
+        active_scope = _serialize_scope(resolve_scope(request, user))
+    except HTTPException as exc:
+        if has_explicit_selector and exc.status_code in {403, 404, 409}:
+            selection_required = False
+        elif exc.status_code == 409 and str(exc.detail) == "Team selection required":
+            selection_required = True
+        elif exc.status_code == 403 and str(exc.detail) == "Team membership required":
+            selection_required = False
+        else:
+            raise
+
+    return {
+        "user": user_payload,
+        "memberships": membership_payload,
+        "teams": teams_payload,
+        "seasons": [season for team_id in sorted(seasons_by_team) for season in seasons_by_team[team_id]],
+        "active_scope": active_scope,
+        "selection_required": selection_required,
+    }
+
+
 def require_team_role(
     request: Request,
     user: dict[str, Any],
