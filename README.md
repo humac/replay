@@ -188,6 +188,21 @@ $REPLAY_DATA_DIR/
         └── second_half.mp4
 ```
 
+## Backend Layout
+
+The FastAPI app is intentionally split so `server.py` stays focused on app wiring, lifespan/startup work, shared path helpers, static/SPA serving, and route domains that have not yet moved. Phase 3 extracted the first focused modules:
+
+- `routers/auth.py` — `/api/login`, `/api/logout`, and `/api/auth/check`
+- `routers/admin.py` — admin-only `/api/users*` user-management endpoints
+- `routers/admin_teams.py` — global-admin team, season, and membership management
+- `services/teams.py` — shared team/season/membership business logic used by both API and `python -m tools.admin`
+- `services/visibility.py` — coaching visibility checks and viewer scrubbing helpers
+- `services/engagement.py` — coach engagement dashboard aggregation
+- `services/thumbnails.py` — coaching note/clip thumbnail path checks and generation helpers
+- `services/activity.py` — persisted admin/activity feed wrappers
+
+Keep new backend behavior in the appropriate router/service module instead of adding more policy logic to `server.py`.
+
 ## API
 
 | Endpoint | Method | Purpose |
