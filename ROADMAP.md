@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 5.3 — Safe CSS Split ✅ COMPLETE (2026-05-10)
+
+Splits a self-contained Coach Engagement stylesheet without introducing build tooling or disturbing the wider monolithic CSS cascade.
+
+- **CSS module** (`styles/coaching-engagement.css`): moves the contiguous Phase 9 Coach Engagement dashboard block, including dark/light theme and responsive rules, out of `styles.css`.
+- **SPA shell** (`index.html`): loads `/static/styles/coaching-engagement.css` after the main stylesheet so existing cascade order is preserved.
+- **Static export** (`server.py`): includes the `styles/` directory in the production static allowlist for Caddy/exported-static deployments.
+- **Validation**: `python -m py_compile server.py`; `node --check script.js js/coaching.js js/coaching/*.js`; `pytest tests/test_phase5_css_split_static.py tests/test_phase5_frontend_modularization_static.py tests/test_active_scope_ui_static.py tests/test_me_scope.py -q`; live curl of `/static/styles/coaching-engagement.css`.
+
+**Next**: Phase 6 — AI-Assisted Coaching Insights.
+
 ## Platform Hardening Phase 5.2 — Coaching Domain Module Assembly ✅ COMPLETE (2026-05-10)
 
 Establishes the no-build domain-module layout for the large Coach/My Feedback frontend before deeper AI UI work.

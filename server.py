@@ -150,6 +150,7 @@ STATIC_EXPORT_DIR = (
 _STATIC_EXPORT_PATHS = (
     "script.js",
     "styles.css",
+    "styles",       # split CSS modules loaded by index.html
     "logo.png",
     "js",           # whole directory (utils.js, api.js, etc.)
 )

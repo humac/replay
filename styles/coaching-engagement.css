@@ -1,0 +1,373 @@
+/* Phase 9 — Coach engagement dashboard polish. Dedicated selectors keep
+   the dashboard independent from roster KPI/table styles while matching the
+   dark native Coach workspace treatment. */
+.coach-engagement-shell {
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+    border-color: rgba(255, 255, 255, 0.10);
+}
+
+.coach-engagement-shell .admin-panel-head {
+    align-items: flex-start;
+    gap: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.coach-engagement-shell .admin-card-sub {
+    max-width: 72ch;
+    margin-top: 0.35rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid rgba(23, 113, 201, 0.24);
+    border-radius: 12px;
+    background: rgba(23, 113, 201, 0.08);
+    color: var(--text-muted);
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+
+.coach-engagement-filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+    gap: 0.75rem;
+    margin-top: 1rem;
+    padding: 0.85rem;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 16px;
+    background: rgba(0, 0, 0, 0.22);
+}
+
+.coach-engagement-filters label {
+    min-width: 0;
+    display: grid;
+    gap: 0.35rem;
+}
+
+.coach-engagement-filters label > span {
+    color: var(--text-muted);
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.coach-engagement-filters select,
+.coach-engagement-filters input[type="date"] {
+    width: 100%;
+    min-height: 44px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 11px;
+    background-color: rgba(8, 11, 18, 0.82);
+    color: var(--text-main);
+    font: inherit;
+    font-size: 0.92rem;
+    padding: 0.66rem 2.45rem 0.66rem 0.8rem;
+    appearance: none;
+    -webkit-appearance: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.coach-engagement-filters select {
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%;
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+}
+
+.coach-engagement-filters input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: invert(1) opacity(0.72);
+}
+
+.coach-engagement-filters select:hover,
+.coach-engagement-filters input[type="date"]:hover {
+    border-color: rgba(23, 113, 201, 0.48);
+    background-color: rgba(13, 18, 28, 0.92);
+}
+
+.coach-engagement-filters select:focus-visible,
+.coach-engagement-filters input[type="date"]:focus-visible {
+    outline: 2px solid rgba(56, 189, 248, 0.75);
+    outline-offset: 2px;
+    border-color: rgba(56, 189, 248, 0.62);
+}
+
+.coach-engagement-dashboard {
+    min-width: 0;
+}
+
+.coach-engagement-kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.9rem;
+}
+
+.coach-engagement-kpi {
+    min-width: 0;
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.95rem;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 16px;
+    background: radial-gradient(circle at 12% 0%, rgba(23, 113, 201, 0.18), transparent 36%), rgba(255, 255, 255, 0.035);
+}
+
+.coach-engagement-kpi-label {
+    color: var(--text-muted);
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.coach-engagement-kpi-value {
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: clamp(1.55rem, 3vw, 2.2rem);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.coach-engagement-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.9rem;
+    align-items: start;
+}
+
+.coach-engagement-card {
+    min-width: 0;
+    padding: 0.9rem;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 16px;
+    background: rgba(0, 0, 0, 0.20);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.12);
+}
+
+.coach-engagement-card--wide {
+    grid-column: 1 / -1;
+}
+
+.coach-engagement-card h4 {
+    margin: 0 0 0.75rem;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.coach-engagement-table-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(23, 113, 201, 0.72) rgba(255, 255, 255, 0.06);
+}
+
+.coach-engagement-table-wrap::-webkit-scrollbar {
+    height: 8px;
+}
+
+.coach-engagement-table-wrap::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 999px;
+}
+
+.coach-engagement-table-wrap::-webkit-scrollbar-thumb {
+    background: linear-gradient(90deg, rgba(23, 113, 201, 0.86), rgba(56, 189, 248, 0.62));
+    border-radius: 999px;
+}
+
+.coach-engagement-table {
+    width: 100%;
+    min-width: 620px;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+}
+
+.coach-engagement-table th,
+.coach-engagement-table td {
+    padding: 0.62rem 0.7rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    text-align: left;
+    vertical-align: top;
+}
+
+.coach-engagement-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: rgba(9, 12, 18, 0.96);
+    color: var(--text-muted);
+    font-family: var(--font-heading);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.coach-engagement-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.coach-engagement-table td:not(:first-child) {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.coach-engagement-list {
+    list-style: none;
+    display: grid;
+    gap: 0.55rem;
+    margin: 0;
+    padding: 0;
+}
+
+.coach-engagement-list-item {
+    min-width: 0;
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.coach-engagement-list-item strong {
+    min-width: 0;
+    color: var(--text-main);
+    font-family: var(--font-heading);
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.coach-engagement-meta-pill {
+    justify-self: start;
+    max-width: 100%;
+    padding: 0.18rem 0.5rem;
+    border: 1px solid rgba(23, 113, 201, 0.30);
+    border-radius: 999px;
+    background: rgba(23, 113, 201, 0.10);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.coach-engagement-preview {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.coach-engagement-list-item--empty {
+    color: var(--text-muted);
+    font-size: 0.84rem;
+    font-style: italic;
+}
+
+.coach-engagement-note {
+    margin: 0.75rem 0 0;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+[data-theme="light"] .coach-engagement-shell {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .coach-engagement-shell .admin-panel-head,
+[data-theme="light"] .coach-engagement-card,
+[data-theme="light"] .coach-engagement-kpi,
+[data-theme="light"] .coach-engagement-filters,
+[data-theme="light"] .coach-engagement-table-wrap,
+[data-theme="light"] .coach-engagement-list-item,
+[data-theme="light"] .coach-engagement-note {
+    border-color: rgba(0, 0, 0, 0.09);
+}
+
+[data-theme="light"] .coach-engagement-shell .admin-card-sub {
+    background: rgba(23, 113, 201, 0.08);
+    border-color: rgba(23, 113, 201, 0.20);
+}
+
+[data-theme="light"] .coach-engagement-filters,
+[data-theme="light"] .coach-engagement-card {
+    background: rgba(255, 255, 255, 0.72);
+}
+
+[data-theme="light"] .coach-engagement-filters select,
+[data-theme="light"] .coach-engagement-filters input[type="date"] {
+    background-color: rgba(255, 255, 255, 0.94);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .coach-engagement-filters input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: none;
+    opacity: 0.72;
+}
+
+[data-theme="light"] .coach-engagement-table th {
+    background: rgba(246, 248, 252, 0.98);
+}
+
+[data-theme="light"] .coach-engagement-table th,
+[data-theme="light"] .coach-engagement-table td {
+    border-bottom-color: rgba(0, 0, 0, 0.07);
+}
+
+[data-theme="light"] .coach-engagement-list-item,
+[data-theme="light"] .coach-engagement-note {
+    background: rgba(0, 0, 0, 0.025);
+}
+
+@media (max-width: 900px) {
+    .coach-engagement-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 640px) {
+    .coach-engagement-shell .admin-panel-head {
+        display: grid;
+    }
+
+    .coach-engagement-filters {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 0.7rem;
+    }
+
+    .coach-engagement-kpis {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .coach-engagement-card {
+        padding: 0.75rem;
+    }
+
+    .coach-engagement-table {
+        min-width: 560px;
+    }
+}
