@@ -1182,6 +1182,8 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Clearly label AI output as draft.
 - No automatic publish/save.
 
+**Closeout (2026-05-11):** Implemented a minimal, non-chat AI drafting panel in the Coach Review composer (`js/coaching.js`, `js/api.js`, `styles.css`). The panel reads active team settings before rendering, stays disabled when `ai.drafting_enabled` is off or no note-field targets are allowed, honors visibility blocks client-side before sending requests, calls only `POST /api/coach/ai/draft`, shows draft output in a review-only textarea, and inserts into structured note fields only after the coach clicks Insert. Nothing is saved or player-visible until the existing Save note flow persists it. Added themed dark/light styling aligned with the existing compact composer, plus Playwright smoke/capture coverage and screenshots under `docs/screenshots/phase-8-5-ai-drafting-ui/`.
+
 **Tests:**
 
 - Coach can draft allowed field.

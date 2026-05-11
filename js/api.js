@@ -525,6 +525,20 @@ export const apiMixin = {
         return resp.json();
     },
 
+    async draftCoachAI(data) {
+        const resp = await this.authFetch('/api/coach/ai/draft', {
+            method: 'POST',
+            headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) {
+            const detail = await resp.json().catch(() => ({}));
+            const message = detail?.detail?.error_message || detail?.detail || 'AI drafting failed';
+            throw new Error(message);
+        }
+        return resp.json();
+    },
+
     async listCoachMatchSummaries(matchId = null) {
         const suffix = matchId ? `?match_id=${encodeURIComponent(matchId)}` : '';
         const resp = await this.authFetch(`/api/coach/match-summaries${suffix}`, {

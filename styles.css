@@ -6735,6 +6735,70 @@ details.diag-row-details[open] > summary::after {
     }
 }
 
+.coach-ai-draft-panel {
+    display: grid;
+    gap: 0.65rem;
+    padding: 0.8rem;
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    border-radius: 14px;
+    background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 42%),
+        rgba(2, 6, 23, 0.42);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.coach-ai-draft-panel.is-disabled {
+    border-color: rgba(148, 163, 184, 0.18);
+    background: rgba(15, 23, 42, 0.42);
+}
+.coach-ai-draft-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.coach-ai-draft-head h5 {
+    margin: 0.1rem 0 0;
+    font-size: 0.98rem;
+    letter-spacing: -0.01em;
+}
+.coach-ai-draft-status {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+.coach-ai-draft-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.coach-ai-draft-actions .mini-action-btn {
+    flex: 1 1 8rem;
+}
+.coach-ai-draft-output {
+    min-height: 5.5rem;
+    resize: vertical;
+}
+.coach-ai-draft-panel select,
+.coach-ai-draft-panel textarea {
+    width: 100%;
+}
+.coach-ai-draft-panel :disabled,
+.coach-ai-draft-panel [aria-disabled="true"] {
+    opacity: 0.58;
+    cursor: not-allowed;
+}
+[data-theme="light"] .coach-ai-draft-panel {
+    border-color: rgba(14, 165, 233, 0.28);
+    background:
+        radial-gradient(circle at top left, rgba(14, 165, 233, 0.13), transparent 45%),
+        rgba(255, 255, 255, 0.82);
+}
+[data-theme="light"] .coach-ai-draft-panel.is-disabled {
+    border-color: rgba(100, 116, 139, 0.24);
+    background: rgba(248, 250, 252, 0.86);
+}
+
 /* ============================================================
  * Sprint 4: fast note composer with collapsed advanced details
  *
