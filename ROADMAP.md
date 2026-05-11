@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 6.3 — Durable Background Jobs ✅ COMPLETE (2026-05-10)
+
+Adds the queue primitives needed before AI drafting workloads rely on retryable asynchronous work.
+
+- **Schema** (`db.py`): `_migrate_v17` creates `background_jobs` with payload versioning, team scope, idempotency, status/attempt counters, leases, heartbeats, result/error fields, due/lease/team indexes, and team-scoped idempotency uniqueness.
+- **Queue service** (`services/jobs.py`): enqueue, team-scoped list/get, internal lease/start, heartbeat, stale-worker-safe complete/fail, cancel, and stuck-job recovery helpers.
+- **Runtime integration** (`server.py`): `/api/jobs*` exposes team-scoped user enqueue/read/cancel only; worker lease/heartbeat/complete/fail routes intentionally return 404 without service auth. Transcode spawns create durable job rows while continuing to execute through the existing in-process transcode path, and `lifespan` runs the recovery sweep every 30 seconds.
+- **Validation**: `pytest tests/test_jobs.py -q` plus targeted transcode/upload regression tests.
+
+**Next**: Phase 6.4 — SQLite To Postgres Migration Command.
+
 ## Post-merge stack audit follow-up — PRs #146–#151 ✅ COMPLETE (2026-05-10)
 
 Follow-up after auditing the merged platform-hardening stack for missed review/fix/docs/screenshot gates.

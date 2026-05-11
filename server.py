@@ -16,10 +16,11 @@ import secrets
 import shutil
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import aiofiles
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -39,6 +40,7 @@ from routers.admin_teams import router as admin_teams_router
 from routers.auth import router as auth_router
 from services import activity as _activity
 from services import engagement as _engagement
+from services import jobs as _jobs
 from services import thumbnails as _thumbs
 from services.visibility import (
     ACTIVE_GOAL_STATUSES as _ACTIVE_GOAL_STATUSES,
@@ -57,7 +59,7 @@ from models import (
     CreateCoachingClipRequest, CreateCoachingNoteRequest, CreateCoachingPlaylistRequest,
     CreateMatchRequest, CreateMatchSummaryRequest, CreatePlayerGoalReflectionRequest,
     CreatePlayerGoalRequest, CreatePlayerRequest, CreatePlayerUserLinkRequest,
-    CreateUploadSessionRequest, LiveAuthRequest,
+    CreateUploadSessionRequest, EnqueueJobRequest, LiveAuthRequest,
     MarkCoachingReviewRequest, StartCaptureRequest, UnblockStreamRequest,
     UpdateCoachingClipRequest, UpdateCoachingNoteRequest, UpdateCoachingPlaylistRequest,
     UpdateMatchRequest, UpdateMatchSummaryRequest, UpdatePlayerGoalRequest,
@@ -113,13 +115,87 @@ def _spawn_task(coro) -> asyncio.Task:
     return task
 
 
+async def _job_recovery_loop(interval_seconds: float = 30.0) -> None:
+    """Periodically recover expired durable job leases during app runtime."""
+    while True:
+        try:
+            result = _jobs.recover_stuck()
+            if result.get("requeued") or result.get("failed"):
+                logger.warning(
+                    "Recovered stuck background jobs: requeued=%s failed=%s",
+                    result.get("requeued", 0),
+                    result.get("failed", 0),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Background job stuck-recovery sweep failed: %s", exc)
+        await asyncio.sleep(interval_seconds)
+
+
+async def _job_heartbeat_loop(job_id: int, worker_id: str, *, interval_seconds: float = 300.0, lease_seconds: int = 3600) -> None:
+    """Keep long in-process jobs from expiring while their worker is still alive."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        if _jobs.heartbeat(job_id, worker_id, lease_seconds=lease_seconds) != 1:
+            logger.warning("Background job %s heartbeat was not accepted for worker %s", job_id, worker_id)
+            return
+
+
 def _spawn_transcode(match_id: str, slot: str, src, dest) -> asyncio.Task:
     """Spawn a tracked transcode task, registering it for per-match cancellation."""
     key = f"{match_id}/{slot}"
-    task = _spawn_task(_transcode_video(match_id, slot, src, dest))
+    team_id = _team_id_for_match(match_id)
+    if not team_id:
+        raise RuntimeError(f"Cannot enqueue transcode job without team scope for match {match_id}")
+    job_id = _jobs.enqueue(
+        "transcode",
+        {"match_id": match_id, "slot": slot, "src": str(src), "dest": str(dest)},
+        team_id=team_id,
+    )
+    worker_id = f"in-process-transcode:{key}:{job_id}"
+    task = _spawn_task(_run_transcode_job(job_id, worker_id, match_id, slot, src, dest))
     _transcode_tasks[key] = task
-    task.add_done_callback(lambda _: _transcode_tasks.pop(key, None))
+    def _cleanup(_):
+        _transcode_tasks.pop(key, None)
+    task.add_done_callback(_cleanup)
     return task
+
+
+async def _run_transcode_job(job_id: int, worker_id: str, match_id: str, slot: str, src, dest) -> None:
+    """Bridge a durable transcode job row to the existing in-process transcode path."""
+    job = _jobs.start(job_id, worker_id, lease_seconds=3600)
+    if job is None:
+        logger.warning("Transcode job %s was not pending when task started", job_id)
+        return
+    match = _db.get_match_by_id(match_id)
+    if not match or str(match.get("team_id")) != str(job["team_id"]):
+        _jobs.fail(job_id, worker_id, "transcode resource no longer belongs to job team")
+        return
+    heartbeat_task = asyncio.create_task(_job_heartbeat_loop(job_id, worker_id))
+    try:
+        await _transcode_video(match_id, slot, src, dest)
+    except asyncio.CancelledError:
+        _jobs.fail(job_id, worker_id, "transcode task cancelled")
+        raise
+    except Exception as exc:
+        _jobs.fail(job_id, worker_id, str(exc))
+        raise
+    finally:
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+    refreshed = _db.get_match_by_id(match_id)
+    status = _get_video_status(refreshed, slot) if refreshed else None
+    if status == "ready":
+        _jobs.complete(job_id, worker_id, {"match_id": match_id, "slot": slot, "status": status})
+    else:
+        error_text = "transcode finished without ready status"
+        if refreshed:
+            error_info = (refreshed.get("video_errors") or {}).get(slot) if isinstance(refreshed.get("video_errors"), dict) else None
+            if error_info:
+                error_text = json.dumps(error_info, separators=(",", ":"))
+        _jobs.fail(job_id, worker_id, error_text)
 
 
 STATIC_DIR = Path(__file__).parent
@@ -267,10 +343,14 @@ async def lifespan(application: FastAPI):
         videos_dir=VIDEOS_DIR, originals_dir=ORIGINALS_DIR, load_matches=_load_matches,
     ))
     sweeper = asyncio.create_task(_streams.sweeper_task())
+    job_recovery = asyncio.create_task(_job_recovery_loop())
     try:
         yield
     finally:
         sweeper.cancel()
+        job_recovery.cancel()
+        with suppress(asyncio.CancelledError):
+            await job_recovery
         await _media.cancel_active_transcodes()
         pending = [t for t in _background_tasks if not t.done()]
         for t in pending:
@@ -283,6 +363,185 @@ app = FastAPI(title="Replay", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(admin_teams_router)
+
+
+def _serialize_job_for_api(job: dict) -> dict:
+    payload = job.get("payload") or {}
+    if job.get("kind") == "transcode":
+        payload = {key: payload.get(key) for key in ("match_id", "slot") if payload.get(key) is not None}
+    return {
+        "id": job["id"],
+        "kind": job["kind"],
+        "team_id": job["team_id"],
+        "status": job["status"],
+        "attempts": job["attempts"],
+        "max_attempts": job["max_attempts"],
+        "payload": payload,
+        "payload_version": job.get("payload_version", 1),
+        "idempotency_key": job.get("idempotency_key"),
+        "scheduled_at": job.get("scheduled_at"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at"),
+        "result": job.get("result"),
+        "error_text": job.get("error_text"),
+    }
+
+
+JOB_KIND_CAPABILITIES = {
+    "ai_draft": "coach_object:write",
+    "thumbnail": "match:write",
+    "transcode": "match:write",
+}
+
+
+def _job_write_capability(kind: str) -> str:
+    try:
+        return JOB_KIND_CAPABILITIES[kind]
+    except KeyError as exc:
+        raise HTTPException(422, "Unsupported job kind") from exc
+
+
+def _normalize_job_payload(kind: str, payload: dict, team_id: str) -> dict:
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    if len(payload_json.encode("utf-8")) > 10_000:
+        raise HTTPException(422, "Job payload is too large")
+    if payload.get("team_id") is not None and str(payload.get("team_id")) != team_id:
+        raise HTTPException(403, "Job payload team does not match resolved team")
+    if kind == "ai_draft":
+        return dict(payload)
+    allowed_keys = {"match_id", "slot", "team_id"} if kind == "transcode" else {"match_id", "slot", "team_id"}
+    extra_keys = set(payload) - allowed_keys
+    if extra_keys:
+        raise HTTPException(422, "Unsupported job payload fields")
+    match_id = str(payload.get("match_id") or "").strip()
+    if not match_id:
+        raise HTTPException(422, "match_id is required")
+    match = _db.get_match_by_id(match_id)
+    if not match or str(match.get("team_id")) != team_id:
+        raise HTTPException(404, "Match not found")
+    normalized = {"match_id": match_id}
+    if payload.get("slot") is not None:
+        normalized["slot"] = str(payload.get("slot")).strip()
+    return normalized
+
+
+def _normalize_scheduled_at(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(422, "scheduled_at must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _require_job_access(request: Request, user: dict, *, team_id: str, kind: str):
+    return _tenancy.resolve_scope(
+        request,
+        user,
+        team_id=team_id,
+        require_role=_job_write_capability(kind),
+        allow_global_admin_override=False,
+    )
+
+
+@app.post("/api/jobs")
+async def enqueue_job(request: Request, body: EnqueueJobRequest):
+    user = _auth.require_auth(request)
+    kind = body.kind
+    payload = body.payload
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        team_id=body.team_id,
+        require_role=_job_write_capability(kind),
+        allow_global_admin_override=False,
+    )
+    team_id = str(scope.team["id"])
+    payload = _normalize_job_payload(kind, payload, team_id)
+    job_id = _jobs.enqueue(
+        kind,
+        payload,
+        team_id=team_id,
+        idempotency_key=body.idempotency_key,
+        scheduled_at=_normalize_scheduled_at(body.scheduled_at),
+        max_attempts=body.max_attempts,
+        payload_version=body.payload_version,
+    )
+    job = _jobs.get(job_id, team_id=team_id)
+    return _serialize_job_for_api(job)
+
+
+@app.get("/api/jobs")
+async def list_jobs(request: Request, team_id: str, status: str | None = None, kind: str | None = None, limit: int = 50):
+    user = _auth.require_auth(request)
+    required_capability = _job_write_capability(kind) if kind else "match:write"
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        team_id=team_id,
+        require_role=required_capability,
+        allow_global_admin_override=False,
+    )
+    rows = _jobs.list_for_team(str(scope.team["id"]), status=status, kind=kind, limit=limit)
+    return [_serialize_job_for_api(row) for row in rows]
+
+
+@app.post("/api/jobs/lease")
+async def reject_worker_lease_route():
+    raise HTTPException(404, "Not found")
+
+
+@app.post("/api/jobs/{job_id}/heartbeat")
+@app.post("/api/jobs/{job_id}/complete")
+@app.post("/api/jobs/{job_id}/fail")
+async def reject_worker_lifecycle_route(job_id: int):
+    raise HTTPException(404, "Not found")
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job(request: Request, job_id: int, team_id: str):
+    user = _auth.require_auth(request)
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        team_id=team_id,
+        require_role="team:read",
+        allow_global_admin_override=False,
+    )
+    job = _jobs.get(job_id, team_id=str(scope.team["id"]))
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    _require_job_access(request, user, team_id=str(scope.team["id"]), kind=job["kind"])
+    return _serialize_job_for_api(job)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(request: Request, job_id: int, team_id: str):
+    user = _auth.require_auth(request)
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        team_id=team_id,
+        require_role="team:read",
+        allow_global_admin_override=False,
+    )
+    resolved_team_id = str(scope.team["id"])
+    job = _jobs.get(job_id, team_id=resolved_team_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    _require_job_access(request, user, team_id=resolved_team_id, kind=job["kind"])
+    if job["status"] != "pending":
+        raise HTTPException(409, "Only pending jobs can be cancelled")
+    if _jobs.cancel(job_id, team_id=resolved_team_id) != 1:
+        raise HTTPException(409, "Only pending jobs can be cancelled")
+    refreshed = _jobs.get(job_id, team_id=resolved_team_id)
+    return _serialize_job_for_api(refreshed)
+
 
 # Shared secret MediaMTX sends in X-Internal-Secret when calling /api/live/auth.
 # Configure via mediamtx.yml authHTTPHeaders. If unset the endpoint is open

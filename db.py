@@ -1099,11 +1099,44 @@ def _migrate_v16(conn: sqlite3.Connection):
     _add_column_if_missing(conn, "users", "last_season_id", "TEXT")
 
 
+def _migrate_v17(conn: sqlite3.Connection):
+    """Add durable background job rows for Phase 6.3 in-process workers."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            payload_version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            team_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 3,
+            scheduled_at TEXT NOT NULL,
+            locked_until TEXT,
+            locked_by TEXT,
+            last_heartbeat TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            error_text TEXT,
+            result_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_due ON background_jobs(status, scheduled_at) WHERE status = 'pending'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_lease ON background_jobs(status, locked_until) WHERE status = 'running'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_team ON background_jobs(team_id, status)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency ON background_jobs(team_id, kind, idempotency_key) WHERE idempotency_key IS NOT NULL")
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
-    _migrate_v15, _migrate_v16,
+    _migrate_v15, _migrate_v16, _migrate_v17,
 ]
 
 
