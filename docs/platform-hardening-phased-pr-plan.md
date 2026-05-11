@@ -695,41 +695,40 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - `pytest tests/test_phase5_frontend_modularization_static.py tests/test_me_scope.py tests/test_active_scope_ui_static.py -q`
 - Phase 4 active-scope Playwright smoke/captures
 
-### PR 5.2: Split Coaching Domain Modules
+### PR 5.2: Split Coaching Domain Modules ✅ COMPLETE (2026-05-10)
 
 **Files:**
 
-- Create: `js/coaching/roster.js`
-- Create: `js/coaching/notes.js`
-- Create: `js/coaching/clips.js`
-- Create: `js/coaching/playlists.js`
-- Create: `js/coaching/review.js`
-- Create: `js/coaching/observations.js`
-- Create: `js/coaching/development.js`
-- Create: `js/coaching/goals.js`
-- Create: `js/coaching/match-summaries.js`
-- Create: `js/coaching/engagement.js`
-- Create: `js/coaching/feedback.js`
-- Create: `js/coaching/feedback-player.js`
-- Create: `js/coaching/thumbnails.js`
-- Move/rename: `js/coaching-templates.js` to `js/coaching/templates.js` if practical
-- Modify: `script.js`
-- Modify: `index.html` script tags
-- Test: JS checks and Playwright captures
+- Created: `js/coaching/roster.js`
+- Created: `js/coaching/notes.js`
+- Created: `js/coaching/clips.js`
+- Created: `js/coaching/playlists.js`
+- Created: `js/coaching/review.js`
+- Created: `js/coaching/observations.js`
+- Created: `js/coaching/development.js`
+- Created: `js/coaching/goals.js`
+- Created: `js/coaching/match-summaries.js`
+- Created: `js/coaching/engagement.js`
+- Created: `js/coaching/feedback.js`
+- Created: `js/coaching/feedback-player.js`
+- Created: `js/coaching/thumbnails.js`
+- Modified: `script.js`
+- Modified: `js/coaching.js`
+- Added/updated: `tests/test_phase5_frontend_modularization_static.py`
+- Updated: `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`
 
 **Key changes:**
 
-- Follow `js/tactical-board.js` mixin style.
-- Keep one `window.app` assembly path.
-- Do not add Vite or any build tool.
-- Preserve inline handlers and templates.
-- Do not add a new Coach top-level Goals tab unless a later product decision says to. Keep goals surfaced through the current roster/player-development flow or document the exact existing placement before moving it.
+- Followed the existing no-build mixin style: every domain file exports a named mixin and `script.js` assembles all of them into the same global `window.app` object.
+- Moved Coach Engagement dashboard methods (`renderCoachEngagementFilters`, `coachEngagementFilters`, `renderCoachEngagement`, `loadCoachEngagementDashboard`, `renderCoachEngagementDashboard`) into `js/coaching/engagement.js`.
+- Created the remaining domain files as intentionally-empty mixin anchors so future extractions can move methods one cluster at a time without changing the app assembly path again.
+- Preserved inline handlers and templates; no Vite, bundler, root `package.json`, framework, or top-level Goals tab was introduced.
 
 **Tests:**
 
-- `node --check script.js js/**/*.js` or explicit touched-file checks.
-- Coach Review, observations, goals, summaries, engagement, and My Feedback smoke/captures pass.
-- No missing handlers or null/undefined UI states.
+- `node --check script.js js/coaching.js js/coaching/*.js`
+- `pytest tests/test_phase5_frontend_modularization_static.py tests/test_active_scope_ui_static.py tests/test_me_scope.py -q`
+- Static guard verifies all `index.html` inline `app.*` handlers still have a method definition in assembled modules.
 
 ### PR 5.3: CSS Split Only If Safe
 
