@@ -1051,6 +1051,16 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Audit rows persist success/failure.
 - Team A cannot access Team B runs.
 
+**Status:** Complete in PR 8.1.
+
+**Implementation closeout:**
+
+- Added SQLite migration `_migrate_v19` for `ai_drafting_runs` with team/status/created indexes and optional `background_job_id` linkage.
+- Added `services/ai_drafting.py` service-only lifecycle helpers (`create_run`, `start_run`, `succeed_run`, `fail_run`, `get_run`, `list_runs`) with team membership/capability checks and Phase 7 draft-target validation.
+- Audit metadata stores only bounded evidence references. Raw prompts, provider outputs, `coach_private_note`, body/source text, and chat messages are not persisted.
+- Added migration/import coverage so `ai_drafting_runs` participates in SQLite→Postgres table ordering, scoped validation, and privacy-canary checks.
+- No Phase 8.2+ context builder, provider calls, API routes, chat threads, or message tables were added.
+
 ### PR 8.2: Privacy-Safe Context Builder
 
 **Files:**

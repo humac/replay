@@ -33,8 +33,16 @@ _SCOPE_TABLES = {
     "coaching_match_summaries",
     "background_jobs",
     "team_settings",
+    "ai_drafting_runs",
 }
-_PRIVACY_CANARY_TABLES = {"coaching_notes"}
+_PRIVACY_CANARY_TABLES = {"coaching_notes", "ai_drafting_runs"}
+_AI_DRAFTING_PRIVATE_MARKERS = (
+    "raw_prompt",
+    "provider_output",
+    "private_source_text",
+    "coach_private_note",
+    "private_phase8_raw_prompt_canary",
+)
 
 
 def quote_ident(identifier: str) -> str:
@@ -163,9 +171,12 @@ class InMemoryPostgresMirror:
         return dict(sorted(counts.items()))
 
     def count_privacy_canaries(self, table: str) -> int:
+        rows = self.tables.get(table, [])
+        if table == "ai_drafting_runs":
+            return sum(1 for row in rows if _ai_drafting_row_has_private_payload(row))
         return sum(
             1
-            for row in self.tables.get(table, [])
+            for row in rows
             if row.get("visibility") == "private" and bool(row.get("coach_private_note"))
         )
 
@@ -203,10 +214,22 @@ class PsycopgValidationTarget:
 
     def count_privacy_canaries(self, table: str) -> int:
         with self.conn.cursor() as cur:
-            cur.execute(
-                sql.SQL("SELECT count(*) AS c FROM {} WHERE visibility = %s AND coach_private_note IS NOT NULL AND coach_private_note <> ''").format(sql.Identifier(table)),
-                ("private",),
-            )
+            if table == "ai_drafting_runs":
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT count(*) AS c FROM {}
+                        WHERE lower(coalesce(evidence_refs_json, '') || ' ' || coalesce(error_code, '') || ' ' || coalesce(error_message, '') || ' ' || coalesce(provider, '') || ' ' || coalesce(model, ''))
+                        LIKE ANY(%s)
+                        """
+                    ).format(sql.Identifier(table)),
+                    ([f"%{marker}%" for marker in _AI_DRAFTING_PRIVATE_MARKERS],),
+                )
+            else:
+                cur.execute(
+                    sql.SQL("SELECT count(*) AS c FROM {} WHERE visibility = %s AND coach_private_note IS NOT NULL AND coach_private_note <> ''").format(sql.Identifier(table)),
+                    ("private",),
+                )
             return int(cur.fetchone()["c"])
 
     def count_orphans(self, table: str, column: str, parent_table: str, parent_column: str) -> int:
@@ -240,7 +263,21 @@ def _sqlite_team_distribution(conn: sqlite3.Connection, table: str) -> dict[str,
     return {"__NULL__" if row[0] is None else str(row[0]): int(row[1]) for row in rows}
 
 
+def _ai_drafting_row_has_private_payload(row: dict[str, Any] | sqlite3.Row) -> bool:
+    haystack = " ".join(
+        str(row[key] or "")
+        for key in ("evidence_refs_json", "error_code", "error_message", "provider", "model")
+        if key in row.keys()
+    ).lower()
+    return any(marker in haystack for marker in _AI_DRAFTING_PRIVATE_MARKERS)
+
+
 def _sqlite_privacy_canaries(conn: sqlite3.Connection, table: str) -> int:
+    if table == "ai_drafting_runs":
+        rows = conn.execute(
+            f"SELECT evidence_refs_json, error_code, error_message, provider, model FROM {quote_ident(table)}"
+        ).fetchall()
+        return sum(1 for row in rows if _ai_drafting_row_has_private_payload(row))
     return int(
         conn.execute(
             f"SELECT count(*) FROM {quote_ident(table)} WHERE visibility = ? AND coach_private_note IS NOT NULL AND coach_private_note <> ''",
