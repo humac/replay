@@ -95,7 +95,10 @@ async def request_me_email_verification(request: Request):
     token = _auth.create_email_verification_token_for_user(user_id)
     if not token:
         raise HTTPException(400, "Profile email is required before verification")
-    return {"ok": True, "verification_token": token}
+    payload = {"ok": True}
+    if os.environ.get("REPLAY_DEV_TOKEN_DELIVERY") == "1":
+        payload["verification_token"] = token
+    return payload
 
 
 @router.post("/api/me/email-verification/confirm")

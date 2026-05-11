@@ -92,6 +92,40 @@ async def test_roster_import_preview_valid_csv_returns_plan_without_db_writes(cl
     assert _table_counts() == before
 
 
+async def test_roster_import_without_explicit_season_uses_latest_starts_on_fallback(client):
+    import db as _db
+    from services import teams as _teams
+
+    team = _create_team("roster-season-fallback-team")
+    latest = _teams.create_season(team_id=team["id"], name="Fall", starts_on="2025-08-01")
+    admin = _create_user("roster-season-fallback-admin")
+    _grant(team["id"], admin["id"], "team_admin")
+    payload = {
+        "csv_text": _csv_text([
+            {"display_name": "No Season Player", "jersey_number": "7", "position": "Midfielder", "guardian_email": ""},
+        ])
+    }
+
+    preview = await client.post(
+        f"/api/coach/players/import/preview?team_id={team['id']}",
+        headers=_token_headers(admin),
+        json=payload,
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["summary"]["create_players"] == 1
+
+    committed = await client.post(
+        f"/api/coach/players/import/commit?team_id={team['id']}",
+        headers=_token_headers(admin),
+        json=payload,
+    )
+    assert committed.status_code == 200, committed.text
+    player_id = committed.json()["rows"][0]["player"]["id"]
+    with _db.connect() as conn:
+        player = conn.execute("SELECT season_id FROM players WHERE id = ?", (player_id,)).fetchone()
+    assert player["season_id"] == latest["id"]
+
+
 async def test_roster_import_commit_creates_players_single_guardian_invite_and_accept_links_both(client, monkeypatch):
     import db as _db
 

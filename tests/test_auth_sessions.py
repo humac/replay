@@ -116,9 +116,27 @@ async def test_password_change_revokes_existing_sessions_and_requires_new_passwo
     assert (await client.post("/api/login", json={"username": user["username"], "password": "NewPassword!234"})).status_code == 200
 
 
-async def test_email_verification_stores_token_hash_and_marks_profile(client):
+async def test_email_verification_request_hides_token_without_dev_delivery(client):
     import db as _db
 
+    user = _create_user("email-verify-hidden-token-user")
+    _db.upsert_user_profile(user["id"], {"email": "verify-hidden@example.com"})
+    _token, headers = await _login(client, user["username"])
+
+    resp = await client.post("/api/me/email-verification/request", headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    with _db.connect() as conn:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM email_verification_tokens WHERE user_id = ?", (user["id"],)).fetchall()]
+    assert len(rows) == 1
+    assert rows[0]["token_hash"]
+
+
+async def test_email_verification_stores_token_hash_and_marks_profile(client, monkeypatch):
+    import db as _db
+
+    monkeypatch.setenv("REPLAY_DEV_TOKEN_DELIVERY", "1")
     user = _create_user("email-verify-user")
     _db.upsert_user_profile(user["id"], {"email": "verify-me@example.com"})
     _token, headers = await _login(client, user["username"])

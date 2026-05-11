@@ -322,15 +322,24 @@ async def test_user_job_api_is_team_scoped_and_worker_routes_absent(client, auth
     )
     assert oversized_payload_create.status_code == 422
 
-    allowed_create = await client.post(
+    canary = "RAW_AI_PROMPT_CANARY_private_family_detail_42"
+    blocked_ai_create = await client.post(
         "/api/jobs",
         headers=default_headers,
-        json={"team_id": default_team["id"], "kind": "ai_draft", "payload": {"draft": "x"}, "idempotency_key": "draft:x"},
+        json={"team_id": default_team["id"], "kind": "ai_draft", "payload": {"raw_prompt": canary}, "idempotency_key": "draft:canary"},
     )
-    assert allowed_create.status_code == 200, allowed_create.text
-    created_job = allowed_create.json()
-    assert created_job["team_id"] == default_team["id"]
-    assert created_job["payload"] == {"draft": "x"}
+    assert blocked_ai_create.status_code == 422
+    assert canary not in blocked_ai_create.text
+    with _db.connect() as conn:
+        persisted = conn.execute(
+            "SELECT COUNT(*) AS n FROM background_jobs WHERE payload_json LIKE ?",
+            (f"%{canary}%",),
+        ).fetchone()["n"]
+    assert persisted == 0
+
+    created_job_id = jobs.enqueue("ai_draft", {"draft_ref": "safe-service-created"}, team_id=default_team["id"])
+    created_job = jobs.get(created_job_id, team_id=default_team["id"])
+    assert created_job["payload"] == {"draft_ref": "safe-service-created"}
 
     denied_list = await client.get(f"/api/jobs?team_id={other_team['id']}", headers=default_headers)
     assert denied_list.status_code == 403

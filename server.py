@@ -469,6 +469,8 @@ async def enqueue_job(request: Request, body: EnqueueJobRequest):
         require_role=_job_write_capability(kind),
         allow_global_admin_override=False,
     )
+    if kind == "ai_draft":
+        raise HTTPException(422, "AI draft jobs cannot be created through /api/jobs")
     team_id = str(scope.team["id"])
     payload = _normalize_job_payload(kind, payload, team_id)
     job_id = _jobs.enqueue(
