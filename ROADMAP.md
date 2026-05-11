@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 6.4 — SQLite To Postgres Migration Command ✅ COMPLETE (2026-05-11)
+
+Adds the guarded one-shot import path needed before a production Postgres cutover.
+
+- **Migration command** (`scripts/migrate_sqlite_to_postgres.py`): reads a SQLite `replay.db`, opens it read-only, rejects missing paths, orders tables with foreign-key parents before children, optionally bootstraps compatible Postgres tables (including composite primary keys), optionally truncates targets, imports rows with safe identifier quoting, and validates before committing.
+- **Validation gates**: compares per-table row counts, checks scoped `team_id` null counts and per-team row distributions for tenant-owned tables, reports Postgres-side foreign-key orphans, and verifies privacy canary counts for private coaching notes with coach-only text.
+- **Tests/docs** (`tests/test_sqlite_to_postgres_migration.py`, `docs/DEPLOYMENT.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`): cover table ordering, DDL conversion (including composite PKs), validation success/failure reporting, missing SQLite path safety, and document the command as a Phase 6.4 cutover helper rather than full runtime cutover.
+- **Validation**: `python3 -m py_compile scripts/migrate_sqlite_to_postgres.py`; `pytest tests/test_sqlite_to_postgres_migration.py tests/test_postgres_lane.py tests/test_postgres_compose_static.py tests/test_postgres_migration_adr_static.py -q`.
+
+**Next**: Phase 7 — Minimal Team Settings For AI Governance.
+
 ## Platform Hardening Phase 6.3 — Durable Background Jobs ✅ COMPLETE (2026-05-10)
 
 Adds the queue primitives needed before AI drafting workloads rely on retryable asynchronous work.

@@ -100,7 +100,24 @@ The migration direction is:
 2. add a Postgres compose/test lane;
 3. map the existing `db.py` `_migrate_v0` through `_migrate_v16` chain to an Alembic baseline;
 4. run future schema changes through Alembic for both SQLite-dev and Postgres-production lanes;
-5. add a one-shot SQLite-to-Postgres import command with row-count, foreign-key, scope-column, and privacy-canary validation before cutover.
+5. use the Phase 6.4 one-shot SQLite-to-Postgres import command with row-count, foreign-key, scope-column, and privacy-canary validation before cutover.
+
+Phase 6.4 migration helper usage:
+
+```bash
+# Import an existing SQLite replay.db into the configured Postgres target and fail
+# if row counts, tenant-scope counts, FK checks, or privacy canaries do not match.
+python -m scripts.migrate_sqlite_to_postgres \
+  --sqlite /path/to/replay.db \
+  --database-url postgresql://replay:***@localhost:5432/replay \
+  --output-json
+
+# The helper rejects missing SQLite paths, opens SQLite read-only, inserts with
+# normal conflict errors (so stale target rows cannot be skipped), validates in
+# the same Postgres transaction, and commits only after validation passes.
+# For disposable/dev targets only, add --create-schema and/or --truncate.
+# Production cutovers should prefer a schema prepared by the approved baseline/migration lane.
+```
 
 Phase 6.2 Postgres lane usage:
 
