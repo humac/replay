@@ -52,7 +52,9 @@ seeds the setting, then the env var is ignored. Edit through the UI thereafter.
 | `LIVE_AUTH_SECRET` | (empty) | Shared secret MediaMTX sends in `X-Internal-Secret`. When unset, `/api/live/auth` fails closed with 503 unless `LIVE_AUTH_ALLOW_INSECURE=1`. |
 | `LIVE_AUTH_ALLOW_INSECURE` | `0` | Set to `1` to allow `/api/live/auth` to accept publish requests when `LIVE_AUTH_SECRET` is unset. **Dev-only.** A warning is logged on first use. Never enable in production or on a publicly reachable MediaMTX. |
 | `MAX_ACTIVE_TOKENS` | `1000` | Hard cap on concurrent admin/uploader sessions in the in-memory token store. Oldest tokens are evicted when the cap is hit. |
-| `REPLAY_STATIC_EXPORT_DIR` | (empty) | Optional path the replay container populates at startup with the SPA's static assets (`script.js`, `styles.css`, `js/`, `logo.png`) so Caddy can serve `/static/*` directly via `sendfile()`. Leave unset for the single-container layout where uvicorn serves static. |
+| `REPLAY_STATIC_EXPORT_DIR` | (empty) | Optional path the replay container populates at startup with the SPA's static assets (`script.js`, `styles.css`, split `styles/`, `js/`, `logo.png`) so Caddy can serve `/static/*` directly via `sendfile()`. Leave unset for the single-container layout where uvicorn serves static. |
+| `DATABASE_URL` | (empty) | Planned Phase 6 production database URL. When Postgres support lands, production should use a `postgresql://` / `postgresql+psycopg://` URL. Until then SQLite remains the live backend. |
+| `REPLAY_DB_BACKEND` | `sqlite` | Planned Phase 6 selector for `sqlite` vs `postgres` lanes if split config is used instead of `DATABASE_URL`. |
 
 **First-boot fallback (otherwise edited in admin Settings → Performance Tuning):**
 
@@ -82,6 +84,20 @@ new transcode for ladder/segment-duration changes).
   Terramaster F6-424 Max with Iris Xe + 10 GbE LAN.
 - **Live-first** — `replay_hwaccel=qsv`, `live_hls_variant=lowLatency`,
   `live_record_enabled=1`, `live_transcode_enabled=1`. Favors live ingest.
+
+## Database Backends And Migration Direction
+
+Replay currently boots with SQLite as the live backend. Platform Hardening Phase 6.1 adopts Postgres as the production target and Alembic as the forward migration runner; see [`postgres-migration-adr.md`](postgres-migration-adr.md).
+
+The migration direction is:
+
+1. preserve SQLite for local/dev and single-laptop validation;
+2. add a Postgres compose/test lane;
+3. map the existing `db.py` `_migrate_v0` through `_migrate_v16` chain to an Alembic baseline;
+4. run future schema changes through Alembic for both SQLite-dev and Postgres-production lanes;
+5. add a one-shot SQLite-to-Postgres import command with row-count, foreign-key, scope-column, and privacy-canary validation before cutover.
+
+Until the Phase 6.2/6.4 implementation PRs land, operators should treat `DATABASE_URL` and `REPLAY_DB_BACKEND` as planned configuration, not live runtime switches.
 
 ## Reverse Proxy (Caddy — bundled)
 
