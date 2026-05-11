@@ -16,7 +16,7 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **Chromecast** — Google Cast SDK integration with a dedicated cast button, metadata, and remote playback resume support
 - **Coaching workspace** — coaches can create roster players, link family/player accounts, save timestamped notes with telestrator overlays, build playable review playlists, and publish feedback to linked viewers
 - **Active team/season scope** — multi-team coaches/admins can switch the active workspace from the navigation bar; scoped coach/admin/feedback data reloads without showing stale previous-team content
-- **AI drafting audit foundation** — team-scoped `ai_drafting_runs` persist queued/running/succeeded/failed draft run metadata with bounded evidence references and privacy canaries; provider calls and context building are intentionally not enabled yet
+- **AI drafting MVP** — team-scoped settings gate coach-only draft generation, bounded provider calls use privacy-safe context/audit rows, and the Coach Review composer exposes review-only insert controls so output is never published until a coach saves it
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
 - **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
 - **Public downloads** — optional direct MP4 download buttons for ready games with normal browser resume support for large files
