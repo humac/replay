@@ -40,6 +40,7 @@ from routers.admin_teams import router as admin_teams_router
 from routers.auth import router as auth_router
 from routers.coach_ai import router as coach_ai_router
 from routers.coach_clips import router as coach_clips_router
+from routers.coach_goals import router as coach_goals_router
 from routers.coach_notes import router as coach_notes_router
 from routers.coach_playlists import router as coach_playlists_router
 from routers.live import router as live_router
@@ -378,6 +379,7 @@ app.include_router(team_members_router)
 app.include_router(team_settings_router)
 app.include_router(coach_ai_router)
 app.include_router(coach_clips_router)
+app.include_router(coach_goals_router)
 app.include_router(coach_notes_router)
 app.include_router(coach_playlists_router)
 app.include_router(live_router)
@@ -1685,55 +1687,10 @@ async def coach_delete_match_summary(summary_id: int, request: Request):
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/coach/goals")
-async def coach_list_goals(request: Request, player_id: str | None = None):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    if player_id:
-        _require_player_in_team(player_id, team_id)
-    goals = [g for g in _db.list_player_goals(player_id=player_id) if _same_team(g, team_id)]
-    return {"goals": _goals_with_visible_sources(goals, user, team_id=team_id)}
-
-
-@app.post("/api/coach/goals")
-async def coach_create_goal(request: Request, body: CreatePlayerGoalRequest):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    season_id = scope.season["id"] if scope.season else None
-    data = body.model_dump()
-    _require_player_in_team(data["player_id"], team_id)
-    _validate_goal_source_links(data, data["player_id"], team_id)
-    data["team_id"] = team_id
-    data["season_id"] = season_id
-    goal = _db.create_player_goal(data, actor=user["username"])
-    _log_activity("coach.goal_created", severity="info", message=f"Player goal created: {goal.get('title')}", actor=user["username"], metadata={"goal_id": goal.get("id"), "player_id": goal.get("player_id")})
-    return {"ok": True, "goal": _goal_with_visible_sources(goal, user, team_id=team_id)}
-
-
-@app.patch("/api/coach/goals/{goal_id}")
-async def coach_update_goal(goal_id: int, request: Request, body: UpdatePlayerGoalRequest):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    existing = _require_scoped_item(_db.get_player_goal(goal_id), team_id, "Goal not found")
-    updates = body.model_dump(exclude_unset=True)
-    merged = {**existing, **updates}
-    _require_player_in_team(merged["player_id"], team_id)
-    _validate_goal_source_links(merged, existing["player_id"], team_id)
-    goal = _db.update_player_goal(goal_id, updates, actor=user["username"])
-    _log_activity("coach.goal_updated", severity="info", message=f"Player goal updated: {goal.get('title')}", actor=user["username"], metadata={"goal_id": goal_id, "fields": sorted(updates.keys())})
-    return {"ok": True, "goal": _goal_with_visible_sources(goal, user, team_id=team_id)}
-
-
-@app.delete("/api/coach/goals/{goal_id}")
-async def coach_delete_goal(goal_id: int, request: Request):
-    user, scope = _resolve_coach_scope(request)
-    team_id = _scope_team_id(scope)
-    existing = _require_scoped_item(_db.get_player_goal(goal_id), team_id, "Goal not found")
-    _tenancy.assert_can_delete_coach_object(scope, "goal", created_by_user_id=existing.get("created_by"))
-    if not _db.delete_player_goal(goal_id):
-        raise HTTPException(404, "Goal not found")
-    _log_activity("coach.goal_deleted", severity="warning", message=f"Player goal deleted: {existing.get('title', goal_id) if existing else goal_id}", actor=user["username"], metadata={"goal_id": goal_id})
-    return {"ok": True}
+# ---------------------------------------------------------------------------
+# Coach player goals routes have moved to ``routers/coach_goals.py``
+# (PR-BE 7/N).
+# ---------------------------------------------------------------------------
 
 
 @app.get("/api/my-feedback/goals")
