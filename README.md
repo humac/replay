@@ -212,6 +212,7 @@ The FastAPI app is intentionally split so `server.py` stays focused on app wirin
 - `routers/admin.py` — admin-only `/api/users*` user-management endpoints
 - `routers/admin_teams.py` — global-admin team, season, and membership management
 - `services/teams.py` — shared team/season/membership business logic used by both API and `python -m tools.admin`
+- `services/team_settings.py` — service-only Phase 7.1 team settings registry for AI governance/default visibility keys, with scoped validation and draft-target visibility guards
 - `services/visibility.py` — coaching visibility checks and viewer scrubbing helpers
 - `services/engagement.py` — coach engagement dashboard aggregation
 - `services/thumbnails.py` — coaching note/clip thumbnail path checks and generation helpers

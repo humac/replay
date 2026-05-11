@@ -32,6 +32,7 @@ _SCOPE_TABLES = {
     "match_summaries",
     "coaching_match_summaries",
     "background_jobs",
+    "team_settings",
 }
 _PRIVACY_CANARY_TABLES = {"coaching_notes"}
 

@@ -1132,11 +1132,28 @@ def _migrate_v17(conn: sqlite3.Connection):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency ON background_jobs(team_id, kind, idempotency_key) WHERE idempotency_key IS NOT NULL")
 
 
+def _migrate_v18(conn: sqlite3.Connection):
+    """Add per-team settings rows for AI governance and coaching defaults."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_settings (
+            team_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT,
+            PRIMARY KEY (team_id, key)
+        )
+        """
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_team_settings_team_key ON team_settings(team_id, key)")
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
-    _migrate_v15, _migrate_v16, _migrate_v17,
+    _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18,
 ]
 
 

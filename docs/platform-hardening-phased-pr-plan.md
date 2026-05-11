@@ -931,13 +931,13 @@ while True:
 
 **Objective:** Add a per-team settings registry focused on safe AI rollout and a few critical coaching defaults. Defer the full settings UI catalog until after AI unless needed.
 
-### PR 7.1: Team Settings Schema And Registry
+### PR 7.1: Team Settings Schema And Registry ✅ COMPLETE (2026-05-11)
 
 **Files:**
 
-- Modify: `db.py` / Alembic migrations
-- Create: `services/team_settings.py`
-- Test: `tests/test_team_settings.py`
+- Modified: `db.py`, `scripts/migrate_sqlite_to_postgres.py`, `AGENTS.md`, `CLAUDE.md`, `README.md`
+- Created: `services/team_settings.py`, `tests/test_team_settings.py`
+- Tested: `tests/test_team_settings.py`
 
 **Schema target:**
 
@@ -971,6 +971,13 @@ while True:
 - Team A coach cannot read/write Team B settings.
 - Raw JSON cannot smuggle unsupported AI targets.
 - Draft-target visibility mapping rejects generation when the target resource's current/proposed visibility is in `ai.never_draft_for_visibilities`.
+
+**Implementation closeout:**
+
+- `_migrate_v18` creates `team_settings` with `team_id`, `key`, `value_json`, `updated_at`, `updated_by`, and unique `(team_id, key)`; the SQLite→Postgres helper treats it as a scoped table for validation.
+- `services/team_settings.py` owns the closed `TEAM_SETTING_SCHEMAS` registry, structured validation/authorization exceptions, membership-scoped service reads/writes, minimal activity audit, JSON-safe persistence, and `can_generate_draft(...)` visibility checks.
+- Initial keys implemented: `ai.drafting_enabled`, `ai.allowed_draft_targets`, `ai.tone`, `ai.never_draft_for_visibilities`, `notes.default_visibility`, `summaries.default_visibility`, and `goals.default_visibility`.
+- No API/UI endpoints were added; PR 7.2 remains the next step for HTTP and frontend surfaces.
 
 ### PR 7.2: Team Settings API And Minimal UI
 
