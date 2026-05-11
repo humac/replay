@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 5.2 — Coaching Domain Module Assembly ✅ COMPLETE (2026-05-10)
+
+Establishes the no-build domain-module layout for the large Coach/My Feedback frontend before deeper AI UI work.
+
+- **Domain module path** (`js/coaching/*.js`): creates the planned roster, notes, clips, playlists, review, observations, development, goals, match-summaries, engagement, feedback, feedback-player, and thumbnails module files.
+- **Meaningful extraction** (`js/coaching/engagement.js`): moves Coach Engagement dashboard filter/render/load methods out of the monolithic `js/coaching.js` without changing public `app.*` handlers.
+- **Mixin assembly** (`script.js`): imports and spreads every coaching domain mixin after the shared `coachingMixin`, preserving the single `window.app` path and inline-handler compatibility.
+- **Validation**: `node --check script.js js/coaching.js js/coaching/*.js`; `pytest tests/test_phase5_frontend_modularization_static.py tests/test_active_scope_ui_static.py tests/test_me_scope.py -q`.
+
+**Next**: Phase 5.3 — CSS Split Only If Safe.
+
 ## Platform Hardening Phase 5.1 — Frontend API/State Modularization ✅ COMPLETE (2026-05-10)
 
 Extracts the active Team/Season scope lifecycle out of the large frontend API mixin while preserving the zero-build `window.app` assembly.

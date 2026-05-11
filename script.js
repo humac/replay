@@ -11,6 +11,19 @@ import { uiMixin } from './js/ui.js';
 import { liveMixin } from './js/live.js';
 import { adminMixin } from './js/admin.js';
 import { coachingStateMixin } from './js/coaching/state.js';
+import { coachingRosterMixin } from './js/coaching/roster.js';
+import { coachingNotesMixin } from './js/coaching/notes.js';
+import { coachingClipsMixin } from './js/coaching/clips.js';
+import { coachingPlaylistsMixin } from './js/coaching/playlists.js';
+import { coachingReviewMixin } from './js/coaching/review.js';
+import { coachingObservationsMixin } from './js/coaching/observations.js';
+import { coachingDevelopmentMixin } from './js/coaching/development.js';
+import { coachingGoalsMixin } from './js/coaching/goals.js';
+import { coachingMatchSummariesMixin } from './js/coaching/match-summaries.js';
+import { coachingEngagementMixin } from './js/coaching/engagement.js';
+import { coachingFeedbackMixin } from './js/coaching/feedback.js';
+import { coachingFeedbackPlayerMixin } from './js/coaching/feedback-player.js';
+import { coachingThumbnailsMixin } from './js/coaching/thumbnails.js';
 import { coachingMixin } from './js/coaching.js';
 import { tacticalBoardMixin } from './js/tactical-board.js';
 
@@ -397,6 +410,19 @@ const app = {
     ...adminMixin,
     ...coachingStateMixin,
     ...coachingMixin,
+    ...coachingRosterMixin,
+    ...coachingNotesMixin,
+    ...coachingClipsMixin,
+    ...coachingPlaylistsMixin,
+    ...coachingReviewMixin,
+    ...coachingObservationsMixin,
+    ...coachingDevelopmentMixin,
+    ...coachingGoalsMixin,
+    ...coachingMatchSummariesMixin,
+    ...coachingEngagementMixin,
+    ...coachingFeedbackMixin,
+    ...coachingFeedbackPlayerMixin,
+    ...coachingThumbnailsMixin,
     ...tacticalBoardMixin,
 };
 
