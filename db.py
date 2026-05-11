@@ -1763,6 +1763,12 @@ def list_players(*, include_inactive: bool = True, team_id: str | None = None, a
         return [_row_to_player(row, links.get(row["id"], [])) for row in rows]
 
 
+def player_exists(player_id: str) -> bool:
+    with connect() as conn:
+        row = conn.execute("SELECT 1 FROM players WHERE id = ? LIMIT 1", (player_id,)).fetchone()
+        return row is not None
+
+
 def get_player(player_id: str, team_id: str | None = None, *, allow_unscoped: bool = False) -> dict | None:
     _require_team_scope_for_strict("get_player", team_id, allow_unscoped=allow_unscoped)
     with connect() as conn:
@@ -1990,9 +1996,12 @@ def list_coaching_notes(match_id: str | None = None) -> list[dict]:
         return [_row_to_note(row, players.get(row["id"], []), tags.get(row["id"], [])) for row in rows]
 
 
-def get_coaching_note(note_id: int) -> dict | None:
+def get_coaching_note(note_id: int, team_id: str | None = None) -> dict | None:
     with connect() as conn:
-        row = conn.execute("SELECT * FROM coaching_notes WHERE id = ?", (note_id,)).fetchone()
+        if team_id is not None:
+            row = conn.execute("SELECT * FROM coaching_notes WHERE id = ? AND team_id = ?", (note_id, team_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM coaching_notes WHERE id = ?", (note_id,)).fetchone()
         if not row:
             return None
         players, tags = _note_child_data(conn, [note_id])
@@ -2223,9 +2232,12 @@ def list_coaching_playlists() -> list[dict]:
         return [_row_to_playlist(row, items.get(row["id"], []), players.get(row["id"], [])) for row in rows]
 
 
-def get_coaching_playlist(playlist_id: int) -> dict | None:
+def get_coaching_playlist(playlist_id: int, team_id: str | None = None) -> dict | None:
     with connect() as conn:
-        row = conn.execute("SELECT * FROM coaching_playlists WHERE id = ?", (playlist_id,)).fetchone()
+        if team_id is not None:
+            row = conn.execute("SELECT * FROM coaching_playlists WHERE id = ? AND team_id = ?", (playlist_id, team_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM coaching_playlists WHERE id = ?", (playlist_id,)).fetchone()
         if not row:
             return None
         items, players = _playlist_child_data(conn, [playlist_id])
@@ -2348,6 +2360,38 @@ def list_coaching_reviews(user_id: str | None = None) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def coaching_source_exists(ref_type: str, ref_id: int) -> bool:
+    tables = {
+        "note": "coaching_notes",
+        "clip": "coaching_clips",
+        "playlist": "coaching_playlists",
+        "goal": "player_goals",
+        "match_summary": "coaching_match_summaries",
+    }
+    table = tables.get(ref_type)
+    if table is None:
+        return False
+    with connect() as conn:
+        row = conn.execute(f"SELECT 1 FROM {table} WHERE id = ? LIMIT 1", (ref_id,)).fetchone()
+        return row is not None
+
+
+def get_coaching_review_for_ai_context(review_id: int, team_id: str) -> dict | None:
+    """Return compact review metadata scoped by source team, excluding reflection text."""
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT r.id, r.note_id, r.playlist_id, r.reviewed_at
+            FROM coaching_reviews r
+            LEFT JOIN coaching_notes n ON n.id = r.note_id
+            LEFT JOIN coaching_playlists p ON p.id = r.playlist_id
+            WHERE r.id = ? AND (n.team_id = ? OR p.team_id = ?)
+            """,
+            (review_id, team_id, team_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 # ---------------------------------------------------------------------------
 # Coaching clips (Phase 4a)
 #
@@ -2425,9 +2469,12 @@ def list_coaching_clips(match_id: str | None = None) -> list[dict]:
         return [_row_to_clip(row, players.get(row["id"], [])) for row in rows]
 
 
-def get_coaching_clip(clip_id: int) -> dict | None:
+def get_coaching_clip(clip_id: int, team_id: str | None = None) -> dict | None:
     with connect() as conn:
-        row = conn.execute("SELECT * FROM coaching_clips WHERE id = ?", (clip_id,)).fetchone()
+        if team_id is not None:
+            row = conn.execute("SELECT * FROM coaching_clips WHERE id = ? AND team_id = ?", (clip_id, team_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM coaching_clips WHERE id = ?", (clip_id,)).fetchone()
         if not row:
             return None
         players = _clip_player_data(conn, [clip_id])
@@ -2597,9 +2644,12 @@ def list_player_goals(player_id: str | None = None, *, statuses: list[str] | Non
         return _hydrate_goals(conn, rows)
 
 
-def get_player_goal(goal_id: int) -> dict | None:
+def get_player_goal(goal_id: int, team_id: str | None = None) -> dict | None:
     with connect() as conn:
-        row = conn.execute("SELECT * FROM player_goals WHERE id = ?", (goal_id,)).fetchone()
+        if team_id is not None:
+            row = conn.execute("SELECT * FROM player_goals WHERE id = ? AND team_id = ?", (goal_id, team_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM player_goals WHERE id = ?", (goal_id,)).fetchone()
         if not row:
             return None
         return _hydrate_goals(conn, [row])[0]
@@ -2750,9 +2800,12 @@ def list_coaching_match_summaries(match_id: str | None = None) -> list[dict]:
         ]
 
 
-def get_coaching_match_summary(summary_id: int) -> dict | None:
+def get_coaching_match_summary(summary_id: int, team_id: str | None = None) -> dict | None:
     with connect() as conn:
-        row = conn.execute("SELECT * FROM coaching_match_summaries WHERE id = ?", (summary_id,)).fetchone()
+        if team_id is not None:
+            row = conn.execute("SELECT * FROM coaching_match_summaries WHERE id = ? AND team_id = ?", (summary_id, team_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM coaching_match_summaries WHERE id = ?", (summary_id,)).fetchone()
         if not row:
             return None
         notes, clips, playlists = _summary_child_data(conn, [summary_id])
