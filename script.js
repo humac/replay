@@ -10,6 +10,7 @@ import { adminViewsMixin } from './js/admin-views.js';
 import { uiMixin } from './js/ui.js';
 import { liveMixin } from './js/live.js';
 import { adminMixin } from './js/admin.js';
+import { coachingStateMixin } from './js/coaching/state.js';
 import { coachingMixin } from './js/coaching.js';
 import { tacticalBoardMixin } from './js/tactical-board.js';
 
@@ -394,6 +395,7 @@ const app = {
     ...uiMixin,
     ...liveMixin,
     ...adminMixin,
+    ...coachingStateMixin,
     ...coachingMixin,
     ...tacticalBoardMixin,
 };
