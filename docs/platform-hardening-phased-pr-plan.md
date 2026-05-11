@@ -1233,7 +1233,9 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Password change endpoint.
 - Password reset tokens and email verification tokens store hashes only.
 - Dev/admin-visible token delivery is acceptable until SMTP/email provider is configured.
-- Password change/reset revokes sessions.
+- Password change/reset revokes existing sessions.
+
+**Closeout (2026-05-11):** Implemented durable `user_sessions`, `password_reset_tokens`, and `email_verification_tokens` in migration v21, storing only SHA-256 token hashes. Database-user login persists a hashed session; `/api/logout`, `/api/me/password`, and password-reset confirmation revoke sessions. `require_auth` now rejects revoked/expired sessions and disabled database users, including legacy non-persisted tokens for real DB users, while preserving the env-admin break-glass path and synthetic test-token compatibility. Password-reset responses are generic by default, rate-limited, and expose a dev-only one-time token only when `REPLAY_DEV_TOKEN_DELIVERY=1`; email-verification endpoints also use hashed tokens and profile email changes clear prior verification timestamps.
 
 **Tests:**
 
