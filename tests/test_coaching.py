@@ -6009,3 +6009,228 @@ async def test_tactical_board_legacy_no_stroke_width_unchanged(client, auth_head
     assert resp.status_code == 200, resp.text
     for s in resp.json()["note"]["tactical_board_json"]["shapes"]:
         assert "stroke_width" not in s
+
+
+# ---------------------------------------------------------------------------
+# PR-AUTH: Membership-only Coach access (Fix 1) and centralized delete
+# authorization (Fix 2) — behavioral tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_membership_only_coach_can_access_coach_routes(client, auth_headers):
+    """A user whose legacy ``users.role`` is ``viewer`` but who has a
+    ``team_user_memberships`` row granting ``coach`` for the team must
+    reach ``/api/coach/*`` routes. This is the regression Fix 1 closes."""
+    default_team = _db.get_default_team()
+    user_id = await _create_user(client, auth_headers, "membership_only_coach", "viewer")
+    _grant_only_team_membership(user_id, default_team["id"], "coach")
+
+    headers = await _login(client, "membership_only_coach")
+    resp = await client.get("/api/coach/players", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert "players" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_membership_only_assistant_coach_can_access_coach_routes(client, auth_headers):
+    """Same as above but for ``assistant_coach`` memberships."""
+    default_team = _db.get_default_team()
+    user_id = await _create_user(client, auth_headers, "membership_only_asst", "viewer")
+    _grant_only_team_membership(user_id, default_team["id"], "assistant_coach")
+
+    headers = await _login(client, "membership_only_asst")
+    resp = await client.get("/api/coach/players", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_no_membership_still_denied(client, auth_headers):
+    """A viewer with no relevant membership still gets 403 — Fix 1 must
+    not weaken authorization for users who have no team membership."""
+    await _create_user(client, auth_headers, "nomembership_viewer", "viewer")
+    # Intentionally do NOT grant any team_user_memberships row.
+
+    headers = await _login(client, "nomembership_viewer")
+    resp = await client.get("/api/coach/players", headers=headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_assistant_coach_cannot_delete_others_note(client, auth_headers):
+    """An ``assistant_coach`` membership cannot delete a note created by a
+    different coach. The current team scope is fine; ownership gating is
+    layered on top by ``assert_can_delete_coach_object``."""
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    _seed_scoped_match("asst-delete-other-match", default_team["id"], default_season["id"])
+
+    asst_id = await _create_user(client, auth_headers, "asst_coach_a", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+
+    # Note created by a DIFFERENT coach (actor mismatch with assistant_coach username).
+    note = _db.create_coaching_note({
+        "match_id": "asst-delete-other-match",
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Head coach note",
+        "visibility": "team",
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+    }, actor="head_coach")
+
+    asst_headers = await _login(client, "asst_coach_a")
+    resp = await client.delete(f"/api/coach/notes/{note['id']}", headers=asst_headers)
+    assert resp.status_code == 403, resp.text
+    # Defense-in-depth: the row is still there.
+    assert _db.get_coaching_note(note["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_assistant_coach_can_delete_own_note(client, auth_headers):
+    """An ``assistant_coach`` membership CAN delete a note they created."""
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    _seed_scoped_match("asst-delete-own-match", default_team["id"], default_season["id"])
+
+    asst_id = await _create_user(client, auth_headers, "asst_coach_b", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+    asst_headers = await _login(client, "asst_coach_b")
+
+    note_resp = await client.post(f"/api/coach/notes?team_id={default_team['id']}", json={
+        "match_id": "asst-delete-own-match",
+        "slot": "full",
+        "timestamp_seconds": 7,
+        "title": "Self-authored note",
+        "visibility": "team",
+    }, headers=asst_headers)
+    assert note_resp.status_code == 200, note_resp.text
+    note_id = note_resp.json()["note"]["id"]
+
+    del_resp = await client.delete(f"/api/coach/notes/{note_id}", headers=asst_headers)
+    assert del_resp.status_code == 200, del_resp.text
+    assert _db.get_coaching_note(note_id) is None
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_assistant_coach_cannot_delete_others_clip(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    _seed_scoped_match("asst-delete-clip-match", default_team["id"], default_season["id"])
+
+    asst_id = await _create_user(client, auth_headers, "asst_coach_clip", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+
+    clip = _db.create_coaching_clip({
+        "match_id": "asst-delete-clip-match",
+        "slot": "full",
+        "start_seconds": 1,
+        "end_seconds": 4,
+        "title": "Head coach clip",
+        "visibility": "team",
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+    }, actor="head_coach")
+
+    headers = await _login(client, "asst_coach_clip")
+    resp = await client.delete(f"/api/coach/clips/{clip['id']}", headers=headers)
+    assert resp.status_code == 403, resp.text
+    assert _db.get_coaching_clip(clip["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_assistant_coach_cannot_delete_others_playlist(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+
+    asst_id = await _create_user(client, auth_headers, "asst_coach_pl", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+
+    playlist = _db.create_coaching_playlist({
+        "title": "Head coach playlist",
+        "visibility": "team",
+        "note_ids": [],
+        "player_ids": [],
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+    }, actor="head_coach")
+
+    headers = await _login(client, "asst_coach_pl")
+    resp = await client.delete(f"/api/coach/playlists/{playlist['id']}", headers=headers)
+    assert resp.status_code == 403, resp.text
+    assert _db.get_coaching_playlist(playlist["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_assistant_coach_cannot_delete_others_goal(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+
+    asst_id = await _create_user(client, auth_headers, "asst_coach_goal", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+
+    player = _db.create_player("Goal Target Player")
+    _move_player_to_team(player["id"], default_team["id"], default_season["id"])
+
+    goal = _db.create_player_goal({
+        "player_id": player["id"],
+        "title": "Head coach goal",
+        "visibility": "player",
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+    }, actor="head_coach")
+
+    headers = await _login(client, "asst_coach_goal")
+    resp = await client.delete(f"/api/coach/goals/{goal['id']}", headers=headers)
+    assert resp.status_code == 403, resp.text
+    assert _db.get_player_goal(goal["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_assistant_coach_cannot_delete_others_match_summary(client, auth_headers):
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    _seed_scoped_match("asst-delete-summary-match", default_team["id"], default_season["id"])
+
+    asst_id = await _create_user(client, auth_headers, "asst_coach_summary", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+
+    summary = _db.create_coaching_match_summary({
+        "match_id": "asst-delete-summary-match",
+        "visibility": "team",
+        "body": "Head coach summary",
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+    }, actor="head_coach")
+
+    headers = await _login(client, "asst_coach_summary")
+    resp = await client.delete(f"/api/coach/match-summaries/{summary['id']}", headers=headers)
+    assert resp.status_code == 403, resp.text
+    assert _db.get_coaching_match_summary(summary["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_pr_auth_head_coach_can_delete_others_note(client, auth_headers):
+    """A ``coach`` membership still has ``coach_object:delete_others`` — they
+    can delete another coach's note. Fix 2 must not regress this."""
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    _seed_scoped_match("head-coach-delete-other-match", default_team["id"], default_season["id"])
+
+    head_id = await _create_user(client, auth_headers, "head_coach_x", "viewer")
+    _grant_only_team_membership(head_id, default_team["id"], "coach")
+
+    note = _db.create_coaching_note({
+        "match_id": "head-coach-delete-other-match",
+        "slot": "full",
+        "timestamp_seconds": 12,
+        "title": "Other coach note",
+        "visibility": "team",
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+    }, actor="other_coach")
+
+    headers = await _login(client, "head_coach_x")
+    resp = await client.delete(f"/api/coach/notes/{note['id']}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert _db.get_coaching_note(note["id"]) is None
