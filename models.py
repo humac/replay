@@ -32,6 +32,34 @@ class UpdateActiveScopeRequest(BaseModel):
         return cleaned
 
 
+class EnqueueJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: str = Field(..., min_length=1, max_length=200)
+    kind: Literal["ai_draft", "thumbnail", "transcode"]
+    payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: Optional[str] = Field(None, max_length=500)
+    scheduled_at: Optional[str] = Field(None, max_length=64)
+    max_attempts: int = Field(3, ge=1, le=25)
+    payload_version: int = Field(1, ge=1)
+
+    @field_validator("team_id")
+    @classmethod
+    def strip_required_team_id(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("team_id is required")
+        return cleaned
+
+    @field_validator("idempotency_key", "scheduled_at")
+    @classmethod
+    def strip_optional_whitespace(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        cleaned = v.strip()
+        return cleaned or None
+
+
 class CreateAdminTeamRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     slug: str = Field(..., min_length=1, max_length=64)
