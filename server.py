@@ -49,6 +49,7 @@ from routers.feedback import router as feedback_router
 from routers.jobs import router as jobs_router
 from routers.live import router as live_router
 from routers.matches import router as matches_router
+from routers.settings import router as settings_router
 from routers.team_members import router as team_members_router
 from routers.team_settings import router as team_settings_router
 from routers.uploads import router as uploads_router
@@ -392,6 +393,7 @@ app.include_router(feedback_router)
 app.include_router(jobs_router)
 app.include_router(live_router)
 app.include_router(matches_router)
+app.include_router(settings_router)
 app.include_router(uploads_router)
 
 
@@ -1157,139 +1159,6 @@ async def static_file(filepath: str):
 # ---------------------------------------------------------------------------
 # Settings & app asset endpoints
 # ---------------------------------------------------------------------------
-
-@app.get("/api/settings")
-async def get_public_settings():
-    return await _public_settings_payload()
-
-
-@app.get("/api/admin/settings")
-async def get_admin_settings(request: Request):
-    _auth.require_role(request, "admin")
-    return await _admin_settings_payload()
-
-
-@app.put("/api/admin/settings")
-async def update_admin_settings(request: Request):
-    user = _auth.require_role(request, "admin")
-    body = await request.json()
-    updates: dict[str, str] = {}
-    errors: dict[str, str] = {}
-    for key, value in body.items():
-        if key not in _settings.EDITABLE_APP_SETTING_KEYS:
-            continue
-        try:
-            updates[key] = _settings.normalize_value(key, value)
-        except ValueError as exc:
-            errors[key] = str(exc)
-    if errors:
-        raise HTTPException(400, {"message": "Invalid settings", "errors": errors})
-
-    actor = user.get("username") if isinstance(user, dict) else None
-    settings = await _save_settings(updates, actor=actor)
-
-    # Apply live-reloadable side effects (semaphore resize). Other knobs are
-    # picked up on the next call site read — see current_*() helpers.
-    if "transcode_concurrency" in updates:
-        await TRANSCODE_SEMAPHORE.resize(_settings.get_int(settings, "transcode_concurrency", 2))
-
-    if updates:
-        tuning_keys = [key for key in updates if key in _settings.TUNING_KNOBS]
-        event_type = "settings.tuning_updated" if tuning_keys else "settings.updated"
-        _log_activity(
-            event_type,
-            severity="info",
-            message="Tuning settings saved" if tuning_keys else "Settings saved",
-            actor=actor,
-            metadata={"keys": sorted(updates.keys()), "tuning_keys": sorted(tuning_keys)},
-        )
-
-    return {
-        "ok": True,
-        "settings": settings,
-        "assets": {
-            "logo_url": _settings.app_asset_url("logo", settings),
-            "favicon_url": _settings.app_asset_url("favicon", settings),
-        },
-        "tuning_knobs": {
-            key: dict(spec) for key, spec in _settings.TUNING_KNOBS.items()
-        },
-        "audit": _settings.list_audit_entries(20),
-    }
-
-
-@app.post("/api/admin/settings/asset")
-async def upload_app_asset(file: UploadFile, request: Request):
-    _auth.require_role(request, "admin")
-    kind = request.query_params.get("kind", "logo")
-    if kind not in _settings.APP_ASSET_CONFIG:
-        raise HTTPException(400, "kind must be logo or favicon")
-
-    config = _settings.APP_ASSET_CONFIG[kind]
-    filename = file.filename or f"{kind}.png"
-    ext = Path(filename).suffix.lower()
-    if ext not in config["allowed_exts"]:
-        raise HTTPException(400, f"Unsupported {kind} format")
-
-    settings = await _load_settings()
-    current_name = settings.get(config["setting_key"], "")
-    if current_name:
-        (APP_ASSETS_DIR / current_name).unlink(missing_ok=True)
-
-    dest_name = f"app_{kind}{ext}"
-    dest = APP_ASSETS_DIR / dest_name
-    await _save_upload_file(file, dest, max_size_bytes=config["max_size"])
-    actor = _auth.require_auth(request)["username"]
-    settings = await _save_settings({config["setting_key"]: dest_name}, actor=actor)
-    _log_activity(
-        "settings.asset_updated",
-        severity="info",
-        message=f"{kind.title()} asset updated",
-        actor=actor,
-        metadata={"kind": kind, "filename": dest_name},
-    )
-    return {
-        "ok": True,
-        "kind": kind,
-        "filename": dest_name,
-        "settings": settings,
-        "assets": {
-            "logo_url": _settings.app_asset_url("logo", settings),
-            "favicon_url": _settings.app_asset_url("favicon", settings),
-        },
-    }
-
-
-@app.get("/api/app-assets/{kind}")
-async def serve_app_asset(kind: str):
-    if kind not in _settings.APP_ASSET_CONFIG:
-        raise HTTPException(400, "Invalid asset kind")
-    settings = await _load_settings()
-    filename = settings.get(_settings.APP_ASSET_CONFIG[kind]["setting_key"], "")
-    if not filename:
-        raise HTTPException(404, "Asset not configured")
-    asset_path = APP_ASSETS_DIR / filename
-    if not asset_path.is_file():
-        raise HTTPException(404, "Asset not found")
-    media_types = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".svg": "image/svg+xml",
-        ".webp": "image/webp",
-        ".ico": "image/x-icon",
-    }
-    mt = media_types.get(asset_path.suffix.lower(), "application/octet-stream")
-    headers = {"Cache-Control": "public, max-age=3600, immutable"}
-    if asset_path.suffix.lower() == ".svg":
-        headers["Content-Security-Policy"] = "script-src 'none'"
-        headers["Content-Disposition"] = f"inline; filename=\"{asset_path.name}\""
-    return FileResponse(
-        str(asset_path),
-        media_type=mt,
-        headers=headers,
-    )
-
 
 # ---------------------------------------------------------------------------
 # Live streaming (MediaMTX bridge)
