@@ -66,6 +66,34 @@ class PatchTeamSettingsRequest(BaseModel):
     settings: dict[str, Any] = Field(default_factory=dict)
 
 
+class CoachAIDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: Optional[str] = Field(None, min_length=1, max_length=200)
+    season_id: Optional[str] = Field(None, min_length=1, max_length=200)
+    draft_target: str = Field(..., min_length=1, max_length=120)
+    target_resource_type: str = Field(..., min_length=1, max_length=80)
+    target_resource_id: Optional[str | int] = None
+    target_visibility: Optional[str] = Field(None, max_length=32)
+    proposed_visibility: Optional[str] = Field(None, max_length=32)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    target_player_ids: list[str] = Field(default_factory=list, max_length=50)
+    coach_prompt: Optional[str] = Field(None, max_length=10000)
+
+    @field_validator("team_id", "season_id", "draft_target", "target_resource_type", "target_visibility", "proposed_visibility", "coach_prompt")
+    @classmethod
+    def strip_optional_text(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+    @field_validator("target_player_ids")
+    @classmethod
+    def strip_player_ids(cls, v: list[str]) -> list[str]:
+        return [str(item).strip() for item in v if str(item).strip()]
+
+
 class CreateAdminTeamRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     slug: str = Field(..., min_length=1, max_length=64)

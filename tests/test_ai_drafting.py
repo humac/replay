@@ -970,3 +970,184 @@ def test_ai_provider_unknown_non_mock_provider_fails_closed_without_call(client,
     assert result["ok"] is False
     assert result["error_code"] == "provider_unsupported"
     assert "SECRET_AI_KEY_CANARY" not in json.dumps(result, sort_keys=True)
+
+
+def _auth_headers_for(user: dict) -> dict[str, str]:
+    token = _auth.create_token(user["id"], user.get("role", "coach"), user["username"])
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _post_ai_draft(client, user: dict, payload: dict) -> object:
+    return await client.post("/api/coach/ai/draft", json=payload, headers=_auth_headers_for(user))
+
+
+def _base_ai_api_payload(team_id: str, data: dict, **overrides) -> dict:
+    payload = {
+        "team_id": team_id,
+        "draft_target": "player_summary",
+        "target_resource_type": "note",
+        "target_resource_id": data["note"]["id"],
+        "target_visibility": "team",
+        "evidence_refs": [{"type": "note", "id": data["note"]["id"]}],
+        "coach_prompt": "Keep it concise.",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_endpoint_requires_coach_access(client, monkeypatch):
+    _create_team("ai-api-role")
+    coach = _create_member("ai-api-role", "ai_api_role_coach", role="team_admin")
+    viewer = _create_member("ai-api-role", "ai_api_role_viewer", role="viewer")
+    assistant = _create_member("ai-api-role", "ai_api_role_assistant", role="assistant_coach")
+    _enable_ai_provider("ai-api-role", coach, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-api-role", coach, prefix="ai-api-role")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, viewer, _base_ai_api_payload("ai-api-role", data))
+    assistant_response = await _post_ai_draft(client, assistant, _base_ai_api_payload("ai-api-role", data))
+
+    assert response.status_code == 403
+    assert assistant_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_endpoint_requires_team_settings_opt_in(client, monkeypatch):
+    _create_team("ai-api-opt-in")
+    coach = _create_member("ai-api-opt-in", "ai_api_opt_in_coach", role="team_admin")
+    data = _seed_ai_context_objects("ai-api-opt-in", coach, prefix="ai-api-opt-in")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, coach, _base_ai_api_payload("ai-api-opt-in", data))
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["error_code"] == "drafting_disabled"
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_endpoint_rejects_disallowed_target(client, monkeypatch):
+    _create_team("ai-api-target")
+    coach = _create_member("ai-api-target", "ai_api_target_coach", role="team_admin")
+    _enable_ai_provider("ai-api-target", coach, targets=["what_happened"], never_draft=["private"])
+    data = _seed_ai_context_objects("ai-api-target", coach, prefix="ai-api-target")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, coach, _base_ai_api_payload("ai-api-target", data, draft_target="player_summary"))
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["error_code"] == "drafting_disabled"
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_endpoint_rejects_player_visible_target_by_policy(client, monkeypatch):
+    _create_team("ai-api-player-policy")
+    coach = _create_member("ai-api-player-policy", "ai_api_player_policy_coach", role="team_admin")
+    _enable_ai_provider("ai-api-player-policy", coach, never_draft=["private", "player"])
+    data = _seed_ai_context_objects("ai-api-player-policy", coach, prefix="ai-api-player-policy")
+    _db.update_coaching_note(data["note"]["id"], {"visibility": "player"})
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, coach, _base_ai_api_payload("ai-api-player-policy", data, target_visibility="player"))
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["error_code"] == "drafting_disabled"
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_endpoint_rejects_client_visibility_mismatch(client, monkeypatch):
+    _create_team("ai-api-visibility-mismatch")
+    coach = _create_member("ai-api-visibility-mismatch", "ai_api_visibility_mismatch_coach", role="team_admin")
+    _enable_ai_provider("ai-api-visibility-mismatch", coach, never_draft=["private", "player"])
+    data = _seed_ai_context_objects("ai-api-visibility-mismatch", coach, prefix="ai-api-visibility-mismatch")
+    _db.update_coaching_note(data["note"]["id"], {"visibility": "player"})
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, coach, _base_ai_api_payload("ai-api-visibility-mismatch", data, target_visibility="team"))
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "target_visibility_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_endpoint_rejects_cross_team_resource_reference(client, monkeypatch):
+    _create_team("ai-api-cross-a")
+    _create_team("ai-api-cross-b")
+    coach_a = _create_member("ai-api-cross-a", "ai_api_cross_a_coach", role="team_admin")
+    coach_b = _create_member("ai-api-cross-b", "ai_api_cross_b_coach", role="team_admin")
+    _enable_ai_provider("ai-api-cross-a", coach_a, never_draft=["private"])
+    own = _seed_ai_context_objects("ai-api-cross-a", coach_a, prefix="ai-api-cross-own")
+    other = _seed_ai_context_objects("ai-api-cross-b", coach_b, prefix="ai-api-cross-other")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(
+        client,
+        coach_a,
+        _base_ai_api_payload("ai-api-cross-a", own, evidence_refs=[{"type": "note", "id": other["note"]["id"]}]),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["error_code"] == "resource_reference_unavailable"
+
+    missing = await _post_ai_draft(
+        client,
+        coach_a,
+        _base_ai_api_payload("ai-api-cross-a", own, evidence_refs=[{"type": "note", "id": "999999"}]),
+    )
+    assert missing.status_code == 403
+    assert missing.json()["detail"]["error_code"] == "resource_reference_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_endpoint_records_authenticated_actor_id(client, monkeypatch):
+    _create_team("ai-api-actor")
+    coach = _create_member("ai-api-actor", "ai_api_actor_coach", role="team_admin")
+    _enable_ai_provider("ai-api-actor", coach, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-api-actor", coach, prefix="ai-api-actor")
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, coach, _base_ai_api_payload("ai-api-actor", data))
+
+    assert response.status_code == 200
+    assert response.json()["run"]["created_by_user_id"] == coach["id"]
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_output_is_not_visible_in_my_feedback_until_saved(client, monkeypatch):
+    _create_team("ai-api-not-published")
+    coach = _create_member("ai-api-not-published", "ai_api_not_published_coach", role="team_admin")
+    player_user = _create_member("ai-api-not-published", "ai_api_not_published_player", role="player")
+    _enable_ai_provider("ai-api-not-published", coach, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-api-not-published", coach, prefix="ai-api-not-published")
+    _db.link_player_user(data["player"]["id"], player_user["id"], "self")
+    draft_text = "AI_DRAFT_NOT_PUBLISHED_CANARY"
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, coach, _base_ai_api_payload("ai-api-not-published", data, coach_prompt=draft_text))
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    feedback = await client.get("/api/my-feedback?team_id=ai-api-not-published", headers=_auth_headers_for(player_user))
+    assert feedback.status_code == 200
+    assert draft_text not in json.dumps(feedback.json(), sort_keys=True)
+
+
+@pytest.mark.asyncio
+async def test_coach_ai_draft_long_prompt_rejected_without_persisting_prompt_or_job_payload(client, monkeypatch):
+    _create_team("ai-api-long-prompt")
+    coach = _create_member("ai-api-long-prompt", "ai_api_long_prompt_coach", role="team_admin")
+    _enable_ai_provider("ai-api-long-prompt", coach, never_draft=["private"])
+    data = _seed_ai_context_objects("ai-api-long-prompt", coach, prefix="ai-api-long-prompt")
+    canary = "LONG_PROMPT_PRIVATE_CANARY"
+    monkeypatch.setenv("REPLAY_AI_PROVIDER", "mock")
+
+    response = await _post_ai_draft(client, coach, _base_ai_api_payload("ai-api-long-prompt", data, coach_prompt=canary + ("x" * 6000)))
+
+    assert response.status_code == 413
+    serialized = json.dumps(response.json(), sort_keys=True)
+    assert canary not in serialized
+    with _db.connect() as conn:
+        rows = [dict(row) for row in conn.execute("SELECT payload_json, error_text, result_json FROM background_jobs")]
+        runs = [dict(row) for row in conn.execute("SELECT * FROM ai_drafting_runs")]
+    assert canary not in json.dumps(rows, sort_keys=True)
+    assert canary not in json.dumps(runs, sort_keys=True)

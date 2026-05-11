@@ -1150,8 +1150,10 @@ Do not block AI MVP on the full catalog unless product needs require it.
 - Input includes target field, target resource id/type, target resource current/proposed visibility when applicable, resource references, active scope, and optional coach prompt.
 - Enforce `ai.drafting_enabled`, `ai.allowed_draft_targets`, and target visibility against `ai.never_draft_for_visibilities` before building provider context or enqueueing a job.
 - If a target field has no fixed visibility, derive visibility from the target resource using the same normal scoped DB reads used for authorization. Reject mismatches between client-provided visibility and server-derived visibility.
-- For short prompts, return synchronously; for long prompts, enqueue `background_jobs` and return job/run id.
+- For short prompts, return synchronously; long prompts currently return a safe `413 prompt_too_long` rather than enqueueing because the existing durable job payload path would require storing the raw coach prompt. A privacy-preserving enqueue path remains deferred.
 - Generated output remains a draft and is not visible to players/family until explicitly saved into a normal scoped coaching object.
+
+**Closeout (2026-05-11):** Implemented as `POST /api/coach/ai/draft` in `routers/coach_ai.py`, registered from `server.py`, with request validation in `models.py`. The route derives visibility from scoped DB reads for notes/clips/playlists/goals/match summaries, requires explicit visibility for player/profile targets, allows only coach/team-admin team memberships, rejects assistant/viewer access, rejects client/server visibility mismatches, enforces team AI settings before context/provider calls, rejects missing/cross-team evidence refs with tenant-neutral `resource_reference_unavailable` errors, and uses the Phase 8.3 mock provider synchronously through a sync FastAPI route. API-created audit rows preserve the authenticated actor id. Long-prompt async enqueue remains deferred via safe 413 to avoid raw prompt persistence in `background_jobs`.
 
 **Tests:**
 
