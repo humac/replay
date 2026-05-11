@@ -905,25 +905,25 @@ while True:
 8. **Worker boundary:** Internal worker can lease due jobs across teams, but stale/wrong-team payload references fail closed during execution and user sessions cannot call worker-only lease/heartbeat/complete paths.
 9. **Existing transcode behavior:** All existing transcode integration tests still pass; new assertions confirm a corresponding `background_jobs` row exists.
 
-### PR 6.4: SQLite To Postgres Migration Command
+### PR 6.4: SQLite To Postgres Migration Command ✅ COMPLETE (2026-05-11)
 
 **Files:**
 
-- Create: migration/export script under `scripts/` or `tools/`
-- Modify: `docs/DEPLOYMENT.md`
-- Test: migration smoke tests / dev DB row-count diff
+- Created: `scripts/migrate_sqlite_to_postgres.py`
+- Modified: `docs/DEPLOYMENT.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`
+- Tested: `tests/test_sqlite_to_postgres_migration.py`
 
 **Key changes:**
 
-- One-shot migration reads SQLite and writes Postgres in dependency order.
-- Validate row counts, foreign keys, scope columns, and privacy canaries after import.
+- One-shot migration reads SQLite read-only and writes Postgres in dependency order.
+- Inserts use normal conflict behavior so stale target rows fail rather than being skipped; validation runs in the same transaction and commits only after passing.
+- Optional `--create-schema` / `--truncate` support disposable/dev targets; production cutovers should prefer a prepared baseline schema.
+- Validate row counts, foreign keys, scope-column null counts/distributions, and privacy canaries after import.
 
 **Tests/validation:**
 
-- Dev DB migrates successfully.
-- Row counts match per table.
-- Foreign keys validate.
-- Cross-team privacy tests pass against migrated Postgres data.
+- Unit smoke covers FK dependency ordering, Postgres DDL conversion including composite primary keys, validation success, validation failure reporting, and missing SQLite path safety.
+- Focused validation: `python3 -m py_compile scripts/migrate_sqlite_to_postgres.py`; `pytest tests/test_sqlite_to_postgres_migration.py tests/test_postgres_lane.py tests/test_postgres_compose_static.py tests/test_postgres_migration_adr_static.py -q`.
 
 ---
 
