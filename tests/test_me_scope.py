@@ -66,6 +66,7 @@ async def test_me_scope_single_team_user_gets_active_scope(client):
         "roles": ["coach"],
         "is_global_admin": False,
         "last_team_id": None,
+        "last_season_id": None,
     }
     assert body["selection_required"] is False
     assert body["active_scope"]["team"]["id"] == "scope-one"
@@ -202,6 +203,155 @@ async def test_me_scope_collapses_unavailable_explicit_selectors_without_tenant_
         assert "eligible-team" in serialized
         assert "hidden-team" not in serialized
         assert "hidden-season" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_me_scope_can_save_team_and_season_and_subsequent_requests_use_saved_scope(client):
+    import db as _db
+
+    with _db.connect() as conn:
+        _insert_team_with_season(conn, "persist-a", "persist-a", name="Persist A")
+        _insert_team_with_season(conn, "persist-b", "persist-b", name="Persist B")
+        conn.execute(
+            "INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES (?, ?, 'Spring Season', '2026-04-01', '', ?)",
+            ("persist-b-spring", "persist-b", "2026-04-02T00:00:00Z"),
+        )
+        _insert_user(conn, "persist-user", "persist_user", "coach")
+        _grant_membership(conn, "persist-a", "persist-user", "coach")
+        _grant_membership(conn, "persist-b", "persist-user", "coach")
+        conn.commit()
+
+    headers = _auth_headers("persist-user", "coach", "persist_user")
+    saved = await client.put(
+        "/api/me/scope",
+        headers=headers,
+        json={"team_id": "persist-b", "season_id": "persist-b-spring"},
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["active_scope"]["team"]["id"] == "persist-b"
+    assert saved.json()["active_scope"]["season"]["id"] == "persist-b-spring"
+    assert saved.json()["selection_required"] is False
+
+    refreshed = await client.get("/api/me", headers=headers)
+    assert refreshed.status_code == 200, refreshed.text
+    body = refreshed.json()
+    assert body["active_scope"]["team"]["id"] == "persist-b"
+    assert body["active_scope"]["season"]["id"] == "persist-b-spring"
+    assert body["user"]["last_team_id"] == "persist-b"
+    assert body["user"]["last_season_id"] == "persist-b-spring"
+
+    explicit_team = await client.get("/api/me?team_id=persist-b", headers=headers)
+    assert explicit_team.status_code == 200, explicit_team.text
+    assert explicit_team.json()["active_scope"]["season"]["id"] == "persist-b-spring"
+
+
+@pytest.mark.asyncio
+async def test_me_scope_rejects_saving_team_without_membership(client):
+    import db as _db
+
+    with _db.connect() as conn:
+        _insert_team_with_season(conn, "member-team", "member-team")
+        _insert_team_with_season(conn, "non-member-team", "non-member-team")
+        _insert_user(conn, "membership-user", "membership_user", "coach")
+        _grant_membership(conn, "member-team", "membership-user", "coach")
+        conn.commit()
+
+    headers = _auth_headers("membership-user", "coach", "membership_user")
+    existing = await client.put(
+        "/api/me/scope",
+        headers=headers,
+        json={"team_id": "non-member-team", "season_id": "non-member-team-season"},
+    )
+    missing = await client.put(
+        "/api/me/scope",
+        headers=headers,
+        json={"team_id": "missing-team", "season_id": "missing-team-season"},
+    )
+
+    assert existing.status_code == 403
+    assert missing.status_code == 403
+    assert existing.json() == missing.json() == {"detail": "Scope selection is not available"}
+
+
+@pytest.mark.asyncio
+async def test_me_scope_rejects_saving_season_from_another_team(client):
+    import db as _db
+
+    with _db.connect() as conn:
+        _insert_team_with_season(conn, "season-member-team", "season-member-team")
+        _insert_team_with_season(conn, "season-other-team", "season-other-team")
+        _insert_user(conn, "season-user", "season_user", "coach")
+        _grant_membership(conn, "season-member-team", "season-user", "coach")
+        conn.commit()
+
+    headers = _auth_headers("season-user", "coach", "season_user")
+    existing = await client.put(
+        "/api/me/scope",
+        headers=headers,
+        json={"team_id": "season-member-team", "season_id": "season-other-team-season"},
+    )
+    missing = await client.put(
+        "/api/me/scope",
+        headers=headers,
+        json={"team_id": "season-member-team", "season_id": "missing-season"},
+    )
+
+    assert existing.status_code == 403
+    assert missing.status_code == 403
+    assert existing.json() == missing.json() == {"detail": "Scope selection is not available"}
+
+
+@pytest.mark.asyncio
+async def test_me_scope_rejects_blank_active_scope_selectors(client):
+    import db as _db
+
+    with _db.connect() as conn:
+        _insert_team_with_season(conn, "blank-team", "blank-team")
+        _insert_user(conn, "blank-user", "blank_user", "coach")
+        _grant_membership(conn, "blank-team", "blank-user", "coach")
+        conn.commit()
+
+    resp = await client.put(
+        "/api/me/scope",
+        headers=_auth_headers("blank-user", "coach", "blank_user"),
+        json={"team_id": "   ", "season_id": "blank-team-season"},
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_me_scope_revoked_saved_membership_requires_reselection(client):
+    import db as _db
+
+    with _db.connect() as conn:
+        _insert_team_with_season(conn, "revoked-a", "revoked-a")
+        _insert_team_with_season(conn, "revoked-b", "revoked-b")
+        _insert_user(conn, "revoked-user", "revoked_user", "coach")
+        _grant_membership(conn, "revoked-a", "revoked-user", "coach")
+        _grant_membership(conn, "revoked-b", "revoked-user", "coach")
+        conn.commit()
+
+    headers = _auth_headers("revoked-user", "coach", "revoked_user")
+    saved = await client.put(
+        "/api/me/scope",
+        headers=headers,
+        json={"team_id": "revoked-b", "season_id": "revoked-b-season"},
+    )
+    assert saved.status_code == 200, saved.text
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM team_user_memberships WHERE team_id = 'revoked-b' AND user_id = 'revoked-user'")
+        conn.commit()
+
+    refreshed = await client.get("/api/me", headers=headers)
+    assert refreshed.status_code == 200, refreshed.text
+    body = refreshed.json()
+    assert body["active_scope"] is None
+    assert body["selection_required"] is True
+    assert body["user"]["last_team_id"] is None
+    assert body["user"]["last_season_id"] is None
 
 
 @pytest.mark.asyncio

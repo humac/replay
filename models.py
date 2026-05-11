@@ -17,6 +17,21 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=200)
 
 
+class UpdateActiveScopeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: str = Field(..., min_length=1, max_length=200)
+    season_id: str = Field(..., min_length=1, max_length=200)
+
+    @field_validator("team_id", "season_id")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("scope selector is required")
+        return cleaned
+
+
 class CreateAdminTeamRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     slug: str = Field(..., min_length=1, max_length=64)
