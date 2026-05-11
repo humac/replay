@@ -6,6 +6,17 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Phase 8.2 — Privacy-Safe AI Context Builder ✅ COMPLETE (2026-05-11)
+
+Adds the service-only context assembly layer needed before provider-backed AI drafting.
+
+- **Context service** (`services/ai_context.py`): builds structured, compact provider context from scoped notes, clips, playlists, goals, match summaries, player development profile refs, and engagement aggregates without making provider calls or storing raw prompt text.
+- **Privacy policy**: uses team-scoped DB reads plus `services/visibility.py`, applies `ai.never_draft_for_visibilities` to source inclusion, rejects disallowed draft targets/target visibility through team settings, omits `coach_private_note`, private playlist descriptions, and tactical-board JSON, and excludes cross-team/unlinked-player refs.
+- **Audit metadata**: returns source refs included, excluded by visibility, excluded by cross-team scope, or excluded by permanent policy using type/id/status/reason only.
+- **Validation**: `pytest tests/test_ai_drafting.py -q -k ai_context`; focused ai drafting suite, Python compile, and `git diff --check` before commit.
+
+**Next**: Phase 8.3 — Provider wiring / draft generation boundary.
+
 ## Platform Hardening Phase 6.4 — SQLite To Postgres Migration Command ✅ COMPLETE (2026-05-11)
 
 Adds the guarded one-shot import path needed before a production Postgres cutover.
