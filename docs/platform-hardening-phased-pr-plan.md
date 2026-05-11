@@ -1249,7 +1249,9 @@ Do not block AI MVP on the full catalog unless product needs require it.
 **Files:**
 
 - Modify/create team member routers/UI
-- Test: `tests/test_team_members.py` or equivalent
+- Test: `tests/test_team_members.py`
+
+**Closeout (2026-05-11):** Added migration v22 for `team_invites` with team/season scope, normalized email, role/status, hashed token, expiry/accept/revoke timestamps, creator/acceptor metadata, and JSON player-link metadata. Added team-scoped `/api/team/memberships*` and `/api/team/invites*` APIs: team admins can list/grant/revoke only within their own team, last-admin protection remains centralized in `services/teams.py`, invite tokens are stored hashed-only and returned only under `REPLAY_DEV_TOKEN_DELIVERY=1`, and invite acceptance supports existing or newly-created users plus guardian player links.
 
 **Key changes:**
 

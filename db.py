@@ -1267,12 +1267,42 @@ def _migrate_v21(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id, used_at, expires_at)")
 
 
+def _migrate_v22(conn: sqlite3.Connection):
+    """Add team invitation tokens for member onboarding."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_invites (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL,
+            season_id TEXT,
+            normalized_email TEXT NOT NULL,
+            role TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at REAL NOT NULL,
+            accepted_at REAL,
+            revoked_at REAL,
+            created_at REAL NOT NULL,
+            created_by_user_id TEXT,
+            accepted_by_user_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(team_id) REFERENCES teams(id),
+            FOREIGN KEY(season_id) REFERENCES seasons(id),
+            FOREIGN KEY(created_by_user_id) REFERENCES users(id),
+            FOREIGN KEY(accepted_by_user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_invites_team_status ON team_invites(team_id, status, expires_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_invites_email ON team_invites(normalized_email, status)")
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
     _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18, _migrate_v19,
-    _migrate_v20, _migrate_v21,
+    _migrate_v20, _migrate_v21, _migrate_v22,
 ]
 
 

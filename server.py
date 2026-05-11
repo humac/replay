@@ -39,6 +39,7 @@ from routers.admin import router as admin_router
 from routers.admin_teams import router as admin_teams_router
 from routers.auth import router as auth_router
 from routers.coach_ai import router as coach_ai_router
+from routers.team_members import router as team_members_router
 from routers.team_settings import router as team_settings_router
 from services import activity as _activity
 from services import engagement as _engagement
@@ -365,6 +366,7 @@ app = FastAPI(title="Replay", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(admin_teams_router)
+app.include_router(team_members_router)
 app.include_router(team_settings_router)
 app.include_router(coach_ai_router)
 

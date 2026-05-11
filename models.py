@@ -215,6 +215,54 @@ class CreateAdminMembershipRequest(BaseModel):
         return v.strip()
 
 
+class TeamMembershipRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: str = Field(..., min_length=1, max_length=200)
+    user_id: str = Field(..., min_length=1, max_length=200)
+    role: str = Field(..., min_length=1, max_length=64)
+
+    @field_validator("team_id", "user_id", "role")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        return v.strip()
+
+
+class TeamInviteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: str = Field(..., min_length=1, max_length=200)
+    email: str = Field(..., min_length=3, max_length=320)
+    role: str = Field(..., min_length=1, max_length=64)
+    season_id: Optional[str] = Field(None, max_length=200)
+    player_ids: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("team_id", "email", "role", "season_id")
+    @classmethod
+    def strip_optional_whitespace(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+    @field_validator("player_ids")
+    @classmethod
+    def strip_player_ids(cls, v: list[str]) -> list[str]:
+        return [str(item).strip() for item in v if str(item).strip()]
+
+
+class AcceptTeamInviteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(..., min_length=16, max_length=500)
+    user_id: Optional[str] = Field(None, max_length=200)
+    username: Optional[str] = Field(None, min_length=1, max_length=100)
+    password: Optional[str] = Field(None, min_length=8, max_length=200)
+    display_name: Optional[str] = Field(None, max_length=200)
+
+    @field_validator("token", "user_id", "username", "password", "display_name")
+    @classmethod
+    def strip_optional_whitespace(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else v
+
+
 class CreateMatchRequest(BaseModel):
     home_team: str = Field(..., min_length=1, max_length=200)
     away_team: str = Field(..., min_length=1, max_length=200)
