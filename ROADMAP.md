@@ -6,16 +6,28 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 6.2 — Postgres Compose And Test Lane ✅ COMPLETE (2026-05-10)
+
+Adds a real but narrow Postgres readiness lane without pretending the full app runtime has been ported.
+
+- **Compose lane** (`docker-compose-intel.yml`): optional `postgres:16-alpine` service behind the `postgres` profile, named `replay_postgres` volume, healthcheck, and `REPLAY_DB_BACKEND` / `DATABASE_URL` passthrough. Default Intel deployment stays SQLite-backed.
+- **DB config helpers** (`db.py`): `configured_database_url()`, `configured_db_backend()`, `postgres_runtime_requested()`, and explicit `connect_postgres()` using `psycopg`. `connect()` and startup migrations remain SQLite until the later Alembic/runtime migration PRs.
+- **CI/test lane** (`.github/workflows/ci.yml`, `pytest.ini`, `tests/test_postgres_lane.py`): full existing suite still runs on SQLite; new `postgres-lane` uses a GitHub Actions Postgres service plus explicit `REPLAY_RUN_LIVE_POSTGRES_TESTS=1` opt-in and smoke tests connection, transactions, JSONB, and `FOR UPDATE SKIP LOCKED` target semantics.
+- **Docs/config** (`.env.example`, `docs/DEPLOYMENT.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`): document `REPLAY_DB_BACKEND`, `DATABASE_URL`, optional local Postgres vars, and the explicit caveat that Phase 6.2 is not full runtime cutover.
+- **Validation**: `pytest tests/test_postgres_lane.py tests/test_postgres_compose_static.py tests/test_postgres_migration_adr_static.py -q`; live Postgres lane in CI via `REPLAY_RUN_LIVE_POSTGRES_TESTS=1 DATABASE_URL=postgresql://...`; existing SQLite suite remains required.
+
+**Next**: Phase 6.3 — Durable Background Jobs.
+
 ## Platform Hardening Phase 6.1 — Postgres Migration ADR ✅ COMPLETE (2026-05-10)
 
 Defines the production database target before durable jobs and AI drafting introduce concurrency-sensitive workloads.
 
 - **ADR** (`docs/postgres-migration-adr.md`): adopts Postgres for production, Alembic for forward migrations, SQLite for local/dev where practical, and no `pgvector` for the drafting MVP.
 - **Baseline contract**: maps current `db.py` `_migrate_v0` through `_migrate_v16` to the first Alembic baseline revision, after which new schema changes must be Alembic revisions.
-- **Deployment docs** (`docs/DEPLOYMENT.md`): documents planned `DATABASE_URL` / `REPLAY_DB_BACKEND` direction and warns those switches are not live until Phase 6.2/6.4 implementation lands.
+- **Deployment docs** (`docs/DEPLOYMENT.md`): records the planned `DATABASE_URL` / `REPLAY_DB_BACKEND` direction that Phase 6.2 now turns into a narrow compose/test lane while keeping the app runtime SQLite-backed.
 - **Validation**: `pytest tests/test_postgres_migration_adr_static.py -q` plus existing Phase 5 static guards.
 
-**Next**: Phase 6.2 — Postgres Compose And Test Lane.
+**Next**: Phase 6.2 — Postgres Compose And Test Lane (complete; see entry above).
 
 ## Platform Hardening Phase 5.3 — Safe CSS Split ✅ COMPLETE (2026-05-10)
 

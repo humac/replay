@@ -27,4 +27,6 @@ def test_deployment_docs_link_database_backend_plan():
     assert "postgres-migration-adr.md" in deployment
     assert "DATABASE_URL" in deployment
     assert "REPLAY_DB_BACKEND" in deployment
-    assert "planned configuration, not live runtime switches" in deployment
+    assert "Phase 6.2 Postgres lane usage" in deployment
+    assert "does not switch the app runtime yet" in deployment
+    assert "SQLite remains the live app runtime" in deployment

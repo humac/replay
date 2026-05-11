@@ -53,8 +53,13 @@ seeds the setting, then the env var is ignored. Edit through the UI thereafter.
 | `LIVE_AUTH_ALLOW_INSECURE` | `0` | Set to `1` to allow `/api/live/auth` to accept publish requests when `LIVE_AUTH_SECRET` is unset. **Dev-only.** A warning is logged on first use. Never enable in production or on a publicly reachable MediaMTX. |
 | `MAX_ACTIVE_TOKENS` | `1000` | Hard cap on concurrent admin/uploader sessions in the in-memory token store. Oldest tokens are evicted when the cap is hit. |
 | `REPLAY_STATIC_EXPORT_DIR` | (empty) | Optional path the replay container populates at startup with the SPA's static assets (`script.js`, `styles.css`, split `styles/`, `js/`, `logo.png`) so Caddy can serve `/static/*` directly via `sendfile()`. Leave unset for the single-container layout where uvicorn serves static. |
-| `DATABASE_URL` | (empty) | Planned Phase 6 production database URL. When Postgres support lands, production should use a `postgresql://` / `postgresql+psycopg://` URL. Until then SQLite remains the live backend. |
-| `REPLAY_DB_BACKEND` | `sqlite` | Planned Phase 6 selector for `sqlite` vs `postgres` lanes if split config is used instead of `DATABASE_URL`. |
+| `DATABASE_URL` | (empty) | Phase 6.2 Postgres lane URL. Use `postgresql://` / `postgresql+psycopg://` for explicit Postgres smoke tests. SQLite remains the live app runtime until the later Alembic/runtime migration PRs land. |
+| `REPLAY_DB_BACKEND` | `sqlite` | Phase 6.2 selector for `sqlite` vs `postgres` lane configuration. `postgres` enables explicit Postgres lane helpers/tests but does not switch the app runtime yet. |
+| `POSTGRES_DB` | `replay` | Optional `docker-compose-intel.yml --profile postgres` database name for the local Postgres lane. |
+| `POSTGRES_USER` | `replay` | Optional `docker-compose-intel.yml --profile postgres` user for the local Postgres lane. |
+| `POSTGRES_PASSWORD` | `replay-local-dev` | Optional local/dev Postgres lane password. Override in `.env.local`; do not use the example default for production. |
+| `POSTGRES_PORT` | `5432` | Loopback host port published by the optional local Postgres lane. Compose binds it as `127.0.0.1:${POSTGRES_PORT}` by default; change the compose file only for intentional remote DB access. |
+| `REPLAY_RUN_LIVE_POSTGRES_TESTS` | `0` | Explicit safety gate for tests that connect to `DATABASE_URL` and create/drop smoke-test tables. CI sets this to `1` only in the dedicated Postgres lane. |
 
 **First-boot fallback (otherwise edited in admin Settings → Performance Tuning):**
 
@@ -87,7 +92,7 @@ new transcode for ladder/segment-duration changes).
 
 ## Database Backends And Migration Direction
 
-Replay currently boots with SQLite as the live backend. Platform Hardening Phase 6.1 adopts Postgres as the production target and Alembic as the forward migration runner; see [`postgres-migration-adr.md`](postgres-migration-adr.md).
+Replay currently boots with SQLite as the live backend. Platform Hardening Phase 6.1 adopts Postgres as the production target and Alembic as the forward migration runner; see [`postgres-migration-adr.md`](postgres-migration-adr.md). Phase 6.2 adds an optional Postgres service and smoke-test lane, but it intentionally does **not** port the app runtime or schema migrations to Postgres yet.
 
 The migration direction is:
 
@@ -97,7 +102,20 @@ The migration direction is:
 4. run future schema changes through Alembic for both SQLite-dev and Postgres-production lanes;
 5. add a one-shot SQLite-to-Postgres import command with row-count, foreign-key, scope-column, and privacy-canary validation before cutover.
 
-Until the Phase 6.2/6.4 implementation PRs land, operators should treat `DATABASE_URL` and `REPLAY_DB_BACKEND` as planned configuration, not live runtime switches.
+Phase 6.2 Postgres lane usage:
+
+```bash
+# Start only the optional Postgres service; the default app stack remains SQLite-backed.
+docker compose -f docker-compose-intel.yml --profile postgres up -d postgres
+
+# Run the focused Postgres smoke lane.
+REPLAY_DB_BACKEND=postgres \
+REPLAY_RUN_LIVE_POSTGRES_TESTS=1 \
+DATABASE_URL=postgresql://replay:replay-local-dev@localhost:5432/replay \
+.venv/bin/pytest tests/test_postgres_lane.py -q -m postgres
+```
+
+`db.connect()` and app startup still run the SQLite migration chain. `db.connect_postgres()` is an explicit Phase 6.2 lane helper for connection/config smoke tests and target-dialect checks such as JSONB plus `FOR UPDATE SKIP LOCKED`; full runtime cutover remains future Phase 6 work.
 
 ## Reverse Proxy (Caddy — bundled)
 
