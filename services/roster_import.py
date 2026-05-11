@@ -155,7 +155,7 @@ def _validate_scope(conn: sqlite3.Connection, team_id: str, season_id: str | Non
         if conn.execute("SELECT id FROM seasons WHERE id = ? AND team_id = ?", (season_id, team_id)).fetchone() is None:
             raise RosterImportError(404, "Season not found for team")
         return season_id
-    row = conn.execute("SELECT id FROM seasons WHERE team_id = ? ORDER BY start_date DESC, created_at DESC LIMIT 1", (team_id,)).fetchone()
+    row = conn.execute("SELECT id FROM seasons WHERE team_id = ? ORDER BY starts_on DESC, created_at DESC LIMIT 1", (team_id,)).fetchone()
     return row["id"] if row else None
 
 

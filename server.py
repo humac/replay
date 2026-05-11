@@ -398,13 +398,17 @@ def _serialize_job_for_api(job: dict) -> dict:
 
 
 JOB_KIND_CAPABILITIES = {
-    "ai_draft": "coach_object:write",
     "thumbnail": "match:write",
     "transcode": "match:write",
 }
 
 
 def _job_write_capability(kind: str) -> str:
+    if kind == "ai_draft":
+        raise HTTPException(
+            status_code=422,
+            detail="ai_draft jobs cannot be enqueued via /api/jobs; use POST /api/coach/ai/draft",
+        )
     try:
         return JOB_KIND_CAPABILITIES[kind]
     except KeyError as exc:
@@ -412,13 +416,21 @@ def _job_write_capability(kind: str) -> str:
 
 
 def _normalize_job_payload(kind: str, payload: dict, team_id: str) -> dict:
+    if kind == "ai_draft":
+        # Defense in depth: even if a future change re-adds ai_draft to the
+        # capability map, never persist a user-supplied ai_draft payload through
+        # this route — raw prompts / private source text would land in
+        # background_jobs.payload_json. POST /api/coach/ai/draft is the only
+        # AI draft API.
+        raise HTTPException(
+            status_code=422,
+            detail="ai_draft jobs cannot be enqueued via /api/jobs; use POST /api/coach/ai/draft",
+        )
     payload_json = json.dumps(payload, separators=(",", ":"))
     if len(payload_json.encode("utf-8")) > 10_000:
         raise HTTPException(422, "Job payload is too large")
     if payload.get("team_id") is not None and str(payload.get("team_id")) != team_id:
         raise HTTPException(403, "Job payload team does not match resolved team")
-    if kind == "ai_draft":
-        return dict(payload)
     allowed_keys = {"match_id", "slot", "team_id"} if kind == "transcode" else {"match_id", "slot", "team_id"}
     extra_keys = set(payload) - allowed_keys
     if extra_keys:

@@ -263,3 +263,42 @@ async def test_roster_import_family_sees_only_linked_imported_players(client, mo
     assert feedback.status_code == 200, feedback.text
     assert {p["display_name"] for p in feedback.json()["players"]} == {"Avery Lopez"}
     assert "Mika Chen" not in {p["display_name"] for p in feedback.json()["players"]}
+
+
+async def test_roster_import_falls_back_to_most_recent_season_when_unspecified(client):
+    """When season_id is omitted, the service picks the team's most-recent
+    starts_on season. Regression for the stale `start_date` column reference
+    that previously raised OperationalError on this code path.
+    """
+    import db as _db
+    from services import roster_import as _roster_import
+    from services import teams as _teams
+
+    team = _teams.create_team(name="Roster Fallback", slug="roster-fallback-team", game_format="9v9")
+    older = _teams.create_season(team_id=team["id"], name="Fall 2024", starts_on="2024-09-01")
+    newer = _teams.create_season(team_id=team["id"], name="Spring 2026", starts_on="2026-02-15")
+    admin = _create_user("roster-fallback-admin")
+    _grant(team["id"], admin["id"], "team_admin")
+    actor = {"user_id": admin["id"], "id": admin["id"], "username": admin["username"], "role": admin["role"]}
+
+    csv_text = _csv_text([
+        {"display_name": "Fallback Player", "jersey_number": "11", "position": "Midfielder", "guardian_email": "fallback@example.com"},
+    ])
+
+    # Preview should not raise OperationalError on the fallback query.
+    preview = _roster_import.preview_roster_import(csv_text=csv_text, team_id=team["id"], season_id=None, actor=actor)
+    assert preview["ok"] is True
+    assert preview["summary"]["errors"] == 0
+
+    # Commit should land the player under the most-recent-starts_on season.
+    commit = _roster_import.commit_roster_import(csv_text=csv_text, team_id=team["id"], season_id=None, actor=actor)
+    assert commit["summary"]["created_players"] == 1
+
+    with _db.connect() as conn:
+        rows = conn.execute(
+            "SELECT season_id FROM players WHERE team_id = ? AND display_name = ?",
+            (team["id"], "Fallback Player"),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["season_id"] == newer["id"]
+    assert rows[0]["season_id"] != older["id"]
