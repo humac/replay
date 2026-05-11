@@ -6,6 +6,18 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Platform Hardening Phase 4 — Active Team/Season Selection ✅ COMPLETE (2026-05-10)
+
+Adds an explicit active workspace selector before more scoped coaching/admin UX depends on implicit team defaults.
+
+- **Minimal scope API + persistence** (`tenancy.py`, `models.py`, `server.py`): `/api/me` returns the signed-in user's eligible teams/seasons plus the current active scope, and `PUT /api/me/scope` saves `users.last_team_id` / `users.last_season_id` after validating membership and season ownership. Multi-team ambiguity produces a clear selection-required state instead of silently choosing the wrong team.
+- **Nav selector UI** (`index.html`, `js/api.js`, `styles.css`): signed-in users with eligible teams get a themed Team/Season switcher in the nav. Team changes choose that team's first eligible season; season changes persist immediately, update the nav label, and refresh scoped coach/admin/feedback surfaces.
+- **Stale-data guard**: switching scope clears cached coach/feedback bundles and visible list content to loading placeholders before reloading, so previous-team roster/feedback text is removed from the DOM during the transition.
+- **Evidence**: Playwright screenshots live in `docs/screenshots/phase-4-active-scope/`.
+- **Validation**: `pytest tests/test_me_scope.py tests/test_active_scope_ui_static.py -q` → 15 passed; `npm run capture-phase-4` → 2 passed; `node --check` / `python -m py_compile server.py` clean.
+
+**Next**: Phase 5 — Frontend Modularization, No Framework.
+
 ## Coaching Analysis Phase 9 — Coach Engagement Dashboard ✅ COMPLETE (2026-05-09)
 
 Adds a coach-facing engagement dashboard so coaches can see whether assigned feedback is being reviewed and reflected on, with filters by player, match, and visibility-safe evidence type.

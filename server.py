@@ -3522,14 +3522,46 @@ async def admin_export_database(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/matches")
-async def list_matches(q: str | None = None, page: int | None = None, limit: int | None = None):
+async def list_matches(
+    request: Request,
+    q: str | None = None,
+    page: int | None = None,
+    limit: int | None = None,
+    team_id: str | None = None,
+    season_id: str | None = None,
+):
+    scoped = bool(team_id or season_id)
+    scope = None
+    if scoped:
+        user = _auth.require_auth(request)
+        scope = _tenancy.resolve_scope(
+            request,
+            user,
+            team_id=team_id,
+            season_id=season_id,
+            require_role="match:read",
+            allow_global_admin_override=True,
+        )
+        team_id = scope.team["id"]
+        season_id = scope.season["id"] if scope.season else season_id
+
     if q is not None or page is not None or limit is not None:
         clamped_limit = max(1, min(limit or 50, 200))
         matches, total = _db.search_matches(q=q, page=page or 1, limit=clamped_limit)
+        if scoped:
+            matches = [m for m in matches if str(m.get("team_id")) == str(team_id)]
+            if season_id:
+                matches = [m for m in matches if str(m.get("season_id")) == str(season_id)]
+            total = len(matches)
         return {"matches": [_enrich_match(m) for m in matches], "total": total, "page": page or 1, "limit": clamped_limit}
     # No query params: return the 500 most-recent matches to bound payload size.
     async with MATCHES_LOCK:
-        return [_enrich_match(m) for m in _db.load_matches_unlocked(limit=500)]
+        matches = _db.load_matches_unlocked(limit=500)
+    if scoped:
+        matches = [m for m in matches if str(m.get("team_id")) == str(team_id)]
+        if season_id:
+            matches = [m for m in matches if str(m.get("season_id")) == str(season_id)]
+    return [_enrich_match(m) for m in matches]
 
 
 @app.post("/api/matches")
