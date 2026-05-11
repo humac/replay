@@ -16,6 +16,7 @@ For broader installation and admin operations, see the [administrator guide](./a
 - [Multi-player formation overlay](#multi-player-formation-overlay)
 - [The Review tab](#the-review-tab)
 - [Coach Review templates](#coach-review-templates)
+- [AI drafting — double opt-in](#ai-drafting--double-opt-in)
 - [Wide / Focus mode](#wide--focus-mode)
 - [Review playlists](#review-playlists)
 - [Sharing with players and families](#sharing-with-players-and-families)
@@ -277,6 +278,17 @@ The library covers common soccer areas — pressing, transition, build-up, finis
 Templates **never** populate `Coach private note` — that field stays empty until the coach types into it.
 
 > **Tip:** Templates are a great onboarding tool for assistant coaches. They communicate "what good feedback looks like" by example — the player_summary phrasing, the level of detail in *what to do next*, and the choice of tone.
+
+---
+
+## AI drafting — double opt-in
+
+AI drafting in Coach Review is gated by a deliberate **double opt-in** in team settings, as defense in depth. Both of these must be set by a team admin before the **Generate draft** button does anything:
+
+- `ai.drafting_enabled` — boolean master switch. Defaults to `false`.
+- `ai.allowed_draft_targets` — explicit list of note fields drafting may populate (e.g. `player_summary`, `what_happened`). **Defaults to `[]`** so that even if `ai.drafting_enabled` is flipped to `true`, no drafting can happen until a target is explicitly added. This empty default is intentional defense in depth.
+
+Server-side enforcement lives in `routers/coach_ai.py` and is authoritative; the client-side gates only hide UI to avoid visible-but-non-functional controls.
 
 ---
 
