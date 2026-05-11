@@ -46,6 +46,7 @@ from routers.coach_notes import router as coach_notes_router
 from routers.coach_playlists import router as coach_playlists_router
 from routers.coach_summaries import router as coach_summaries_router
 from routers.feedback import router as feedback_router
+from routers.jobs import router as jobs_router
 from routers.live import router as live_router
 from routers.matches import router as matches_router
 from routers.team_members import router as team_members_router
@@ -388,6 +389,7 @@ app.include_router(coach_notes_router)
 app.include_router(coach_playlists_router)
 app.include_router(coach_summaries_router)
 app.include_router(feedback_router)
+app.include_router(jobs_router)
 app.include_router(live_router)
 app.include_router(matches_router)
 app.include_router(uploads_router)
@@ -487,100 +489,6 @@ def _require_job_access(request: Request, user: dict, *, team_id: str, kind: str
         require_role=_job_write_capability(kind),
         allow_global_admin_override=False,
     )
-
-
-@app.post("/api/jobs")
-async def enqueue_job(request: Request, body: EnqueueJobRequest):
-    user = _auth.require_auth(request)
-    kind = body.kind
-    payload = body.payload
-    scope = _tenancy.resolve_scope(
-        request,
-        user,
-        team_id=body.team_id,
-        require_role=_job_write_capability(kind),
-        allow_global_admin_override=False,
-    )
-    team_id = str(scope.team["id"])
-    payload = _normalize_job_payload(kind, payload, team_id)
-    job_id = _jobs.enqueue(
-        kind,
-        payload,
-        team_id=team_id,
-        idempotency_key=body.idempotency_key,
-        scheduled_at=_normalize_scheduled_at(body.scheduled_at),
-        max_attempts=body.max_attempts,
-        payload_version=body.payload_version,
-    )
-    job = _jobs.get(job_id, team_id=team_id)
-    return _serialize_job_for_api(job)
-
-
-@app.get("/api/jobs")
-async def list_jobs(request: Request, team_id: str, status: str | None = None, kind: str | None = None, limit: int = 50):
-    user = _auth.require_auth(request)
-    required_capability = _job_write_capability(kind) if kind else "match:write"
-    scope = _tenancy.resolve_scope(
-        request,
-        user,
-        team_id=team_id,
-        require_role=required_capability,
-        allow_global_admin_override=False,
-    )
-    rows = _jobs.list_for_team(str(scope.team["id"]), status=status, kind=kind, limit=limit)
-    return [_serialize_job_for_api(row) for row in rows]
-
-
-@app.post("/api/jobs/lease")
-async def reject_worker_lease_route():
-    raise HTTPException(404, "Not found")
-
-
-@app.post("/api/jobs/{job_id}/heartbeat")
-@app.post("/api/jobs/{job_id}/complete")
-@app.post("/api/jobs/{job_id}/fail")
-async def reject_worker_lifecycle_route(job_id: int):
-    raise HTTPException(404, "Not found")
-
-
-@app.get("/api/jobs/{job_id}")
-async def get_job(request: Request, job_id: int, team_id: str):
-    user = _auth.require_auth(request)
-    scope = _tenancy.resolve_scope(
-        request,
-        user,
-        team_id=team_id,
-        require_role="team:read",
-        allow_global_admin_override=False,
-    )
-    job = _jobs.get(job_id, team_id=str(scope.team["id"]))
-    if job is None:
-        raise HTTPException(404, "Job not found")
-    _require_job_access(request, user, team_id=str(scope.team["id"]), kind=job["kind"])
-    return _serialize_job_for_api(job)
-
-
-@app.post("/api/jobs/{job_id}/cancel")
-async def cancel_job(request: Request, job_id: int, team_id: str):
-    user = _auth.require_auth(request)
-    scope = _tenancy.resolve_scope(
-        request,
-        user,
-        team_id=team_id,
-        require_role="team:read",
-        allow_global_admin_override=False,
-    )
-    resolved_team_id = str(scope.team["id"])
-    job = _jobs.get(job_id, team_id=resolved_team_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
-    _require_job_access(request, user, team_id=resolved_team_id, kind=job["kind"])
-    if job["status"] != "pending":
-        raise HTTPException(409, "Only pending jobs can be cancelled")
-    if _jobs.cancel(job_id, team_id=resolved_team_id) != 1:
-        raise HTTPException(409, "Only pending jobs can be cancelled")
-    refreshed = _jobs.get(job_id, team_id=resolved_team_id)
-    return _serialize_job_for_api(refreshed)
 
 
 # Shared secret MediaMTX sends in X-Internal-Secret when calling /api/live/auth.
