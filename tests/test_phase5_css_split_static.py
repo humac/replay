@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import settings as _settings
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,3 +30,10 @@ def test_static_export_allowlist_includes_split_styles_directory():
 
     assert '"styles.css"' in export_block
     assert '"styles"' in export_block
+
+
+def test_rendered_index_versions_split_engagement_stylesheet():
+    rendered = _settings.render_index_html(_settings.public_payload(_settings.DEFAULT_APP_SETTINGS.copy()))
+
+    assert '/static/styles/coaching-engagement.css?v=' in rendered
+    assert '/static/styles/coaching-engagement.css?v=20260510a' not in rendered

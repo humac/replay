@@ -3548,20 +3548,23 @@ async def list_matches(
 
     if q is not None or page is not None or limit is not None:
         clamped_limit = max(1, min(limit or 50, 200))
-        matches, total = _db.search_matches(q=q, page=page or 1, limit=clamped_limit)
-        if scoped:
-            matches = [m for m in matches if str(m.get("team_id")) == str(team_id)]
-            if season_id:
-                matches = [m for m in matches if str(m.get("season_id")) == str(season_id)]
-            total = len(matches)
+        matches, total = _db.search_matches(
+            q=q,
+            page=page or 1,
+            limit=clamped_limit,
+            team_id=team_id if scoped else None,
+            season_id=season_id if scoped else None,
+        )
         return {"matches": [_enrich_match(m) for m in matches], "total": total, "page": page or 1, "limit": clamped_limit}
     # No query params: return the 500 most-recent matches to bound payload size.
+    # Scoped calls filter in SQL before applying that cap so a busy unrelated
+    # team cannot hide older matches from the selected team/season.
     async with MATCHES_LOCK:
-        matches = _db.load_matches_unlocked(limit=500)
-    if scoped:
-        matches = [m for m in matches if str(m.get("team_id")) == str(team_id)]
-        if season_id:
-            matches = [m for m in matches if str(m.get("season_id")) == str(season_id)]
+        matches = _db.load_matches_unlocked(
+            limit=500,
+            team_id=team_id if scoped else None,
+            season_id=season_id if scoped else None,
+        )
     return [_enrich_match(m) for m in matches]
 
 

@@ -1224,16 +1224,30 @@ def upsert_match(conn: sqlite3.Connection, match: dict):
     )
 
 
-def load_matches_unlocked(limit: int | None = None) -> list[dict]:
+def load_matches_unlocked(
+    limit: int | None = None,
+    team_id: str | None = None,
+    season_id: str | None = None,
+) -> list[dict]:
     with connect() as conn:
+        where_clauses = []
+        params: list = []
+        if team_id:
+            where_clauses.append("team_id = ?")
+            params.append(team_id)
+        if season_id:
+            where_clauses.append("season_id = ?")
+            params.append(season_id)
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         if limit is not None:
             rows = conn.execute(
-                "SELECT * FROM matches ORDER BY created_at DESC, id DESC LIMIT ?",
-                (limit,),
+                f"SELECT * FROM matches{where_sql} ORDER BY created_at DESC, id DESC LIMIT ?",
+                params + [limit],
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM matches ORDER BY created_at DESC, id DESC"
+                f"SELECT * FROM matches{where_sql} ORDER BY created_at DESC, id DESC",
+                params,
             ).fetchall()
         return [row_to_match(row) for row in rows]
 
@@ -1242,6 +1256,8 @@ def search_matches(
     q: str | None = None,
     page: int = 1,
     limit: int = 50,
+    team_id: str | None = None,
+    season_id: str | None = None,
 ) -> tuple[list[dict], int]:
     """Search and paginate matches.  Returns (matches, total_count)."""
     with connect() as conn:
@@ -1254,6 +1270,12 @@ def search_matches(
             )
             pattern = f"%{q}%"
             params.extend([pattern, pattern, pattern])
+        if team_id:
+            where_clauses.append("team_id = ?")
+            params.append(team_id)
+        if season_id:
+            where_clauses.append("season_id = ?")
+            params.append(season_id)
 
         where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 
 import pytest
 
@@ -100,20 +101,20 @@ def test_postgres_lane_supports_jsonb_and_skip_locked():
     url = _postgres_url_or_skip()
     conn1 = _db.connect_postgres(url)
     conn2 = _db.connect_postgres(url)
+    table_name = f"replay_pg_lane_smoke_{uuid.uuid4().hex}"
     try:
         with conn1.cursor() as cur:
             cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS replay_pg_lane_jobs (
+                f"""
+                CREATE TABLE {table_name} (
                     id integer primary key,
                     payload jsonb not null,
                     status text not null
                 )
                 """
             )
-            cur.execute("TRUNCATE replay_pg_lane_jobs")
             cur.execute(
-                "INSERT INTO replay_pg_lane_jobs (id, payload, status) VALUES (%s, %s::jsonb, %s)",
+                f"INSERT INTO {table_name} (id, payload, status) VALUES (%s, %s::jsonb, %s)",
                 (1, '{"kind":"smoke"}', "pending"),
             )
             conn1.commit()
@@ -121,7 +122,7 @@ def test_postgres_lane_supports_jsonb_and_skip_locked():
         cur1 = conn1.cursor()
         cur1.execute("BEGIN")
         cur1.execute(
-            "SELECT id FROM replay_pg_lane_jobs WHERE status = 'pending' "
+            f"SELECT id FROM {table_name} WHERE status = 'pending' "
             "ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED"
         )
         assert cur1.fetchone()["id"] == 1
@@ -129,7 +130,7 @@ def test_postgres_lane_supports_jsonb_and_skip_locked():
         cur2 = conn2.cursor()
         cur2.execute("BEGIN")
         cur2.execute(
-            "SELECT id FROM replay_pg_lane_jobs WHERE status = 'pending' "
+            f"SELECT id FROM {table_name} WHERE status = 'pending' "
             "ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED"
         )
         assert cur2.fetchone() is None
@@ -137,7 +138,7 @@ def test_postgres_lane_supports_jsonb_and_skip_locked():
         conn1.rollback()
     finally:
         with conn1.cursor() as cur:
-            cur.execute("DROP TABLE IF EXISTS replay_pg_lane_jobs")
+            cur.execute(f"DROP TABLE IF EXISTS {table_name}")
             conn1.commit()
         conn1.close()
         conn2.close()

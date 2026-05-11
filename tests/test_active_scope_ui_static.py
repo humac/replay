@@ -29,7 +29,9 @@ def test_scope_state_mixin_exposes_active_scope_lifecycle_methods():
         "clearScopedViewData(",
     ]:
         assert method in state_js
-    assert "const shouldShow = !!this.authToken && teams.length > 1 && (this.canCoach?.() || this.isAdmin?.());" in state_js
+    assert "const seasonCount = teams.reduce" in state_js
+    assert "teams.length > 1 || seasonCount > 1" in state_js
+    assert "this.matches = [];" in state_js
     assert "params.set('team_id', this.activeScope.team.id);" in api_js
     assert "params.set('season_id', this.activeScope.season.id);" in api_js
     for stale_placeholder_id in [
