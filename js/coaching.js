@@ -40,7 +40,7 @@ const FEEDBACK_NOTE_TYPE_LABELS = {
     individual_goal: 'Individual goal',
 };
 
-const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'summaries', 'engagement', 'review'];
+const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'summaries', 'engagement', 'settings', 'review'];
 const VALID_FEEDBACK_TABS = ['playlists', 'notes', 'clips', 'summaries', 'development'];
 
 const GOAL_STATUS_OPTIONS = [
@@ -144,6 +144,7 @@ export const coachingMixin = {
     _coachFocusMode: false,
     _coachFocusEscapeHandler: null,
     _coachFocusInspectorOpen: false,
+    _teamSettings: null,
 
     // Sprint 7: Coach Review keyboard shortcut handler. Bound only while
     // Review is the active sub-tab; uninstalled on tab change / teardown.
@@ -258,6 +259,7 @@ export const coachingMixin = {
         if (name === 'clips') this.renderCoachClips();
         if (name === 'summaries') this.renderCoachMatchSummaries();
         if (name === 'engagement') this.renderCoachEngagement();
+        if (name === 'settings') this.renderCoachTeamSettings();
         if (name === 'review') this.renderCoachReview();
         else this.tearDownCoachReview();
     },
@@ -280,6 +282,209 @@ export const coachingMixin = {
         }
         if (name === 'summaries') this.renderFeedbackMatchSummaries(this._feedbackData || {});
         if (name === 'development') this.renderFeedbackDevelopment();
+    },
+
+    // ===== Team settings =====
+
+    async loadCoachTeamSettings() {
+        const resp = await this.authFetch('/api/coach/team/settings', { headers: this.getAuthHeaders() });
+        if (!resp.ok) {
+            const detail = await resp.json().catch(() => ({}));
+            throw new Error(detail.detail || 'Could not load team settings.');
+        }
+        this._teamSettings = await resp.json();
+        return this._teamSettings;
+    },
+
+    async renderCoachTeamSettings() {
+        const el = document.getElementById('coach-team-settings-content');
+        if (!el) return;
+        el.innerHTML = '<div class="session-empty">Loading team settings…</div>';
+        try {
+            const payload = await this.loadCoachTeamSettings();
+            const settings = payload.settings || {};
+            const canEdit = !!payload.can_edit;
+            const teamName = payload.team?.name || payload.team_id || 'Active team';
+            el.innerHTML = this.teamSettingsHtml(settings, { canEdit, teamName });
+            this.syncTeamSettingsControls(settings, canEdit);
+        } catch (error) {
+            el.innerHTML = `<div class="session-empty">${this.esc(error.message || 'Could not load team settings.')}</div>`;
+        }
+    },
+
+    teamSettingsHtml(settings, { canEdit, teamName }) {
+        const disabled = canEdit ? '' : 'disabled';
+        const readonly = canEdit ? '' : '<span class="status-pill waiting">Read only</span>';
+        return `
+            <div class="team-settings-shell">
+                <div class="team-settings-intro">
+                    <div>
+                        <span class="section-kicker">Active team</span>
+                        <h3>${this.esc(teamName)} settings</h3>
+                        <p>Team admins control AI drafting governance and coaching defaults. Coaches can review these settings before using templates and feedback tools.</p>
+                    </div>
+                    ${readonly}
+                </div>
+
+                <div class="team-settings-grid">
+                    <section class="team-settings-card" aria-labelledby="team-settings-ai-title">
+                        <div class="team-settings-card-head">
+                            <span class="section-kicker">AI governance</span>
+                            <h4 id="team-settings-ai-title">Drafting controls</h4>
+                        </div>
+                        ${this.teamSettingsToggleHtml('ai.drafting_enabled', 'Enable AI drafting', 'Allow draft generation for approved targets only.', !!settings['ai.drafting_enabled'], disabled)}
+                        ${this.teamSettingsChoiceGroupHtml('ai.tone', 'Draft tone', [
+                            ['direct', 'Direct'], ['encouraging', 'Encouraging'], ['technical', 'Technical']
+                        ], settings['ai.tone'] || 'direct', disabled)}
+                        ${this.teamSettingsMultiHtml('ai.never_draft_for_visibilities', 'Never draft or include context for', [
+                            ['private', 'Private'], ['player', 'Player/family']
+                        ], settings['ai.never_draft_for_visibilities'] || [], disabled)}
+                        ${this.teamSettingsMultiHtml('ai.allowed_draft_targets', 'Allowed draft targets', [
+                            ['player_summary', 'Player summary'], ['what_happened', 'What happened'], ['why_it_matters', 'Why it matters'],
+                            ['what_to_do_next', 'What to do next'], ['clip_title', 'Clip title'], ['clip_description', 'Clip description'],
+                            ['goal_description', 'Goal description'], ['goal_success_criteria', 'Goal success criteria'],
+                            ['summary_team_positives', 'Summary positives'], ['summary_team_improvements', 'Summary improvements'], ['summary_training_focus', 'Training focus']
+                        ], settings['ai.allowed_draft_targets'] || [], disabled)}
+                    </section>
+
+                    <section class="team-settings-card" aria-labelledby="team-settings-defaults-title">
+                        <div class="team-settings-card-head">
+                            <span class="section-kicker">Defaults</span>
+                            <h4 id="team-settings-defaults-title">Coach workspace defaults</h4>
+                        </div>
+                        ${this.teamSettingsChoiceGroupHtml('notes.default_visibility', 'New note visibility', VISIBILITY_OPTIONS, settings['notes.default_visibility'] || 'private', disabled)}
+                        ${this.teamSettingsChoiceGroupHtml('summaries.default_visibility', 'Match summary visibility', VISIBILITY_OPTIONS, settings['summaries.default_visibility'] || 'private', disabled)}
+                        ${this.teamSettingsChoiceGroupHtml('goals.default_visibility', 'Goal visibility', GOAL_VISIBILITY_OPTIONS, settings['goals.default_visibility'] || 'player', disabled)}
+                    </section>
+                </div>
+
+                <div class="team-settings-actions">
+                    <p id="team-settings-status" class="team-settings-status">${canEdit ? 'Changes save to the active team.' : 'Ask a team admin to change governance settings.'}</p>
+                    <button type="button" class="btn-primary" id="team-settings-save-btn" onclick="app.saveCoachTeamSettings()" ${disabled}>Save team settings</button>
+                </div>
+            </div>
+        `;
+    },
+
+    teamSettingsToggleHtml(key, label, help, selected, disabled) {
+        return `
+            <div class="team-settings-field">
+                <span class="team-settings-label">${this.esc(label)}</span>
+                <button type="button" class="team-settings-switch ${selected ? 'is-on' : ''}" data-setting-key="${this.esc(key)}" data-setting-kind="bool" aria-pressed="${selected ? 'true' : 'false'}" onclick="app.toggleTeamSettingsBool(this)" ${disabled}>
+                    <span>${selected ? 'Enabled' : 'Disabled'}</span>
+                </button>
+                <p>${this.esc(help)}</p>
+            </div>
+        `;
+    },
+
+    teamSettingsChoiceGroupHtml(key, label, options, selected, disabled) {
+        return `
+            <div class="team-settings-field">
+                <span class="team-settings-label">${this.esc(label)}</span>
+                <div class="team-settings-choice-row" data-setting-key="${this.esc(key)}" data-setting-kind="single">
+                    ${options.map(([value, optionLabel]) => `
+                        <button type="button" class="coach-check-option team-settings-chip ${value === selected ? 'is-selected' : ''}" data-value="${this.esc(value)}" aria-pressed="${value === selected ? 'true' : 'false'}" onclick="app.selectTeamSettingsSingle(this)" ${disabled}>
+                            <span class="coach-check-box" aria-hidden="true"></span>
+                            <span class="coach-check-label">${this.esc(optionLabel)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    teamSettingsMultiHtml(key, label, options, selectedValues, disabled) {
+        const selected = new Set(selectedValues || []);
+        return `
+            <div class="team-settings-field">
+                <span class="team-settings-label">${this.esc(label)}</span>
+                <div class="team-settings-choice-row wrap" data-setting-key="${this.esc(key)}" data-setting-kind="multi">
+                    ${options.map(([value, optionLabel]) => `
+                        <button type="button" class="coach-check-option team-settings-chip ${selected.has(value) ? 'is-selected' : ''}" data-value="${this.esc(value)}" aria-pressed="${selected.has(value) ? 'true' : 'false'}" onclick="app.toggleCoachCheck(this)" ${disabled}>
+                            <span class="coach-check-box" aria-hidden="true"></span>
+                            <span class="coach-check-label">${this.esc(optionLabel)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    syncTeamSettingsControls(settings, canEdit) {
+        document.querySelectorAll('#coach-team-settings-content [data-setting-key]').forEach((el) => {
+            if ('disabled' in el) el.disabled = !canEdit;
+        });
+    },
+
+    toggleTeamSettingsBool(btn) {
+        if (!btn || btn.disabled) return;
+        const next = btn.getAttribute('aria-pressed') !== 'true';
+        btn.classList.toggle('is-on', next);
+        btn.setAttribute('aria-pressed', next ? 'true' : 'false');
+        const label = btn.querySelector('span');
+        if (label) label.textContent = next ? 'Enabled' : 'Disabled';
+    },
+
+    selectTeamSettingsSingle(btn) {
+        if (!btn || btn.disabled) return;
+        const row = btn.closest('[data-setting-kind="single"]');
+        if (!row) return;
+        row.querySelectorAll('.team-settings-chip').forEach((item) => {
+            const active = item === btn;
+            item.classList.toggle('is-selected', active);
+            item.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+    },
+
+    collectTeamSettingsPayload() {
+        const root = document.getElementById('coach-team-settings-content');
+        const settings = {};
+        if (!root) return settings;
+        root.querySelectorAll('[data-setting-key]').forEach((el) => {
+            const key = el.dataset.settingKey;
+            const kind = el.dataset.settingKind;
+            if (!key) return;
+            if (kind === 'bool') {
+                settings[key] = el.getAttribute('aria-pressed') === 'true';
+            } else if (kind === 'single') {
+                const selected = el.querySelector('.team-settings-chip.is-selected');
+                if (selected) settings[key] = selected.dataset.value;
+            } else if (kind === 'multi') {
+                settings[key] = Array.from(el.querySelectorAll('.team-settings-chip.is-selected')).map((item) => item.dataset.value);
+            }
+        });
+        return settings;
+    },
+
+    async saveCoachTeamSettings() {
+        const btn = document.getElementById('team-settings-save-btn');
+        const status = document.getElementById('team-settings-status');
+        if (!btn || btn.disabled) return;
+        const done = this.btnLoading ? this.btnLoading(btn, 'Saving…') : null;
+        if (status) status.textContent = 'Saving team settings…';
+        try {
+            const resp = await this.authFetch('/api/coach/team/settings', {
+                method: 'PATCH',
+                headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ settings: this.collectTeamSettingsPayload() }),
+            });
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                const detail = payload.detail;
+                const message = detail?.errors?.map((err) => `${err.key}: ${err.detail}`).join('; ') || detail || 'Could not save team settings.';
+                throw new Error(message);
+            }
+            this._teamSettings = payload;
+            this.showSuccess?.('Team settings saved.');
+            if (status) status.textContent = 'Saved.';
+            await this.renderCoachTeamSettings();
+        } catch (error) {
+            if (status) status.textContent = error.message || 'Could not save team settings.';
+            this.showError?.(error.message || 'Could not save team settings.');
+        } finally {
+            if (done) done();
+        }
     },
 
     // ===== Coach workspace data load =====

@@ -979,31 +979,34 @@ while True:
 - Initial keys implemented: `ai.drafting_enabled`, `ai.allowed_draft_targets`, `ai.tone`, `ai.never_draft_for_visibilities`, `notes.default_visibility`, `summaries.default_visibility`, and `goals.default_visibility`.
 - No API/UI endpoints were added; PR 7.2 remains the next step for HTTP and frontend surfaces.
 
-### PR 7.2: Team Settings API And Minimal UI
+### PR 7.2: Team Settings API And Minimal UI ✅ COMPLETE (2026-05-11)
 
 **Files:**
 
-- Create: `routers/team_settings.py` or include in coach/admin router
-- Modify: `js/coaching/settings.js` if frontend modules are split
-- Modify: `index.html`
-- Modify: `styles.css`
-- Test: `tests/test_team_settings.py`, Playwright if UI added
+- Created: `routers/team_settings.py`
+- Modified: `models.py`, `server.py`, `index.html`, `js/coaching.js`, `js/coaching/state.js`, `styles.css`, `tests/test_team_settings.py`, `tests/test_phase5_frontend_modularization_static.py`, `AGENTS.md`, `CLAUDE.md`, `README.md`
+- Tested: `tests/test_team_settings.py` plus full `pytest`
 
 **Key changes:**
 
-- Add `GET /api/coach/team/settings`.
-- Add `PATCH /api/coach/team/settings`.
-- Require team admin or global admin for `ai.drafting_enabled`, provider-facing AI settings, and `ai.never_draft_for_visibilities`. Coaches may read settings and use drafting only after team-admin enablement; they may not opt the team into provider processing or player-visible context/drafting.
-- Non-AI display defaults such as `notes.default_visibility` may be editable by team admin and coach if product wants coach-managed defaults, but keep the AI governance controls admin-only.
-- Add minimal Coach > Settings surface if needed before AI; hide AI group until provider is configured if appropriate.
+- Added active-scope `GET /api/coach/team/settings` and `PATCH /api/coach/team/settings`.
+- `routers/team_settings.py` resolves scope through `tenancy.resolve_scope(...)`; coaches/team admins/global admins can read, while writes require `team_settings:manage` or global-admin override.
+- API PATCH validates every submitted setting through `services/team_settings.py` and returns structured 422 details without writing partial invalid payloads.
+- Coach > Settings UI is integrated into the existing coaching tab bar and dark Replay component language. It loads settings for the active team, disables controls for read-only coaches, and clears/reloads on team/season switch.
+- Minimal UI covers the Phase 7.1 AI governance/default keys. Normal coaches remain read-only for now; team admins/global admins can edit all exposed settings.
 
 **Tests:**
 
 - Scoped read/write enforcement.
 - PATCH validates each key.
-- UI visible only to eligible roles.
-- Settings are loaded with active team and change when team switches.
+- Settings tab is registered in frontend static coverage.
+- Settings reload with active-team state clearing.
 - Coach cannot toggle `ai.drafting_enabled` or relax `ai.never_draft_for_visibilities`; team admin/global admin can.
+
+**Implementation closeout:**
+
+- No Phase 8 drafting provider/context behavior was added.
+- Provider-gating copy stays informational until Phase 8 provider configuration exists.
 
 ### Future Full Team Settings Phase
 

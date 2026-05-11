@@ -74,7 +74,7 @@ def test_phase5_domain_modules_are_imported_and_assembled_without_build_tooling(
         assert script.index("...coachingMixin,") < script.index(f"...{mixin_name},")
 
     assert not (ROOT / "package.json").exists()
-    assert "VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'summaries', 'engagement', 'review']" in (ROOT / "js" / "coaching.js").read_text()
+    assert "VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'summaries', 'engagement', 'settings', 'review']" in (ROOT / "js" / "coaching.js").read_text()
 
 
 def test_phase5_engagement_dashboard_lives_in_domain_module():

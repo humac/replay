@@ -139,6 +139,7 @@ export const coachingStateMixin = {
         this.matches = [];
         this._matchLoadErrorShown = false;
         this._coachBundle = null;
+        this._teamSettings = null;
         this._feedbackData = null;
         this._feedbackDevCache = null;
         const placeholders = [
@@ -148,6 +149,7 @@ export const coachingStateMixin = {
             ['coach-clips-list', 'Loading clips…'],
             ['coach-summaries-list', 'Loading summaries…'],
             ['coach-engagement-dashboard', 'Loading engagement…'],
+            ['coach-team-settings-content', 'Loading team settings…'],
             ['feedback-playlists-list', 'Loading playlists…'],
             ['feedback-notes-list', 'Loading notes…'],
             ['feedback-clips-list', 'Loading clips…'],

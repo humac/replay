@@ -60,6 +60,12 @@ class EnqueueJobRequest(BaseModel):
         return cleaned or None
 
 
+class PatchTeamSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
 class CreateAdminTeamRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     slug: str = Field(..., min_length=1, max_length=64)
