@@ -56,6 +56,27 @@
             <a href="/admin" data-view="admin" id="nav-admin" style="display:none;">Admin</a>
         </div>
         <div class="nav-actions">
+            <div id="nav-scope-switcher" class="nav-scope-switcher" hidden>
+                <button type="button" id="nav-scope-trigger" class="nav-scope-trigger" aria-expanded="false" aria-controls="nav-scope-panel" onclick="app.toggleScopeSwitcher()">
+                    <span class="nav-scope-kicker">Scope</span>
+                    <span class="nav-scope-label" id="nav-scope-label">Select team</span>
+                </button>
+                <div id="nav-scope-panel" class="nav-scope-panel" hidden>
+                    <div class="nav-scope-panel-head">
+                        <span class="nav-scope-panel-kicker">Active workspace</span>
+                        <strong>Team &amp; season</strong>
+                    </div>
+                    <label class="nav-scope-field">
+                        <span>Team</span>
+                        <select id="nav-scope-team" onchange="app.handleScopeTeamChange(this.value)"></select>
+                    </label>
+                    <label class="nav-scope-field">
+                        <span>Season</span>
+                        <select id="nav-scope-season" onchange="app.handleScopeSeasonChange(this.value)"></select>
+                    </label>
+                    <p class="nav-scope-help" id="nav-scope-help">Choose which team and season coach/admin data should use.</p>
+                </div>
+            </div>
             <button id="theme-toggle-btn" class="nav-icon-btn" onclick="app.toggleTheme()" title="Toggle light/dark mode">
                 <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                 <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>

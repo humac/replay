@@ -11,6 +11,7 @@
     "capture-phase-6d2": "playwright test phase-6d2-capture.spec.js --project=chromium --workers=1",
     "capture-phase-6e":  "playwright test phase-6e-capture.spec.js --project=chromium --workers=1",
     "capture-phase-7":   "playwright test phase-7-goals.spec.js --project=chromium --workers=1",
+    "capture-phase-4":   "playwright test phase-4-active-scope.spec.js --project=chromium --workers=1",
     "capture-phase-8":   "playwright test phase-8-match-summaries.spec.js --project=chromium --workers=1",
     "capture-phase-9":   "playwright test phase-9-engagement-dashboard.spec.js --project=chromium --workers=1"
   },

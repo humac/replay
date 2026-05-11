@@ -355,6 +355,71 @@ async def test_me_scope_revoked_saved_membership_requires_reselection(client):
 
 
 @pytest.mark.asyncio
+async def test_matches_endpoint_filters_by_authorized_active_scope(client):
+    import db as _db
+
+    now = "2026-04-01T00:00:00Z"
+    with _db.connect() as conn:
+        _insert_team_with_season(conn, "matches-a", "matches-a", name="Matches A")
+        _insert_team_with_season(conn, "matches-b", "matches-b", name="Matches B")
+        _insert_user(conn, "matches-user", "matches_user", "coach")
+        _grant_membership(conn, "matches-a", "matches-user", "coach")
+        conn.commit()
+    _db.save_matches_unlocked([
+        {
+            "id": "match-scope-a",
+            "home_team": "Matches A",
+            "away_team": "Visitors",
+            "date": "2026-04-01",
+            "time": "10:00",
+            "location": "Field A",
+            "score_home": "1",
+            "score_away": "0",
+            "format": "full",
+            "videos": {"full": None, "first_half": None, "second_half": None},
+            "video_status": {"full": "none", "first_half": "none", "second_half": "none"},
+            "home_logo": None,
+            "away_logo": None,
+            "created_at": now,
+            "updated_at": now,
+            "slug": "match-scope-a",
+            "team_id": "matches-a",
+            "season_id": "matches-a-season",
+        },
+        {
+            "id": "match-scope-b",
+            "home_team": "Matches B",
+            "away_team": "Visitors",
+            "date": "2026-04-02",
+            "time": "10:00",
+            "location": "Field B",
+            "score_home": "2",
+            "score_away": "0",
+            "format": "full",
+            "videos": {"full": None, "first_half": None, "second_half": None},
+            "video_status": {"full": "none", "first_half": "none", "second_half": "none"},
+            "home_logo": None,
+            "away_logo": None,
+            "created_at": now,
+            "updated_at": now,
+            "slug": "match-scope-b",
+            "team_id": "matches-b",
+            "season_id": "matches-b-season",
+        },
+    ])
+
+    headers = _auth_headers("matches-user", "coach", "matches_user")
+    scoped = await client.get("/api/matches?team_id=matches-a&season_id=matches-a-season", headers=headers)
+    unauthorized = await client.get("/api/matches?team_id=matches-b&season_id=matches-b-season", headers=headers)
+    anonymous = await client.get("/api/matches?team_id=matches-a&season_id=matches-a-season")
+
+    assert scoped.status_code == 200, scoped.text
+    assert [match["id"] for match in scoped.json()] == ["match-scope-a"]
+    assert unauthorized.status_code == 403
+    assert anonymous.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_me_scope_requires_authentication(client):
     resp = await client.get("/api/me")
 

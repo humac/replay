@@ -636,7 +636,7 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - User cannot save a season from another team.
 - Invalid active scope produces selection-required response.
 
-### PR 4.3: Active Team/Season Selector UI
+### PR 4.3: Active Team/Season Selector UI — ✅ complete
 
 **Files:**
 
@@ -660,6 +660,12 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 - No stale cross-team data remains after switch.
 - Playwright assertion: after switching teams, no DOM element containing previous-team data remains visible for more than 100 ms after the switch action resolves.
 - Single-team default behavior remains unchanged.
+
+**Implementation notes (2026-05-10):**
+
+- Added the nav-level active workspace selector (`#nav-scope-switcher`) with themed dark/light styles and mobile positioning.
+- `js/api.js` now loads `/api/me` after auth, persists changes via `PUT /api/me/scope`, updates the label/options, clears scoped coach/feedback/admin match DOM/caches, and refreshes the active surface after a switch. Authenticated match reloads include the active `team_id` / `season_id` query so the season view and admin library do not continue showing cross-team rows.
+- Added static regression coverage in `tests/test_active_scope_ui_static.py` and Playwright coverage/screenshots in `tests/e2e/phase-4-active-scope.spec.js` / `docs/screenshots/phase-4-active-scope/`.
 
 ---
 
