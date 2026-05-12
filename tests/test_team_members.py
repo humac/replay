@@ -94,6 +94,52 @@ async def test_team_admin_cannot_remove_last_team_admin(client):
     assert resp.status_code == 409
 
 
+async def test_global_admin_can_manage_invites_without_team_membership_and_non_member_cannot(client, monkeypatch):
+    monkeypatch.delenv("REPLAY_DEV_TOKEN_DELIVERY", raising=False)
+    team = _create_team("invite-global-admin-team")
+    global_admin = _create_user("invite-global-admin", role="admin")
+    outsider = _create_user("invite-outsider")
+
+    created = await client.post(
+        "/api/team/invites",
+        headers=_token_headers(global_admin),
+        json={"team_id": team["id"], "email": "setup-coach@example.com", "role": "coach"},
+    )
+    assert created.status_code == 200, created.text
+    invite = created.json()
+    assert invite["email"] == "setup-coach@example.com"
+    assert invite["role"] == "coach"
+    assert "invite_token" not in invite
+    assert "token_hash" not in invite
+
+    listed = await client.get(f"/api/team/invites?team_id={team['id']}", headers=_token_headers(global_admin))
+    assert listed.status_code == 200, listed.text
+    assert [row["id"] for row in listed.json()] == [invite["id"]]
+    assert "token_hash" not in listed.json()[0]
+
+    denied = await client.post(
+        "/api/team/invites",
+        headers=_token_headers(outsider),
+        json={"team_id": team["id"], "email": "blocked-coach@example.com", "role": "coach"},
+    )
+    assert denied.status_code == 403
+
+    resent = await client.post(
+        f"/api/team/invites/{invite['id']}/resend?team_id={team['id']}",
+        headers=_token_headers(global_admin),
+    )
+    assert resent.status_code == 200, resent.text
+    assert "invite_token" not in resent.json()
+    assert "token_hash" not in resent.json()
+
+    revoked = await client.post(
+        f"/api/team/invites/{invite['id']}/revoke?team_id={team['id']}",
+        headers=_token_headers(global_admin),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "revoked"
+
+
 async def test_team_invite_accept_existing_user_and_reject_replay(client, monkeypatch):
     import db as _db
 
