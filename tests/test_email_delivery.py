@@ -28,11 +28,13 @@ def test_brevo_send_invite_uses_transactional_api(monkeypatch):
             calls.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
             return FakeResponse()
 
-    monkeypatch.setenv("REPLAY_EMAIL_PROVIDER", "brevo")
-    monkeypatch.setenv("REPLAY_PUBLIC_BASE_URL", "https://replay.example.test")
-    monkeypatch.setenv("REPLAY_BREVO_API_KEY", "brevo-secret")
-    monkeypatch.setenv("REPLAY_EMAIL_FROM", "noreply@example.test")
-    monkeypatch.setenv("REPLAY_EMAIL_FROM_NAME", "Replay Ops")
+    monkeypatch.setattr(email_delivery._settings, "email_effective_config", lambda: {
+        "email_provider": "brevo",
+        "email_public_base_url": "https://replay.example.test",
+        "email_brevo_api_key": "brevo-secret",
+        "email_from": "noreply@example.test",
+        "email_from_name": "Replay Ops",
+    })
     monkeypatch.setattr(email_delivery.httpx, "Client", FakeClient)
 
     result = email_delivery.send_invite_email(
@@ -61,10 +63,13 @@ def test_brevo_missing_config_fails_closed_without_network(monkeypatch):
     def fail_client(*args, **kwargs):
         raise AssertionError("network client should not be constructed")
 
-    monkeypatch.setenv("REPLAY_EMAIL_PROVIDER", "brevo")
-    monkeypatch.delenv("REPLAY_PUBLIC_BASE_URL", raising=False)
-    monkeypatch.setenv("REPLAY_BREVO_API_KEY", "brevo-secret")
-    monkeypatch.setenv("REPLAY_EMAIL_FROM", "noreply@example.test")
+    monkeypatch.setattr(email_delivery._settings, "email_effective_config", lambda: {
+        "email_provider": "brevo",
+        "email_public_base_url": "",
+        "email_brevo_api_key": "brevo-secret",
+        "email_from": "noreply@example.test",
+        "email_from_name": "Replay",
+    })
     monkeypatch.setattr(email_delivery.httpx, "Client", fail_client)
 
     result = email_delivery.send_password_reset_email(to_email="person@example.test", token="reset-token")
@@ -72,4 +77,3 @@ def test_brevo_missing_config_fails_closed_without_network(monkeypatch):
     assert result.ok is False
     assert result.provider == "brevo"
     assert result.status == "not_configured"
-

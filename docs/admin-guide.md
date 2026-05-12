@@ -474,6 +474,18 @@ The Settings page controls every customer-facing piece of copy and imagery.
 | **App Logo** | Top-left logo (replaces the "REPLAY" wordmark if uploaded) |
 | **Favicon** | Browser tab icon |
 
+### Notifications
+
+Use **Admin > Settings > Notifications** to manage transactional email without editing environment variables:
+
+- choose **Brevo** or keep email disabled;
+- set the public Replay URL used in invite/reset/verification links;
+- set the sender email and display name;
+- save, replace, or clear the Brevo API key;
+- send a test email.
+
+The Brevo API key is write-only in the app. Admins can see whether a key is configured, but the saved secret is not returned to the browser.
+
 > **Note:** Logos and favicons accept PNG, JPG, SVG, and WebP. SVG uploads have script tags stripped before serving — uploaded logos are still **inline** in the page, so a malicious SVG would otherwise be a stored XSS vector.
 
 ### Navigation and section labels

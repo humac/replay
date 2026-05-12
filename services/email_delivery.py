@@ -8,12 +8,12 @@ links and are never logged or persisted by this module.
 
 from __future__ import annotations
 
-import os
 from html import escape
 from dataclasses import dataclass
 from urllib.parse import quote, urlencode
 
 import httpx
+import settings as _settings
 
 BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
 
@@ -28,30 +28,33 @@ class EmailResult:
 
 
 def provider() -> str:
-    return (os.environ.get("REPLAY_EMAIL_PROVIDER") or "disabled").strip().lower() or "disabled"
+    return (_settings.email_effective_config().get("email_provider") or "disabled").strip().lower() or "disabled"
 
 
 def public_base_url() -> str:
-    return (os.environ.get("REPLAY_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    return (_settings.email_effective_config().get("email_public_base_url") or "").strip().rstrip("/")
 
 
 def is_configured() -> bool:
-    if provider() != "brevo":
+    config = _settings.email_effective_config()
+    if (config.get("email_provider") or "disabled").strip().lower() != "brevo":
         return False
     return bool(
-        public_base_url()
-        and os.environ.get("REPLAY_BREVO_API_KEY")
-        and os.environ.get("REPLAY_EMAIL_FROM")
+        (config.get("email_public_base_url") or "").strip()
+        and config.get("email_brevo_api_key")
+        and (config.get("email_from") or "").strip()
     )
 
 
 def config_status() -> dict:
+    payload = _settings.email_admin_payload()
+    status = payload["status"]
     return {
-        "provider": provider(),
-        "configured": is_configured(),
-        "has_public_base_url": bool(public_base_url()),
-        "has_from": bool(os.environ.get("REPLAY_EMAIL_FROM")),
-        "has_brevo_api_key": bool(os.environ.get("REPLAY_BREVO_API_KEY")),
+        "provider": payload["provider"],
+        "configured": payload["configured"],
+        "has_public_base_url": status["has_public_base_url"],
+        "has_from": status["has_from"],
+        "has_brevo_api_key": status["has_brevo_api_key"],
     }
 
 
@@ -68,16 +71,25 @@ def verification_url(token: str) -> str:
 
 
 def _sender() -> dict:
-    sender = {"email": os.environ.get("REPLAY_EMAIL_FROM", "").strip()}
-    name = (os.environ.get("REPLAY_EMAIL_FROM_NAME") or "Replay").strip()
+    config = _settings.email_effective_config()
+    sender = {"email": (config.get("email_from") or "").strip()}
+    name = (config.get("email_from_name") or "Replay").strip()
     if name:
         sender["name"] = name
     return sender
 
 
 def _send_brevo(*, to_email: str, subject: str, text: str, html: str, tags: list[str]) -> EmailResult:
-    if not is_configured():
-        return EmailResult(False, "not_configured", provider(), detail="Brevo email delivery is not configured")
+    config = _settings.email_effective_config()
+    active_provider = (config.get("email_provider") or "disabled").strip().lower() or "disabled"
+    configured = (
+        active_provider == "brevo"
+        and bool((config.get("email_public_base_url") or "").strip())
+        and bool(config.get("email_brevo_api_key"))
+        and bool((config.get("email_from") or "").strip())
+    )
+    if not configured:
+        return EmailResult(False, "not_configured", active_provider, detail="Brevo email delivery is not configured")
 
     payload = {
         "sender": _sender(),
@@ -89,7 +101,7 @@ def _send_brevo(*, to_email: str, subject: str, text: str, html: str, tags: list
     }
     headers = {
         "accept": "application/json",
-        "api-key": os.environ.get("REPLAY_BREVO_API_KEY", ""),
+        "api-key": config.get("email_brevo_api_key", ""),
         "content-type": "application/json",
     }
     try:
@@ -105,10 +117,11 @@ def _send_brevo(*, to_email: str, subject: str, text: str, html: str, tags: list
 
 
 def _send(*, to_email: str, subject: str, text: str, html: str, tags: list[str]) -> EmailResult:
-    if provider() == "disabled":
+    active_provider = provider()
+    if active_provider == "disabled":
         return EmailResult(False, "disabled", "disabled", detail="Email delivery is disabled")
-    if provider() != "brevo":
-        return EmailResult(False, "not_configured", provider(), detail="Unsupported email provider")
+    if active_provider != "brevo":
+        return EmailResult(False, "not_configured", active_provider, detail="Unsupported email provider")
     return _send_brevo(to_email=to_email, subject=subject, text=text, html=html, tags=tags)
 
 
