@@ -210,17 +210,33 @@ $REPLAY_DATA_DIR/
 
 ## Backend Layout
 
-The FastAPI app is intentionally split so `server.py` stays focused on app wiring, lifespan/startup work, shared path helpers, static/SPA serving, and route domains that have not yet moved. Phase 3 extracted the first focused modules:
+The FastAPI app is intentionally split so `server.py` stays focused on app wiring, lifespan/startup work, shared path helpers, static/SPA serving, and compatibility wrappers. Most request domains now live in focused routers with shared policy in services; this is the completed route split map for current main:
 
-- `routers/auth.py` — `/api/login`, `/api/logout`, and `/api/auth/check`
-- `routers/admin.py` — admin-only `/api/users*` user-management endpoints
-- `routers/admin_teams.py` — global-admin team, season, and membership management
-- `services/teams.py` — shared team/season/membership business logic used by both API and `python -m tools.admin`
-- `services/team_settings.py` — Phase 7 team settings registry for AI governance/default visibility keys, with scoped validation, draft-target visibility guards, and active-scope Coach settings API/UI integration via `routers/team_settings.py` (`GET/PATCH /api/coach/team/settings`)
+- Core/account routers:
+  - `routers/auth.py` — login/logout/auth-check, `/api/me` scope/profile/password/email flows, password reset, and email verification
+  - `routers/admin.py` — admin-only `/api/users*` account-management endpoints
+  - `routers/settings.py` — admin settings and branding
+- Tenant/admin routers:
+  - `routers/admin_teams.py` — global-admin `/api/admin/teams*` team, season, and membership override surface
+  - `routers/team_members.py` — membership-scoped `/api/team/memberships*` and `/api/team/invites*`, used by **Admin > People** (`/admin/people`), `/welcome`, and `/invite/{token}`
+  - `routers/team_settings.py` — active-scope `GET/PATCH /api/coach/team/settings` for Coach > Settings settings/defaults/AI governance; Coach > Settings links/copy point people management to Admin > People
+- Media/operations routers:
+  - `routers/matches.py`, `routers/uploads.py`, `routers/live.py`, `routers/jobs.py`, `routers/admin_ops.py` — match library CRUD/playback/recovery, resumable uploads, live streaming, team-scoped jobs, and diagnostics/export
+- Coaching/viewer routers:
+  - `routers/coach_notes.py`, `routers/coach_clips.py`, `routers/coach_playlists.py`, `routers/coach_goals.py`, `routers/coach_summaries.py`, `routers/coach_engagement.py`, `routers/coach_ai.py`, `routers/feedback.py` — coach workspace, AI drafting, engagement, and My Feedback domains
+
+Shared service map:
+
+- `services/teams.py` — global-admin team/season/membership business logic shared by API and `python -m tools.admin`
+- `services/team_members.py` — active-team membership/invite business logic, hashed invite tokens, resend/revoke, and last-admin protection delegation for Admin > People
+- `services/team_settings.py` — AI governance/default visibility registry, scoped validation, and draft-target visibility guards
 - `services/visibility.py` — coaching visibility checks and viewer scrubbing helpers
 - `services/engagement.py` — coach engagement dashboard aggregation
 - `services/thumbnails.py` — coaching note/clip thumbnail path checks and generation helpers
 - `services/activity.py` — persisted admin/activity feed wrappers
+- `services/jobs.py` — durable background-job enqueue/list/cancel/worker lifecycle
+- `services/ai_drafting.py`, `services/ai_context.py`, `services/ai_providers.py` — AI audit, privacy-safe context, and provider boundary
+- `services/roster_import.py`, `services/email_delivery.py` — CSV roster preview/commit and transactional email delivery
 
 Keep new backend behavior in the appropriate router/service module instead of adding more policy logic to `server.py`.
 
