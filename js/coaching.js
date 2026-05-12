@@ -248,7 +248,11 @@ export const coachingMixin = {
         if (name === 'clips') this.renderCoachClips();
         if (name === 'summaries') this.renderCoachMatchSummaries();
         if (name === 'engagement') this.renderCoachEngagement();
-        if (name === 'settings') this.renderCoachTeamSettings();
+        if (name === 'settings') {
+            this.renderCoachTeamSettings();
+            this.loadCoachTeamMembers?.();
+            this.loadCoachTeamInvites?.();
+        }
         if (name === 'review') this.renderCoachReview();
         else this.tearDownCoachReview();
     },
