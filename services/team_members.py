@@ -84,6 +84,13 @@ def _assert_team_admin(team_id: str, actor: dict) -> None:
         raise _teams.TeamServiceError(403, "Team admin membership required")
 
 
+def _assert_invite_manager(team_id: str, actor: dict) -> None:
+    """Allow team admins and global admins to manage team invites."""
+    if _auth.has_role(actor, "admin"):
+        return
+    _assert_team_admin(team_id, actor)
+
+
 def list_memberships(team_id: str, actor: dict) -> list[dict]:
     _assert_team_admin(team_id, actor)
     return _teams.list_memberships(team_id)
@@ -122,7 +129,7 @@ def _validate_player_ids(conn: sqlite3.Connection, team_id: str, player_ids: lis
 
 
 def list_invites(team_id: str, actor: dict) -> list[dict]:
-    _assert_team_admin(team_id, actor)
+    _assert_invite_manager(team_id, actor)
     with _db.connect() as conn:
         rows = conn.execute(
             "SELECT * FROM team_invites WHERE team_id = ? ORDER BY created_at DESC, id DESC",
@@ -180,7 +187,7 @@ def _send_invite_email(invite_id: str, token: str) -> None:
 
 
 def create_invite(*, team_id: str, email: str, role: str, actor: dict, season_id: str | None = None, player_ids: list[str] | None = None) -> dict:
-    _assert_team_admin(team_id, actor)
+    _assert_invite_manager(team_id, actor)
     clean_role = _teams._validate_membership_role(role)
     normalized_email = _normalize_email(email)
     token = secrets.token_urlsafe(32)
@@ -226,7 +233,7 @@ def create_invite(*, team_id: str, email: str, role: str, actor: dict, season_id
 
 
 def revoke_invite(team_id: str, invite_id: str, actor: dict) -> dict:
-    _assert_team_admin(team_id, actor)
+    _assert_invite_manager(team_id, actor)
     now = time.time()
     with _db.connect() as conn:
         row = conn.execute("SELECT * FROM team_invites WHERE id = ? AND team_id = ?", (invite_id, team_id)).fetchone()
@@ -240,7 +247,7 @@ def revoke_invite(team_id: str, invite_id: str, actor: dict) -> dict:
 
 
 def resend_invite(team_id: str, invite_id: str, actor: dict) -> dict:
-    _assert_team_admin(team_id, actor)
+    _assert_invite_manager(team_id, actor)
     token = secrets.token_urlsafe(32)
     now = time.time()
     with _db.connect() as conn:
