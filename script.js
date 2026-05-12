@@ -30,6 +30,7 @@ import { coachingTeamMembersMixin } from './js/coaching/team-members.js';
 import { coachingMixin } from './js/coaching.js';
 import { tacticalBoardMixin } from './js/tactical-board.js';
 import { accountMixin } from './js/account.js';
+import { onboardingMixin } from './js/onboarding.js';
 
 const app = {
     // ===== STATE & CONFIG =====
@@ -152,7 +153,7 @@ const app = {
             return;
         }
         if (path === '/welcome') {
-            this.showShellView('welcome-view', 'welcome', { pushHistory: false, scrollTop: false });
+            this.showWelcomeView({ pushHistory: false, replaceHistory: true, scrollTop: false });
             return;
         }
         if (path.startsWith('/invite/')) {
@@ -254,7 +255,7 @@ const app = {
             return;
         }
         if (state.view === 'welcome') {
-            this.showShellView('welcome-view', 'welcome', { pushHistory: false, scrollTop });
+            this.showWelcomeView({ pushHistory: false, scrollTop });
             return;
         }
         if (state.view === 'invite') {
@@ -506,6 +507,7 @@ const app = {
     ...coachingTeamMembersMixin,
     ...tacticalBoardMixin,
     ...accountMixin,
+    ...onboardingMixin,
 };
 
 // Expose globally for inline onclick handlers
