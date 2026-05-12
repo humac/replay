@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 
@@ -37,6 +38,33 @@ def test_admin_people_console_is_available_to_membership_admins_static_hooks():
     assert "if (section === 'people') return this.isAdmin() || this.canManageTeamMembers?.();" in admin_js
     assert "if (this.canManageTeamMembers?.()) return 'people';" in admin_js
     assert "if (section === 'matches') return this.canEdit();" in admin_js
+
+
+def test_welcome_redirect_honors_nested_me_admin_shape(tmp_path):
+    onboarding_js = _read("js/onboarding.js")
+    assert "me.user?.is_global_admin ?? me.is_global_admin" in onboarding_js
+
+    module = onboarding_js.replace("export const onboardingMixin =", "const onboardingMixin =")
+    module += r'''
+
+globalThis.localStorage = { getItem: () => null };
+const cases = [
+  [{ user: { is_global_admin: true }, teams: [] }, true, 'nested global admin with no teams redirects'],
+  [{ user: { is_global_admin: false }, teams: [] }, false, 'nested non-admin does not redirect'],
+  [{ user: { is_global_admin: true }, teams: [{ id: 1 }] }, false, 'nested global admin with teams does not redirect'],
+  [{ is_global_admin: true, teams: [] }, true, 'legacy top-level global admin remains compatible'],
+];
+for (const [payload, expected, label] of cases) {
+  const actual = onboardingMixin.shouldRedirectToWelcome(payload);
+  if (actual !== expected) {
+    throw new Error(`${label}: expected ${expected}, got ${actual}`);
+  }
+}
+'''
+    test_module = tmp_path / "onboarding-test.mjs"
+    test_module.write_text(module)
+
+    subprocess.run(["node", str(test_module)], cwd=ROOT, check=True)
 
 
 def test_welcome_redirect_and_coach_settings_copy_are_current():
