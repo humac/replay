@@ -301,14 +301,14 @@
             </header>
 
             <nav class="coach-subnav" role="tablist" aria-label="Coaching sections">
-                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-coach-tab="roster" onclick="app.setCoachTab('roster')">Roster</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="true" data-coach-tab="review" onclick="app.setCoachTab('review')">Review</button>
+                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="roster" onclick="app.setCoachTab('roster')">Roster</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="notes" onclick="app.setCoachTab('notes')">Notes</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="playlists" onclick="app.setCoachTab('playlists')">Playlists</button>
                 <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="clips" onclick="app.setCoachTab('clips')">Clips</button>
                 <button type="button" id="coach-subnav-summaries" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="summaries" onclick="app.setCoachTab('summaries')">Match Summaries</button>
                 <button type="button" id="coach-subnav-engagement" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="engagement" onclick="app.setCoachTab('engagement')">Engagement</button>
                 <button type="button" id="coach-subnav-settings" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="settings" onclick="app.setCoachTab('settings')">Settings</button>
-                <button type="button" class="coach-subnav-btn" role="tab" aria-selected="false" data-coach-tab="review" onclick="app.setCoachTab('review')">Review</button>
             </nav>
 
             <!-- Roster sub-tab -->
@@ -2131,17 +2131,23 @@
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group">
-                                        <label>Role</label>
+                                        <label for="new-user-role">Platform role</label>
                                         <select id="new-user-role">
-                                            <option value="viewer">Viewer</option>
-                                            <option value="coach">Coach</option>
-                                            <option value="uploader">Uploader</option>
-                                            <option value="coach,uploader">Coach + Uploader</option>
-                                            <option value="admin">Admin</option>
+                                            <option value="viewer">Sign-in only (default)</option>
+                                            <option value="uploader">Match library uploader</option>
+                                            <option value="admin">Global admin / superuser</option>
                                         </select>
+                                        <p class="form-help">
+                                            This is the <strong>platform-wide</strong> role. Team-specific roles
+                                            (Team admin, Coach, Assistant coach, Player, Guardian) are managed
+                                            per team under
+                                            <a href="/admin/teams" onclick="event.preventDefault(); app.showAdminView('teams');">Admin&nbsp;&rsaquo;&nbsp;Teams&nbsp;&rsaquo;&nbsp;Memberships</a>
+                                            or, for team admins, under
+                                            <a href="/coach?tab=settings" onclick="event.preventDefault(); app.showCoachView({ tab: 'settings' });">Coach&nbsp;&rsaquo;&nbsp;Settings&nbsp;&rsaquo;&nbsp;Members</a>.
+                                        </p>
                                     </div>
                                     <div class="form-group">
-                                        <label>Display Name</label>
+                                        <label for="new-user-display-name">Display name</label>
                                         <input type="text" id="new-user-display-name" maxlength="100" placeholder="optional">
                                     </div>
                                 </div>
