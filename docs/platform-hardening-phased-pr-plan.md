@@ -39,6 +39,8 @@ After Phases 1–9 of this plan shipped backend support for multi-tenant teams, 
 
 **Privacy invariants verified throughout:** `coach_private_note` is never referenced by any new client mixin; passwords never logged or stored in localStorage; invite + verify + reset tokens surface only when the server response carries them (i.e. `REPLAY_DEV_TOKEN_DELIVERY=1`); the `/me`, `/admin/teams`, and Coach > Settings membership flows have no client-side authorization — every gate is backend-enforced.
 
+**Post-review UI/UX follow-up (2026-05-12):** Team people administration now centers on **Admin > People** for membership-scoped team admins, while Coach > Settings stays focused on team settings and AI governance. Invite acceptance routes by `membership.role`, new-account acceptance signs in through the shared login helper, pending invite rows expose delivery status/resend/revoke/dev-copy controls, `/welcome` auto-redirect is wired into app init, and Brevo-backed transactional email covers invites, password resets, verification links, and admin test sends.
+
 ## Deferred Architecture Follow-ups
 
 - **Alembic migration adoption (Phase 6.1 contract drift)** — Tracked as [issue #172](https://github.com/humac/replay/issues/172). Post-v16 schema changes continued as `db.py _migrate_v17+` instead of Alembic per the Phase 6.1 contract. Not blocking for current feature work but should be resolved before broad multi-tenant Postgres production rollout. This was finding #9 of the follow-up review and is the one finding the sequence explicitly punted on.
@@ -90,7 +92,7 @@ The early phases intentionally favor architecture that prevents data leakage and
 
 - Public self-service signup.
 - MFA.
-- Full email/provider integration beyond dev/admin-visible token delivery.
+- Additional email providers beyond Brevo.
 - Multi-club `organizations` table.
 - Object storage/S3/R2 migration.
 - React/Svelte/Vue or any frontend build step.

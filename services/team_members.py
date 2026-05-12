@@ -11,6 +11,7 @@ import uuid
 
 import auth as _auth
 import db as _db
+from services import email_delivery as _email_delivery
 from services import teams as _teams
 
 INVITE_TTL = 7 * 86400
@@ -39,6 +40,7 @@ def _public_invite(row: sqlite3.Row | None, *, include_token: str | None = None)
         return None
     data = dict(row)
     data.pop("token_hash", None)
+    data["email"] = data.get("normalized_email") or ""
     data["metadata"] = _invite_metadata(row)
     data.pop("metadata_json", None)
     if include_token is not None:
@@ -129,6 +131,54 @@ def list_invites(team_id: str, actor: dict) -> list[dict]:
         return [_public_invite(row) for row in rows]
 
 
+def _record_invite_delivery(invite_id: str, result: _email_delivery.EmailResult) -> None:
+    now = time.time()
+    with _db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE team_invites
+            SET last_sent_at = ?,
+                last_delivery_status = ?,
+                last_delivery_provider = ?,
+                last_delivery_message_id = ?,
+                last_delivery_error = ?,
+                delivery_attempts = COALESCE(delivery_attempts, 0) + 1
+            WHERE id = ?
+            """,
+            (
+                now,
+                result.status,
+                result.provider,
+                result.message_id,
+                result.detail[:500] if result.detail else "",
+                invite_id,
+            ),
+        )
+        conn.commit()
+
+
+def _send_invite_email(invite_id: str, token: str) -> None:
+    with _db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT i.*, t.name AS team_name
+            FROM team_invites AS i
+            JOIN teams AS t ON t.id = i.team_id
+            WHERE i.id = ?
+            """,
+            (invite_id,),
+        ).fetchone()
+    if row is None:
+        return
+    result = _email_delivery.send_invite_email(
+        to_email=row["normalized_email"],
+        token=token,
+        team_name=row["team_name"] or "your team",
+        role=row["role"],
+    )
+    _record_invite_delivery(invite_id, result)
+
+
 def create_invite(*, team_id: str, email: str, role: str, actor: dict, season_id: str | None = None, player_ids: list[str] | None = None) -> dict:
     _assert_team_admin(team_id, actor)
     clean_role = _teams._validate_membership_role(role)
@@ -165,6 +215,9 @@ def create_invite(*, team_id: str, email: str, role: str, actor: dict, season_id
         )
         conn.commit()
         row = conn.execute("SELECT * FROM team_invites WHERE id = ?", (invite_id,)).fetchone()
+    _send_invite_email(invite_id, token)
+    with _db.connect() as conn:
+        row = conn.execute("SELECT * FROM team_invites WHERE id = ?", (invite_id,)).fetchone()
     include_token = token if os.environ.get("REPLAY_DEV_TOKEN_DELIVERY") == "1" else None
     invite = _public_invite(row, include_token=include_token)
     if invite is None:
@@ -184,6 +237,34 @@ def revoke_invite(team_id: str, invite_id: str, actor: dict) -> dict:
         conn.execute("UPDATE team_invites SET status = 'revoked', revoked_at = ? WHERE id = ?", (now, invite_id))
         conn.commit()
         return _public_invite(conn.execute("SELECT * FROM team_invites WHERE id = ?", (invite_id,)).fetchone())
+
+
+def resend_invite(team_id: str, invite_id: str, actor: dict) -> dict:
+    _assert_team_admin(team_id, actor)
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with _db.connect() as conn:
+        row = conn.execute("SELECT * FROM team_invites WHERE id = ? AND team_id = ?", (invite_id, team_id)).fetchone()
+        if row is None:
+            raise _teams.TeamServiceError(404, "Invite not found")
+        if row["status"] != "pending" or row["accepted_at"] or row["revoked_at"]:
+            raise _teams.TeamServiceError(409, "Invite is not pending")
+        conn.execute(
+            """
+            UPDATE team_invites
+            SET token_hash = ?, expires_at = ?, last_delivery_status = NULL,
+                last_delivery_provider = NULL, last_delivery_message_id = NULL,
+                last_delivery_error = NULL
+            WHERE id = ?
+            """,
+            (_auth.token_hash(token), now + INVITE_TTL, invite_id),
+        )
+        conn.commit()
+    _send_invite_email(invite_id, token)
+    with _db.connect() as conn:
+        row = conn.execute("SELECT * FROM team_invites WHERE id = ?", (invite_id,)).fetchone()
+    include_token = token if os.environ.get("REPLAY_DEV_TOKEN_DELIVERY") == "1" else None
+    return _public_invite(row, include_token=include_token)
 
 
 def _existing_user_for_invite(conn: sqlite3.Connection, invite: sqlite3.Row, user_id: str) -> dict:

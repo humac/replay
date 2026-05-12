@@ -434,6 +434,20 @@ def commit_roster_import(*, csv_text: str, team_id: str, season_id: str | None, 
     except Exception:
         raise
 
+    for invite, token in invite_rows.values():
+        if token:
+            _team_members._send_invite_email(invite["id"], token)
+
+    if invite_rows:
+        with _db.connect() as conn:
+            invite_rows = {
+                email: (
+                    conn.execute("SELECT * FROM team_invites WHERE id = ?", (invite["id"],)).fetchone() or invite,
+                    token,
+                )
+                for email, (invite, token) in invite_rows.items()
+            }
+
     public_invites = [
         _public_invite(invite, include_token=(token if os.environ.get("REPLAY_DEV_TOKEN_DELIVERY") == "1" else None))
         for invite, token in invite_rows.values()

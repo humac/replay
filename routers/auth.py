@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 import auth as _auth
 import db as _db
 import tenancy as _tenancy
+from services import email_delivery
 from models import (
     EmailVerificationConfirmRequest,
     LoginRequest,
@@ -43,6 +44,12 @@ async def logout(request: Request):
 async def request_password_reset(request: Request, body: PasswordResetRequest):
     _auth.check_password_reset_rate_limit(request, body.username)
     reset_token = _auth.create_password_reset_token_for_username(body.username)
+    if reset_token:
+        user = _db.get_user_by_username(body.username)
+        profile = _db.get_user_profile(user["id"]) if user else {}
+        email = profile.get("email")
+        if email:
+            email_delivery.send_password_reset_email(to_email=email, token=reset_token)
     payload = {"ok": True}
     if reset_token and os.environ.get("REPLAY_DEV_TOKEN_DELIVERY") == "1":
         payload["reset_token"] = reset_token
@@ -95,6 +102,9 @@ async def request_me_email_verification(request: Request):
     token = _auth.create_email_verification_token_for_user(user_id)
     if not token:
         raise HTTPException(400, "Profile email is required before verification")
+    profile = _db.get_user_profile(user_id)
+    if profile.get("email"):
+        email_delivery.send_email_verification_email(to_email=profile["email"], token=token)
     payload = {"ok": True}
     if os.environ.get("REPLAY_DEV_TOKEN_DELIVERY") == "1":
         payload["verification_token"] = token

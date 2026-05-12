@@ -566,12 +566,9 @@
                 </div>
             </div>
 
-            <!-- Team settings sub-tab (Platform Phase 7.2 + Phase B team
-                 admin members/invites). Three cards stacked: AI &amp;
-                 defaults, Members, Pending Invites. The Members and Invites
-                 cards render only when the active-scope user can manage
-                 memberships (team_admin / global_admin), otherwise show a
-                 read-only summary.
+            <!-- Team settings sub-tab (Platform Phase 7.2). People and
+                 invites live in the unified Admin > People console; this
+                 tab keeps governance/default controls close to coach work.
             -->
             <div id="coach-tab-settings" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-settings" hidden>
                 <div class="options-card">
@@ -586,34 +583,15 @@
                     </div>
                 </div>
 
-                <div class="options-card" id="coach-team-members-card">
+                <div class="options-card" id="coach-team-people-link-card">
                     <div class="admin-panel-head">
                         <div>
-                            <h3>Members</h3>
-                            <p class="admin-card-sub">Coaches, assistant coaches, players, and guardians on this team.</p>
+                            <h3>People &amp; invites</h3>
+                            <p class="admin-card-sub">Team admins manage members, pending invites, and delivery status in the Admin people console.</p>
                         </div>
                         <div class="admin-panel-head-actions">
-                            <button type="button" class="btn-head" id="coach-team-members-refresh-btn" onclick="app.loadCoachTeamMembers(true)">↻ Refresh</button>
-                            <button type="button" class="btn-primary" id="coach-team-members-invite-btn" onclick="app.openCoachTeamInviteModal()">+ Invite member</button>
+                            <button type="button" class="btn-primary" onclick="app.canAccessAdminConsole?.() ? app.showAdminView('people') : app.notifyModal?.({ title: 'Team admins only', message: 'Ask a team admin to manage members and invites.' })">Open Admin &rsaquo; People</button>
                         </div>
-                    </div>
-                    <div id="coach-team-members-content" class="team-members-content">
-                        <div class="session-empty">Loading members…</div>
-                    </div>
-                </div>
-
-                <div class="options-card" id="coach-team-invites-card">
-                    <div class="admin-panel-head">
-                        <div>
-                            <h3>Pending invites</h3>
-                            <p class="admin-card-sub">Outstanding invitations. Resend, copy the invite link, or revoke.</p>
-                        </div>
-                        <div class="admin-panel-head-actions">
-                            <button type="button" class="btn-head" id="coach-team-invites-refresh-btn" onclick="app.loadCoachTeamInvites(true)">↻ Refresh</button>
-                        </div>
-                    </div>
-                    <div id="coach-team-invites-content" class="team-invites-content">
-                        <div class="session-empty">Loading invites…</div>
                     </div>
                 </div>
             </div>
@@ -1516,7 +1494,7 @@
                     <!-- Step 3 — Invite coaches -->
                     <div class="welcome-step-panel" data-welcome-panel="invite" hidden>
                         <h2>Invite your coaches</h2>
-                        <p class="form-help">Add one email at a time and pick a role. You can skip this and send invites later from Coach &rsaquo; Settings.</p>
+                        <p class="form-help">Add one email at a time and pick a role. You can skip this and send invites later from Admin &rsaquo; People.</p>
                         <form id="welcome-invite-form" class="account-form" onsubmit="app.handleWelcomeInviteSubmit(event)" novalidate>
                             <div class="account-form-grid">
                                 <div class="form-group">
@@ -1562,13 +1540,13 @@
                 <header class="onboarding-shell-head">
                     <span class="onboarding-shell-kicker">Invite</span>
                     <h1>You&rsquo;ve been invited</h1>
-                    <p class="onboarding-shell-sub" id="invite-shell-sub">We&rsquo;ll set up your account once invite acceptance ships.</p>
+                    <p class="onboarding-shell-sub" id="invite-shell-sub">Accept your team invite, then land in the right workspace for your role.</p>
                 </header>
                 <div class="onboarding-shell-body">
                     <div class="account-placeholder">
                         <div class="account-placeholder-glyph" aria-hidden="true">✉</div>
-                        <h2>Invite acceptance is coming soon</h2>
-                        <p>The team-admin invite flow lands shortly. For now, please ask the team admin who sent you this link to add you manually.</p>
+                        <h2>Checking invite</h2>
+                        <p>Use the link from your email. We&rsquo;ll ask you to sign in or create an account before joining the team.</p>
                     </div>
                 </div>
             </div>
@@ -1996,6 +1974,38 @@
                         </div>
                     </section>
 
+                    <!-- PEOPLE (team-admin member onboarding) -->
+                    <section class="admin-section" data-admin-section="people">
+                        <div class="options-card">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <h3>Team people</h3>
+                                    <p class="admin-card-sub">Members and outstanding invites for the active team.</p>
+                                </div>
+                                <div class="admin-panel-head-actions">
+                                    <button type="button" class="btn-head" onclick="app.loadAdminPeople(true)">↻ Refresh</button>
+                                    <button type="button" class="btn-primary" onclick="app.openCoachTeamInviteModal()">+ Invite member</button>
+                                </div>
+                            </div>
+                            <div id="admin-people-scope-note" class="admin-panel-copy"></div>
+                            <div id="admin-people-members-content" class="team-members-content">
+                                <div class="session-empty">Loading members…</div>
+                            </div>
+                        </div>
+
+                        <div class="options-card mt-4">
+                            <div class="admin-panel-head">
+                                <div>
+                                    <h3>Invites</h3>
+                                    <p class="admin-card-sub">Delivery status, expiry, resend, and revoke controls.</p>
+                                </div>
+                            </div>
+                            <div id="admin-people-invites-content" class="team-invites-content">
+                                <div class="session-empty">Loading invites…</div>
+                            </div>
+                        </div>
+                    </section>
+
                     <!-- TEAMS (global-admin tenants) -->
                     <section class="admin-section" data-admin-section="teams">
                         <div class="admin-teams-shell">
@@ -2078,7 +2088,7 @@
                             <div class="form-group">
                                 <label for="admin-membership-grant-user-search">Find user</label>
                                 <input type="search" id="admin-membership-grant-user-search" placeholder="Search by username…" autocomplete="off">
-                                <p class="form-help">Type to filter. Only existing users appear here — invite new people via Coach &rsaquo; Settings &rsaquo; Invite member.</p>
+                                <p class="form-help">Type to filter. Only existing users appear here — invite new people from Admin &rsaquo; People.</p>
                             </div>
                             <div class="form-group">
                                 <label for="admin-membership-grant-user">User</label>

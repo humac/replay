@@ -15,6 +15,7 @@ GET /
 GET /admin
 GET /admin/{section}
 GET /api/admin/diagnostics
+GET /api/admin/email/status
 GET /api/admin/live/config
 GET /api/admin/live/diagnostics
 GET /api/admin/matches/{match_id}/errors
@@ -94,6 +95,7 @@ PATCH /api/coach/team/settings
 PATCH /api/me/profile
 PATCH /api/users/{user_id}
 POST /api/admin/backfill-hls
+POST /api/admin/email/test
 POST /api/admin/export-database
 POST /api/admin/live/rotate-key
 POST /api/admin/matches/{match_id}/regenerate-thumbnail
@@ -140,6 +142,7 @@ POST /api/my-feedback/goals/{goal_id}/reflection
 POST /api/my-feedback/review
 POST /api/team/invites
 POST /api/team/invites/accept
+POST /api/team/invites/{invite_id}/resend
 POST /api/team/invites/{invite_id}/revoke
 POST /api/team/memberships
 POST /api/uploads/sessions/cleanup

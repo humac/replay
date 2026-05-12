@@ -1,7 +1,7 @@
 // Team admin members + invites mixin (Phase B of UI/UX hardening).
 //
-// Two cards inside Coach > Settings: Members list and Pending Invites list.
-// Plus the "Invite member" composer modal opened from the Members card head.
+// Admin > People: Members list, Pending Invites list, and the "Invite member"
+// composer modal. Coach > Settings links here for people administration.
 // Backed by /api/team/memberships* and /api/team/invites* introduced by
 // platform-hardening Phase 9.3.
 //
@@ -98,7 +98,7 @@ export const coachingTeamMembersMixin = {
                 throw new Error(detail.detail || `invites_load_failed:${resp.status}`);
             }
             this._teamInvites = await resp.json();
-            el.innerHTML = this.teamInvitesListHtml(this._teamInvites);
+            this.renderTeamInviteSurfaces();
         } catch (err) {
             el.innerHTML = `<div class="session-empty">${this.esc(err.message || 'Could not load invites.')}</div>`;
         } finally {
@@ -167,6 +167,11 @@ export const coachingTeamMembersMixin = {
         const role = TEAM_ROLE_LABELS[invite.role] || invite.role;
         const expires = this.formatInviteExpiry(invite);
         const isPending = status === 'pending';
+        const delivery = this.inviteDeliveryLabel(invite);
+        const devUrl = invite.invite_token ? `${window.location.origin}/invite/${invite.invite_token}` : '';
+        const inviteIdArg = this.jsInlineArg(invite.id || '');
+        const emailArg = this.jsInlineArg(email);
+        const devUrlArg = this.jsInlineArg(devUrl);
         return `
             <li class="team-invite-row" data-invite-id="${this.esc(String(invite.id || ''))}">
                 <div class="team-invite-meta">
@@ -174,14 +179,45 @@ export const coachingTeamMembersMixin = {
                     <div class="team-invite-sub">
                         <span class="team-pill" data-role="${this.esc(invite.role)}">${this.esc(role)}</span>
                         <span class="team-pill" data-state="${this.esc(status)}">${this.esc(status)}</span>
+                        ${delivery ? `<span class="team-pill" data-state="${this.esc(delivery.state)}">${this.esc(delivery.label)}</span>` : ''}
                         <span class="team-invite-expiry">${this.esc(expires)}</span>
                     </div>
                 </div>
                 <div class="team-invite-actions">
-                    ${isPending ? `<button type="button" class="mini-action-btn mini-action-danger" onclick="app.revokeCoachTeamInvite('${this.esc(String(invite.id || ''))}', '${this.esc(email)}')">Revoke</button>` : ''}
+                    ${isPending ? `<button type="button" class="mini-action-btn" onclick="app.resendCoachTeamInvite(${inviteIdArg}, ${emailArg})">Resend</button>` : ''}
+                    ${isPending && devUrl ? `<button type="button" class="mini-action-btn" onclick="app.copyToClipboard?.(${devUrlArg})">Copy link</button>` : ''}
+                    ${isPending ? `<button type="button" class="mini-action-btn mini-action-danger" onclick="app.revokeCoachTeamInvite(${inviteIdArg}, ${emailArg})">Revoke</button>` : ''}
                 </div>
             </li>
         `;
+    },
+
+    jsInlineArg(value) {
+        return this.esc(JSON.stringify(String(value ?? '')));
+    },
+
+    inviteDeliveryLabel(invite) {
+        const status = (invite.last_delivery_status || '').toLowerCase();
+        if (!status) return null;
+        if (status === 'sent') return { state: 'accepted', label: 'Email sent' };
+        if (status === 'disabled') return { state: 'pending', label: 'Email off' };
+        if (status === 'not_configured') return { state: 'pending', label: 'Email not configured' };
+        if (status === 'failed') return { state: 'revoked', label: 'Send failed' };
+        return { state: status, label: status.replace(/_/g, ' ') };
+    },
+
+    renderTeamInviteSurfaces() {
+        ['coach-team-invites-content', 'admin-people-invites-content'].forEach((id) => {
+            const target = document.getElementById(id);
+            if (target) target.innerHTML = this.teamInvitesListHtml(this._teamInvites || []);
+        });
+    },
+
+    renderTeamMemberSurfaces() {
+        ['coach-team-members-content', 'admin-people-members-content'].forEach((id) => {
+            const target = document.getElementById(id);
+            if (target) target.innerHTML = this.teamMembersListHtml(this._teamMembers || []);
+        });
     },
 
     formatInviteExpiry(invite) {
@@ -191,7 +227,7 @@ export const coachingTeamMembersMixin = {
         if (status === 'expired') return 'Expired';
         // Pending — show expiry countdown.
         if (invite.expires_at) {
-            const d = new Date(invite.expires_at);
+            const d = this.parseServerDate(invite.expires_at);
             if (!Number.isNaN(d.getTime())) {
                 const now = Date.now();
                 const ms = d.getTime() - now;
@@ -208,10 +244,16 @@ export const coachingTeamMembersMixin = {
     formatRelativeDate(iso) {
         if (!iso) return '';
         try {
-            const d = new Date(iso);
+            const d = this.parseServerDate(iso);
             if (Number.isNaN(d.getTime())) return iso;
             return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
         } catch { return iso; }
+    },
+
+    parseServerDate(value) {
+        if (typeof value === 'number') return new Date(value * 1000);
+        if (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value)) return new Date(Number(value) * 1000);
+        return new Date(value);
     },
 
     computeInitials(name) {
@@ -324,9 +366,70 @@ export const coachingTeamMembersMixin = {
                 throw new Error(detail.detail || 'Could not revoke invite.');
             }
             this.loadCoachTeamInvites(true);
+            if (document.getElementById('admin-people-invites-content')) this.loadAdminPeople(true);
         } catch (err) {
             this.notifyModal?.({ title: 'Could not revoke invite', message: err.message || 'Unexpected error.' });
         }
+    },
+
+    async resendCoachTeamInvite(inviteId, label) {
+        if (!this.canManageTeamMembers()) return;
+        const teamId = this.activeTeamIdForMembership();
+        if (!teamId || !inviteId) return;
+        try {
+            const resp = await this.authFetch(
+                `/api/team/invites/${encodeURIComponent(inviteId)}/resend?team_id=${encodeURIComponent(teamId)}`,
+                { method: 'POST', headers: this.getAuthHeaders() },
+            );
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(body.detail || 'Could not resend invite.');
+            this._teamInvites = (this._teamInvites || []).map((iv) => String(iv.id) === String(inviteId) ? body : iv);
+            this.renderTeamInviteSurfaces();
+            const extra = body.invite_token ? ' Dev mode: the refreshed invite link is available in the row.' : '';
+            this.notifyModal?.({ title: 'Invite resent', message: `Invite sent to ${label || body.email || 'the invitee'}.${extra}` });
+        } catch (err) {
+            this.notifyModal?.({ title: 'Could not resend invite', message: err.message || 'Unexpected error.' });
+        }
+    },
+
+    async loadAdminPeople(force = false) {
+        const note = document.getElementById('admin-people-scope-note');
+        const membersEl = document.getElementById('admin-people-members-content');
+        const invitesEl = document.getElementById('admin-people-invites-content');
+        const teamId = this.activeTeamIdForMembership();
+        const teamName = this.activeScope?.team?.name || 'active team';
+        if (note) note.textContent = teamId ? `Managing ${teamName}. Use the team switcher in the top bar to change scope.` : 'Pick a team from the scope switcher to manage people.';
+        if (!membersEl || !invitesEl) return;
+        if (!teamId) {
+            membersEl.innerHTML = '<div class="session-empty">Pick a team from the scope switcher to manage members.</div>';
+            invitesEl.innerHTML = '<div class="session-empty">Pick a team from the scope switcher to see invites.</div>';
+            return;
+        }
+        if (!this.canManageTeamMembers()) {
+            membersEl.innerHTML = this.teamMembersReadOnlyHtml();
+            invitesEl.innerHTML = '<div class="session-empty">Only team admins can view pending invites.</div>';
+            return;
+        }
+        membersEl.innerHTML = '<div class="session-empty">Loading members…</div>';
+        invitesEl.innerHTML = '<div class="session-empty">Loading invites…</div>';
+        try {
+            const [membersResp, invitesResp] = await Promise.all([
+                this.authFetch(`/api/team/memberships?team_id=${encodeURIComponent(teamId)}`, { headers: this.getAuthHeaders() }),
+                this.authFetch(`/api/team/invites?team_id=${encodeURIComponent(teamId)}`, { headers: this.getAuthHeaders() }),
+            ]);
+            if (!membersResp.ok || !invitesResp.ok) throw new Error('Could not load team people.');
+            this._teamMembers = await membersResp.json();
+            this._teamInvites = await invitesResp.json();
+            this.renderTeamMemberSurfaces();
+            this.renderTeamInviteSurfaces();
+        } catch (err) {
+            membersEl.innerHTML = `<div class="session-empty">${this.esc(err.message || 'Could not load team members.')}</div>`;
+            invitesEl.innerHTML = '<div class="session-empty">Invites unavailable.</div>';
+        }
+    },
+
+    renderAdminPeople() {
+        this.loadAdminPeople(true);
     },
 
     // ---- Invite composer ----
@@ -558,11 +661,9 @@ export const coachingTeamMembersMixin = {
                 return;
             }
             setBanner('success', 'Invite accepted. Taking you to your team…');
+            await this.loadMeScope?.();
             setTimeout(() => {
-                // Land on the right surface for the role.
-                const role = (body.role || '').toLowerCase();
-                if (role === 'guardian' || role === 'player') this.showFeedbackView?.();
-                else this.showCoachView?.();
+                this.routeAfterInviteAcceptance(body.membership?.role);
             }, 800);
         } catch (err) {
             setBanner('error', 'Network error. Try again in a moment.');
@@ -599,18 +700,39 @@ export const coachingTeamMembersMixin = {
                 return;
             }
             setBanner('success', 'Account created. Signing you in…');
-            // The accept endpoint creates the user; now log them in with the
-            // same credentials so they land on the right surface.
             try {
-                await this.loginWith?.(username, password) ?? null;
-            } catch { /* fall through to login modal */ }
+                await this.loginWith(username, password);
+            } catch {
+                setBanner('error', 'Account created, but automatic sign-in failed. Please sign in with your new account.');
+                this.showLoginModal?.();
+                return;
+            }
             setTimeout(() => {
-                const role = (body.role || '').toLowerCase();
-                if (role === 'guardian' || role === 'player') this.showFeedbackView?.();
-                else this.showCoachView?.();
+                this.routeAfterInviteAcceptance(body.membership?.role);
             }, 800);
         } catch (err) {
             setBanner('error', 'Network error while creating your account.');
         }
+    },
+
+    routeAfterInviteAcceptance(role) {
+        const normalized = (role || '').toLowerCase();
+        if (normalized === 'guardian' || normalized === 'player') {
+            this.showFeedbackView?.({ replaceHistory: true });
+            return;
+        }
+        if (normalized === 'team_admin' && this.canAccessAdminConsole?.()) {
+            this.showAdminView?.('people', { replaceHistory: true });
+            return;
+        }
+        if (this.canCoach?.()) {
+            this.showCoachView?.({ replaceHistory: true });
+            return;
+        }
+        if (this.canAccessAdminConsole?.()) {
+            this.showAdminView?.(undefined, { replaceHistory: true });
+            return;
+        }
+        this.showSeasonView?.({ replaceHistory: true });
     },
 };

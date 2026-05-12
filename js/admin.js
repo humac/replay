@@ -11,7 +11,7 @@
 // `system` was renamed to `performance` so the tuning knobs and the live
 // signal they control share one page. Old URLs redirect via
 // resolveAdminSection() below.
-const ADMIN_SECTIONS = ['overview', 'matches', 'live', 'performance', 'teams', 'users', 'settings'];
+const ADMIN_SECTIONS = ['overview', 'matches', 'live', 'performance', 'people', 'teams', 'users', 'settings'];
 const ADMIN_ONLY_SECTIONS = new Set(['overview', 'live', 'performance', 'teams', 'users', 'settings']);
 const LEGACY_SECTION_REDIRECTS = {
     streams: 'live',
@@ -23,9 +23,10 @@ const SECTION_META = {
     matches:     { label: 'Matches',     glyph: '02', kicker: 'Library' },
     live:        { label: 'Live',        glyph: '03', kicker: 'Broadcast' },
     performance: { label: 'Performance', glyph: '04', kicker: 'Encoder & host' },
-    teams:       { label: 'Teams',       glyph: '05', kicker: 'Tenants' },
-    users:       { label: 'Users',       glyph: '06', kicker: 'Accounts' },
-    settings:    { label: 'Settings',    glyph: '07', kicker: 'Branding' },
+    people:      { label: 'People',      glyph: '05', kicker: 'Team access' },
+    teams:       { label: 'Teams',       glyph: '06', kicker: 'Tenants' },
+    users:       { label: 'Users',       glyph: '07', kicker: 'Accounts' },
+    settings:    { label: 'Settings',    glyph: '08', kicker: 'Branding' },
 };
 
 // Visual grouping of the admin sidebar. Routes are unchanged; only the
@@ -34,7 +35,7 @@ const SECTION_META = {
 // coaching product) and platform-wide settings.
 const ADMIN_NAV_GROUPS = [
     { label: 'Broadcast',  sections: ['overview', 'matches', 'live', 'performance'] },
-    { label: 'Tenants',    sections: ['teams'] },
+    { label: 'Tenants',    sections: ['people', 'teams'] },
     { label: 'Platform',   sections: ['users', 'settings'] },
 ];
 
@@ -46,17 +47,27 @@ export const adminMixin = {
         return ADMIN_SECTIONS.includes(section) || section in LEGACY_SECTION_REDIRECTS;
     },
 
+    canViewAdminSection(section) {
+        if (section in LEGACY_SECTION_REDIRECTS) section = LEGACY_SECTION_REDIRECTS[section];
+        if (section === 'matches') return this.canEdit();
+        if (section === 'people') return this.isAdmin() || this.canManageTeamMembers?.();
+        if (ADMIN_ONLY_SECTIONS.has(section)) return this.isAdmin();
+        return this.canAccessAdminConsole?.() || this.canEdit();
+    },
+
     resolveAdminSection(section) {
         // Honor legacy URLs so existing bookmarks (/admin/streams, /admin/system)
         // keep working after the layout refactor.
         if (section in LEGACY_SECTION_REDIRECTS) section = LEGACY_SECTION_REDIRECTS[section];
-        if (!ADMIN_SECTIONS.includes(section)) return this.isAdmin() ? 'overview' : 'matches';
-        if (!this.isAdmin() && ADMIN_ONLY_SECTIONS.has(section)) return 'matches';
+        if (!ADMIN_SECTIONS.includes(section)) return this.defaultAdminSection();
+        if (!this.canViewAdminSection(section)) return this.defaultAdminSection();
         return section;
     },
 
     defaultAdminSection() {
-        return this.isAdmin() ? 'overview' : 'matches';
+        if (this.isAdmin()) return 'overview';
+        if (this.canManageTeamMembers?.()) return 'people';
+        return 'matches';
     },
 
     adminSectionUrl(section) {
@@ -64,7 +75,7 @@ export const adminMixin = {
     },
 
     showAdminView(section, { pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
-        if (!this.canEdit()) {
+        if (!this.canAccessAdminConsole?.()) {
             this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
             return;
         }
@@ -93,7 +104,7 @@ export const adminMixin = {
         const isAdmin = this.isAdmin();
         const groupsHtml = ADMIN_NAV_GROUPS.map((group) => {
             const visibleSections = group.sections.filter(
-                (s) => isAdmin || !ADMIN_ONLY_SECTIONS.has(s)
+                (s) => this.canViewAdminSection(s)
             );
             if (!visibleSections.length) return '';
             const items = visibleSections.map((s) => {
@@ -121,7 +132,7 @@ export const adminMixin = {
         const brandLabel = document.getElementById('admin-brand-name');
         if (brandLabel) brandLabel.textContent = (this.getAppSettings().app_name || 'Replay');
         const brandRole = document.getElementById('admin-brand-role');
-        if (brandRole) brandRole.textContent = isAdmin ? 'Admin Console' : 'Match Studio';
+        if (brandRole) brandRole.textContent = isAdmin ? 'Admin Console' : (this.canManageTeamMembers?.() ? 'Team Admin Console' : 'Match Studio');
     },
 
     setAdminSection(section) {
@@ -172,6 +183,9 @@ export const adminMixin = {
                 break;
             case 'users':
                 if (typeof this.renderUsersList === 'function') this.renderUsersList();
+                break;
+            case 'people':
+                this.renderAdminPeople?.();
                 break;
             case 'settings':
                 if (typeof this.renderSettingsForm === 'function') this.renderSettingsForm();
