@@ -4361,6 +4361,58 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     padding-top: 0.5rem;
 }
 
+/* Phase F.2: Admin > Users membership expander. Each user row gains an
+   inline foldout showing their team memberships across tenants. */
+.user-row-expandable {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 0.75rem 0.9rem;
+    background: rgba(255,255,255,0.02);
+}
+.user-row-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+}
+.user-row-summary .user-info { flex: 1; min-width: 200px; }
+[data-theme="light"] .user-row-expandable { background: rgba(0,0,0,0.02); }
+.user-row-memberships {
+    border-top: 1px solid var(--border-light);
+    padding-top: 0.75rem;
+    margin-top: 0.25rem;
+}
+.user-memberships-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.user-membership-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+}
+.user-membership-team {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.user-membership-team strong { color: var(--text-main); font-size: 0.9rem; }
+.user-membership-team .admin-card-sub {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.78rem;
+}
+
 /* ----- Content area ----- */
 
 .admin-content {

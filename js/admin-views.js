@@ -316,21 +316,93 @@ export const adminViewsMixin = {
             container.innerHTML = '<p class="text-muted">No additional user accounts. Only the env-var admin is active.</p>';
             return;
         }
+        // Phase F.2: user-memberships expander. Each row carries a hidden
+        // detail panel that hydrates lazily from /api/admin/teams/{id}/memberships
+        // when the operator clicks "View teams". This is a debugging /
+        // support surface — "this user says they can't see team X" → expand
+        // their row, see which teams they're actually a member of.
         const rows = users.map(u => `
-            <div class="user-row" data-user-id="${u.id}">
-                <div class="user-info">
-                    <span class="user-name">${this.esc(u.display_name || u.username)}</span>
-                    <span class="user-username">@${this.esc(u.username)}</span>
+            <div class="user-row user-row-expandable" data-user-id="${u.id}">
+                <div class="user-row-summary">
+                    <div class="user-info">
+                        <span class="user-name">${this.esc(u.display_name || u.username)}</span>
+                        <span class="user-username">@${this.esc(u.username)}</span>
+                    </div>
+                    <span class="badge ${String(u.role || 'viewer').includes('coach') ? 'processing' : u.role}">${this.esc(String(u.role || 'viewer').replace(',', ' + '))}</span>
+                    <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
+                    <div class="user-actions">
+                        <button class="btn-sm" onclick="app.toggleUserMembershipsExpander('${u.id}')" data-user-memberships-toggle="${u.id}">View teams</button>
+                        <button class="btn-sm" onclick="app.toggleUserEnabled('${u.id}', ${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
+                        <button class="btn-sm btn-danger" onclick="app.handleDeleteUser('${u.id}', '${this.esc(u.username)}')">Delete</button>
+                    </div>
                 </div>
-                <span class="badge ${String(u.role || 'viewer').includes('coach') ? 'processing' : u.role}">${this.esc(String(u.role || 'viewer').replace(',', ' + '))}</span>
-                <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
-                <div class="user-actions">
-                    <button class="btn-sm" onclick="app.toggleUserEnabled('${u.id}', ${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
-                    <button class="btn-sm btn-danger" onclick="app.handleDeleteUser('${u.id}', '${this.esc(u.username)}')">Delete</button>
+                <div class="user-row-memberships" data-user-memberships="${u.id}" hidden>
+                    <div class="session-empty">Click View teams to load this user's memberships.</div>
                 </div>
             </div>
         `).join('');
         container.innerHTML = rows;
+    },
+
+    // Phase F.2: open / close the membership expander on an Admin > Users row.
+    // Lazy-loads from /api/admin/teams (already cached) + /api/admin/teams/{id}/memberships
+    // (one request per team). Cached on first open via _userMembershipsCache.
+    async toggleUserMembershipsExpander(userId) {
+        const panel = document.querySelector(`[data-user-memberships="${userId}"]`);
+        const toggle = document.querySelector(`[data-user-memberships-toggle="${userId}"]`);
+        if (!panel) return;
+        if (!panel.hidden) {
+            panel.hidden = true;
+            if (toggle) toggle.textContent = 'View teams';
+            return;
+        }
+        panel.hidden = false;
+        if (toggle) toggle.textContent = 'Hide teams';
+        panel.innerHTML = '<div class="session-empty">Loading memberships…</div>';
+        try {
+            const memberships = await this.loadUserMemberships(userId);
+            panel.innerHTML = this.renderUserMembershipsList(memberships);
+        } catch (err) {
+            panel.innerHTML = `<div class="session-empty">${this.esc(err.message || 'Could not load memberships.')}</div>`;
+        }
+    },
+
+    async loadUserMemberships(userId) {
+        // Reuse the admin-teams team list cache if present; otherwise fetch.
+        let teams = this._adminTeams;
+        if (!teams) {
+            const resp = await this.authFetch('/api/admin/teams', { headers: this.getAuthHeaders() });
+            if (!resp.ok) throw new Error('Could not load teams.');
+            teams = await resp.json();
+            this._adminTeams = teams;
+        }
+        const results = await Promise.all(teams.map(async (t) => {
+            try {
+                const resp = await this.authFetch(`/api/admin/teams/${encodeURIComponent(t.id)}/memberships`, { headers: this.getAuthHeaders() });
+                if (!resp.ok) return null;
+                const memberships = await resp.json();
+                const mine = memberships.find((m) => String(m.user_id) === String(userId));
+                if (!mine) return null;
+                return { team: t, role: mine.role };
+            } catch { return null; }
+        }));
+        return results.filter(Boolean);
+    },
+
+    renderUserMembershipsList(memberships) {
+        if (!memberships.length) {
+            return '<div class="session-empty">No team memberships. This user can sign in but has no team-scoped access.</div>';
+        }
+        const rows = memberships.map(({ team, role }) => `
+            <li class="user-membership-row">
+                <span class="user-membership-team">
+                    <strong>${this.esc(team.name)}</strong>
+                    <span class="admin-card-sub">/${this.esc(team.slug)}</span>
+                </span>
+                <span class="team-pill" data-role="${this.esc(role)}">${this.esc(role.replace(/_/g, ' '))}</span>
+            </li>
+        `).join('');
+        return `<ul class="user-memberships-list" role="list">${rows}</ul>`;
     },
 
     async handleAddUser() {
