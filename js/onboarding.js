@@ -55,10 +55,12 @@ export const onboardingMixin = {
     },
 
     // Should the welcome wizard auto-fire? Caller passes the /api/me payload
-    // so we can check `is_global_admin` + zero-teams. Returns true if so.
+    // so we can check `user.is_global_admin` + zero-teams. Keep the legacy
+    // top-level flag fallback for older/static payloads. Returns true if so.
     shouldRedirectToWelcome(me) {
         if (!me) return false;
-        if (!me.is_global_admin) return false;
+        const isGlobalAdmin = me.user?.is_global_admin ?? me.is_global_admin;
+        if (!isGlobalAdmin) return false;
         const teams = (me.teams || []);
         if (teams.length > 0) return false;
         // Don't redirect if user already explicitly skipped the wizard.
