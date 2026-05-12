@@ -15,6 +15,14 @@ export const coachingStateMixin = {
             this.meScope = payload;
             this.activeScope = payload.active_scope || null;
             this.renderScopeSwitcher();
+            // Re-evaluate nav visibility now that membership data is
+            // available — canCoach() consults meScope.memberships so a
+            // viewer-role user with a coach/team_admin membership
+            // upgrades from "no /coach nav link" to "nav link visible"
+            // at this point. setLoggedIn is idempotent (it sets
+            // style.display from the current canCoach/canEdit/isAdmin
+            // values) so calling it twice during login is safe.
+            this.setLoggedIn?.();
             return payload;
         } catch (error) {
             console.error('Failed to load active scope', error);

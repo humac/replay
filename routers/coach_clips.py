@@ -265,7 +265,7 @@ async def coach_get_clip_thumbnail(clip_id: int, request: Request):
     scope = _tenancy.resolve_scope(
         request,
         user,
-        require_role=("team_admin", "coach") if _auth.has_role(user, "admin", "coach") else None,
+        require_role=("team_admin", "coach") if _auth.is_privileged_coach(user) else None,
         allow_global_admin_override=True,
     )
     team_id = _scope_team_id(scope)

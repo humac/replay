@@ -114,7 +114,7 @@ async def my_feedback(request: Request):
     # for that hydration too. Coach/admin call sites get the raw list
     # (no scrub needed). See PR #73 review + the playlist-leak test in
     # tests/test_coaching.py.
-    is_privileged = _auth.has_role(user, "admin", "coach")
+    is_privileged = _auth.is_privileged_coach(user)
     items_source = all_notes if is_privileged else [_strip_private_fields(n) for n in all_notes]
     playlists = _playlists_with_items(_filter_playlists_for_user([p for p in _db.list_coaching_playlists() if _same_team(p, team_id)], user, team_id=team_id), items_source)
     visible_note_ids = {n["id"] for n in notes}

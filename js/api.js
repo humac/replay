@@ -58,7 +58,20 @@ export const apiMixin = {
     },
 
     canCoach() {
-        return this.hasRole('coach');
+        // Legacy role: covers existing admin/coach users and the env-admin
+        // break-glass path. Membership path: a user invited as a coach
+        // through team_user_memberships has `users.role='viewer'` (the
+        // legacy column is never updated by the membership system); the
+        // SPA must still treat them as a coach for nav + redirect gates
+        // so they aren't bounced from /coach. `meScope.memberships` is
+        // populated by loadMeScope() right after login and on every
+        // app boot; while it's still loading (first paint after token
+        // restore) the membership branch returns false and the user is
+        // upgraded once /api/me lands.
+        if (this.hasRole('coach')) return true;
+        const memberships = this.meScope?.memberships;
+        if (!Array.isArray(memberships)) return false;
+        return memberships.some((m) => m.role === 'coach' || m.role === 'team_admin');
     },
 
     canEdit() {

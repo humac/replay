@@ -1915,6 +1915,28 @@ def user_has_team_membership(user_id: str, team_id: str | None) -> bool:
         return row is not None
 
 
+def user_has_coach_membership(user_id: str | None) -> bool:
+    """Return True when the user has a team_user_memberships row with a role
+    that grants coach-level access on any team.
+
+    Used by privacy/visibility helpers and the SPA nav gate to detect
+    "this user is a coach somewhere" without relying on the legacy
+    ``users.role`` column — which never updates when a user is invited
+    as a coach via the team membership system and stays at e.g.
+    ``viewer``. Membership roles considered: ``coach``, ``team_admin``.
+    Global admins are intentionally NOT inferred here; their privileged
+    status comes from the legacy ``users.role='admin'`` check upstream.
+    """
+    if not user_id:
+        return False
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM team_user_memberships WHERE user_id = ? AND role IN ('coach', 'team_admin') LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        return row is not None
+
+
 def list_users(team_id: str | None = None, *, allow_unscoped: bool = False) -> list[dict]:
     _require_team_scope_for_strict("list_users", team_id, allow_unscoped=allow_unscoped)
     with connect() as conn:
