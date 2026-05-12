@@ -185,8 +185,8 @@ export const adminMixin = {
                 }
                 break;
             case 'teams':
-                // Phase 0 placeholder. Phase C populates this section with the
-                // global-admin team CRUD UI (list, detail tabs, memberships).
+                // Phase C: global-admin team CRUD lives in js/admin-teams.js.
+                this.loadAdminTeams?.();
                 break;
         }
         if (section !== 'performance') this.stopPerformanceTuningPolling?.();
