@@ -25,6 +25,7 @@ import { coachingFeedbackMixin } from './js/coaching/feedback.js';
 import { coachingFeedbackPlayerMixin } from './js/coaching/feedback-player.js';
 import { coachingThumbnailsMixin } from './js/coaching/thumbnails.js';
 import { coachingAIMixin } from './js/coaching/ai.js';
+import { coachingTeamMembersMixin } from './js/coaching/team-members.js';
 import { coachingMixin } from './js/coaching.js';
 import { tacticalBoardMixin } from './js/tactical-board.js';
 import { accountMixin } from './js/account.js';
@@ -292,6 +293,10 @@ const app = {
         if (routeName === 'verify-email' || routeName === 'reset-password') {
             this.populateLandingTokenFromQuery?.();
         }
+        // Phase B.3: hydrate the invite acceptance card from the URL token.
+        if (routeName === 'invite') {
+            this.handleInviteAcceptLandingMount?.();
+        }
         if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
     },
 
@@ -496,6 +501,7 @@ const app = {
     ...coachingFeedbackPlayerMixin,
     ...coachingThumbnailsMixin,
     ...coachingAIMixin,
+    ...coachingTeamMembersMixin,
     ...tacticalBoardMixin,
     ...accountMixin,
 };

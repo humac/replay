@@ -6,6 +6,7 @@
     <title>Replay</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260501a">
     <link rel="stylesheet" href="/static/styles/coaching-engagement.css?v=20260510a">
+    <link rel="stylesheet" href="/static/styles/team-members.css?v=20260512a">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -565,7 +566,13 @@
                 </div>
             </div>
 
-            <!-- Team settings sub-tab (Platform Phase 7.2) -->
+            <!-- Team settings sub-tab (Platform Phase 7.2 + Phase B team
+                 admin members/invites). Three cards stacked: AI &amp;
+                 defaults, Members, Pending Invites. The Members and Invites
+                 cards render only when the active-scope user can manage
+                 memberships (team_admin / global_admin), otherwise show a
+                 read-only summary.
+            -->
             <div id="coach-tab-settings" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-settings" hidden>
                 <div class="options-card">
                     <div class="admin-panel-head">
@@ -578,7 +585,74 @@
                         <div class="session-empty">Loading team settings…</div>
                     </div>
                 </div>
+
+                <div class="options-card" id="coach-team-members-card">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Members</h3>
+                            <p class="admin-card-sub">Coaches, assistant coaches, players, and guardians on this team.</p>
+                        </div>
+                        <div class="admin-panel-head-actions">
+                            <button type="button" class="btn-head" id="coach-team-members-refresh-btn" onclick="app.loadCoachTeamMembers(true)">↻ Refresh</button>
+                            <button type="button" class="btn-primary" id="coach-team-members-invite-btn" onclick="app.openCoachTeamInviteModal()">+ Invite member</button>
+                        </div>
+                    </div>
+                    <div id="coach-team-members-content" class="team-members-content">
+                        <div class="session-empty">Loading members…</div>
+                    </div>
+                </div>
+
+                <div class="options-card" id="coach-team-invites-card">
+                    <div class="admin-panel-head">
+                        <div>
+                            <h3>Pending invites</h3>
+                            <p class="admin-card-sub">Outstanding invitations. Resend, copy the invite link, or revoke.</p>
+                        </div>
+                        <div class="admin-panel-head-actions">
+                            <button type="button" class="btn-head" id="coach-team-invites-refresh-btn" onclick="app.loadCoachTeamInvites(true)">↻ Refresh</button>
+                        </div>
+                    </div>
+                    <div id="coach-team-invites-content" class="team-invites-content">
+                        <div class="session-empty">Loading invites…</div>
+                    </div>
+                </div>
             </div>
+
+            <!-- Invite composer modal template (Phase B.2). Cloned by
+                 app.openCoachTeamInviteModal() and mounted via the existing
+                 formModal() primitive in js/ui.js. -->
+            <template id="coach-team-invite-form-template">
+                <form id="coach-team-invite-form" class="coach-team-invite-form" novalidate>
+                    <div class="form-group">
+                        <label for="coach-team-invite-email">Email address</label>
+                        <input type="email" id="coach-team-invite-email" name="email" required autocomplete="email" maxlength="320">
+                        <p class="form-help">We&rsquo;ll email them a one-time invite link.</p>
+                    </div>
+                    <div class="form-group">
+                        <span class="form-label-static">Role</span>
+                        <div class="account-radio-group" role="radiogroup" aria-label="Invite role">
+                            <label class="account-radio"><input type="radio" name="role" value="coach" checked><span>Coach</span></label>
+                            <label class="account-radio"><input type="radio" name="role" value="assistant_coach"><span>Assistant coach</span></label>
+                            <label class="account-radio"><input type="radio" name="role" value="team_admin"><span>Team admin</span></label>
+                            <label class="account-radio"><input type="radio" name="role" value="player"><span>Player</span></label>
+                            <label class="account-radio"><input type="radio" name="role" value="guardian"><span>Guardian</span></label>
+                        </div>
+                    </div>
+                    <div class="form-group coach-team-invite-players" id="coach-team-invite-players-group" hidden>
+                        <label for="coach-team-invite-players">Link to player(s)</label>
+                        <select id="coach-team-invite-players" name="player_ids" multiple size="6" aria-describedby="coach-team-invite-players-help"></select>
+                        <p class="form-help" id="coach-team-invite-players-help">Hold Cmd/Ctrl to select multiple. Guardians can link to several siblings.</p>
+                    </div>
+                    <div id="coach-team-invite-banner" class="account-banner" hidden></div>
+                    <div id="coach-team-invite-dev-token" class="account-dev-token" hidden>
+                        <p class="form-help">Dev mode: share this invite URL with the invitee.</p>
+                        <code id="coach-team-invite-dev-token-value"></code>
+                    </div>
+                    <div class="account-form-actions">
+                        <button type="submit" class="btn-primary" id="coach-team-invite-submit-btn">Send invite</button>
+                    </div>
+                </form>
+            </template>
 
             <!-- Review sub-tab -->
             <div id="coach-tab-review" class="coach-tab-panel" role="tabpanel" aria-labelledby="coach-subnav-review" hidden>
