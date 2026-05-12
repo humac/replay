@@ -110,6 +110,16 @@ For larger deployments, you can split hot HLS data and cold raw uploads onto sep
 3. Enter the `ADMIN_USER` / `ADMIN_PASS` you set in `.env.local`.
 4. Once signed in, an **ADMIN** link appears in the top nav. Click it to enter the admin dashboard.
 
+### Guided setup wizard
+
+If you sign in to a freshly-installed instance that has no teams yet, you can open `/welcome` to run the **three-step guided setup**:
+
+1. **Create your first team** — name, slug, default match format.
+2. **Add your first season** — name + optional date range.
+3. **Invite your coaches** — chain together as many email + role invites as you need; each successful invite shows a copy-link button in dev mode.
+
+The wizard is skippable at every step. Skipping always lands you on `/admin/teams` so you can finish setup manually. The wizard is also auto-suppressed after the first skip (via `localStorage`), so you don't get bounced back to it on every login.
+
 ---
 
 ## The admin dashboard
@@ -118,18 +128,33 @@ For larger deployments, you can split hot HLS data and cold raw uploads onto sep
 
 ![Admin overview dashboard](./screenshots/admin-overview.png)
 
-The left sidebar has six sections:
+The left sidebar is grouped into three sections so you can mentally separate the public broadcast product from the secured coaching product:
 
-| Section | Purpose |
-|---|---|
-| **Overview** | KPIs and recent activity (this page) |
-| **Matches** | Match library — add, edit, delete, recover failed transcodes |
-| **Live** | RTMP cockpit — stream key, viewers, encoder load |
-| **Performance** | Tuning knobs and disk diagnostics |
-| **Users** | User account management |
-| **Settings** | Branding, navigation labels, feature toggles |
+| Group | Section | Purpose |
+|---|---|---|
+| **Broadcast** | Overview | KPIs and recent activity |
+|  | Matches | Match library — add, edit, delete, recover failed transcodes |
+|  | Live | RTMP cockpit — stream key, viewers, encoder load |
+|  | Performance | Tuning knobs and disk diagnostics |
+| **Tenants** | Teams | Global-admin team / season / membership management (`/admin/teams`) |
+| **Platform** | Users | User account management |
+|  | Settings | Branding, navigation labels, feature toggles |
 
 > **Note:** Old links to `/admin/streams` redirect to `/admin/live`, and `/admin/system` redirects to `/admin/performance`.
+
+### `/admin/teams` — global-admin team management
+
+The Tenants > Teams page is the **global-admin** cross-tenant surface. Day-to-day team management for a single team lives inside **Coach > Settings** (where team admins manage their own members + invites). Only global admins see this page.
+
+The page has a two-pane layout:
+
+- **Left**: list of teams with a search filter and a **+ New team** button.
+- **Right**: detail panel for the selected team with three sub-tabs:
+  - **Overview** — 4 KPI tiles (Seasons, Memberships, Default format, Created date).
+  - **Seasons** — list + add (name, optional start / end dates).
+  - **Memberships** — cross-tenant audit list. Grant memberships from the user picker (live filter against `/api/users`); revoke shows a confirm modal. The backend enforces last-admin protection, returning a 409 surfaced inline.
+
+A team admin who needs to debug "this user says they can't see team X" can also open **Admin > Users**, click the **View teams** toggle on the user's row, and see every team membership for that account across tenants.
 
 ---
 
