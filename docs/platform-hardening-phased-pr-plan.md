@@ -587,6 +587,10 @@ Whichever option lands, helper signatures must receive enough scope data (`team_
 
 **Phase 3 closeout note (docs/phase3-closeout):** Phase 3 completed the planned service extractions plus the first router split slice. `AGENTS.md`, `CLAUDE.md`, this plan, and `README.md` now document the new router/service boundaries and the UI/UX merge gate (frontend design skill + `docs/screenshots/<phase-or-feature>/` evidence). Remaining match/live/coach router moves are intentionally future slices; do not infer that every route domain has moved out of `server.py`.
 
+**PR 3.3 closeout (2026-05-11):**
+
+Completed in the PR-BE platform-hardening follow-up. 12 router extractions (matches, uploads, live, coach_notes, coach_clips, coach_playlists, coach_goals, coach_summaries, coach_engagement, feedback, jobs, settings, admin_ops — settings and admin_ops landed as the final sub-commits 12a + 12b) moved 99 of 109 route handlers from `server.py` into focused `routers/*.py` modules. `server.py` shrank from 4,816 to 2,103 lines (−56%); the 10 remaining `@app.` decorators are all SPA HTML shells and the `/static/{filepath:path}` mount. The line-count target of <1,500 is intentionally not met: ~600 lines of remaining helpers (`_require_*_in_team`, `_resolve_*_scope`, `_log_activity`, `_filter_*_for_user`, `_normalize_job_payload`, `_can_view_coach_*`, `_build_player_development_profile`, etc.) are shared by multiple routers via late imports and would require a service-extraction pass to relocate. The PR-BE plan explicitly scoped out service extraction; this is the documented exception. A future architecture follow-up can lift those helpers into `services/*.py` once the late-import pattern is replaced with explicit service dependencies.
+
 ---
 
 ## Phase 4 — Active Team/Season Selection
