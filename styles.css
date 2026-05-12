@@ -4137,6 +4137,16 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     align-items: center;
     justify-content: center;
 }
+/* The empty-state and detail panels are toggled via the `hidden` HTML
+   attribute. The class selectors above (display: flex on the empty state,
+   default display: block on .admin-teams-detail) are more specific than
+   the user-agent [hidden] { display: none } rule, so without these
+   explicit overrides BOTH would render simultaneously and the detail
+   pane would stack vertically below the placeholder. */
+.admin-teams-detail-empty[hidden],
+.admin-teams-detail[hidden] {
+    display: none !important;
+}
 .admin-teams-detail-head {
     display: flex;
     align-items: flex-start;

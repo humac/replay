@@ -32,7 +32,7 @@ export const DEFAULT_NOTE_TYPE = 'correction';
 
 // TODO(PR-FE 10): FEEDBACK_NOTE_TYPE_LABELS moved to js/coaching/feedback.js.
 
-const VALID_COACH_TABS = ['roster', 'notes', 'playlists', 'clips', 'summaries', 'engagement', 'settings', 'review'];
+const VALID_COACH_TABS = ['review', 'roster', 'notes', 'playlists', 'clips', 'summaries', 'engagement', 'settings'];
 // TODO(PR-FE 10): VALID_FEEDBACK_TABS moved to js/coaching/feedback.js; imported above.
 
 export const GOAL_STATUS_OPTIONS = [
@@ -150,7 +150,7 @@ export const coachingMixin = {
         this.teardownLiveView?.();
         this.stopSeasonLiveCtaPolling?.();
         this.activateView('coach-view', 'coach');
-        const targetTab = VALID_COACH_TABS.includes(tab) ? tab : (this._coachTab || 'roster');
+        const targetTab = VALID_COACH_TABS.includes(tab) ? tab : (this._coachTab || 'review');
         if (matchId) this._coachReviewPending = { matchId, slot: slot || 'full' };
         if (pushHistory) {
             const url = this._coachUrl(targetTab, matchId, slot);
@@ -192,7 +192,7 @@ export const coachingMixin = {
     // ===== sub-tab routers =====
 
     setCoachTab(name, { pushHistory = true } = {}) {
-        if (!VALID_COACH_TABS.includes(name)) name = 'roster';
+        if (!VALID_COACH_TABS.includes(name)) name = 'review';
         this._coachTab = name;
         document.querySelectorAll('[data-coach-tab]').forEach((btn) => {
             const active = btn.dataset.coachTab === name;
