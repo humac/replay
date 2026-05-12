@@ -27,6 +27,7 @@ import { coachingThumbnailsMixin } from './js/coaching/thumbnails.js';
 import { coachingAIMixin } from './js/coaching/ai.js';
 import { coachingMixin } from './js/coaching.js';
 import { tacticalBoardMixin } from './js/tactical-board.js';
+import { accountMixin } from './js/account.js';
 
 const app = {
     // ===== STATE & CONFIG =====
@@ -270,27 +271,13 @@ const app = {
         this.showSeasonView({ pushHistory: false, scrollTop });
     },
 
-    // Phase 0 placeholder for the account self-service shell. Phase A
-    // replaces this with a tab-driven mixin (profile / password / sessions /
-    // email) that loads /api/me on enter.
-    showAccountView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
-        if (!this.authToken) {
-            this.showLoginModal?.();
-            this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
-            return;
-        }
-        this.teardownGameView?.();
-        this.teardownLiveView?.();
-        this.activateView('account-view');
-        if (pushHistory) {
-            this.pushHistoryState({ view: 'account' }, { replace: replaceHistory, url: '/me' });
-        }
-        if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
-    },
+    // showAccountView is owned by accountMixin (Phase A). The mixin spread
+    // below replaces this placeholder slot with the tab-driven implementation.
 
-    // Phase 0 placeholder for onboarding/auth landing shells (/welcome,
-    // /invite/{token}, /verify-email, /reset-password). Each route renders
-    // its own #<view-id> placeholder until its phase ships.
+    // Onboarding/auth landing shells: /welcome (Phase D), /invite/{token}
+    // (Phase B), /verify-email and /reset-password (Phase A.3). Phase A
+    // populates the verify-email and reset-password forms; the populator
+    // hook runs after activation so query-string tokens auto-fill.
     showShellView(viewId, routeName, { pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
         this.teardownGameView?.();
         this.teardownLiveView?.();
@@ -300,6 +287,10 @@ const app = {
                 ? window.location.pathname
                 : `/${routeName}`;
             this.pushHistoryState({ view: routeName }, { replace: replaceHistory, url });
+        }
+        // Phase A.3: pre-fill the token field when the URL carries one.
+        if (routeName === 'verify-email' || routeName === 'reset-password') {
+            this.populateLandingTokenFromQuery?.();
         }
         if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
     },
@@ -506,6 +497,7 @@ const app = {
     ...coachingThumbnailsMixin,
     ...coachingAIMixin,
     ...tacticalBoardMixin,
+    ...accountMixin,
 };
 
 // Expose globally for inline onclick handlers
