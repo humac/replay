@@ -6,6 +6,25 @@ Improvement plan for the Replay match video platform, organized as sequential mi
 
 ---
 
+## Admin & Onboarding UI Pass ✅ COMPLETE (2026-05-12)
+
+Closed the user-facing surface gap for platform-hardening Phases 1–9. Seven small PRs introduced:
+
+- `/admin` sidebar regrouped into Broadcast (overview/matches/live/performance) / Tenants (teams) / Platform (users/settings) so a global admin can mentally separate the public VOD/live product from the secured coaching product.
+- New SPA shells: `/me` (Profile · Password · Email · Sessions), `/welcome` onboarding wizard, `/invite/{token}` acceptance landing, `/verify-email` and `/reset-password` token landings.
+- `/admin/teams` two-pane shell (list / Overview / Seasons / Memberships) for global-admin team CRUD, backed by `/api/admin/teams*`.
+- Coach > Settings gained Members + Pending Invites cards + invite composer for team admins, backed by `/api/team/{memberships,invites}*`. Capability-gated by `membership:manage`.
+- Admin > Users gained a "View teams" expander for cross-tenant membership debugging.
+- Login modal polished with `<label for>` + autocomplete attrs + "Forgot password?" footer link.
+
+Privacy invariants preserved verbatim: passwords / verification tokens / invite tokens / `coach_private_note` are never logged, persisted to localStorage, or templated to viewer surfaces. Tokens surface only when the server response carries them (i.e. `REPLAY_DEV_TOKEN_DELIVERY=1`).
+
+PRs: #178 (Phase 0 IA) · #179 (Phase A account) · #180 (Phase B team admin) · #181 (Phase C global admin) · #182 (Phase D onboarding wizard) · #183 (Phase F.2 user memberships) · #184 (Phase E audit + docs).
+
+Deferred follow-ups: F.3 jobs strip in /admin/performance, D.2 first-run coach-marks (needs `user_profiles.first_signin_at` migration), `/me` Sessions tab needs server-side session-list endpoint, auto-redirect `maybeRedirectToWelcome()` wired into `init()`.
+
+---
+
 ## Platform Phase 8.4 — Drafting API ✅ COMPLETE (2026-05-11)
 
 Adds the narrow backend/API drafting endpoint on top of the Phase 8.3 mock-provider boundary.

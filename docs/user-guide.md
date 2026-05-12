@@ -100,11 +100,33 @@ Most of Replay is open to anyone, but some teams enable login for additional fea
 
 Enter the username and password your coach or team admin gave you and click **LOGIN**.
 
-Once signed in, the LOGIN button is replaced by **LOGOUT** and your name appears in the header.
+Once signed in, the LOGIN button is replaced by **LOGOUT** and your name appears in the header. A new **account icon** appears next to the theme toggle — click it to open **your profile** at `/me`.
 
 ![Header after signing in](./screenshots/user-logged-in-header.png)
 
 > **Warning:** Replay locks out an IP after 5 failed login attempts in 60 seconds. If you mistype your password a few times, wait a minute before trying again.
+
+### Your account
+
+The `/me` page has four tabs:
+
+- **Profile** — your first / last name, email, phone, timezone, language, and preferred contact method. Email is used for password reset and for verification notifications.
+- **Password** — change your password. Doing so signs out all your other sessions.
+- **Email** — request a verification email and confirm your address. The token from the email auto-fills if you click the link from your inbox.
+- **Sessions** — for now, the simplest way to sign out everywhere is to change your password on the Password tab. A full session-list view is on the roadmap.
+
+### Forgot password?
+
+If you can't sign in, click **Forgot password?** at the bottom of the login modal. Enter your username and we'll send reset instructions to the email on file. The reset email contains a link to `/reset-password?token=…` — open it in any browser, paste a new password, and you'll be signed back in.
+
+### Accepting an invite
+
+If your coach or team admin invited you, you'll receive an email with a link to `/invite/{token}`. Open the link:
+
+- If you already have a Replay account, sign in and click **Accept invite**.
+- If this is your first time using Replay, fill in a username and password to create your account. Acceptance creates your account and links you to the team in one step.
+
+Family / guardian invites can link to multiple players if you have several children on the same team.
 
 ---
 
