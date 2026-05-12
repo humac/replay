@@ -141,6 +141,30 @@ const app = {
             return;
         }
 
+        // Phase 0: account + onboarding shell routes. Content is filled in
+        // by Phases A / B / D; until then each renders a "Coming soon"
+        // placeholder so bookmarked / emailed links don't 404.
+        if (path === '/me') {
+            this.showAccountView({ pushHistory: false, replaceHistory: true, scrollTop: false });
+            return;
+        }
+        if (path === '/welcome') {
+            this.showShellView('welcome-view', 'welcome', { pushHistory: false, scrollTop: false });
+            return;
+        }
+        if (path.startsWith('/invite/')) {
+            this.showShellView('invite-view', 'invite', { pushHistory: false, scrollTop: false });
+            return;
+        }
+        if (path === '/verify-email') {
+            this.showShellView('verify-email-view', 'verify-email', { pushHistory: false, scrollTop: false });
+            return;
+        }
+        if (path === '/reset-password') {
+            this.showShellView('reset-password-view', 'reset-password', { pushHistory: false, scrollTop: false });
+            return;
+        }
+
         const current = window.history.state;
         if (!current || !current.view) {
             window.history.replaceState({ view: 'season' }, '', '/');
@@ -221,7 +245,63 @@ const app = {
             return;
         }
 
+        // Phase 0 IA foundation shells.
+        if (state.view === 'account') {
+            this.showAccountView({ pushHistory: false, scrollTop });
+            return;
+        }
+        if (state.view === 'welcome') {
+            this.showShellView('welcome-view', 'welcome', { pushHistory: false, scrollTop });
+            return;
+        }
+        if (state.view === 'invite') {
+            this.showShellView('invite-view', 'invite', { pushHistory: false, scrollTop });
+            return;
+        }
+        if (state.view === 'verify-email') {
+            this.showShellView('verify-email-view', 'verify-email', { pushHistory: false, scrollTop });
+            return;
+        }
+        if (state.view === 'reset-password') {
+            this.showShellView('reset-password-view', 'reset-password', { pushHistory: false, scrollTop });
+            return;
+        }
+
         this.showSeasonView({ pushHistory: false, scrollTop });
+    },
+
+    // Phase 0 placeholder for the account self-service shell. Phase A
+    // replaces this with a tab-driven mixin (profile / password / sessions /
+    // email) that loads /api/me on enter.
+    showAccountView({ pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
+        if (!this.authToken) {
+            this.showLoginModal?.();
+            this.showSeasonView({ pushHistory: false, replaceHistory: true, scrollTop: false });
+            return;
+        }
+        this.teardownGameView?.();
+        this.teardownLiveView?.();
+        this.activateView('account-view');
+        if (pushHistory) {
+            this.pushHistoryState({ view: 'account' }, { replace: replaceHistory, url: '/me' });
+        }
+        if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+
+    // Phase 0 placeholder for onboarding/auth landing shells (/welcome,
+    // /invite/{token}, /verify-email, /reset-password). Each route renders
+    // its own #<view-id> placeholder until its phase ships.
+    showShellView(viewId, routeName, { pushHistory = true, replaceHistory = false, scrollTop = true } = {}) {
+        this.teardownGameView?.();
+        this.teardownLiveView?.();
+        this.activateView(viewId);
+        if (pushHistory) {
+            const url = routeName === 'invite'
+                ? window.location.pathname
+                : `/${routeName}`;
+            this.pushHistoryState({ view: routeName }, { replace: replaceHistory, url });
+        }
+        if (scrollTop) window.scrollTo({ top: 0, behavior: 'smooth' });
     },
 
     activateView(viewId, navView = null) {

@@ -78,6 +78,9 @@
                     <p class="nav-scope-help" id="nav-scope-help">Choose which team and season coach/admin data should use.</p>
                 </div>
             </div>
+            <button id="nav-account-btn" class="nav-icon-btn" onclick="app.showAccountView()" title="Account &amp; profile" style="display:none;" aria-label="Account">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </button>
             <button id="theme-toggle-btn" class="nav-icon-btn" onclick="app.toggleTheme()" title="Toggle light/dark mode">
                 <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                 <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -1184,6 +1187,97 @@
             </div>
         </section>
 
+        <!-- Phase 0 IA foundation: placeholder shells for /me, /welcome,
+             /invite/{token}, /verify-email, /reset-password. Each is the
+             single source of truth for its route until later phases (A, B, D)
+             populate the content. The shell pattern matches /coach + /feedback
+             so initializeHistory() and activateView() can swap them in. -->
+        <section id="account-view" class="view" data-shell-route="me">
+            <div class="account-shell">
+                <header class="account-shell-head">
+                    <span class="account-shell-kicker">Account</span>
+                    <h1>Your profile</h1>
+                    <p class="account-shell-sub" id="account-shell-sub">Manage your contact details, password, email verification, and active sessions.</p>
+                </header>
+                <div class="account-shell-body" id="account-shell-body">
+                    <div class="account-placeholder">
+                        <div class="account-placeholder-glyph" aria-hidden="true">◐</div>
+                        <h2>Profile management is coming soon</h2>
+                        <p>The self-service profile, password change, email verification, and active-session controls land in the next release.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="welcome-view" class="view" data-shell-route="welcome">
+            <div class="onboarding-shell">
+                <header class="onboarding-shell-head">
+                    <span class="onboarding-shell-kicker">Welcome</span>
+                    <h1>Let&rsquo;s get your tenant set up</h1>
+                    <p class="onboarding-shell-sub">First-time setup will walk you through creating a team, a season, and inviting your coaches.</p>
+                </header>
+                <div class="onboarding-shell-body">
+                    <div class="account-placeholder">
+                        <div class="account-placeholder-glyph" aria-hidden="true">▣</div>
+                        <h2>Onboarding wizard coming soon</h2>
+                        <p>Use the admin console to create your first team and seasons today, or wait for the guided wizard in the next release.</p>
+                        <a class="btn-primary" href="/admin" onclick="event.preventDefault(); app.showAdminView('teams');">Open admin console</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="invite-view" class="view" data-shell-route="invite">
+            <div class="onboarding-shell">
+                <header class="onboarding-shell-head">
+                    <span class="onboarding-shell-kicker">Invite</span>
+                    <h1>You&rsquo;ve been invited</h1>
+                    <p class="onboarding-shell-sub" id="invite-shell-sub">We&rsquo;ll set up your account once invite acceptance ships.</p>
+                </header>
+                <div class="onboarding-shell-body">
+                    <div class="account-placeholder">
+                        <div class="account-placeholder-glyph" aria-hidden="true">✉</div>
+                        <h2>Invite acceptance is coming soon</h2>
+                        <p>The team-admin invite flow lands shortly. For now, please ask the team admin who sent you this link to add you manually.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="verify-email-view" class="view" data-shell-route="verify-email">
+            <div class="onboarding-shell">
+                <header class="onboarding-shell-head">
+                    <span class="onboarding-shell-kicker">Email</span>
+                    <h1>Verify your email</h1>
+                    <p class="onboarding-shell-sub">We&rsquo;ll confirm the token from your inbox here.</p>
+                </header>
+                <div class="onboarding-shell-body">
+                    <div class="account-placeholder">
+                        <div class="account-placeholder-glyph" aria-hidden="true">✓</div>
+                        <h2>Email verification is coming soon</h2>
+                        <p>Until the verification UI ships, your email is recorded against your account and can be used for password reset.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="reset-password-view" class="view" data-shell-route="reset-password">
+            <div class="onboarding-shell">
+                <header class="onboarding-shell-head">
+                    <span class="onboarding-shell-kicker">Reset</span>
+                    <h1>Reset your password</h1>
+                    <p class="onboarding-shell-sub">Paste the token from your reset email below.</p>
+                </header>
+                <div class="onboarding-shell-body">
+                    <div class="account-placeholder">
+                        <div class="account-placeholder-glyph" aria-hidden="true">⟳</div>
+                        <h2>Password reset confirmation is coming soon</h2>
+                        <p>Contact your team admin or a global admin to reset your password until this surface ships.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Admin Dashboard (consolidates Add Match + legacy Settings) -->
         <section id="admin-view" class="view">
             <div class="admin-status-strip" id="admin-status-strip" aria-label="Platform status"></div>
@@ -1548,6 +1642,25 @@
                                     <div id="live-blocks-list" class="session-list"></div>
                                 </div>
                             </div>
+                        </div>
+                    </section>
+
+                    <!-- TEAMS (tenants placeholder — populated by Phase C) -->
+                    <section class="admin-section" data-admin-section="teams">
+                        <div class="options-card admin-placeholder-card" id="admin-teams-placeholder">
+                            <div class="admin-card-head">
+                                <h3>Teams &amp; Tenants</h3>
+                                <span class="admin-card-kicker">Coming soon</span>
+                            </div>
+                            <p class="admin-panel-copy">
+                                Cross-tenant team and season management lands here in a follow-up release. For now,
+                                team admins manage their own roster, memberships, and invites inside
+                                <a href="/coach" onclick="event.preventDefault(); app.showCoachView();">Coach&nbsp;&rsaquo;&nbsp;Settings</a>.
+                            </p>
+                            <p class="admin-panel-copy admin-placeholder-hint">
+                                Global admins can still operate teams through the headless CLI
+                                (<code>python -m tools.admin teams|seasons|memberships</code>) until this page ships.
+                            </p>
                         </div>
                     </section>
 
