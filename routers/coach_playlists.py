@@ -145,7 +145,7 @@ async def coach_delete_playlist(playlist_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     playlist = _require_playlist_in_team(playlist_id, team_id)
-    _tenancy.assert_can_delete_coach_object(scope, "playlist", created_by_user_id=playlist.get("created_by"))
+    _tenancy.assert_can_delete_coach_object(scope, "playlist", created_by_username=playlist.get("created_by"))
     if not _db.delete_coaching_playlist(playlist_id):
         raise HTTPException(404, "Playlist not found")
     _log_activity(

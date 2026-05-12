@@ -445,7 +445,7 @@ async def coach_delete_note(note_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     note = _require_note_in_team(note_id, team_id)
-    _tenancy.assert_can_delete_coach_object(scope, "note", created_by_user_id=note.get("created_by"))
+    _tenancy.assert_can_delete_coach_object(scope, "note", created_by_username=note.get("created_by"))
     if not _db.delete_coaching_note(note_id):
         raise HTTPException(404, "Note not found")
     label = _coach_note_activity_label(note) if note else ""

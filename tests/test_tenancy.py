@@ -995,9 +995,9 @@ def test_pr_auth_delete_helper_allows_global_admin_for_any_creator(obj_type):
 
     scope = _make_scope("global_admin", username="root")
     # Should not raise for any creator (own or other).
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="someone_else")
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="root")
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id=None)
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="someone_else")
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="root")
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username=None)
 
 
 @pytest.mark.parametrize("obj_type", ["note", "clip", "playlist", "goal", "match_summary"])
@@ -1005,8 +1005,8 @@ def test_pr_auth_delete_helper_allows_team_admin_for_any_creator(obj_type):
     import tenancy
 
     scope = _make_scope("team_admin", username="ta")
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="someone_else")
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="ta")
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="someone_else")
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="ta")
 
 
 @pytest.mark.parametrize("obj_type", ["note", "clip", "playlist", "goal", "match_summary"])
@@ -1014,8 +1014,8 @@ def test_pr_auth_delete_helper_allows_coach_for_any_creator(obj_type):
     import tenancy
 
     scope = _make_scope("coach", username="head_coach")
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="other_coach")
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="head_coach")
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="other_coach")
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="head_coach")
 
 
 @pytest.mark.parametrize("obj_type", ["note", "clip", "playlist", "goal", "match_summary"])
@@ -1023,7 +1023,7 @@ def test_pr_auth_delete_helper_assistant_coach_can_delete_own(obj_type):
     import tenancy
 
     scope = _make_scope("assistant_coach", username="asst")
-    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="asst")
+    tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="asst")
 
 
 @pytest.mark.parametrize("obj_type", ["note", "clip", "playlist", "goal", "match_summary"])
@@ -1033,7 +1033,7 @@ def test_pr_auth_delete_helper_assistant_coach_cannot_delete_others(obj_type):
 
     scope = _make_scope("assistant_coach", username="asst")
     with pytest.raises(HTTPException) as exc:
-        tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="other_coach")
+        tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="other_coach")
     assert exc.value.status_code == 403
 
 
@@ -1046,7 +1046,7 @@ def test_pr_auth_delete_helper_assistant_coach_cannot_delete_unowned_audit(obj_t
     # grant deletion to a delete_own-only actor.
     scope = _make_scope("assistant_coach", username="asst")
     with pytest.raises(HTTPException) as exc:
-        tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id=None)
+        tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username=None)
     assert exc.value.status_code == 403
 
 
@@ -1057,7 +1057,7 @@ def test_pr_auth_delete_helper_viewer_denied(obj_type):
 
     scope = _make_scope("viewer", username="bystander")
     with pytest.raises(HTTPException) as exc:
-        tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_user_id="bystander")
+        tenancy.assert_can_delete_coach_object(scope, obj_type, created_by_username="bystander")
     assert exc.value.status_code == 403
 
 
@@ -1067,5 +1067,5 @@ def test_pr_auth_delete_helper_rejects_unknown_obj_type():
 
     scope = _make_scope("coach", username="head_coach")
     with pytest.raises(HTTPException) as exc:
-        tenancy.assert_can_delete_coach_object(scope, "drawing", created_by_user_id="head_coach")
+        tenancy.assert_can_delete_coach_object(scope, "drawing", created_by_username="head_coach")
     assert exc.value.status_code == 422

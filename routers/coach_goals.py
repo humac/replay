@@ -120,7 +120,7 @@ async def coach_delete_goal(goal_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     existing = _require_scoped_item(_db.get_player_goal(goal_id), team_id, "Goal not found")
-    _tenancy.assert_can_delete_coach_object(scope, "goal", created_by_user_id=existing.get("created_by"))
+    _tenancy.assert_can_delete_coach_object(scope, "goal", created_by_username=existing.get("created_by"))
     if not _db.delete_player_goal(goal_id):
         raise HTTPException(404, "Goal not found")
     _log_activity("coach.goal_deleted", severity="warning", message=f"Player goal deleted: {existing.get('title', goal_id) if existing else goal_id}", actor=user["username"], metadata={"goal_id": goal_id})
