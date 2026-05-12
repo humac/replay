@@ -1437,14 +1437,121 @@
                 <header class="onboarding-shell-head">
                     <span class="onboarding-shell-kicker">Welcome</span>
                     <h1>Let&rsquo;s get your tenant set up</h1>
-                    <p class="onboarding-shell-sub">First-time setup will walk you through creating a team, a season, and inviting your coaches.</p>
+                    <p class="onboarding-shell-sub">Three quick steps: name your team, define a season, invite your coaches.</p>
                 </header>
+
+                <!-- Step indicator -->
+                <ol class="welcome-steps" aria-label="Setup steps">
+                    <li class="welcome-step" data-welcome-step="team" aria-current="step">
+                        <span class="welcome-step-num">1</span>
+                        <span class="welcome-step-label">Create team</span>
+                    </li>
+                    <li class="welcome-step" data-welcome-step="season">
+                        <span class="welcome-step-num">2</span>
+                        <span class="welcome-step-label">Add season</span>
+                    </li>
+                    <li class="welcome-step" data-welcome-step="invite">
+                        <span class="welcome-step-num">3</span>
+                        <span class="welcome-step-label">Invite coaches</span>
+                    </li>
+                </ol>
+
                 <div class="onboarding-shell-body">
-                    <div class="account-placeholder">
-                        <div class="account-placeholder-glyph" aria-hidden="true">▣</div>
-                        <h2>Onboarding wizard coming soon</h2>
-                        <p>Use the admin console to create your first team and seasons today, or wait for the guided wizard in the next release.</p>
-                        <a class="btn-primary" href="/admin" onclick="event.preventDefault(); app.showAdminView('teams');">Open admin console</a>
+                    <!-- Step 1 — Create team -->
+                    <div class="welcome-step-panel" data-welcome-panel="team">
+                        <h2>Create your first team</h2>
+                        <p class="form-help">Teams are the top-level tenant in Replay. Coaches, players, and guardians all belong to one or more teams.</p>
+                        <form id="welcome-team-form" class="account-form" onsubmit="app.handleWelcomeTeamSubmit(event)" novalidate>
+                            <div class="form-group">
+                                <label for="welcome-team-name">Team name</label>
+                                <input type="text" id="welcome-team-name" name="name" required minlength="1" maxlength="200" placeholder="e.g. U12 Girls Steel" autocomplete="off">
+                            </div>
+                            <div class="form-group">
+                                <label for="welcome-team-slug">Slug</label>
+                                <input type="text" id="welcome-team-slug" name="slug" required minlength="1" maxlength="64" pattern="[a-z0-9][a-z0-9_-]*" placeholder="u12-girls-steel" autocomplete="off">
+                                <p class="form-help">Lower-case letters, digits, dashes. Used in URLs and the CLI.</p>
+                            </div>
+                            <div class="form-group">
+                                <span class="form-label-static">Default match format</span>
+                                <div class="account-radio-group" role="radiogroup" aria-label="Default match format">
+                                    <label class="account-radio"><input type="radio" name="game_format" value="full" checked><span>Full match</span></label>
+                                    <label class="account-radio"><input type="radio" name="game_format" value="two_halves"><span>Two halves</span></label>
+                                </div>
+                            </div>
+                            <div id="welcome-team-banner" class="account-banner" hidden></div>
+                            <div class="account-form-actions">
+                                <button type="submit" class="btn-primary">Continue to season</button>
+                                <button type="button" class="btn-secondary" onclick="app.skipWelcomeFlow()">Skip setup</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Step 2 — Create season -->
+                    <div class="welcome-step-panel" data-welcome-panel="season" hidden>
+                        <h2>Add your first season</h2>
+                        <p class="form-help">A season anchors scoped matches, memberships, and coaching context. You can add more seasons later.</p>
+                        <form id="welcome-season-form" class="account-form" onsubmit="app.handleWelcomeSeasonSubmit(event)" novalidate>
+                            <div class="form-group">
+                                <label for="welcome-season-name">Season name</label>
+                                <input type="text" id="welcome-season-name" name="name" required minlength="1" maxlength="200" placeholder="Spring 2026" autocomplete="off">
+                            </div>
+                            <div class="account-form-grid">
+                                <div class="form-group">
+                                    <label for="welcome-season-start">Starts on</label>
+                                    <input type="date" id="welcome-season-start" name="starts_on" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label for="welcome-season-end">Ends on</label>
+                                    <input type="date" id="welcome-season-end" name="ends_on" autocomplete="off">
+                                </div>
+                            </div>
+                            <div id="welcome-season-banner" class="account-banner" hidden></div>
+                            <div class="account-form-actions">
+                                <button type="submit" class="btn-primary">Continue to invites</button>
+                                <button type="button" class="btn-secondary" onclick="app.skipWelcomeStep('season')">Skip this step</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Step 3 — Invite coaches -->
+                    <div class="welcome-step-panel" data-welcome-panel="invite" hidden>
+                        <h2>Invite your coaches</h2>
+                        <p class="form-help">Add one email at a time and pick a role. You can skip this and send invites later from Coach &rsaquo; Settings.</p>
+                        <form id="welcome-invite-form" class="account-form" onsubmit="app.handleWelcomeInviteSubmit(event)" novalidate>
+                            <div class="account-form-grid">
+                                <div class="form-group">
+                                    <label for="welcome-invite-email">Coach email</label>
+                                    <input type="email" id="welcome-invite-email" name="email" maxlength="320" placeholder="coach@example.com" autocomplete="email">
+                                </div>
+                                <div class="form-group">
+                                    <span class="form-label-static">Role</span>
+                                    <div class="account-radio-group" role="radiogroup" aria-label="Invite role">
+                                        <label class="account-radio"><input type="radio" name="role" value="coach" checked><span>Coach</span></label>
+                                        <label class="account-radio"><input type="radio" name="role" value="assistant_coach"><span>Assistant coach</span></label>
+                                        <label class="account-radio"><input type="radio" name="role" value="team_admin"><span>Team admin</span></label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="welcome-invite-banner" class="account-banner" hidden></div>
+                            <div class="welcome-invites-sent" id="welcome-invites-sent"></div>
+                            <div class="account-form-actions">
+                                <button type="submit" class="btn-secondary">+ Add invite</button>
+                                <button type="button" class="btn-primary" onclick="app.finishWelcomeFlow()">Finish &amp; open admin console</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Done step (replaces panel after Finish) -->
+                    <div class="welcome-step-panel welcome-step-done" data-welcome-panel="done" hidden>
+                        <div class="account-placeholder">
+                            <div class="account-placeholder-glyph" aria-hidden="true">✓</div>
+                            <h2 id="welcome-done-title">Your team is ready</h2>
+                            <p id="welcome-done-sub">You can open the admin console or jump straight into coach tools.</p>
+                            <div class="account-form-actions">
+                                <button type="button" class="btn-primary" onclick="app.showAdminView('teams')">Open admin console</button>
+                                <button type="button" class="btn-secondary" onclick="app.showCoachView()">Open coach workspace</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
