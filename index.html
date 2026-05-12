@@ -1199,11 +1199,160 @@
                     <h1>Your profile</h1>
                     <p class="account-shell-sub" id="account-shell-sub">Manage your contact details, password, email verification, and active sessions.</p>
                 </header>
+
+                <nav class="account-tabs" role="tablist" aria-label="Account sections">
+                    <button type="button" class="account-tab" role="tab" data-account-tab="profile" aria-selected="true" onclick="app.setAccountTab('profile')">
+                        <span class="account-tab-glyph" aria-hidden="true">◐</span>
+                        Profile
+                    </button>
+                    <button type="button" class="account-tab" role="tab" data-account-tab="password" aria-selected="false" onclick="app.setAccountTab('password')">
+                        <span class="account-tab-glyph" aria-hidden="true">⚿</span>
+                        Password
+                    </button>
+                    <button type="button" class="account-tab" role="tab" data-account-tab="email" aria-selected="false" onclick="app.setAccountTab('email')">
+                        <span class="account-tab-glyph" aria-hidden="true">✉</span>
+                        Email
+                    </button>
+                    <button type="button" class="account-tab" role="tab" data-account-tab="sessions" aria-selected="false" onclick="app.setAccountTab('sessions')">
+                        <span class="account-tab-glyph" aria-hidden="true">◇</span>
+                        Sessions
+                    </button>
+                </nav>
+
                 <div class="account-shell-body" id="account-shell-body">
-                    <div class="account-placeholder">
-                        <div class="account-placeholder-glyph" aria-hidden="true">◐</div>
-                        <h2>Profile management is coming soon</h2>
-                        <p>The self-service profile, password change, email verification, and active-session controls land in the next release.</p>
+                    <!-- Profile tab -->
+                    <div class="account-tab-panel" data-account-panel="profile" role="tabpanel">
+                        <div id="account-profile-banner" class="account-banner" hidden></div>
+                        <form id="account-profile-form" class="account-form" onsubmit="app.handleAccountProfileSubmit(event)" novalidate>
+                            <div class="account-form-grid">
+                                <div class="form-group">
+                                    <label for="account-profile-first-name">First name</label>
+                                    <input type="text" id="account-profile-first-name" name="first_name" autocomplete="given-name" maxlength="120">
+                                </div>
+                                <div class="form-group">
+                                    <label for="account-profile-last-name">Last name</label>
+                                    <input type="text" id="account-profile-last-name" name="last_name" autocomplete="family-name" maxlength="120">
+                                </div>
+                                <div class="form-group account-form-full">
+                                    <label for="account-profile-email">
+                                        Email
+                                        <span id="account-profile-email-pill" class="account-pill" hidden></span>
+                                    </label>
+                                    <input type="email" id="account-profile-email" name="email" autocomplete="email" maxlength="320">
+                                    <p class="form-help" id="account-profile-email-help">Used for password reset and team notifications.</p>
+                                </div>
+                                <div class="form-group">
+                                    <label for="account-profile-phone">Phone</label>
+                                    <input type="tel" id="account-profile-phone" name="phone" autocomplete="tel" maxlength="64">
+                                </div>
+                                <div class="form-group">
+                                    <label for="account-profile-timezone">Timezone</label>
+                                    <select id="account-profile-timezone" name="timezone">
+                                        <option value="">Browser default</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="account-profile-locale">Language</label>
+                                    <select id="account-profile-locale" name="locale">
+                                        <option value="">Browser default</option>
+                                        <option value="en-US">English (US)</option>
+                                        <option value="en-GB">English (UK)</option>
+                                        <option value="es-ES">Español</option>
+                                        <option value="fr-FR">Français</option>
+                                        <option value="de-DE">Deutsch</option>
+                                        <option value="pt-BR">Português (Brasil)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group account-form-full">
+                                    <span class="form-label-static">Preferred contact method</span>
+                                    <div class="account-radio-group" role="radiogroup" aria-label="Preferred contact method">
+                                        <label class="account-radio">
+                                            <input type="radio" name="preferred_contact_method" value="email">
+                                            <span>Email</span>
+                                        </label>
+                                        <label class="account-radio">
+                                            <input type="radio" name="preferred_contact_method" value="phone">
+                                            <span>Phone</span>
+                                        </label>
+                                        <label class="account-radio">
+                                            <input type="radio" name="preferred_contact_method" value="none" checked>
+                                            <span>No preference</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="account-form-actions">
+                                <button type="submit" class="btn-primary" id="account-profile-save">Save profile</button>
+                                <button type="button" class="btn-secondary" onclick="app.loadAccountProfile()">Discard changes</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Password tab -->
+                    <div class="account-tab-panel" data-account-panel="password" role="tabpanel" hidden>
+                        <div id="account-password-banner" class="account-banner" hidden></div>
+                        <form id="account-password-form" class="account-form" onsubmit="app.handleAccountPasswordSubmit(event)" novalidate>
+                            <div class="form-group">
+                                <label for="account-password-current">Current password</label>
+                                <input type="password" id="account-password-current" name="current_password" autocomplete="current-password" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="account-password-new">New password</label>
+                                <input type="password" id="account-password-new" name="new_password" autocomplete="new-password" minlength="8" required>
+                                <p class="form-help">At least 8 characters. Changing your password signs out all other sessions.</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="account-password-confirm">Confirm new password</label>
+                                <input type="password" id="account-password-confirm" name="confirm_password" autocomplete="new-password" minlength="8" required>
+                            </div>
+                            <div class="account-form-actions">
+                                <button type="submit" class="btn-primary">Change password</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Email tab -->
+                    <div class="account-tab-panel" data-account-panel="email" role="tabpanel" hidden>
+                        <div id="account-email-banner" class="account-banner" hidden></div>
+                        <div class="team-settings-card account-email-card">
+                            <div class="account-email-row">
+                                <div class="account-email-meta">
+                                    <span class="account-tab-glyph" aria-hidden="true">✉</span>
+                                    <div>
+                                        <strong id="account-email-current">No email on file</strong>
+                                        <p id="account-email-status" class="form-help">Add an email on the Profile tab to enable verification.</p>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn-primary" id="account-email-verify-btn" onclick="app.requestAccountEmailVerification()" disabled>Send verification email</button>
+                            </div>
+                            <div id="account-email-dev-token" class="account-dev-token" hidden>
+                                <p class="form-help">Dev mode: paste this token into the confirmation form below.</p>
+                                <code id="account-email-dev-token-value"></code>
+                            </div>
+                        </div>
+                        <form id="account-email-confirm-form" class="account-form" onsubmit="app.handleAccountEmailConfirmSubmit(event)" novalidate>
+                            <div class="form-group">
+                                <label for="account-email-token">Verification token</label>
+                                <input type="text" id="account-email-token" name="token" minlength="16" maxlength="500" autocomplete="off" required>
+                                <p class="form-help">Paste the token from the verification email to confirm ownership.</p>
+                            </div>
+                            <div class="account-form-actions">
+                                <button type="submit" class="btn-primary">Confirm email</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Sessions tab -->
+                    <div class="account-tab-panel" data-account-panel="sessions" role="tabpanel" hidden>
+                        <div class="team-settings-card account-sessions-card">
+                            <p class="form-help">
+                                Active sessions appear here once the backend exposes a session-listing endpoint. For now you can sign out everywhere by changing your password.
+                            </p>
+                            <div class="account-form-actions">
+                                <button type="button" class="btn-secondary" onclick="app.setAccountTab('password')">Open password tab</button>
+                                <button type="button" class="btn-danger" onclick="app.logout()">Sign out of this device</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1249,14 +1398,20 @@
                 <header class="onboarding-shell-head">
                     <span class="onboarding-shell-kicker">Email</span>
                     <h1>Verify your email</h1>
-                    <p class="onboarding-shell-sub">We&rsquo;ll confirm the token from your inbox here.</p>
+                    <p class="onboarding-shell-sub">Paste the verification token from the email we sent you to confirm ownership.</p>
                 </header>
                 <div class="onboarding-shell-body">
-                    <div class="account-placeholder">
-                        <div class="account-placeholder-glyph" aria-hidden="true">✓</div>
-                        <h2>Email verification is coming soon</h2>
-                        <p>Until the verification UI ships, your email is recorded against your account and can be used for password reset.</p>
-                    </div>
+                    <div id="verify-email-banner" class="account-banner" hidden></div>
+                    <form id="verify-email-form" class="account-form" onsubmit="app.handleVerifyEmailLandingSubmit(event)" novalidate>
+                        <div class="form-group">
+                            <label for="verify-email-token-input">Verification token</label>
+                            <input type="text" id="verify-email-token-input" name="token" minlength="16" maxlength="500" autocomplete="off" required>
+                        </div>
+                        <div class="account-form-actions">
+                            <button type="submit" class="btn-primary">Confirm email</button>
+                            <a class="btn-secondary" href="/me" onclick="event.preventDefault(); app.showAccountView({ tab: 'email' });">Open profile</a>
+                        </div>
+                    </form>
                 </div>
             </div>
         </section>
@@ -1266,14 +1421,29 @@
                 <header class="onboarding-shell-head">
                     <span class="onboarding-shell-kicker">Reset</span>
                     <h1>Reset your password</h1>
-                    <p class="onboarding-shell-sub">Paste the token from your reset email below.</p>
+                    <p class="onboarding-shell-sub">Paste the token from your reset email and choose a new password.</p>
                 </header>
                 <div class="onboarding-shell-body">
-                    <div class="account-placeholder">
-                        <div class="account-placeholder-glyph" aria-hidden="true">⟳</div>
-                        <h2>Password reset confirmation is coming soon</h2>
-                        <p>Contact your team admin or a global admin to reset your password until this surface ships.</p>
-                    </div>
+                    <div id="reset-password-banner" class="account-banner" hidden></div>
+                    <form id="reset-password-form" class="account-form" onsubmit="app.handleResetPasswordLandingSubmit(event)" novalidate>
+                        <div class="form-group">
+                            <label for="reset-password-token">Reset token</label>
+                            <input type="text" id="reset-password-token" name="token" minlength="16" maxlength="500" autocomplete="off" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="reset-password-new">New password</label>
+                            <input type="password" id="reset-password-new" name="new_password" autocomplete="new-password" minlength="8" required>
+                            <p class="form-help">At least 8 characters. Any existing sessions will be signed out.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="reset-password-confirm">Confirm new password</label>
+                            <input type="password" id="reset-password-confirm" name="confirm_password" autocomplete="new-password" minlength="8" required>
+                        </div>
+                        <div class="account-form-actions">
+                            <button type="submit" class="btn-primary">Set new password</button>
+                            <button type="button" class="btn-secondary" onclick="app.showSeasonView()">Cancel</button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </section>
@@ -1968,15 +2138,43 @@
             <h2>Login</h2>
             <form id="login-form" onsubmit="app.handleLogin(event)">
                 <div class="form-group">
-                    <label>Username</label>
+                    <label for="login-username">Username</label>
                     <input type="text" id="login-username" required autocomplete="username">
                 </div>
                 <div class="form-group">
-                    <label>Password</label>
+                    <label for="login-password">Password</label>
                     <input type="password" id="login-password" required autocomplete="current-password">
                 </div>
                 <div id="login-error" style="color:var(--red);font-size:0.85rem;margin-bottom:0.5rem;display:none;"></div>
                 <button type="submit" class="btn-primary" style="width:100%;">Login</button>
+            </form>
+            <div class="login-modal-footer">
+                <button type="button" class="login-link" onclick="app.openPasswordResetRequestModal()">Forgot password?</button>
+                <p class="login-modal-hint">Have an invite? Use the link from your email.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Password reset request modal (Phase A.3) -->
+    <div id="password-reset-request-modal" class="login-modal" style="display:none;" aria-hidden="true">
+        <div class="login-modal-backdrop" onclick="app.closePasswordResetRequestModal()"></div>
+        <div class="login-modal-content">
+            <h2>Reset your password</h2>
+            <form id="password-reset-request-form" onsubmit="app.handlePasswordResetRequestSubmit(event)" novalidate>
+                <p class="login-modal-hint" style="margin-top:0;">
+                    Enter your username. If an account exists, we&rsquo;ll send password reset instructions.
+                </p>
+                <div class="form-group">
+                    <label for="password-reset-username">Username</label>
+                    <input type="text" id="password-reset-username" name="username" required autocomplete="username" minlength="1" maxlength="200">
+                </div>
+                <div id="password-reset-request-banner" class="account-banner" hidden></div>
+                <div id="password-reset-request-dev-token" class="account-dev-token" hidden>
+                    <p class="form-help">Dev mode: paste this token into the reset confirmation form.</p>
+                    <code id="password-reset-request-dev-token-value"></code>
+                </div>
+                <button type="submit" class="btn-primary" style="width:100%;">Send reset instructions</button>
+                <button type="button" class="btn-secondary" style="width:100%;margin-top:0.5rem;" onclick="app.closePasswordResetRequestModal()">Cancel</button>
             </form>
         </div>
     </div>
