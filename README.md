@@ -20,6 +20,7 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **Account profile foundation** — `/api/me` includes a safe self-profile companion payload with nullable legacy email support, normalized email uniqueness, and a self-service profile patch endpoint that cannot mutate roles or memberships
 - **Durable session/password foundation** — database-user logins persist hashed bearer sessions, logout/password changes/reset consume or revoke sessions, and reset/verification tokens are stored hashed-only
 - **Team member management and invites** — team admins can manage active-team people from Admin > People, issue Brevo-delivered hashed-token staff/guardian invites, resend with token rotation, and accept invites as existing or new users
+- **Notification settings** — global admins can configure Brevo transactional email from Admin > Settings > Notifications, including a write-only API key and test email sender
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
 - **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
 - **Public downloads** — optional direct MP4 download buttons for ready games with normal browser resume support for large files

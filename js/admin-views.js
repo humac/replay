@@ -36,12 +36,106 @@ export const adminViewsMixin = {
         // Performance Tuning card (admin only — needs the tuning_knobs schema
         // which is only returned by the admin settings endpoint).
         if (this.isAdmin()) this.renderTuningKnobsCard();
+        if (this.isAdmin()) this.renderNotificationSettingsCard();
 
         // Show user management for admins
         const userCard = document.getElementById('user-management-card');
         if (userCard) {
             userCard.style.display = this.isAdmin() ? 'block' : 'none';
             if (this.isAdmin()) this.renderUsersList();
+        }
+    },
+
+    async renderNotificationSettingsCard() {
+        const summary = document.getElementById('settings-email-summary');
+        if (!summary) return;
+        try {
+            const resp = await this.authFetch('/api/admin/email/settings', { headers: this.getAuthHeaders() });
+            if (!resp.ok) throw new Error('Could not load notification settings');
+            const payload = await resp.json();
+            this._emailSettingsPayload = payload;
+            const settings = payload.settings || {};
+            const provider = document.getElementById('settings-email-provider');
+            const baseUrl = document.getElementById('settings-email-public-base-url');
+            const from = document.getElementById('settings-email-from');
+            const fromName = document.getElementById('settings-email-from-name');
+            const keyInput = document.getElementById('settings-email-brevo-api-key');
+            const clearKey = document.getElementById('settings-email-clear-key');
+            const keyState = document.getElementById('settings-email-key-state');
+            if (provider) provider.value = settings.email_provider || 'disabled';
+            if (baseUrl) baseUrl.value = settings.email_public_base_url || '';
+            if (from) from.value = settings.email_from || '';
+            if (fromName) fromName.value = settings.email_from_name || 'Replay';
+            if (keyInput) keyInput.value = '';
+            if (clearKey) clearKey.checked = false;
+            const status = payload.status || {};
+            const stateText = status.has_brevo_api_key
+                ? `Brevo API key configured${status.brevo_api_key_source === 'env' ? ' from environment' : ''}.`
+                : 'No Brevo API key configured.';
+            if (keyState) keyState.textContent = stateText;
+            summary.textContent = payload.configured
+                ? 'Brevo is ready for invites, password resets, verification, and test emails.'
+                : 'Email delivery is not fully configured. Save Brevo settings here or leave notifications disabled.';
+        } catch (err) {
+            summary.textContent = err.message || 'Could not load notification settings.';
+        }
+    },
+
+    collectNotificationSettings() {
+        const provider = document.getElementById('settings-email-provider');
+        if (!provider) return null;
+        const body = {
+            email_provider: provider.value || 'disabled',
+            email_public_base_url: document.getElementById('settings-email-public-base-url')?.value.trim() || '',
+            email_from: document.getElementById('settings-email-from')?.value.trim() || '',
+            email_from_name: document.getElementById('settings-email-from-name')?.value.trim() || '',
+            clear_brevo_api_key: document.getElementById('settings-email-clear-key')?.checked === true,
+        };
+        const key = document.getElementById('settings-email-brevo-api-key')?.value.trim() || '';
+        if (key) body.email_brevo_api_key = key;
+        return body;
+    },
+
+    async saveNotificationSettings({ silent = false } = {}) {
+        const body = this.collectNotificationSettings();
+        if (!body) return null;
+        const resp = await this.authFetch('/api/admin/email/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+            body: JSON.stringify(body),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(payload.detail || 'Could not save notification settings.');
+        this._emailSettingsPayload = payload;
+        await this.renderNotificationSettingsCard();
+        if (!silent) this.showSuccess('Notification settings saved.');
+        return payload;
+    },
+
+    async sendNotificationTestEmail() {
+        const result = document.getElementById('settings-email-test-result');
+        const email = document.getElementById('settings-email-test-address')?.value.trim() || '';
+        if (!email) {
+            this.showError('Enter a test email address.');
+            return;
+        }
+        try {
+            await this.saveNotificationSettings({ silent: true });
+            if (result) result.textContent = 'Sending test email…';
+            const resp = await this.authFetch('/api/admin/email/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                body: JSON.stringify({ email }),
+            });
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok || !payload.ok) {
+                throw new Error(payload.detail || payload.status || 'Could not send test email.');
+            }
+            if (result) result.textContent = `Sent via ${payload.provider}.`;
+            this.showSuccess('Test email sent.');
+        } catch (err) {
+            if (result) result.textContent = err.message || 'Could not send test email.';
+            this.showError(err.message || 'Could not send test email.');
         }
     },
 
@@ -600,6 +694,7 @@ export const adminViewsMixin = {
                     : (typeof detail === 'string' ? detail : 'Failed to save settings');
                 throw new Error(msg);
             }
+            await this.saveNotificationSettings({ silent: true });
             this.setAppSettingsPayload(await resp.json());
             await this.uploadSettingsAsset('settings-app-logo', 'logo');
             await this.uploadSettingsAsset('settings-favicon', 'favicon');

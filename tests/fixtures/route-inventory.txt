@@ -15,6 +15,7 @@ GET /
 GET /admin
 GET /admin/{section}
 GET /api/admin/diagnostics
+GET /api/admin/email/settings
 GET /api/admin/email/status
 GET /api/admin/live/config
 GET /api/admin/live/diagnostics
@@ -84,6 +85,7 @@ GET,HEAD /docs/oauth2-redirect
 GET,HEAD /openapi.json
 GET,HEAD /redoc
 GET,HEAD,OPTIONS /api/live/hls/{asset_path:path}
+PATCH /api/admin/email/settings
 PATCH /api/admin/teams/{team_id}
 PATCH /api/coach/clips/{clip_id}
 PATCH /api/coach/goals/{goal_id}
