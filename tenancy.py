@@ -575,10 +575,15 @@ def assert_can_delete_coach_object(
     scope: Scope,
     obj_type: str,
     *,
-    created_by_user_id: str | None,
+    created_by_username: str | None,
 ) -> None:
     """Raise HTTPException if the actor in ``scope`` cannot delete a coach
-    object of type ``obj_type`` whose creator is ``created_by_user_id``.
+    object of type ``obj_type`` whose creator is ``created_by_username``.
+
+    Coach object tables (``coaching_notes``, ``coaching_clips``,
+    ``coaching_playlists``, ``player_goals``, ``coaching_match_summaries``)
+    store the actor's ``username`` in their ``created_by`` column — not
+    a ``users.id``. Callers should pass ``row.get("created_by")`` directly.
 
     Policy:
     - Unknown ``obj_type`` → 422 (closed enum, defense in depth).
@@ -586,11 +591,10 @@ def assert_can_delete_coach_object(
       allowed for any creator (still inside the same team scope, which
       the caller has already verified via ``_require_*_in_team``).
     - Actor with only ``coach_object:delete_own`` → allowed only when
-      ``created_by_user_id`` matches the actor's identity. ``created_by``
-      on coach objects stores the actor's ``username`` (not user_id), so
-      we compare against ``scope.user["username"]``. A creator with no
-      recorded username (``None``/empty) is treated as "not owned by the
-      actor" so a missing audit field cannot grant deletion.
+      ``created_by_username`` matches ``scope.user["username"]``. A
+      creator with no recorded username (``None``/empty) is treated as
+      "not owned by the actor" so a missing audit field cannot grant
+      deletion.
     - Otherwise → 403.
     """
     if obj_type not in _VALID_COACH_OBJECT_TYPES:
@@ -599,12 +603,12 @@ def assert_can_delete_coach_object(
     if "coach_object:delete_others" in caps:
         return
     actor_username = (scope.user.get("username") if scope.user else None) or ""
-    creator = (created_by_user_id or "").strip()
+    creator = (created_by_username or "").strip()
     if (
         "coach_object:delete_own" in caps
         and creator
         and actor_username
-        and str(creator) == str(actor_username)
+        and creator == actor_username
     ):
         return
     raise HTTPException(status_code=403, detail="You do not have permission to delete this coach object")

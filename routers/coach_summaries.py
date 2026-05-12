@@ -148,7 +148,7 @@ async def coach_delete_match_summary(summary_id: int, request: Request):
     user, scope = _resolve_coach_scope(request)
     team_id = _scope_team_id(scope)
     summary = _require_summary_in_team(summary_id, team_id)
-    _tenancy.assert_can_delete_coach_object(scope, "match_summary", created_by_user_id=summary.get("created_by"))
+    _tenancy.assert_can_delete_coach_object(scope, "match_summary", created_by_username=summary.get("created_by"))
     if not _db.delete_coaching_match_summary(summary_id):
         raise HTTPException(404, "Match summary not found")
     _log_activity(
