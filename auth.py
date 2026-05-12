@@ -61,6 +61,33 @@ def has_role(user: dict, *roles: str) -> bool:
     return bool(role_set(user.get("role")).intersection(roles))
 
 
+def is_privileged_coach(user: dict) -> bool:
+    """Return True when the user should see the privileged (unscrubbed)
+    coach view of feedback resources.
+
+    Covers two paths so a membership-only coach (legacy ``users.role`` ==
+    ``viewer`` but a coach/team_admin row in ``team_user_memberships``)
+    gets the same un-scrubbed visibility as a legacy admin/coach user.
+
+    1. Legacy ``users.role`` is ``admin`` or ``coach`` — the original
+       privacy check from before the membership system landed.
+    2. The user has at least one ``coach`` or ``team_admin`` membership
+       row, regardless of legacy ``users.role``.
+
+    Either is sufficient. Use this anywhere code currently calls
+    ``has_role(user, 'admin', 'coach')`` to decide whether to scrub
+    ``coach_private_note`` / surface playlist source ids / show coach-
+    only sections.
+    """
+    if has_role(user, "admin", "coach"):
+        return True
+    # Late-imported to avoid a circular import at module load (db imports
+    # log; this module is imported by db indirectly). Cheap check — one
+    # indexed SELECT against team_user_memberships.
+    import db as _db
+    return _db.user_has_coach_membership(user.get("user_id"))
+
+
 # ---------------------------------------------------------------------------
 # Password hashing (scrypt, stdlib only)
 # ---------------------------------------------------------------------------

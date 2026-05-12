@@ -6371,3 +6371,99 @@ async def test_coach_can_still_manage_roster(client, auth_headers):
 
     delete_resp = await client.delete(f"/api/coach/players/{player_id}", headers=headers)
     assert delete_resp.status_code == 200, delete_resp.text
+
+
+# ---------------------------------------------------------------------------
+# Membership-only coaches must get the PRIVILEGED visibility view
+# (follow-up to PR-AUTH #168)
+#
+# PR-AUTH made `_require_coach` membership-aware, but services/visibility.py
+# still checked legacy users.role to decide whether to scrub
+# coach_private_note. A viewer-role user with a coach team membership
+# reached /api/coach/* but received the viewer-side scrubbed view of
+# their own coach surfaces. _auth.is_privileged_coach (this fix) joins
+# the legacy-role check with a db.user_has_coach_membership lookup so
+# both paths converge.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_membership_only_coach_sees_coach_private_note_on_coach_notes(client, auth_headers):
+    """Viewer-role user with a coach membership must receive the unscrubbed
+    view from GET /api/coach/notes — `coach_private_note` is the canary."""
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    _seed_scoped_match("mem-coach-priv-note-match", default_team["id"], default_season["id"])
+
+    asst_id = await _create_user(client, auth_headers, "membership_coach_view", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "coach")
+
+    note = _db.create_coaching_note({
+        "match_id": "mem-coach-priv-note-match",
+        "slot": "full",
+        "timestamp_seconds": 9,
+        "title": "Has private coach text",
+        "coach_private_note": "INTERNAL_COACH_NOTE_xyz789",
+        "visibility": "team",
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+    }, actor="head_coach")
+
+    headers = await _login(client, "membership_coach_view")
+    resp = await client.get("/api/coach/notes", headers=headers)
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    matching = [n for n in payload["notes"] if n["id"] == note["id"]]
+    assert matching, f"Membership-only coach could not see their own team's note: {payload}"
+    assert matching[0]["coach_private_note"] == "INTERNAL_COACH_NOTE_xyz789", (
+        "Membership-only coach received the scrubbed view of coach_private_note; "
+        "is_privileged_coach() must consult team_user_memberships, not only users.role"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_viewer_still_sees_scrubbed_my_feedback_notes(client, auth_headers):
+    """Defense in depth: a true viewer (no coach membership) must STILL get
+    coach_private_note scrubbed when calling /api/my-feedback. The
+    is_privileged_coach widening must not weaken the viewer-side privacy
+    invariant."""
+    default_team = _db.get_default_team()
+    default_season = _db.get_default_season(default_team["id"])
+    _seed_scoped_match("viewer-feedback-match", default_team["id"], default_season["id"])
+
+    viewer_id = await _create_user(client, auth_headers, "true_viewer_no_membership", "viewer")
+    # Grant viewer-equivalent membership so the user has team scope but
+    # not a coach role. Without ANY membership, /api/my-feedback would
+    # 404/scope-fail; we want to exercise the scrubbed-but-visible path.
+    _grant_only_team_membership(viewer_id, default_team["id"], "guardian")
+    player = _db.create_player("Linked Player", team_id=default_team["id"])
+    _db.link_player_user(player["id"], viewer_id, "parent")
+
+    _db.create_coaching_note({
+        "match_id": "viewer-feedback-match",
+        "slot": "full",
+        "timestamp_seconds": 5,
+        "title": "Team-visible note with private text",
+        "coach_private_note": "MUST_NOT_LEAK_TO_VIEWER",
+        "player_summary": "What you did well.",
+        "visibility": "team",
+        "team_id": default_team["id"],
+        "season_id": default_season["id"],
+        "player_ids": [player["id"]],
+    }, actor="head_coach")
+
+    headers = await _login(client, "true_viewer_no_membership")
+    resp = await client.get("/api/my-feedback", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body_text = resp.text
+    assert "MUST_NOT_LEAK_TO_VIEWER" not in body_text, (
+        "Viewer-side path leaked coach_private_note — is_privileged_coach "
+        "must NOT consider guardian/family memberships privileged."
+    )
+    payload = resp.json()
+    notes = payload.get("notes", [])
+    assert notes, "Viewer with linked player should still see the team-visible note"
+    for n in notes:
+        assert n.get("coach_private_note", "") == "", (
+            f"Expected coach_private_note scrubbed for viewer, got: {n.get('coach_private_note')!r}"
+        )

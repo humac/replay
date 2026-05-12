@@ -72,7 +72,7 @@ def strip_goal_private_fields(goal: dict) -> dict:
 
 def filter_notes_for_user(notes: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
     notes = team_scoped_items(notes, team_id)
-    if _auth.has_role(user, "admin", "coach"):
+    if _auth.is_privileged_coach(user):
         return notes
     linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     visible = []
@@ -89,7 +89,7 @@ def filter_notes_for_user(notes: list[dict], user: dict, team_id: str | None = N
 def filter_playlists_for_user(playlists: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
     playlists = team_scoped_items(playlists, team_id)
     playlists = _sanitize_playlist_source_ids(playlists, team_id)
-    if _auth.has_role(user, "admin", "coach"):
+    if _auth.is_privileged_coach(user):
         return playlists
     linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     visible = []
@@ -106,7 +106,7 @@ def filter_playlists_for_user(playlists: list[dict], user: dict, team_id: str | 
 def filter_clips_for_user(clips: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
     """Apply the coaching visibility ladder to clip rows."""
     clips = team_scoped_items(clips, team_id)
-    if _auth.has_role(user, "admin", "coach"):
+    if _auth.is_privileged_coach(user):
         return clips
     linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     visible = []
@@ -122,7 +122,7 @@ def filter_clips_for_user(clips: list[dict], user: dict, team_id: str | None = N
 
 def filter_goals_for_user(goals: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
     goals = team_scoped_items(goals, team_id)
-    if _auth.has_role(user, "admin", "coach"):
+    if _auth.is_privileged_coach(user):
         return goals
     linked_players = set(_db.linked_player_ids_for_user(user.get("user_id"), team_id=team_id))
     return [
@@ -148,7 +148,7 @@ def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None
 
 def goal_with_visible_sources(goal: dict, user: dict, team_id: str | None = None) -> dict:
     out = dict(goal)
-    if not _auth.has_role(user, "admin", "coach"):
+    if not _auth.is_privileged_coach(user):
         out = strip_goal_private_fields(out)
         user_id = user.get("user_id")
         reflections = [
@@ -166,7 +166,7 @@ def goal_with_visible_sources(goal: dict, user: dict, team_id: str | None = None
     visible_clips = filter_clips_for_user([clip], user, team_id=team_id) if clip else []
     visible_playlists = filter_playlists_for_user([playlist], user, team_id=team_id) if playlist else []
     viewer_notes_source = filter_notes_for_user(_db.list_coaching_notes(), user, team_id=team_id)
-    if not _auth.has_role(user, "admin", "coach"):
+    if not _auth.is_privileged_coach(user):
         viewer_notes_source = [strip_private_fields(n) for n in viewer_notes_source]
         visible_notes = [strip_private_fields(n) for n in visible_notes]
     out["source_note"] = visible_notes[0] if visible_notes else None
@@ -196,7 +196,7 @@ def goals_with_visible_sources(goals: list[dict], user: dict, team_id: str | Non
 def filter_match_summaries_for_user(summaries: list[dict], user: dict, team_id: str | None = None) -> list[dict]:
     """Apply viewer-scoped match summary visibility and sanitize source ids."""
     summaries = team_scoped_items(summaries, team_id)
-    if _auth.has_role(user, "admin", "coach"):
+    if _auth.is_privileged_coach(user):
         return _sanitize_summary_source_ids(summaries, team_id)
     visible_note_ids = {n["id"] for n in filter_notes_for_user(_db.list_coaching_notes(), user, team_id=team_id)}
     visible_clip_ids = {c["id"] for c in filter_clips_for_user(_db.list_coaching_clips(), user, team_id=team_id)}
@@ -215,7 +215,7 @@ def filter_match_summaries_for_user(summaries: list[dict], user: dict, team_id: 
 
 def can_view_coach_note(user: dict, note: dict, team_id: str | None = None) -> bool:
     """Return whether a user can see a standalone coaching note."""
-    if _auth.has_role(user, "admin", "coach"):
+    if _auth.is_privileged_coach(user):
         return True
     visible = filter_notes_for_user([note], user, team_id=team_id)
     return bool(visible)
@@ -223,7 +223,7 @@ def can_view_coach_note(user: dict, note: dict, team_id: str | None = None) -> b
 
 def can_view_coach_clip(user: dict, clip: dict, team_id: str | None = None) -> bool:
     """Return whether a user can see a standalone coaching clip."""
-    if _auth.has_role(user, "admin", "coach"):
+    if _auth.is_privileged_coach(user):
         return True
     visible = filter_clips_for_user([clip], user, team_id=team_id)
     return bool(visible)
