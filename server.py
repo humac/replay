@@ -399,27 +399,53 @@ app.include_router(settings_router)
 app.include_router(uploads_router)
 
 
+# Per-kind allowlist of payload fields safe to echo back through /api/jobs.
+# Kinds not in this map are treated as "unsafe to surface" — the serializer
+# drops their payload + idempotency_key + result + error_text. This is the
+# defense-in-depth layer behind the route-level filter in list_jobs that
+# already drops ai_draft rows from the user-visible feed: even if a row
+# somehow reaches the serializer, raw prompts / provider output / private
+# source text cannot leak.
+_JOB_PAYLOAD_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "transcode": ("match_id", "slot"),
+    "thumbnail": ("match_id", "slot"),
+}
+
+
 def _serialize_job_for_api(job: dict) -> dict:
-    payload = job.get("payload") or {}
-    if job.get("kind") == "transcode":
-        payload = {key: payload.get(key) for key in ("match_id", "slot") if payload.get(key) is not None}
+    kind = job.get("kind")
+    raw_payload = job.get("payload") or {}
+    allowed_fields = _JOB_PAYLOAD_ALLOWLIST.get(kind)
+    if allowed_fields is None:
+        # Unknown / privacy-sensitive kind (e.g. ai_draft): surface only
+        # structural metadata. Raw payload, idempotency_key, result, and
+        # error_text could carry coach-supplied prompts or provider output.
+        payload = {}
+        idempotency_key = None
+        result = None
+        error_text = None
+    else:
+        payload = {key: raw_payload.get(key) for key in allowed_fields if raw_payload.get(key) is not None}
+        idempotency_key = job.get("idempotency_key")
+        result = job.get("result")
+        error_text = job.get("error_text")
     return {
         "id": job["id"],
-        "kind": job["kind"],
+        "kind": kind,
         "team_id": job["team_id"],
         "status": job["status"],
         "attempts": job["attempts"],
         "max_attempts": job["max_attempts"],
         "payload": payload,
         "payload_version": job.get("payload_version", 1),
-        "idempotency_key": job.get("idempotency_key"),
+        "idempotency_key": idempotency_key,
         "scheduled_at": job.get("scheduled_at"),
         "started_at": job.get("started_at"),
         "finished_at": job.get("finished_at"),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
-        "result": job.get("result"),
-        "error_text": job.get("error_text"),
+        "result": result,
+        "error_text": error_text,
     }
 
 
@@ -427,6 +453,14 @@ JOB_KIND_CAPABILITIES = {
     "thumbnail": "match:write",
     "transcode": "match:write",
 }
+
+# Job kinds that must never appear in user-facing /api/jobs responses,
+# even when they belong to the caller's team. ai_draft jobs can be
+# created by internal/service paths (services.jobs.enqueue) and may
+# carry coach-supplied prompts or provider output in their payload /
+# idempotency_key / result columns; surfacing them through the user
+# route would re-expose the very data PR-S blocked at enqueue.
+JOB_KINDS_HIDDEN_FROM_USER_API = frozenset({"ai_draft"})
 
 
 def _job_write_capability(kind: str) -> str:
