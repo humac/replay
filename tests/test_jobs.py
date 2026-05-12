@@ -426,3 +426,68 @@ async def test_user_route_rejects_ai_draft_enqueue(client):
     for row in rows:
         assert canary not in (row["payload_json"] or "")
         assert canary not in (row["idempotency_key"] or "")
+
+
+@pytest.mark.asyncio
+async def test_user_route_hides_ai_draft_rows_from_listing_and_read(client):
+    """GET /api/jobs and GET /api/jobs/{id} must NOT surface ai_draft rows
+    to the user route, even when those rows were created internally via
+    services.jobs.enqueue. ai_draft job payload / idempotency_key / result /
+    error_text can carry coach-supplied prompts or provider output; the
+    PR-S enqueue rejection is necessary but not sufficient if internal or
+    legacy rows are still listed/read by team admins.
+
+    Defense in depth: (1) the listing drops hidden kinds, (2) the per-id
+    GET/cancel returns 404 (not 422) so a caller cannot probe ai_draft
+    job_ids, (3) the serializer redacts payload + idempotency_key + result
+    + error_text for any kind not on the allowlist.
+    """
+    import db as _db
+    from services import jobs
+
+    default_team = _db.get_default_team()
+    _user_id, headers = _create_member(default_team["id"], username="jobs-listing-coach")
+
+    canary = "CANARY_LIST_LEAK_AbC456_xyz123"
+    # Internal enqueue path (NOT the user route) — simulates an existing or
+    # future async path that legitimately persists ai_draft work items.
+    ai_job_id = jobs.enqueue(
+        "ai_draft",
+        {"prompt": canary, "private_source_text": canary},
+        team_id=default_team["id"],
+        idempotency_key=f"draft:{canary}",
+    )
+
+    # GET /api/jobs?team_id=<default> with no kind filter must not include
+    # the ai_draft row.
+    listing = await client.get(f"/api/jobs?team_id={default_team['id']}", headers=headers)
+    assert listing.status_code == 200, listing.text
+    body = listing.json()
+    listing_text = listing.text
+    assert canary not in listing_text, "ai_draft payload/idempotency_key leaked through /api/jobs listing"
+    listed_ids = [row["id"] for row in body]
+    assert ai_job_id not in listed_ids, "ai_draft job id leaked through /api/jobs listing"
+
+    # Explicit ?kind=ai_draft filter must be rejected at the route boundary.
+    explicit_kind = await client.get(
+        f"/api/jobs?team_id={default_team['id']}&kind=ai_draft",
+        headers=headers,
+    )
+    assert explicit_kind.status_code == 422
+
+    # GET /api/jobs/<ai_draft id> must 404 (not 422 — that would confirm the
+    # row exists). Body must not echo the canary.
+    direct_read = await client.get(
+        f"/api/jobs/{ai_job_id}?team_id={default_team['id']}",
+        headers=headers,
+    )
+    assert direct_read.status_code == 404
+    assert canary not in direct_read.text
+
+    # POST /api/jobs/<ai_draft id>/cancel must also 404.
+    direct_cancel = await client.post(
+        f"/api/jobs/{ai_job_id}/cancel?team_id={default_team['id']}",
+        headers=headers,
+    )
+    assert direct_cancel.status_code == 404
+    assert canary not in direct_cancel.text

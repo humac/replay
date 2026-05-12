@@ -80,9 +80,16 @@ async def list_jobs(request: Request, team_id: str, status: str | None = None, k
         _job_write_capability,
         _serialize_job_for_api,
         _tenancy,
+        JOB_KINDS_HIDDEN_FROM_USER_API,
     )
 
     user = _auth.require_auth(request)
+    # Reject explicit filters for hidden kinds (e.g. ai_draft) at the route
+    # boundary so the user cannot enumerate them at all. _job_write_capability
+    # already 422s ai_draft via the kind branch; this catches future hidden
+    # kinds that might map to a real capability.
+    if kind is not None and kind in JOB_KINDS_HIDDEN_FROM_USER_API:
+        raise HTTPException(status_code=422, detail=f"{kind} jobs are not exposed through /api/jobs")
     required_capability = _job_write_capability(kind) if kind else "match:write"
     scope = _tenancy.resolve_scope(
         request,
@@ -92,7 +99,12 @@ async def list_jobs(request: Request, team_id: str, status: str | None = None, k
         allow_global_admin_override=False,
     )
     rows = _jobs.list_for_team(str(scope.team["id"]), status=status, kind=kind, limit=limit)
-    return [_serialize_job_for_api(row) for row in rows]
+    # PR-S follow-up: drop hidden kinds from the feed. Internal callers
+    # (services.jobs.enqueue) can still create ai_draft rows, but they
+    # must never appear in the team-admin-visible listing — their payload
+    # / idempotency_key / result columns can carry coach prompts.
+    visible_rows = [row for row in rows if row.get("kind") not in JOB_KINDS_HIDDEN_FROM_USER_API]
+    return [_serialize_job_for_api(row) for row in visible_rows]
 
 
 @router.post("/api/jobs/lease")
@@ -114,6 +126,7 @@ async def get_job(request: Request, job_id: int, team_id: str):
         _require_job_access,
         _serialize_job_for_api,
         _tenancy,
+        JOB_KINDS_HIDDEN_FROM_USER_API,
     )
 
     user = _auth.require_auth(request)
@@ -127,6 +140,11 @@ async def get_job(request: Request, job_id: int, team_id: str):
     job = _jobs.get(job_id, team_id=str(scope.team["id"]))
     if job is None:
         raise HTTPException(404, "Job not found")
+    # PR-S follow-up: hidden kinds (e.g. ai_draft) are not surfaced as 422
+    # (which would leak existence). 404 matches the "no such job" path so
+    # a caller cannot probe whether an ai_draft job_id exists.
+    if job.get("kind") in JOB_KINDS_HIDDEN_FROM_USER_API:
+        raise HTTPException(404, "Job not found")
     _require_job_access(request, user, team_id=str(scope.team["id"]), kind=job["kind"])
     return _serialize_job_for_api(job)
 
@@ -138,6 +156,7 @@ async def cancel_job(request: Request, job_id: int, team_id: str):
         _require_job_access,
         _serialize_job_for_api,
         _tenancy,
+        JOB_KINDS_HIDDEN_FROM_USER_API,
     )
 
     user = _auth.require_auth(request)
@@ -151,6 +170,10 @@ async def cancel_job(request: Request, job_id: int, team_id: str):
     resolved_team_id = str(scope.team["id"])
     job = _jobs.get(job_id, team_id=resolved_team_id)
     if job is None:
+        raise HTTPException(404, "Job not found")
+    # See get_job above — hidden kinds 404 rather than 422 to avoid
+    # leaking existence to a probing caller.
+    if job.get("kind") in JOB_KINDS_HIDDEN_FROM_USER_API:
         raise HTTPException(404, "Job not found")
     _require_job_access(request, user, team_id=resolved_team_id, kind=job["kind"])
     if job["status"] != "pending":
