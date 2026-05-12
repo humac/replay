@@ -6234,3 +6234,140 @@ async def test_pr_auth_head_coach_can_delete_others_note(client, auth_headers):
     resp = await client.delete(f"/api/coach/notes/{note['id']}", headers=headers)
     assert resp.status_code == 200, resp.text
     assert _db.get_coaching_note(note["id"]) is None
+
+
+# ---------------------------------------------------------------------------
+# Roster-manage capability gating (follow-up to PR-AUTH #168)
+#
+# assistant_coach satisfies ``require_role=("team_admin","coach")`` because
+# _role_satisfies grants the ``coach`` shortcut to any role with
+# ``coach_object:write``. That's fine for coach OBJECTS (notes/clips/playlists),
+# but roster mutations (player CRUD, player-user links) are gated by
+# ``roster:manage`` in ROLE_CAPABILITIES, which assistant_coach does NOT have.
+# Routes must use ``_resolve_roster_manage_scope`` so the check fires.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_assistant_coach_cannot_create_player(client, auth_headers):
+    """assistant_coach has roster:read but NOT roster:manage. Creating a
+    roster player must 403 even though _resolve_coach_scope would have
+    let them through via the coach_object:write inheritance shortcut."""
+    default_team = _db.get_default_team()
+    asst_id = await _create_user(client, auth_headers, "asst_coach_roster_create", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+
+    headers = await _login(client, "asst_coach_roster_create")
+    resp = await client.post("/api/coach/players", json={
+        "display_name": "Should Not Land",
+        "jersey_number": "99",
+    }, headers=headers)
+    assert resp.status_code == 403, resp.text
+    # Defense in depth: the player row did not get created.
+    matches = [p for p in _db.list_players(team_id=default_team["id"]) if p.get("display_name") == "Should Not Land"]
+    assert matches == []
+
+
+@pytest.mark.asyncio
+async def test_assistant_coach_cannot_update_player(client, auth_headers):
+    default_team = _db.get_default_team()
+    asst_id = await _create_user(client, auth_headers, "asst_coach_roster_update", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+    player = _db.create_player("Original Name", team_id=default_team["id"])
+
+    headers = await _login(client, "asst_coach_roster_update")
+    resp = await client.patch(f"/api/coach/players/{player['id']}", json={
+        "display_name": "Renamed By Assistant",
+    }, headers=headers)
+    assert resp.status_code == 403, resp.text
+    reloaded = _db.get_player(player["id"], team_id=default_team["id"])
+    assert reloaded["display_name"] == "Original Name"
+
+
+@pytest.mark.asyncio
+async def test_assistant_coach_cannot_delete_player(client, auth_headers):
+    default_team = _db.get_default_team()
+    asst_id = await _create_user(client, auth_headers, "asst_coach_roster_delete", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+    player = _db.create_player("Sticky Player", team_id=default_team["id"])
+
+    headers = await _login(client, "asst_coach_roster_delete")
+    resp = await client.delete(f"/api/coach/players/{player['id']}", headers=headers)
+    assert resp.status_code == 403, resp.text
+    assert _db.get_player(player["id"], team_id=default_team["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_assistant_coach_cannot_link_player_to_user(client, auth_headers):
+    default_team = _db.get_default_team()
+    asst_id = await _create_user(client, auth_headers, "asst_coach_link_create", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+    target_user_id = await _create_user(client, auth_headers, "family_target", "viewer")
+    _grant_only_team_membership(target_user_id, default_team["id"], "guardian")
+    player = _db.create_player("Link Target", team_id=default_team["id"])
+
+    headers = await _login(client, "asst_coach_link_create")
+    resp = await client.post("/api/coach/player-links", json={
+        "player_id": player["id"],
+        "user_id": target_user_id,
+        "relationship": "parent",
+    }, headers=headers)
+    assert resp.status_code == 403, resp.text
+    # Defense in depth: no link row landed.
+    with _db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM player_user_links WHERE player_id = ? AND user_id = ?",
+            (player["id"], target_user_id),
+        ).fetchall()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_assistant_coach_cannot_unlink_player_user(client, auth_headers):
+    default_team = _db.get_default_team()
+    asst_id = await _create_user(client, auth_headers, "asst_coach_link_delete", "viewer")
+    _grant_only_team_membership(asst_id, default_team["id"], "assistant_coach")
+    target_user_id = await _create_user(client, auth_headers, "family_already_linked", "viewer")
+    _grant_only_team_membership(target_user_id, default_team["id"], "guardian")
+    player = _db.create_player("Already Linked", team_id=default_team["id"])
+    # Seed link via DB directly so we know the row exists.
+    _db.link_player_user(player["id"], target_user_id, "parent")
+    with _db.connect() as conn:
+        seeded = conn.execute(
+            "SELECT id FROM player_user_links WHERE player_id = ? AND user_id = ?",
+            (player["id"], target_user_id),
+        ).fetchone()
+    assert seeded is not None
+    link_id = seeded["id"]
+
+    headers = await _login(client, "asst_coach_link_delete")
+    resp = await client.delete(f"/api/coach/player-links/{link_id}", headers=headers)
+    assert resp.status_code == 403, resp.text
+    # Link still present.
+    assert _db.get_player_user_link(link_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_coach_can_still_manage_roster(client, auth_headers):
+    """Regression guard: a head ``coach`` membership has roster:manage and
+    must still be able to create/edit/delete players. This is the must-not-
+    regress side of the fix."""
+    default_team = _db.get_default_team()
+    coach_id = await _create_user(client, auth_headers, "head_coach_roster", "viewer")
+    _grant_only_team_membership(coach_id, default_team["id"], "coach")
+
+    headers = await _login(client, "head_coach_roster")
+    create_resp = await client.post("/api/coach/players", json={
+        "display_name": "Coach Made Player",
+        "jersey_number": "11",
+    }, headers=headers)
+    assert create_resp.status_code == 200, create_resp.text
+    player_id = create_resp.json()["player"]["id"]
+
+    update_resp = await client.patch(f"/api/coach/players/{player_id}", json={
+        "display_name": "Coach Renamed",
+    }, headers=headers)
+    assert update_resp.status_code == 200, update_resp.text
+
+    delete_resp = await client.delete(f"/api/coach/players/{player_id}", headers=headers)
+    assert delete_resp.status_code == 200, delete_resp.text

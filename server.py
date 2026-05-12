@@ -1249,6 +1249,31 @@ def _resolve_coach_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
     return user, scope
 
 
+def _resolve_roster_manage_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
+    """Coach-route scope helper for roster MUTATIONS (player CRUD, player-user
+    links). Requires the ``roster:manage`` capability, which ``coach``,
+    ``team_admin``, and ``global_admin`` have but ``assistant_coach`` does
+    NOT — assistant coaches have read-only roster access per
+    ``ROLE_CAPABILITIES``.
+
+    The plain ``_resolve_coach_scope`` requires ``("team_admin", "coach")``,
+    which ``assistant_coach`` satisfies via the ``coach_object:write``
+    inheritance shortcut in ``tenancy._role_satisfies``. That works fine for
+    coach OBJECTS (notes, clips, playlists, etc.) which assistant coaches
+    can author, but it leaks roster mutation access through. Routes that
+    create/update/delete players or player-user links must use this helper
+    so the ``roster:manage`` gate is enforced.
+    """
+    user = _require_coach(request)
+    scope = _tenancy.resolve_scope(
+        request,
+        user,
+        require_role="roster:manage",
+        allow_global_admin_override=True,
+    )
+    return user, scope
+
+
 def _resolve_feedback_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
     user = _auth.require_auth(request)
     scope = _tenancy.resolve_scope(request, user, allow_global_admin_override=True)

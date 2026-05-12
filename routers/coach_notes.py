@@ -144,8 +144,8 @@ async def coach_commit_roster_import(request: Request, body: RosterImportRequest
 
 @router.post("/api/coach/players")
 async def coach_create_player(request: Request, body: CreatePlayerRequest):
-    from server import _log_activity, _resolve_coach_scope, _scope_team_id
-    user, scope = _resolve_coach_scope(request)
+    from server import _log_activity, _resolve_roster_manage_scope, _scope_team_id
+    user, scope = _resolve_roster_manage_scope(request)
     team_id = _scope_team_id(scope)
     season_id = scope.season["id"] if scope.season else None
     player = _db.create_player(
@@ -168,8 +168,8 @@ async def coach_create_player(request: Request, body: CreatePlayerRequest):
 
 @router.patch("/api/coach/players/{player_id}")
 async def coach_update_player(player_id: str, request: Request, body: UpdatePlayerRequest):
-    from server import _log_activity, _require_player_in_team, _resolve_coach_scope, _scope_team_id
-    user, scope = _resolve_coach_scope(request)
+    from server import _log_activity, _require_player_in_team, _resolve_roster_manage_scope, _scope_team_id
+    user, scope = _resolve_roster_manage_scope(request)
     team_id = _scope_team_id(scope)
     _require_player_in_team(player_id, team_id)
     updates = body.model_dump(exclude_unset=True)
@@ -190,8 +190,8 @@ async def coach_update_player(player_id: str, request: Request, body: UpdatePlay
 
 @router.delete("/api/coach/players/{player_id}")
 async def coach_delete_player(player_id: str, request: Request):
-    from server import _log_activity, _require_player_in_team, _resolve_coach_scope, _scope_team_id
-    user, scope = _resolve_coach_scope(request)
+    from server import _log_activity, _require_player_in_team, _resolve_roster_manage_scope, _scope_team_id
+    user, scope = _resolve_roster_manage_scope(request)
     team_id = _scope_team_id(scope)
     player = _require_player_in_team(player_id, team_id)
     if not _db.delete_player(player_id):
@@ -208,8 +208,8 @@ async def coach_delete_player(player_id: str, request: Request):
 
 @router.post("/api/coach/player-links")
 async def coach_link_player_user(request: Request, body: CreatePlayerUserLinkRequest):
-    from server import _log_activity, _require_player_in_team, _resolve_coach_scope, _scope_team_id
-    user, scope = _resolve_coach_scope(request)
+    from server import _log_activity, _require_player_in_team, _resolve_roster_manage_scope, _scope_team_id
+    user, scope = _resolve_roster_manage_scope(request)
     team_id = _scope_team_id(scope)
     _require_player_in_team(body.player_id, team_id)
     if not _db.get_user_by_id(body.user_id) or not _db.user_has_team_membership(body.user_id, team_id):
@@ -227,8 +227,8 @@ async def coach_link_player_user(request: Request, body: CreatePlayerUserLinkReq
 
 @router.delete("/api/coach/player-links/{link_id}")
 async def coach_delete_player_user_link(link_id: int, request: Request):
-    from server import _log_activity, _resolve_coach_scope, _scope_team_id
-    user, scope = _resolve_coach_scope(request)
+    from server import _log_activity, _resolve_roster_manage_scope, _scope_team_id
+    user, scope = _resolve_roster_manage_scope(request)
     team_id = _scope_team_id(scope)
     link = _db.get_player_user_link(link_id)
     if not link or (team_id is not None and link.get("team_id") != team_id):
