@@ -77,8 +77,13 @@ const app = {
         await this.loadMatches();
         this.bindEvents();
         this.applyAppSettings();
-        this.renderSeasonView();
-        this.initializeHistory();
+        const redirectedToWelcome = window.location.pathname === '/'
+            ? await this.maybeRedirectToWelcome?.()
+            : false;
+        if (!redirectedToWelcome) {
+            this.renderSeasonView();
+            this.initializeHistory();
+        }
         this.initAirPlay();
         this.initCast();
         this.initLiveRemotePlayback();
@@ -104,7 +109,7 @@ const app = {
 
         const adminRoute = path.match(/^\/admin(?:\/([^/]+))?\/?$/);
         if (adminRoute) {
-            if (!this.canEdit()) {
+            if (!this.canAccessAdminConsole()) {
                 window.history.replaceState({ view: 'season' }, '', '/');
                 return;
             }
@@ -198,7 +203,7 @@ const app = {
         }
 
         if (state.view === 'admin') {
-            if (!this.canEdit()) {
+            if (!this.canAccessAdminConsole()) {
                 this.showSeasonView({ pushHistory: false, scrollTop });
                 return;
             }

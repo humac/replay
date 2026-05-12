@@ -250,8 +250,6 @@ export const coachingMixin = {
         if (name === 'engagement') this.renderCoachEngagement();
         if (name === 'settings') {
             this.renderCoachTeamSettings();
-            this.loadCoachTeamMembers?.();
-            this.loadCoachTeamInvites?.();
         }
         if (name === 'review') this.renderCoachReview();
         else this.tearDownCoachReview();

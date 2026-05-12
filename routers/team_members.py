@@ -69,6 +69,12 @@ async def revoke_team_invite(request: Request, invite_id: str, team_id: str = Qu
     return _call_service(_team_members.revoke_invite, team_id, invite_id, actor)
 
 
+@router.post("/invites/{invite_id}/resend")
+async def resend_team_invite(request: Request, invite_id: str, team_id: str = Query(..., min_length=1)):
+    actor = _auth.require_auth(request)
+    return _call_service(_team_members.resend_invite, team_id, invite_id, actor)
+
+
 @router.post("/invites/accept")
 async def accept_team_invite(payload: AcceptTeamInviteRequest):
     return _call_service(

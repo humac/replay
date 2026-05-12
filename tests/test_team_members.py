@@ -210,3 +210,64 @@ async def test_team_invite_accept_new_user_links_guardian_players(client, monkey
     user_id = accepted.json()["user"]["id"]
     assert accepted.json()["membership"]["role"] == "guardian"
     assert player["id"] in _db.linked_player_ids_for_user(user_id, team["id"])
+
+
+async def test_team_invite_resend_rotates_token_hash_and_preserves_metadata(client, monkeypatch):
+    import db as _db
+
+    monkeypatch.setenv("REPLAY_DEV_TOKEN_DELIVERY", "1")
+    monkeypatch.setenv("REPLAY_EMAIL_PROVIDER", "disabled")
+    team = _create_team("invite-resend-team")
+    admin = _create_user("invite-resend-admin")
+    _grant(team["id"], admin["id"], "team_admin")
+    player = _db.create_player("Resend Player", team_id=team["id"], season_id=team["season_id"])
+
+    invite = await client.post(
+        "/api/team/invites",
+        headers=_token_headers(admin),
+        json={
+            "team_id": team["id"],
+            "season_id": team["season_id"],
+            "email": "resend-parent@example.com",
+            "role": "guardian",
+            "player_ids": [player["id"]],
+        },
+    )
+    assert invite.status_code == 200, invite.text
+    first = invite.json()
+    first_token = first["invite_token"]
+    with _db.connect() as conn:
+        before = dict(conn.execute("SELECT * FROM team_invites WHERE id = ?", (first["id"],)).fetchone())
+
+    resent = await client.post(
+        f"/api/team/invites/{first['id']}/resend?team_id={team['id']}",
+        headers=_token_headers(admin),
+    )
+    assert resent.status_code == 200, resent.text
+    second = resent.json()
+    second_token = second["invite_token"]
+    assert second_token and second_token != first_token
+    assert second["metadata"]["player_ids"] == [player["id"]]
+    assert second["role"] == "guardian"
+
+    with _db.connect() as conn:
+        after = dict(conn.execute("SELECT * FROM team_invites WHERE id = ?", (first["id"],)).fetchone())
+    assert after["token_hash"] == hashlib.sha256(second_token.encode("utf-8")).hexdigest()
+    assert after["token_hash"] != before["token_hash"]
+    assert after["metadata_json"] == before["metadata_json"]
+    assert after["delivery_attempts"] == before["delivery_attempts"] + 1
+    assert after["last_delivery_status"] == "disabled"
+    assert second_token not in str(after)
+
+    old_accept = await client.post(
+        "/api/team/invites/accept",
+        json={"token": first_token, "username": "old_resend_parent", "password": "Passw0rd!"},
+    )
+    assert old_accept.status_code == 404
+
+    accepted = await client.post(
+        "/api/team/invites/accept",
+        json={"token": second_token, "username": "new_resend_parent", "password": "Passw0rd!"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert player["id"] in _db.linked_player_ids_for_user(accepted.json()["user"]["id"], team["id"])

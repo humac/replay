@@ -1297,12 +1297,27 @@ def _migrate_v22(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_team_invites_email ON team_invites(normalized_email, status)")
 
 
+def _migrate_v23(conn: sqlite3.Connection):
+    """Add best-effort invite email delivery audit fields."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(team_invites)").fetchall()}
+    for name, ddl in {
+        "last_sent_at": "ALTER TABLE team_invites ADD COLUMN last_sent_at REAL",
+        "last_delivery_status": "ALTER TABLE team_invites ADD COLUMN last_delivery_status TEXT",
+        "last_delivery_provider": "ALTER TABLE team_invites ADD COLUMN last_delivery_provider TEXT",
+        "last_delivery_message_id": "ALTER TABLE team_invites ADD COLUMN last_delivery_message_id TEXT",
+        "last_delivery_error": "ALTER TABLE team_invites ADD COLUMN last_delivery_error TEXT",
+        "delivery_attempts": "ALTER TABLE team_invites ADD COLUMN delivery_attempts INTEGER NOT NULL DEFAULT 0",
+    }.items():
+        if name not in columns:
+            conn.execute(ddl)
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
     _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18, _migrate_v19,
-    _migrate_v20, _migrate_v21, _migrate_v22,
+    _migrate_v20, _migrate_v21, _migrate_v22, _migrate_v23,
 ]
 
 

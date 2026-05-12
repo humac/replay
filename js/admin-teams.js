@@ -384,26 +384,55 @@ export const adminTeamsMixin = {
     async openAdminTeamRenameModal(teamId) {
         const team = (this._adminTeams || []).find((t) => t.id === teamId);
         if (!team) return;
-        // Reuse promptChoice/notifyModal? No — use a simple prompt-style modal.
-        const newName = window.prompt(`Rename team "${team.name}" to:`, team.name);
-        if (newName == null) return; // cancel
-        const trimmed = newName.trim();
-        if (!trimmed || trimmed === team.name) return;
-        try {
-            const resp = await this.authFetch(`/api/admin/teams/${encodeURIComponent(teamId)}`, {
-                method: 'PATCH',
-                headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: trimmed }),
-            });
-            const body = await resp.json().catch(() => ({}));
-            if (!resp.ok) {
-                this.notifyModal?.({ title: 'Could not rename team', message: body.detail || 'Unexpected error.' });
-                return;
-            }
-            this.loadAdminTeams(true);
-        } catch (err) {
-            this.notifyModal?.({ title: 'Network error', message: 'Could not rename team.' });
-        }
+        const body = document.createElement('form');
+        body.className = 'account-form';
+        body.noValidate = true;
+        body.innerHTML = `
+            <div class="form-group">
+                <label for="admin-team-rename-name">Team name</label>
+                <input type="text" id="admin-team-rename-name" name="name" required maxlength="200" autocomplete="off" value="${this.esc(team.name || '')}">
+                <p class="form-help">This changes the display name only. The team slug stays the same.</p>
+            </div>
+            <div id="admin-team-rename-banner" class="account-banner" hidden></div>
+        `;
+        let root = body;
+        await this.formModal?.({
+            title: 'Rename team',
+            body,
+            confirmLabel: 'Save name',
+            onMount: (modalRoot) => {
+                root = modalRoot.querySelector('form.account-form') || body;
+                root.querySelector('#admin-team-rename-name')?.select();
+            },
+            onSubmit: async (close) => {
+                const banner = root.querySelector('#admin-team-rename-banner');
+                const setBanner = (kind, msg) => {
+                    if (!banner) return;
+                    banner.dataset.kind = kind;
+                    banner.textContent = msg;
+                    banner.hidden = false;
+                };
+                const trimmed = (root.querySelector('#admin-team-rename-name')?.value || '').trim();
+                if (!trimmed) { setBanner('error', 'Team name is required.'); return; }
+                if (trimmed === team.name) { close({ ok: true, unchanged: true }); return; }
+                try {
+                    const resp = await this.authFetch(`/api/admin/teams/${encodeURIComponent(teamId)}`, {
+                        method: 'PATCH',
+                        headers: { ...this.getAuthHeaders(), 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: trimmed }),
+                    });
+                    const result = await resp.json().catch(() => ({}));
+                    if (!resp.ok) {
+                        setBanner('error', result.detail || 'Could not rename team.');
+                        return;
+                    }
+                    this.loadAdminTeams(true);
+                    close({ ok: true });
+                } catch (err) {
+                    setBanner('error', 'Network error while renaming team.');
+                }
+            },
+        });
     },
 
     // ---- Create season ----

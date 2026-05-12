@@ -19,7 +19,7 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **AI drafting MVP** — team-scoped settings gate coach-only draft generation, bounded provider calls use privacy-safe context/audit rows, and the Coach Review composer exposes review-only insert controls so output is never published until a coach saves it
 - **Account profile foundation** — `/api/me` includes a safe self-profile companion payload with nullable legacy email support, normalized email uniqueness, and a self-service profile patch endpoint that cannot mutate roles or memberships
 - **Durable session/password foundation** — database-user logins persist hashed bearer sessions, logout/password changes/reset consume or revoke sessions, and reset/verification tokens are stored hashed-only
-- **Team member management and invites** — team admins can list/grant/revoke memberships within their team, protected by last-admin checks, and issue hashed-token staff/guardian invites that existing or new users can accept
+- **Team member management and invites** — team admins can manage active-team people from Admin > People, issue Brevo-delivered hashed-token staff/guardian invites, resend with token rotation, and accept invites as existing or new users
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
 - **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
 - **Public downloads** — optional direct MP4 download buttons for ready games with normal browser resume support for large files
@@ -261,6 +261,7 @@ Keep new backend behavior in the appropriate router/service module instead of ad
 | `/api/team/memberships` | GET/POST | Team admin: list or grant memberships inside the active team boundary |
 | `/api/team/memberships/{membership_id}` | DELETE | Team admin: revoke a team membership; last `team_admin` is protected |
 | `/api/team/invites` | GET/POST | Team admin: list/create staff, guardian, player, or viewer invites; raw token is returned only when `REPLAY_DEV_TOKEN_DELIVERY=1` |
+| `/api/team/invites/{invite_id}/resend` | POST | Team admin: resend a pending invite, rotating the stored token hash and preserving metadata |
 | `/api/team/invites/{invite_id}/revoke` | POST | Team admin: revoke a pending invite |
 | `/api/team/invites/accept` | POST | Existing or new user: consume an invite token and create the scoped membership/player links |
 | `/api/me/scope` | PUT | Persist the signed-in user's active team/season selection |

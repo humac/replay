@@ -57,6 +57,11 @@ seeds the setting, then the env var is ignored. Edit through the UI thereafter.
 | `REPLAY_AI_PROVIDER_API_KEY` | (empty) | Provider secret for non-mock providers. Must come from env/secret config only; never store in team settings JSON, DB rows, logs, or job payloads. Mock does not require this. |
 | `REPLAY_AI_PROVIDER_MODEL` | `mock-model-v1` for mock | Provider model identifier stored in audit metadata; do not put secrets in this value. |
 | `REPLAY_AI_PROVIDER_TIMEOUT_SECONDS` | `15` | Per-call provider timeout. Timeout failures record a safe `provider_timeout` run state without raw prompt/provider output text. |
+| `REPLAY_EMAIL_PROVIDER` | `disabled` | Transactional email provider. Set to `brevo` to send team invites, password resets, email verification, and admin test emails through Brevo's HTTPS transactional API. |
+| `REPLAY_PUBLIC_BASE_URL` | (empty) | Public origin used to build email links, e.g. `https://replay.example.com`. Required when `REPLAY_EMAIL_PROVIDER=brevo`. |
+| `REPLAY_BREVO_API_KEY` | (empty) | Brevo transactional API key. Required for Brevo delivery; keep it in env/secret storage only. |
+| `REPLAY_EMAIL_FROM` | (empty) | Sender email address for transactional email. Required for Brevo delivery. |
+| `REPLAY_EMAIL_FROM_NAME` | `Replay` | Sender display name for transactional email. |
 | `DATABASE_URL` | (empty) | Phase 6.2 Postgres lane URL. Use `postgresql://` / `postgresql+psycopg://` for explicit Postgres smoke tests. SQLite remains the live app runtime until the later Alembic/runtime migration PRs land. |
 | `REPLAY_DB_BACKEND` | `sqlite` | Phase 6.2 selector for `sqlite` vs `postgres` lane configuration. `postgres` enables explicit Postgres lane helpers/tests but does not switch the app runtime yet. |
 | `POSTGRES_DB` | `replay` | Optional `docker-compose-intel.yml --profile postgres` database name for the local Postgres lane. |
@@ -167,6 +172,20 @@ REPLAY_AI_PROVIDER_TIMEOUT_SECONDS=15
 ```
 
 The mock provider is deterministic and requires no secret. It is intended for tests/local validation only.
+
+## Transactional Email (Brevo)
+
+Replay can send team invites, password reset links, email verification links, and admin test emails through Brevo's transactional email API:
+
+```bash
+REPLAY_EMAIL_PROVIDER=brevo
+REPLAY_PUBLIC_BASE_URL=https://replay.example.com
+REPLAY_BREVO_API_KEY=...
+REPLAY_EMAIL_FROM=noreply@example.com
+REPLAY_EMAIL_FROM_NAME="Replay"
+```
+
+When email is disabled or incomplete, token storage remains hash-only and invite rows show the delivery status as disabled/not configured. `REPLAY_DEV_TOKEN_DELIVERY=1` may be used locally to return raw invite/reset/verification tokens in API responses for manual testing; keep it off in production.
 
 ## Reverse Proxy (Caddy — bundled)
 

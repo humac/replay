@@ -28,10 +28,11 @@ For a brand-new install, work through these in order:
 - [ ] Choose a data directory and set `REPLAY_DATA_DIR` to it.
 - [ ] Start the server (`python server.py` or `docker compose up`).
 - [ ] Sign in at `/admin/overview` with the env-var admin account.
-- [ ] Visit `/admin/settings` and update the team name, season title, and intro copy.
+- [ ] If prompted, use `/welcome` to create your first team and season.
+- [ ] Visit `/admin/settings` and update app branding, navigation labels, and intro copy.
 - [ ] Upload a club logo and favicon under **Branding**.
-- [ ] Visit `/admin/users` and create accounts for everyone who needs to upload matches.
-- [ ] (Optional) Create coach and family/player accounts, then use `/coach` to link roster players to those accounts.
+- [ ] Visit `/admin/people` to invite coaches, guardians, and players to the active team.
+- [ ] Visit `/admin/users` only for platform-wide account recovery or legacy uploader/admin users.
 - [ ] (Optional) Visit `/admin/live` to enable streaming and rotate the stream key.
 - [ ] (Optional) Visit `/admin/performance` to confirm hardware acceleration is detected.
 
@@ -48,6 +49,7 @@ Replay has five access levels/capabilities:
 | **Coach** | Create roster records, link player/family accounts, add coaching notes/drawings/playlists |
 | **Uploader** | Add / edit / delete matches and upload video. Limited to `/admin/matches` |
 | **Admin** | Everything: users, live, settings, performance tuning |
+| **Team admin** | Membership-scoped role that can manage one team's people/invites in `/admin/people` and team governance in Coach > Settings |
 
 Database users can have combined capabilities such as `coach,uploader`. The env-var superadmin always behaves as an admin and inherits every capability.
 
@@ -116,7 +118,7 @@ If you sign in to a freshly-installed instance that has no teams yet, you can op
 
 1. **Create your first team** — name, slug, default match format.
 2. **Add your first season** — name + optional date range.
-3. **Invite your coaches** — chain together as many email + role invites as you need; each successful invite shows a copy-link button in dev mode.
+3. **Invite your coaches** — chain together as many email + role invites as you need; Brevo-backed deployments email the link, while dev mode also shows a copy-link button.
 
 The wizard is skippable at every step. Skipping always lands you on `/admin/teams` so you can finish setup manually. The wizard is also auto-suppressed after the first skip (via `localStorage`), so you don't get bounced back to it on every login.
 
@@ -136,15 +138,28 @@ The left sidebar is grouped into three sections so you can mentally separate the
 |  | Matches | Match library — add, edit, delete, recover failed transcodes |
 |  | Live | RTMP cockpit — stream key, viewers, encoder load |
 |  | Performance | Tuning knobs and disk diagnostics |
+| **Tenants** | People | Active-team members, pending invites, delivery status, resend/revoke controls |
 | **Tenants** | Teams | Global-admin team / season / membership management (`/admin/teams`) |
 | **Platform** | Users | User account management |
 |  | Settings | Branding, navigation labels, feature toggles |
 
 > **Note:** Old links to `/admin/streams` redirect to `/admin/live`, and `/admin/system` redirects to `/admin/performance`.
 
+### `/admin/people` — active-team people management
+
+The Tenants > People page is the day-to-day team-admin console. It follows the active team selected in the top-bar scope switcher and lets a team admin or global admin:
+
+- review current members by role;
+- invite coaches, assistant coaches, team admins, players, and guardians;
+- see invite delivery status and expiry;
+- resend an invite, which rotates the token hash;
+- revoke a pending invite before it is accepted.
+
+Uploader-only users can still enter `/admin`, but they only see **Matches**. Membership-only team admins can enter `/admin/people` without being global admins.
+
 ### `/admin/teams` — global-admin team management
 
-The Tenants > Teams page is the **global-admin** cross-tenant surface. Day-to-day team management for a single team lives inside **Coach > Settings** (where team admins manage their own members + invites). Only global admins see this page.
+The Tenants > Teams page is the **global-admin** cross-tenant surface. Day-to-day team people management for a single team lives in **Admin > People**. Coach > Settings is reserved for team settings, defaults, and AI governance. Only global admins see Teams.
 
 The page has a two-pane layout:
 
@@ -438,7 +453,7 @@ The page lists every account with role, status, and inline actions to **Disable*
 
 ### Resetting a password
 
-Open the user's **⋯** menu and choose **Reset password**. Enter a new value and click save. There is no email-based reset flow — you set the password directly and pass it to the user.
+Open the user's **⋯** menu and choose **Reset password** when you need an admin-forced reset. Users can also use **Forgot password?** from the login modal; when transactional email is configured, Replay sends a one-time reset link to the profile email. In dev-token mode the raw token is returned only to the initiating admin/user for local testing.
 
 ---
 

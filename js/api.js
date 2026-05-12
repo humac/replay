@@ -78,9 +78,18 @@ export const apiMixin = {
         return this.hasRole('uploader');
     },
 
+    canAccessAdminConsole() {
+        if (this.canEdit()) return true;
+        const memberships = this.meScope?.memberships;
+        return Array.isArray(memberships) && memberships.some((m) => {
+            const caps = new Set(m.capabilities || []);
+            return m.role === 'team_admin' || caps.has('membership:manage');
+        });
+    },
+
     setLoggedIn() {
         const navAdmin = document.getElementById('nav-admin');
-        if (navAdmin) navAdmin.style.display = this.canEdit() ? '' : 'none';
+        if (navAdmin) navAdmin.style.display = this.canAccessAdminConsole() ? '' : 'none';
         const navCoach = document.getElementById('nav-coach');
         if (navCoach) navCoach.style.display = this.canCoach() ? '' : 'none';
         const navFeedback = document.getElementById('nav-feedback');
@@ -171,30 +180,35 @@ export const apiMixin = {
         const errorEl = document.getElementById('login-error');
 
         try {
-            const resp = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password }),
-            });
-            if (!resp.ok) {
-                errorEl.textContent = 'Invalid username or password';
-                errorEl.style.display = 'block';
-                return;
-            }
-            const data = await resp.json();
-            this.authToken = data.token;
-            this.userRole = data.role || 'viewer';
-            this.userRoles = data.roles || [this.userRole];
-            this.userName = data.username || '';
-            sessionStorage.setItem('replay_admin_token', data.token);
-            this.setLoggedIn();
-            await this.loadMeScope();
+            await this.loginWith(username, password);
             this.hideLoginModal();
             this.renderSeasonView();
-        } catch {
-            errorEl.textContent = 'Login failed. Please try again.';
+        } catch (err) {
+            errorEl.textContent = err?.message === 'invalid_login'
+                ? 'Invalid username or password'
+                : 'Login failed. Please try again.';
             errorEl.style.display = 'block';
         }
+    },
+
+    async loginWith(username, password) {
+        const resp = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        });
+        if (!resp.ok) {
+            throw new Error(resp.status === 401 ? 'invalid_login' : `login_failed:${resp.status}`);
+        }
+        const data = await resp.json();
+        this.authToken = data.token;
+        this.userRole = data.role || 'viewer';
+        this.userRoles = data.roles || [this.userRole];
+        this.userName = data.username || '';
+        sessionStorage.setItem('replay_admin_token', data.token);
+        this.setLoggedIn();
+        await this.loadMeScope();
+        return data;
     },
 
     async logout() {

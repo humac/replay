@@ -1,7 +1,7 @@
-# Admin & Onboarding UI Audit — Phases 0 / A / B / C / D / F.2
+# Admin & Onboarding UI Audit — Phases 0 / A / B / C / D / F.2 + follow-up
 
 **Date:** 2026-05-12
-**Pass:** Phase E of the platform-hardening UI/UX delivery (PR #178, #179, #180, #181, #182, #183)
+**Pass:** Phase E of the platform-hardening UI/UX delivery (PR #178, #179, #180, #181, #182, #183) plus the Admin > People / Brevo follow-up.
 
 ## Scope
 
@@ -12,9 +12,10 @@ Audit of the seven new or substantially-extended surfaces shipped by Phases 0 �
 3. `/welcome` onboarding wizard (3 steps + done)
 4. `/invite/{token}` invite acceptance landing
 5. `/verify-email` and `/reset-password` token-bearing landings
-6. Coach > Settings — Members + Pending Invites cards + invite composer modal
-7. `/admin/teams` two-pane shell (list / detail / overview / seasons / memberships)
-8. Admin > Users — user-memberships expander
+6. Admin > People — active-team Members + Pending Invites + invite composer modal
+7. Coach > Settings — team settings / AI governance with a link to Admin > People
+8. `/admin/teams` two-pane shell (list / detail / overview / seasons / memberships)
+9. Admin > Users — user-memberships expander
 
 The audit applies the [frontend-designer skill's](`/Users/huynguyen/.claude/skills/frontend-designer/SKILL.md`) Phase 1 criteria across each surface.
 
@@ -42,7 +43,7 @@ The audit applies the [frontend-designer skill's](`/Users/huynguyen/.claude/skil
 - Success green `#22c55e` for verified pills and done step indicators
 - Warning amber `#facc15` for unverified pills and pending invite states
 - Danger red `#f43f5e` / `#f87171` for revoke + sign-out CTAs
-- Five role colors (`#1771c9`, `#38bdf8`, `#818cf8`, `#facc15`, `#f472b6`) for the `.team-pill[data-role]` palette, used identically across Phase B (Coach > Settings members) and Phase C (Admin > Teams memberships)
+- Five role colors (`#1771c9`, `#38bdf8`, `#818cf8`, `#facc15`, `#f472b6`) for the `.team-pill[data-role]` palette, used identically across Admin > People and Admin > Teams memberships
 
 WCAG AA contrast spot-checked against the existing `#070709` dark bg / `#121215` panel bg / `#ffffff` light bg:
 - All accent + text combinations exceed 4.5:1
@@ -101,7 +102,7 @@ Wins:
 Open items:
 1. Account tab strip uses click-only activation. Could optionally add arrow-key tab navigation, but that's a polish item; click + Tab key already works for keyboard users. Marked as a low-priority follow-up.
 2. The `roster-link-chip` close glyph (`×`) is `aria-hidden`, but the chip itself is a `<button>` with descriptive `title`. Screen readers will announce the button, so the visual `×` doesn't need to be exposed separately. ✓
-3. `window.prompt()` is used in two places — admin team rename (Phase C) and the dev-only "copy invite URL" affordance. The rename prompt is a global-admin debug shortcut and acceptable. A richer modal-based rename can land later.
+3. Team rename now uses the shared `formModal()` pattern; dev-only invite links use the standard clipboard helper only when the server returns a raw token.
 
 ### Privacy invariant audit
 
@@ -112,7 +113,7 @@ This is a **delivery requirement** from the platform-hardening plan, audited exp
 | `/me` Password tab | current + new password | Never logged, never templated, never stored in `localStorage`. POST body is the only place the values live. | ✅ |
 | `/me` Email tab | verification token | Surfaced inline only when `body.verification_token` is in the server response (i.e. `REPLAY_DEV_TOKEN_DELIVERY=1`). | ✅ |
 | `/welcome` Step 3 | invite token | Same pattern — `.account-dev-token` block only when server returns `invite_token`. | ✅ |
-| Coach > Settings invite composer | invite token + invitee email | Same pattern; email never logged to console. | ✅ |
+| Admin > People invite composer | invite token + invitee email | Same pattern; email never logged to console. Brevo sends production links; dev copy appears only when `REPLAY_DEV_TOKEN_DELIVERY=1`. | ✅ |
 | `/invite/{token}` landing | invite token (URL), new-user password | Token is read from URL pathname; password never logged. New-user form submits to `/api/team/invites/accept` which creates the user atomically. | ✅ |
 | `/admin/teams` membership grant | user_id from `/api/users` picker | No client-side authorization; backend gates with `require_global_admin()`. | ✅ |
 | Admin > Users memberships expander | cross-tenant team memberships | Read-only; uses the existing global-admin endpoint. | ✅ |
@@ -123,11 +124,9 @@ This is a **delivery requirement** from the platform-hardening plan, audited exp
 These didn't block any phase but are worth tracking:
 
 1. **Account tab arrow-key navigation** — low-priority a11y polish
-2. **Rich modal for team rename** — replaces `window.prompt()` in `/admin/teams` detail
-3. **Phase F.3 — background jobs strip** in `/admin/performance`, exposes durable-jobs queue health to global admins
-4. **First-run coach-marks (Phase D.2)** — needs `user_profiles.first_signin_at` migration
-5. **`/me` Sessions tab** — needs a server-side `/api/me/sessions` GET endpoint to list active sessions; current placeholder is intentional
-6. **Auto-redirect to `/welcome`** — the `maybeRedirectToWelcome()` hook in `js/onboarding.js` is implemented but not yet wired into `init()`; operators reach `/welcome` via direct URL today
+2. **Phase F.3 — background jobs strip** in `/admin/performance`, exposes durable-jobs queue health to global admins
+3. **First-run coach-marks (Phase D.2)** — needs `user_profiles.first_signin_at` migration
+4. **`/me` Sessions tab** — needs a server-side `/api/me/sessions` GET endpoint to list active sessions; current placeholder is intentional
 
 None of these are blocking. The full set of surfaces is shippable and the privacy invariant is intact.
 
