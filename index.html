@@ -2284,6 +2284,56 @@
                                 </div>
                             </div>
 
+                            <div class="options-card mt-4">
+                                <div class="admin-card-head">
+                                    <h3>Notifications</h3>
+                                    <span class="admin-card-kicker">Transactional email</span>
+                                </div>
+                                <div class="admin-panel-copy" id="settings-email-summary">Loading email settings…</div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="settings-email-provider">Email Provider</label>
+                                        <select id="settings-email-provider">
+                                            <option value="disabled">Disabled</option>
+                                            <option value="brevo">Brevo</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="settings-email-public-base-url">Public Base URL</label>
+                                        <input type="url" id="settings-email-public-base-url" maxlength="300" placeholder="https://replay.example.com">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="settings-email-from">From Email</label>
+                                        <input type="email" id="settings-email-from" maxlength="320" placeholder="noreply@example.com" autocomplete="off">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="settings-email-from-name">From Name</label>
+                                        <input type="text" id="settings-email-from-name" maxlength="120" placeholder="Replay">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="settings-email-brevo-api-key">Brevo API Key</label>
+                                        <input type="password" id="settings-email-brevo-api-key" maxlength="500" placeholder="Leave blank to keep the saved key" autocomplete="new-password">
+                                        <p class="form-help" id="settings-email-key-state">API key status unknown.</p>
+                                        <label class="checkbox-label email-clear-key-row">
+                                            <input type="checkbox" id="settings-email-clear-key">
+                                            Clear saved Brevo API key
+                                        </label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="settings-email-test-address">Test Email</label>
+                                        <input type="email" id="settings-email-test-address" maxlength="320" placeholder="you@example.com" autocomplete="email">
+                                        <div class="admin-panel-head-actions settings-email-actions">
+                                            <button type="button" class="btn-head" onclick="app.sendNotificationTestEmail()">Send test</button>
+                                        </div>
+                                        <p class="form-help" id="settings-email-test-result">Sends with the currently saved notification settings.</p>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="form-actions mt-4">
                                 <button type="submit" id="settings-submit-btn" class="btn-primary">Save Settings</button>
                             </div>

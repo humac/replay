@@ -80,3 +80,25 @@ def test_welcome_redirect_and_coach_settings_copy_are_current():
     assert "team-admin invite flow lands shortly" not in index_html
     assert "send invites later from Admin &rsaquo; People" in index_html
 
+
+def test_admin_settings_exposes_notification_settings_without_echoing_secret():
+    index_html = _read("index.html")
+    admin_views_js = _read("js/admin-views.js")
+    settings_py = _read("settings.py")
+    env_example = _read(".env.example")
+
+    assert "settings-email-provider" in index_html
+    assert "settings-email-brevo-api-key" in index_html
+    assert "settings-email-test-address" in index_html
+    assert "renderNotificationSettingsCard" in admin_views_js
+    assert "/api/admin/email/settings" in admin_views_js
+    assert "clear_brevo_api_key" in admin_views_js
+    assert "email_brevo_api_key" in settings_py
+    assert 'PRIVATE_SETTING_KEYS = {"live_stream_key", "email_brevo_api_key"}' in settings_py
+    assert "Admin > Settings > Notifications" in env_example
+    assert "REPLAY_EMAIL_PROVIDER=disabled" in env_example
+    assert "REPLAY_PUBLIC_BASE_URL=" in env_example
+    assert "REPLAY_BREVO_API_KEY=" in env_example
+    assert "REPLAY_EMAIL_FROM=" in env_example
+    assert "REPLAY_EMAIL_FROM_NAME=Replay" in env_example
+    assert "REPLAY_DEV_TOKEN_DELIVERY=0" in env_example
