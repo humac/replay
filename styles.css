@@ -3663,6 +3663,154 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     color: var(--text-muted);
 }
 
+/* Phase 0 IA foundation: visual grouping of admin sidebar sections into
+   Broadcast / Tenants / Platform. Routes are unchanged; only the rendered
+   sidebar gains group headers. The group head is intentionally subdued —
+   it should read as a divider, not as another nav target. */
+.admin-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.admin-nav-group + .admin-nav-group {
+    margin-top: 1.1rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+.admin-nav-group-head {
+    font-family: var(--font-heading);
+    font-size: 0.58rem;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0 0.85rem 0.45rem;
+    opacity: 0.78;
+}
+.admin-nav-group-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+[data-theme="light"] .admin-nav-group + .admin-nav-group {
+    border-top-color: rgba(0,0,0,0.08);
+}
+
+/* Phase 0 IA foundation: account + onboarding shell placeholders. These
+   render for unconfigured routes (/me before Phase A, /welcome before
+   Phase D, /invite/{token} before Phase B, etc.) so bookmarked links
+   render gracefully instead of 404'ing. The visual language matches the
+   existing .session-empty + .team-settings-card patterns. */
+.account-shell,
+.onboarding-shell {
+    max-width: 880px;
+    margin: 2.5rem auto;
+    padding: 0 1.25rem;
+}
+.account-shell-head,
+.onboarding-shell-head {
+    margin-bottom: 1.5rem;
+}
+.account-shell-kicker,
+.onboarding-shell-kicker {
+    display: inline-block;
+    font-family: var(--font-heading);
+    font-size: 0.62rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+}
+.account-shell-head h1,
+.onboarding-shell-head h1 {
+    font-family: var(--font-heading);
+    font-size: 1.75rem;
+    letter-spacing: 0.02em;
+    margin: 0 0 0.5rem;
+    color: var(--text-main);
+}
+.account-shell-sub,
+.onboarding-shell-sub {
+    color: var(--text-muted);
+    line-height: 1.55;
+    margin: 0;
+    max-width: 60ch;
+}
+.account-shell-body,
+.onboarding-shell-body {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-light);
+    border-radius: 18px;
+    padding: 2.5rem 2rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.account-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.7rem;
+    padding: 1.5rem 0.5rem;
+}
+.account-placeholder-glyph {
+    font-size: 2.4rem;
+    color: var(--accent);
+    line-height: 1;
+    opacity: 0.85;
+}
+.account-placeholder h2 {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 1.15rem;
+    letter-spacing: 0.04em;
+    color: var(--text-main);
+}
+.account-placeholder p {
+    margin: 0;
+    max-width: 56ch;
+    color: var(--text-muted);
+    line-height: 1.55;
+}
+.account-placeholder .btn-primary {
+    margin-top: 0.6rem;
+    align-self: center;
+}
+
+/* Phase 0 IA foundation: placeholder card style for the /admin/teams
+   section before Phase C populates it. Reuses .options-card framing. */
+.admin-placeholder-card {
+    background: linear-gradient(180deg, rgba(23,113,201,0.04), transparent 80%);
+}
+.admin-placeholder-hint {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: 0.4rem;
+}
+.admin-placeholder-hint code {
+    background: rgba(255,255,255,0.05);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.82em;
+}
+[data-theme="light"] .admin-placeholder-hint code {
+    background: rgba(0,0,0,0.05);
+}
+
+@media (max-width: 720px) {
+    .account-shell,
+    .onboarding-shell {
+        margin: 1.4rem auto;
+    }
+    .account-shell-body,
+    .onboarding-shell-body {
+        padding: 1.5rem 1.1rem;
+    }
+    .account-shell-head h1,
+    .onboarding-shell-head h1 {
+        font-size: 1.4rem;
+    }
+}
+
 /* ----- Content area ----- */
 
 .admin-content {

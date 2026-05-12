@@ -1120,6 +1120,48 @@ async def feedback_deep_link():
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
+# ---------------------------------------------------------------------------
+# Account + onboarding shell routes (Phase 0 IA foundation).
+#
+# These return the SPA shell unchanged; the client SPA recognizes the path in
+# initializeHistory() and renders the appropriate view. Population of the
+# Profile, Welcome, and Invite views lands in Phases A, D, and B respectively.
+# The verify-email and reset-password landings are populated in Phase A.3.
+# Keeping all five routes server-registered up front means a bookmarked or
+# emailed link returns the SPA HTML rather than a 404, even while the client
+# code that handles the route is still under construction.
+# ---------------------------------------------------------------------------
+
+@app.get("/me")
+async def me_deep_link():
+    """SPA shell for the signed-in user's self-service profile (Phase A.1)."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
+@app.get("/welcome")
+async def welcome_deep_link():
+    """SPA shell for the first-time-setup wizard (Phase D.1)."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
+@app.get("/invite/{token}")
+async def invite_deep_link(token: str):
+    """SPA shell for the invite-acceptance landing (Phase B.3)."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
+@app.get("/verify-email")
+async def verify_email_deep_link():
+    """SPA shell for email-verification confirm landing (Phase A.3)."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
+@app.get("/reset-password")
+async def reset_password_deep_link():
+    """SPA shell for password-reset confirm landing (Phase A.3)."""
+    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
+
+
 # Dev-only: when REPLAY_DEV=1, rewrite ES-module `import './js/foo.js'`
 # statements at serve time so each import URL carries `?v=<mtime_ns>`. This
 # closes the soft-refresh staleness gap — without it, a Cmd+R after editing

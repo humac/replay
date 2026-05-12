@@ -68,11 +68,16 @@ GET /api/uploads/sessions/{session_id}
 GET /api/users
 GET /coach
 GET /feedback
+GET /invite/{token}
 GET /live
 GET /match
 GET /match/{slug}
 GET /match/{slug}/{slot}
+GET /me
+GET /reset-password
 GET /static/{filepath:path}
+GET /verify-email
+GET /welcome
 GET,HEAD /docs
 GET,HEAD /docs/oauth2-redirect
 GET,HEAD /openapi.json
