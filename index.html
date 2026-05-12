@@ -1889,24 +1889,107 @@
                         </div>
                     </section>
 
-                    <!-- TEAMS (tenants placeholder — populated by Phase C) -->
+                    <!-- TEAMS (global-admin tenants) -->
                     <section class="admin-section" data-admin-section="teams">
-                        <div class="options-card admin-placeholder-card" id="admin-teams-placeholder">
-                            <div class="admin-card-head">
-                                <h3>Teams &amp; Tenants</h3>
-                                <span class="admin-card-kicker">Coming soon</span>
+                        <div class="admin-teams-shell">
+                            <aside class="admin-teams-list-pane" aria-label="Team list">
+                                <div class="admin-panel-head admin-teams-list-head">
+                                    <div>
+                                        <h3>Teams</h3>
+                                        <p class="admin-card-sub">Tenants on this Replay instance.</p>
+                                    </div>
+                                    <div class="admin-panel-head-actions">
+                                        <button type="button" class="btn-head" id="admin-teams-refresh-btn" onclick="app.loadAdminTeams(true)" title="Refresh">↻</button>
+                                        <button type="button" class="btn-primary" id="admin-teams-create-btn" onclick="app.openAdminTeamCreateModal()">+ New team</button>
+                                    </div>
+                                </div>
+                                <div id="admin-teams-search-bar" class="admin-teams-search-bar">
+                                    <input type="search" id="admin-teams-search-input" placeholder="Filter teams…" autocomplete="off" oninput="app.handleAdminTeamSearch(event)">
+                                </div>
+                                <div id="admin-teams-list" class="admin-teams-list" role="list">
+                                    <div class="session-empty">Loading teams…</div>
+                                </div>
+                            </aside>
+
+                            <div class="admin-teams-detail-pane" id="admin-teams-detail-pane">
+                                <div class="session-empty admin-teams-detail-empty" id="admin-teams-detail-empty">
+                                    <p>Select a team on the left to see its seasons and memberships.</p>
+                                </div>
+                                <div id="admin-teams-detail" class="admin-teams-detail" hidden></div>
                             </div>
-                            <p class="admin-panel-copy">
-                                Cross-tenant team and season management lands here in a follow-up release. For now,
-                                team admins manage their own roster, memberships, and invites inside
-                                <a href="/coach" onclick="event.preventDefault(); app.showCoachView();">Coach&nbsp;&rsaquo;&nbsp;Settings</a>.
-                            </p>
-                            <p class="admin-panel-copy admin-placeholder-hint">
-                                Global admins can still operate teams through the headless CLI
-                                (<code>python -m tools.admin teams|seasons|memberships</code>) until this page ships.
-                            </p>
                         </div>
                     </section>
+
+                    <!-- New-team modal template (Phase C.1) -->
+                    <template id="admin-team-create-form-template">
+                        <form id="admin-team-create-form" class="account-form" novalidate>
+                            <div class="form-group">
+                                <label for="admin-team-create-name">Team name</label>
+                                <input type="text" id="admin-team-create-name" name="name" required minlength="1" maxlength="200" autocomplete="off">
+                            </div>
+                            <div class="form-group">
+                                <label for="admin-team-create-slug">Slug</label>
+                                <input type="text" id="admin-team-create-slug" name="slug" required minlength="1" maxlength="64" autocomplete="off" pattern="[a-z0-9][a-z0-9_-]*">
+                                <p class="form-help">Lower-case letters, digits, dashes. Used in URLs and the CLI.</p>
+                            </div>
+                            <div class="form-group">
+                                <span class="form-label-static">Default match format</span>
+                                <div class="account-radio-group" role="radiogroup" aria-label="Default match format">
+                                    <label class="account-radio"><input type="radio" name="game_format" value="full" checked><span>Full match</span></label>
+                                    <label class="account-radio"><input type="radio" name="game_format" value="two_halves"><span>Two halves</span></label>
+                                </div>
+                            </div>
+                            <div id="admin-team-create-banner" class="account-banner" hidden></div>
+                        </form>
+                    </template>
+
+                    <!-- New-season modal template (Phase C.2) -->
+                    <template id="admin-season-create-form-template">
+                        <form id="admin-season-create-form" class="account-form" novalidate>
+                            <div class="form-group">
+                                <label for="admin-season-create-name">Season name</label>
+                                <input type="text" id="admin-season-create-name" name="name" required minlength="1" maxlength="200" autocomplete="off">
+                                <p class="form-help">Examples: &ldquo;Spring 2026&rdquo;, &ldquo;Fall U12 Girls&rdquo;, &ldquo;2025–26 Premier&rdquo;.</p>
+                            </div>
+                            <div class="account-form-grid">
+                                <div class="form-group">
+                                    <label for="admin-season-create-start">Starts on</label>
+                                    <input type="date" id="admin-season-create-start" name="starts_on" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label for="admin-season-create-end">Ends on</label>
+                                    <input type="date" id="admin-season-create-end" name="ends_on" autocomplete="off">
+                                </div>
+                            </div>
+                            <div id="admin-season-create-banner" class="account-banner" hidden></div>
+                        </form>
+                    </template>
+
+                    <!-- Grant-membership modal template (Phase C.3) -->
+                    <template id="admin-membership-grant-form-template">
+                        <form id="admin-membership-grant-form" class="account-form" novalidate>
+                            <div class="form-group">
+                                <label for="admin-membership-grant-user-search">Find user</label>
+                                <input type="search" id="admin-membership-grant-user-search" placeholder="Search by username…" autocomplete="off">
+                                <p class="form-help">Type to filter. Only existing users appear here — invite new people via Coach &rsaquo; Settings &rsaquo; Invite member.</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="admin-membership-grant-user">User</label>
+                                <select id="admin-membership-grant-user" name="user_id" required></select>
+                            </div>
+                            <div class="form-group">
+                                <span class="form-label-static">Role</span>
+                                <div class="account-radio-group" role="radiogroup" aria-label="Membership role">
+                                    <label class="account-radio"><input type="radio" name="role" value="coach" checked><span>Coach</span></label>
+                                    <label class="account-radio"><input type="radio" name="role" value="assistant_coach"><span>Assistant coach</span></label>
+                                    <label class="account-radio"><input type="radio" name="role" value="team_admin"><span>Team admin</span></label>
+                                    <label class="account-radio"><input type="radio" name="role" value="player"><span>Player</span></label>
+                                    <label class="account-radio"><input type="radio" name="role" value="guardian"><span>Guardian</span></label>
+                                </div>
+                            </div>
+                            <div id="admin-membership-grant-banner" class="account-banner" hidden></div>
+                        </form>
+                    </template>
 
                     <!-- USERS -->
                     <section class="admin-section" data-admin-section="users">
