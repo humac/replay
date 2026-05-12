@@ -2,6 +2,30 @@
 
 > **For Hermes:** Use `subagent-driven-development` to implement this plan one PR at a time. Each implementation PR must use TDD where behavior changes, add privacy canaries before UI expansion, and pass two-stage review: spec compliance first, code quality second.
 
+## Follow-up Closeout (2026-05-11)
+
+A platform-hardening review against this plan flagged 12 gaps spanning P0 security, P1 authorization, P2 architecture follow-through (PR 3.3 router split + PR 5.2 frontend modularization), and small hygiene/doc items. All non-deferred findings landed in five strictly serial PRs:
+
+- **PR-S** ([#167](https://github.com/humac/replay/pull/167)) — P0 #1 + #4 and P1 #7. Blocked raw AI prompt persistence via `POST /api/jobs` (the route now rejects user-initiated `kind=ai_draft` with 422; `POST /api/coach/ai/draft` remains the only AI draft API). Gated email verification token return on `REPLAY_DEV_TOKEN_DELIVERY=1`. Fixed roster import season fallback (`start_date` → `starts_on`).
+- **PR-AUTH** ([#168](https://github.com/humac/replay/pull/168)) — P1 #2 and #3. Coach routes resolve scope through `tenancy.resolve_scope` directly; legacy `users.role` is no longer a precondition. Membership-only `team_admin` / `coach` / `assistant_coach` users now access `/api/coach/*`. Centralized delete authorization in `tenancy.assert_can_delete_coach_object(scope, obj_type, *, created_by_user_id)` covering note / clip / playlist / goal / match_summary; `assistant_coach` cannot delete others' objects.
+- **PR-H** ([#169](https://github.com/humac/replay/pull/169)) — Hygiene #10 + #11 + #12. AI double opt-in documented in `docs/coach-guide.md` (`ai.drafting_enabled` + `ai.allowed_draft_targets`, empty default as defense in depth). UX-only comment added near the AI drafting client gates (now in `js/coaching/ai.js` post-PR-FE). `_reject_cross_team_evidence` audited and confirmed local-only to `routers/coach_ai.py` (no shared-helper cleanup needed).
+- **PR-FE** ([#170](https://github.com/humac/replay/pull/170)) — Completes PR 5.2. 13 mechanical domain extractions from `js/coaching.js` into per-domain mixins under `js/coaching/`. `js/coaching.js` went from **7,280 → 674 lines** (−90.7%). All 13 stubs are now populated; `js/coaching/ai.js` was newly created and wired into `script.js`. Non-skippable AI-mixin smoke tests added to `tests/test_phase5_frontend_modularization_static.py`.
+- **PR-BE** ([#171](https://github.com/humac/replay/pull/171)) — Completes PR 3.3. 12 mechanical router extractions from `server.py` into `routers/*.py`. `server.py` went from **4,816 → 2,103 lines** (−56%). `@app.` decorator count went from **109 → 10** (the 10 remaining are SPA HTML shells + the `/static/{filepath:path}` mount). 99 of 109 route handlers moved. Route-inventory regression test (`tests/test_route_inventory.py`) was added and stayed green across every router-extraction commit.
+
+**Privacy invariants preserved verbatim throughout:** `coach_private_note` scrubbing via `services.visibility._filter_notes_for_user` + `_strip_private_fields`; per-note + per-clip thumbnail GET reachable by any signed-in user with per-viewer `ETag` + `no-cache, must-revalidate`; the per-player development viewer endpoint returns 404 (not 403) for unknown players and unrelated viewers; raw prompts never persisted to `background_jobs.payload_json`.
+
+**Documented exceptions:**
+- `server.py` at 2,103 lines vs the <1,500 target in PR-BE's exit criteria. The remaining ~600 lines beyond the SPA shell are shared helpers (`_require_*_in_team`, `_resolve_*_scope`, `_log_activity`, `_filter_*_for_user`, `_normalize_job_payload`, `_can_view_coach_*`, `_build_player_development_profile`, plus the FastAPI app construction + lifespan) that are late-imported by every coach router to avoid circular imports. The plan explicitly scoped service extraction out of PR-BE ("No service extraction") — lifting these helpers into `services/*.py` is the natural follow-up.
+
+## Deferred Architecture Follow-ups
+
+- **Alembic migration adoption (Phase 6.1 contract drift)** — Tracked as [issue #172](https://github.com/humac/replay/issues/172). Post-v16 schema changes continued as `db.py _migrate_v17+` instead of Alembic per the Phase 6.1 contract. Not blocking for current feature work but should be resolved before broad multi-tenant Postgres production rollout. This was finding #9 of the follow-up review and is the one finding the sequence explicitly punted on.
+- **Phase 10 (storage provider boundary)** — Untouched. Remains conditional per the original plan; revisit only if the AI drafting MVP succeeds and multi-region storage becomes a priority.
+- **server.py shared-helper lift into `services/*.py`** — See PR-BE exception above. Not blocking; mechanical follow-up when convenient.
+
+---
+
+
 **Goal:** Deliver the platform foundation required for a safe coach-side AI drafting assistant: multi-team/season tenancy, scoped authorization, modular backend/frontend surfaces, Postgres-ready durable jobs, minimal team AI governance settings, and then a bounded AI drafting MVP.
 
 **Architecture:** Ship the pre-AI architecture track first: additive team/season schema, scoped query enforcement, service/router extraction, active scope UI, vanilla-JS module split, Postgres + durable jobs, and minimal per-team settings. Defer broad account/onboarding hardening and storage-provider abstraction until after the AI drafting MVP unless those become the product priority.
