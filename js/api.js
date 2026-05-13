@@ -432,7 +432,21 @@ export const apiMixin = {
             method: 'DELETE',
             headers: this.getAuthHeaders(),
         });
-        if (!resp.ok) throw new Error('Failed to delete user');
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to delete user');
+        }
+        return resp.json();
+    },
+
+    async getUserDetail(userId) {
+        const resp = await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+            headers: this.getAuthHeaders(),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to load user detail');
+        }
         return resp.json();
     },
 

@@ -76,7 +76,11 @@ def _move_player_to_team(player_id: str, team_id: str, season_id: str) -> None:
         conn.commit()
 
 
-async def _create_user(client, auth_headers, username: str, role: str = "coach") -> str:
+async def _create_user(client, auth_headers, username: str, role: str = "viewer") -> str:
+    # Coach access is granted membership-only via `_grant_only_team_membership`;
+    # the legacy ``users.role='coach'`` token was removed in _migrate_v24.
+    if role == "coach":
+        role = "viewer"
     resp = await client.post("/api/users", json={"username": username, "password": "password123", "role": role}, headers=auth_headers)
     assert resp.status_code == 200
     return resp.json()["user"]["id"]
@@ -366,13 +370,18 @@ async def test_pr_2_3_my_feedback_reviews_are_filtered_to_resolved_team(client, 
 
 @pytest.mark.asyncio
 async def test_coach_role_can_use_coaching_workspace(client, auth_headers):
+    # Coach access is membership-only after the v24 cleanup (no legacy
+    # ``users.role='coach'`` token). Create a uploader-tagged user and
+    # grant them the team-level ``coach`` membership.
     resp = await client.post("/api/users", json={
         "username": "coach1",
         "password": "password123",
-        "role": "coach,uploader",
+        "role": "uploader",
     }, headers=auth_headers)
     assert resp.status_code == 200
-    assert resp.json()["user"]["role"] == "coach,uploader"
+    user_id = resp.json()["user"]["id"]
+    default_team = _db.get_default_team()
+    _grant_only_team_membership(user_id, default_team["id"], "coach")
 
     coach_headers = await _login(client, "coach1")
     resp = await client.get("/api/coach/players", headers=coach_headers)
@@ -1876,7 +1885,7 @@ async def test_thumbnail_admin_and_coach_can_access_team_note(client, auth_heade
     """Coach/admin path: both should always succeed once the file exists."""
     await _install_thumbnail_stub(monkeypatch)
     await client.post("/api/users", json={
-        "username": "coach1", "password": "password123", "role": "coach",
+        "username": "coach1", "password": "password123", "role": "viewer",
     }, headers=auth_headers)
     match_resp = await client.post("/api/matches", json={
         "home_team": "OSU Steel", "away_team": "Riverside FC", "date": "2026-05-06",
@@ -3606,12 +3615,16 @@ async def test_dev_profile_viewer_endpoint_scrubs_for_coach_caller(client, auth_
     the un-scrubbed `coach_private_note` despite `viewer_scoped: true`.
     The fix wraps the filtered list in `_strip_private_fields` for
     every viewer-scoped build."""
-    # Create a coach user AND link them to a player.
+    # Create a coach user AND link them to a player. Coach access is
+    # membership-only; grant the team-level coach role so the user can
+    # also reach the viewer endpoint via their player_user_links row.
     coach_resp = await client.post("/api/users", json={
         "username": "linked_coach_caller",
-        "password": "password123", "role": "coach,uploader",
+        "password": "password123", "role": "uploader",
     }, headers=auth_headers)
     coach_user_id = coach_resp.json()["user"]["id"]
+    default_team = _db.get_default_team()
+    _grant_only_team_membership(coach_user_id, default_team["id"], "coach")
 
     player_resp = await client.post("/api/coach/players", json={
         "display_name": "Coach's Kid", "jersey_number": "10",
@@ -3793,7 +3806,7 @@ async def test_clip_thumbnail_admin_and_coach_can_access(client, auth_headers, d
     """Coach/admin can fetch the JPEG once it exists on disk."""
     await _install_clip_thumbnail_stub(monkeypatch)
     await client.post("/api/users", json={
-        "username": "clipcoach", "password": "password123", "role": "coach",
+        "username": "clipcoach", "password": "password123", "role": "viewer",
     }, headers=auth_headers)
     match_resp = await client.post("/api/matches", json={
         "home_team": "OSU Steel", "away_team": "Riverside FC", "date": "2026-05-21",

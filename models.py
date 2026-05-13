@@ -350,7 +350,7 @@ class CreateUploadSessionRequest(BaseModel):
 
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-_VALID_ROLES = {"admin", "coach", "uploader", "viewer"}
+_VALID_ROLES = {"admin", "uploader", "viewer"}
 
 
 def _normalize_role_string(value: str) -> str:
@@ -361,7 +361,7 @@ def _normalize_role_string(value: str) -> str:
     if unknown:
         raise ValueError(f"role must contain only: {', '.join(sorted(_VALID_ROLES))}")
     # Keep a stable order for storage and client comparisons.
-    ordered = [role for role in ("admin", "coach", "uploader", "viewer") if role in roles]
+    ordered = [role for role in ("admin", "uploader", "viewer") if role in roles]
     return ",".join(ordered)
 
 

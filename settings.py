@@ -614,6 +614,7 @@ def render_index_html(settings_payload: dict) -> str:
     html = re.sub(r'/static/styles\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles.css"), html)
     html = re.sub(r'/static/styles/coaching-engagement\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles/coaching-engagement.css"), html)
     html = re.sub(r'/static/styles/team-members\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles/team-members.css"), html)
+    html = re.sub(r'/static/styles/admin-users\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles/admin-users.css"), html)
     html = re.sub(r'/static/script\.js(?:\?v=[^"\']*)?', _versioned_static_path("script.js"), html)
     html = re.sub(r'/static/logo\.png(?:\?v=[^"\']*)?', app_asset_url("logo", settings_payload["settings"]), html)
     html = re.sub(r"<title>.*?</title>", f"<title>{app_name}</title>", html, count=1)

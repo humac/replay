@@ -31,6 +31,8 @@ import { coachingMixin } from './js/coaching.js';
 import { tacticalBoardMixin } from './js/tactical-board.js';
 import { accountMixin } from './js/account.js';
 import { onboardingMixin } from './js/onboarding.js';
+import { relationshipMetaMixin } from './js/relationship-meta.js';
+import { adminUserDetailMixin } from './js/admin-user-detail.js';
 
 const app = {
     // ===== STATE & CONFIG =====
@@ -513,6 +515,8 @@ const app = {
     ...tacticalBoardMixin,
     ...accountMixin,
     ...onboardingMixin,
+    ...relationshipMetaMixin,
+    ...adminUserDetailMixin,
 };
 
 // Expose globally for inline onclick handlers

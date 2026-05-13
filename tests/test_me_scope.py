@@ -50,7 +50,7 @@ async def test_me_scope_single_team_user_gets_active_scope(client):
 
     with _db.connect() as conn:
         _insert_team_with_season(conn, "scope-one", "scope-one", name="Scope One")
-        _insert_user(conn, "scope-user", "scope_user", "coach", display_name="Scope User")
+        _insert_user(conn, "scope-user", "scope_user", "viewer", display_name="Scope User")
         _grant_membership(conn, "scope-one", "scope-user", "coach")
         conn.commit()
 
@@ -62,8 +62,8 @@ async def test_me_scope_single_team_user_gets_active_scope(client):
         "id": "scope-user",
         "username": "scope_user",
         "display_name": "Scope User",
-        "role": "coach",
-        "roles": ["coach"],
+        "role": "viewer",
+        "roles": ["viewer"],
         "is_global_admin": False,
         "last_team_id": None,
         "last_season_id": None,
@@ -84,8 +84,8 @@ async def test_me_scope_multi_team_user_lists_eligible_teams_without_sensitive_d
         _insert_team_with_season(conn, "scope-a", "scope-a", name="Scope A")
         _insert_team_with_season(conn, "scope-b", "scope-b", name="Scope B")
         _insert_team_with_season(conn, "scope-unrelated", "scope-unrelated", name="Scope Unrelated")
-        _insert_user(conn, "multi-user", "multi_user", "coach")
-        _insert_user(conn, "other-user", "other_user", "coach", display_name="Other User")
+        _insert_user(conn, "multi-user", "multi_user", "viewer")
+        _insert_user(conn, "other-user", "other_user", "viewer", display_name="Other User")
         _grant_membership(conn, "scope-a", "multi-user", "coach")
         _grant_membership(conn, "scope-b", "multi-user", "assistant_coach")
         _grant_membership(conn, "scope-unrelated", "other-user", "coach")
@@ -158,7 +158,7 @@ async def test_me_scope_explicit_team_selector_resolves_multi_team_user(client):
     with _db.connect() as conn:
         _insert_team_with_season(conn, "explicit-a", "explicit-a", name="Explicit A")
         _insert_team_with_season(conn, "explicit-b", "explicit-b", name="Explicit B")
-        _insert_user(conn, "explicit-user", "explicit_user", "coach")
+        _insert_user(conn, "explicit-user", "explicit_user", "viewer")
         _grant_membership(conn, "explicit-a", "explicit-user", "coach")
         _grant_membership(conn, "explicit-b", "explicit-user", "coach")
         conn.commit()
@@ -179,7 +179,7 @@ async def test_me_scope_collapses_unavailable_explicit_selectors_without_tenant_
     with _db.connect() as conn:
         _insert_team_with_season(conn, "eligible-team", "eligible-team", name="Eligible Team")
         _insert_team_with_season(conn, "hidden-team", "hidden-team", name="Hidden Team", season_id="hidden-season")
-        _insert_user(conn, "probe-user", "probe_user", "coach")
+        _insert_user(conn, "probe-user", "probe_user", "viewer")
         _grant_membership(conn, "eligible-team", "probe-user", "coach")
         conn.commit()
 
@@ -216,7 +216,7 @@ async def test_me_scope_can_save_team_and_season_and_subsequent_requests_use_sav
             "INSERT INTO seasons (id, team_id, name, starts_on, ends_on, created_at) VALUES (?, ?, 'Spring Season', '2026-04-01', '', ?)",
             ("persist-b-spring", "persist-b", "2026-04-02T00:00:00Z"),
         )
-        _insert_user(conn, "persist-user", "persist_user", "coach")
+        _insert_user(conn, "persist-user", "persist_user", "viewer")
         _grant_membership(conn, "persist-a", "persist-user", "coach")
         _grant_membership(conn, "persist-b", "persist-user", "coach")
         conn.commit()
@@ -253,7 +253,7 @@ async def test_me_scope_rejects_saving_team_without_membership(client):
     with _db.connect() as conn:
         _insert_team_with_season(conn, "member-team", "member-team")
         _insert_team_with_season(conn, "non-member-team", "non-member-team")
-        _insert_user(conn, "membership-user", "membership_user", "coach")
+        _insert_user(conn, "membership-user", "membership_user", "viewer")
         _grant_membership(conn, "member-team", "membership-user", "coach")
         conn.commit()
 
@@ -281,7 +281,7 @@ async def test_me_scope_rejects_saving_season_from_another_team(client):
     with _db.connect() as conn:
         _insert_team_with_season(conn, "season-member-team", "season-member-team")
         _insert_team_with_season(conn, "season-other-team", "season-other-team")
-        _insert_user(conn, "season-user", "season_user", "coach")
+        _insert_user(conn, "season-user", "season_user", "viewer")
         _grant_membership(conn, "season-member-team", "season-user", "coach")
         conn.commit()
 
@@ -308,7 +308,7 @@ async def test_me_scope_rejects_blank_active_scope_selectors(client):
 
     with _db.connect() as conn:
         _insert_team_with_season(conn, "blank-team", "blank-team")
-        _insert_user(conn, "blank-user", "blank_user", "coach")
+        _insert_user(conn, "blank-user", "blank_user", "viewer")
         _grant_membership(conn, "blank-team", "blank-user", "coach")
         conn.commit()
 
@@ -328,7 +328,7 @@ async def test_me_scope_revoked_saved_membership_requires_reselection(client):
     with _db.connect() as conn:
         _insert_team_with_season(conn, "revoked-a", "revoked-a")
         _insert_team_with_season(conn, "revoked-b", "revoked-b")
-        _insert_user(conn, "revoked-user", "revoked_user", "coach")
+        _insert_user(conn, "revoked-user", "revoked_user", "viewer")
         _grant_membership(conn, "revoked-a", "revoked-user", "coach")
         _grant_membership(conn, "revoked-b", "revoked-user", "coach")
         conn.commit()
@@ -362,7 +362,7 @@ async def test_matches_endpoint_filters_by_authorized_active_scope(client):
     with _db.connect() as conn:
         _insert_team_with_season(conn, "matches-a", "matches-a", name="Matches A")
         _insert_team_with_season(conn, "matches-b", "matches-b", name="Matches B")
-        _insert_user(conn, "matches-user", "matches_user", "coach")
+        _insert_user(conn, "matches-user", "matches_user", "viewer")
         _grant_membership(conn, "matches-a", "matches-user", "coach")
         conn.commit()
     noisy_unrelated_matches = [

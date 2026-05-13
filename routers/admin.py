@@ -14,15 +14,43 @@ logger = _log.setup("replay")
 router = APIRouter()
 
 
+def _user_is_global_admin(user: dict | None) -> bool:
+    if not user:
+        return False
+    role = user.get("role") or ""
+    parts = {p.strip().lower() for p in role.split(",") if p.strip()}
+    return "admin" in parts
+
+
+def _scrub_user(user: dict) -> dict:
+    return {k: v for k, v in user.items() if k != "password_hash"}
+
+
 @router.get("/api/users")
 async def list_users(request: Request):
     _auth.require_role(request, "admin")
     users = _db.list_users(allow_unscoped=True)
-    # Strip password hashes from response
-    return [
-        {k: v for k, v in u.items() if k != "password_hash"}
-        for u in users
-    ]
+    return [_scrub_user(u) for u in users]
+
+
+@router.get("/api/users/{user_id}")
+async def get_user_detail(user_id: str, request: Request):
+    """Return one user plus cross-tenant memberships and linked players.
+
+    Powers the Admin > Users 360 drawer so a global admin can see a
+    person's complete picture in one view.
+    """
+    _auth.require_role(request, "admin")
+    user = _db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    memberships = _db.list_user_memberships_with_team(user_id)
+    linked_players = _db.list_player_links_for_user(user_id)
+    return {
+        "user": _scrub_user(user),
+        "memberships": memberships,
+        "linked_players": linked_players,
+    }
 
 
 @router.post("/api/users")
@@ -60,6 +88,17 @@ async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
         updates["enabled"] = 1 if body.enabled else 0
     if not updates:
         return {"ok": True}
+    # Last-admin guard: prevent locking yourself out by demoting/disabling
+    # the only remaining global admin.
+    if _user_is_global_admin(user):
+        will_demote = body.role is not None and "admin" not in {
+            p.strip() for p in (body.role or "").split(",") if p.strip()
+        }
+        will_disable = body.enabled is False
+        if will_demote or will_disable:
+            remaining = _db.count_enabled_global_admins(exclude_user_id=user_id)
+            if remaining == 0:
+                raise HTTPException(409, "last_admin")
     _db.update_user(user_id, **updates)
     updated = _db.get_user_by_id(user_id)
     logger.info("admin.action", extra={"action": "update_user", "actor": actor["username"], "target_id": user_id, "fields": list(updates)})
@@ -77,6 +116,10 @@ async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
 async def delete_user(user_id: str, request: Request):
     user = _auth.require_role(request, "admin")
     target = _db.get_user_by_id(user_id)
+    if target and _user_is_global_admin(target):
+        remaining = _db.count_enabled_global_admins(exclude_user_id=user_id)
+        if remaining == 0:
+            raise HTTPException(409, "last_admin")
     if not _db.delete_user(user_id):
         raise HTTPException(404, "User not found")
     logger.info("admin.action", extra={"action": "delete_user", "actor": user["username"], "target_id": user_id})

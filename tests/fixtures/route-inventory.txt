@@ -68,6 +68,7 @@ GET /api/transcode-progress
 GET /api/uploads/sessions
 GET /api/uploads/sessions/{session_id}
 GET /api/users
+GET /api/users/{user_id}
 GET /coach
 GET /feedback
 GET /invite/{token}

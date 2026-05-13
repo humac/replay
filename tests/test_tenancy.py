@@ -568,14 +568,14 @@ def test_pr_2_1_resolve_scope_allows_single_team_membership_by_default(fresh_db)
     with fresh_db.connect() as conn:
         team = fresh_db.get_default_team(conn=conn)
         season = fresh_db.get_default_season(team["id"], conn=conn)
-        _insert_user(conn, "coach-scope", "coach_scope", "coach")
+        _insert_user(conn, "coach-scope", "coach_scope", "viewer")
         conn.execute("DELETE FROM team_user_memberships WHERE user_id = 'coach-scope'")
         _grant_membership(conn, team["id"], "coach-scope", "coach")
         conn.commit()
 
     scope = tenancy.resolve_scope(
         _ScopeRequest(),
-        {"user_id": "coach-scope", "username": "coach_scope", "role": "coach"},
+        {"user_id": "coach-scope", "username": "coach_scope", "role": "viewer"},
         require_role="coach",
     )
     assert scope.team["id"] == team["id"]
@@ -592,13 +592,13 @@ def test_pr_2_1_explicit_team_requires_membership_even_with_legacy_coach_role(fr
     with fresh_db.connect() as conn:
         _insert_team_with_season(conn, "team-a", "team-a")
         _insert_team_with_season(conn, "team-b", "team-b")
-        _insert_user(conn, "coach-a", "coach_a", "coach")
+        _insert_user(conn, "coach-a", "coach_a", "viewer")
         _grant_membership(conn, "team-a", "coach-a", "coach")
         conn.commit()
 
     scope = tenancy.resolve_scope(
         _ScopeRequest(team="team-a"),
-        {"user_id": "coach-a", "username": "coach_a", "role": "coach"},
+        {"user_id": "coach-a", "username": "coach_a", "role": "viewer"},
         require_role="coach",
     )
     assert scope.team["id"] == "team-a"
@@ -606,7 +606,7 @@ def test_pr_2_1_explicit_team_requires_membership_even_with_legacy_coach_role(fr
     with pytest.raises(HTTPException) as exc:
         tenancy.resolve_scope(
             _ScopeRequest(team="team-b"),
-            {"user_id": "coach-a", "username": "coach_a", "role": "coach"},
+            {"user_id": "coach-a", "username": "coach_a", "role": "viewer"},
             require_role="coach",
         )
     assert exc.value.status_code == 403
@@ -619,7 +619,7 @@ def test_pr_2_1_multi_team_user_without_selected_scope_requires_selection(fresh_
     with fresh_db.connect() as conn:
         _insert_team_with_season(conn, "multi-a", "multi-a")
         _insert_team_with_season(conn, "multi-b", "multi-b")
-        _insert_user(conn, "multi-coach", "multi_coach", "coach")
+        _insert_user(conn, "multi-coach", "multi_coach", "viewer")
         _grant_membership(conn, "multi-a", "multi-coach", "coach")
         _grant_membership(conn, "multi-b", "multi-coach", "coach")
         conn.commit()
@@ -627,7 +627,7 @@ def test_pr_2_1_multi_team_user_without_selected_scope_requires_selection(fresh_
     with pytest.raises(HTTPException) as exc:
         tenancy.resolve_scope(
             _ScopeRequest(),
-            {"user_id": "multi-coach", "username": "multi_coach", "role": "coach"},
+            {"user_id": "multi-coach", "username": "multi_coach", "role": "viewer"},
             require_role="coach",
         )
     assert exc.value.status_code == 409
@@ -640,14 +640,14 @@ def test_pr_2_1_saved_last_team_breaks_multi_team_tie(fresh_db):
     with fresh_db.connect() as conn:
         _insert_team_with_season(conn, "saved-a", "saved-a")
         _insert_team_with_season(conn, "saved-b", "saved-b")
-        _insert_user(conn, "saved-coach", "saved_coach", "coach", last_team_id="saved-b")
+        _insert_user(conn, "saved-coach", "saved_coach", "viewer", last_team_id="saved-b")
         _grant_membership(conn, "saved-a", "saved-coach", "coach")
         _grant_membership(conn, "saved-b", "saved-coach", "coach")
         conn.commit()
 
     scope = tenancy.resolve_scope(
         _ScopeRequest(),
-        {"user_id": "saved-coach", "username": "saved_coach", "role": "coach"},
+        {"user_id": "saved-coach", "username": "saved_coach", "role": "viewer"},
         require_role="coach",
     )
     assert scope.team["id"] == "saved-b"
@@ -671,7 +671,9 @@ def test_pr_2_2_privileged_visibility_helpers_respect_explicit_team_scope(monkey
     monkeypatch.setattr(server._db, "list_coaching_notes", lambda: [])
     monkeypatch.setattr(server._db, "list_coaching_clips", lambda: [])
     monkeypatch.setattr(server._db, "list_coaching_playlists", lambda: [])
-    user = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    # Use legacy global-admin role so privileged visibility kicks in
+    # without needing a real team_user_memberships row.
+    user = {"user_id": "coach-a", "username": "coach_a", "role": "admin"}
     team_a_note = {"id": 1, "team_id": "team-a", "visibility": "private", "coach_private_note": "coach only"}
     team_b_note = {"id": 2, "team_id": "team-b", "visibility": "team", "coach_private_note": "wrong team"}
     team_a_clip = {"id": 10, "team_id": "team-a", "visibility": "private", "player_ids": []}
@@ -781,7 +783,9 @@ def test_pr_2_2_db_coaching_rows_include_team_scope_for_visibility_helpers(fresh
     assert goal["team_id"] == team["id"]
     assert summary["team_id"] == team["id"]
 
-    user = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    # Legacy global-admin role exercises the privileged-visibility branch
+    # without depending on a team_user_memberships row.
+    user = {"user_id": "coach-a", "username": "coach_a", "role": "admin"}
     assert server._filter_notes_for_user([note], user, team_id=team["id"]) == [note]
     assert server._filter_clips_for_user([clip], user, team_id=team["id"]) == [clip]
     assert server._filter_playlists_for_user([playlist], user, team_id=team["id"]) == [playlist]
@@ -822,7 +826,7 @@ def test_pr_2_2_match_summary_sources_are_filtered_to_the_same_team(monkeypatch)
 def test_pr_2_2_scoped_playlist_and_summary_ids_do_not_leak_wrong_team_sources(monkeypatch):
     import server
 
-    coach = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    coach = {"user_id": "coach-a", "username": "coach_a", "role": "admin"}
     team_a_note = {"id": 1, "team_id": "team-a", "visibility": "private", "player_ids": [], "coach_private_note": ""}
     team_b_note = {"id": 2, "team_id": "team-b", "visibility": "team", "player_ids": [], "coach_private_note": ""}
     monkeypatch.setattr(server._db, "list_coaching_notes", lambda: [team_a_note, team_b_note])
@@ -855,7 +859,7 @@ def test_pr_2_2_scoped_playlist_and_summary_ids_do_not_leak_wrong_team_sources(m
 def test_pr_2_2_scoped_goal_source_ids_do_not_leak_wrong_team_sources(monkeypatch):
     import server
 
-    coach = {"user_id": "coach-a", "username": "coach_a", "role": "coach"}
+    coach = {"user_id": "coach-a", "username": "coach_a", "role": "admin"}
     team_a_note = {"id": 1, "team_id": "team-a", "visibility": "private", "player_ids": [], "coach_private_note": ""}
     team_b_note = {"id": 2, "team_id": "team-b", "visibility": "team", "player_ids": [], "coach_private_note": ""}
     team_a_clip = {"id": 10, "team_id": "team-a", "visibility": "private", "player_ids": []}
@@ -956,14 +960,14 @@ def test_pr_2_1_explicit_season_id_resolves_owning_team(fresh_db):
     with fresh_db.connect() as conn:
         _insert_team_with_season(conn, "season-team-a", "season-team-a", "season-a")
         _insert_team_with_season(conn, "season-team-b", "season-team-b", "season-b")
-        _insert_user(conn, "season-coach", "season_coach", "coach")
+        _insert_user(conn, "season-coach", "season_coach", "viewer")
         _grant_membership(conn, "season-team-a", "season-coach", "coach")
         _grant_membership(conn, "season-team-b", "season-coach", "coach")
         conn.commit()
 
     scope = tenancy.resolve_scope(
         _ScopeRequest(season_id="season-b"),
-        {"user_id": "season-coach", "username": "season_coach", "role": "coach"},
+        {"user_id": "season-coach", "username": "season_coach", "role": "viewer"},
         require_role="coach",
     )
     assert scope.team["id"] == "season-team-b"

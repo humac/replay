@@ -25,7 +25,7 @@ def _create_team(team_id: str) -> None:
 
 
 def _create_member(team_id: str, username: str, *, role: str = "team_admin") -> dict:
-    user = _db.create_user(username, _auth.hash_password("password123"), "coach", username.title())
+    user = _db.create_user(username, _auth.hash_password("password123"), "viewer", username.title())
     with _db.connect() as conn:
         conn.execute(
             "INSERT INTO team_user_memberships (team_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
@@ -33,6 +33,10 @@ def _create_member(team_id: str, username: str, *, role: str = "team_admin") -> 
         )
         conn.execute("UPDATE users SET last_team_id = ? WHERE id = ?", (team_id, user["id"]))
         conn.commit()
+    # Surface `user_id` so `services/visibility.py::is_privileged_coach`
+    # can resolve membership-only privilege without falling back to the
+    # legacy `users.role` short-circuit (removed in _migrate_v24).
+    user["user_id"] = user["id"]
     return user
 
 
