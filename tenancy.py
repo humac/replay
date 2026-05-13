@@ -223,8 +223,8 @@ def resolve_scope(
     """Resolve the active team/season and scoped membership for a request.
 
     Normal team-scoped resources require a ``team_user_memberships`` row even
-    when ``users.role`` contains legacy ``coach`` or ``admin``. Break-glass
-    global/system admin behavior is only enabled by callers that pass
+    when ``users.role`` contains legacy ``admin``. Break-glass global/system
+    admin behavior is only enabled by callers that pass
     ``allow_global_admin_override=True`` or use ``auth.require_global_admin``.
     """
     explicit_slug = team or _query_value(request, "team")

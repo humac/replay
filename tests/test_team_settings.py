@@ -28,7 +28,7 @@ def _create_team(team_id: str) -> None:
 
 
 def _create_member(team_id: str, username: str, *, role: str = "team_admin") -> dict:
-    user = _db.create_user(username, _auth.hash_password("password123"), "coach", username.title())
+    user = _db.create_user(username, _auth.hash_password("password123"), "viewer", username.title())
     with _db.connect() as conn:
         conn.execute(
             "INSERT INTO team_user_memberships (team_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
@@ -36,10 +36,11 @@ def _create_member(team_id: str, username: str, *, role: str = "team_admin") -> 
         )
         conn.execute("UPDATE users SET last_team_id = ? WHERE id = ?", (team_id, user["id"]))
         conn.commit()
+    user["user_id"] = user["id"]
     return user
 
 
-def _create_api_user(team_id: str, username: str, *, team_role: str, app_role: str = "coach") -> dict:
+def _create_api_user(team_id: str, username: str, *, team_role: str, app_role: str = "viewer") -> dict:
     user = _db.create_user(username, _auth.hash_password("password123"), app_role, username.title())
     with _db.connect() as conn:
         conn.execute(

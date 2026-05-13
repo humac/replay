@@ -406,36 +406,47 @@ export const adminViewsMixin = {
         const container = document.getElementById('users-list');
         if (!container) return;
         const users = await this.loadUsers();
-        if (!users.length) {
-            container.innerHTML = '<p class="text-muted">No additional user accounts. Only the env-var admin is active.</p>';
-            return;
-        }
-        // Phase F.2: user-memberships expander. Each row carries a hidden
-        // detail panel that hydrates lazily from /api/admin/teams/{id}/memberships
-        // when the operator clicks "View teams". This is a debugging /
-        // support surface — "this user says they can't see team X" → expand
-        // their row, see which teams they're actually a member of.
-        const rows = users.map(u => `
-            <div class="user-row user-row-expandable" data-user-id="${u.id}">
-                <div class="user-row-summary">
-                    <div class="user-info">
-                        <span class="user-name">${this.esc(u.display_name || u.username)}</span>
-                        <span class="user-username">@${this.esc(u.username)}</span>
-                    </div>
-                    <span class="badge ${String(u.role || 'viewer').includes('coach') ? 'processing' : u.role}">${this.esc(String(u.role || 'viewer').replace(',', ' + '))}</span>
-                    <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
-                    <div class="user-actions">
-                        <button class="btn-sm" onclick="app.toggleUserMembershipsExpander('${u.id}')" data-user-memberships-toggle="${u.id}">View teams</button>
-                        <button class="btn-sm" onclick="app.toggleUserEnabled('${u.id}', ${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
-                        <button class="btn-sm btn-danger" onclick="app.handleDeleteUser('${u.id}', '${this.esc(u.username)}')">Delete</button>
-                    </div>
-                </div>
-                <div class="user-row-memberships" data-user-memberships="${u.id}" hidden>
-                    <div class="session-empty">Click View teams to load this user's memberships.</div>
+        const headBar = `
+            <div class="admin-panel-head admin-users-head">
+                <h3>Platform users</h3>
+                <div class="admin-panel-head-actions">
+                    <button type="button" class="btn-head" onclick="app.openAdminUserCreate()">+ New user</button>
                 </div>
             </div>
-        `).join('');
-        container.innerHTML = rows;
+        `;
+        if (!users.length) {
+            container.innerHTML = headBar + '<p class="text-muted admin-users-empty">No additional user accounts. Only the env-var admin is active.</p>';
+            return;
+        }
+        // People pivot: clicking the row body opens the per-user 360 drawer
+        // (profile + every team membership across all teams + every linked
+        // player). Inline actions on the row keep the quick toggles for
+        // common cases.
+        const rows = users.map(u => {
+            const rolesStr = String(u.role || 'viewer');
+            const isGlobalAdmin = rolesStr.split(',').map((p) => p.trim()).includes('admin');
+            const rolePill = `<span class="badge">${this.esc(rolesStr.replace(',', ' + '))}</span>`;
+            const adminPill = isGlobalAdmin ? '<span class="badge ready">Global admin</span>' : '';
+            return `
+                <div class="user-row user-row-clickable" data-user-id="${u.id}">
+                    <button type="button" class="user-row-summary" onclick="app.openAdminUserDetail('${this.esc(u.id)}')" title="View this user's profile, memberships, and linked players">
+                        <div class="user-info">
+                            <span class="user-name">${this.esc(u.display_name || u.username)}</span>
+                            <span class="user-username">@${this.esc(u.username)}</span>
+                        </div>
+                        ${rolePill}
+                        ${adminPill}
+                        <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
+                    </button>
+                    <div class="user-actions">
+                        <button class="mini-action-btn" onclick="app.openAdminUserEdit('${this.esc(u.id)}')">Edit</button>
+                        <button class="mini-action-btn" onclick="app.toggleUserEnabled('${this.esc(u.id)}', ${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
+                        <button class="mini-action-btn is-danger" onclick="app.handleAdminUserDelete('${this.esc(u.id)}', '${this.esc(u.username)}')">Delete</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        container.innerHTML = headBar + rows;
     },
 
     // Phase F.2: open / close the membership expander on an Admin > Users row.

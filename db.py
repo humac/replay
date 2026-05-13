@@ -920,6 +920,11 @@ def _ensure_default_team_and_season(conn: sqlite3.Connection) -> tuple[str, str]
 
 
 def _membership_roles_for_global_role(role: str | None) -> list[str]:
+    # Maps a legacy ``users.role`` string to the membership roles that should
+    # be backfilled on first migration to the membership table. The ``coach``
+    # branch is retained so existing pre-v24 DBs still get a ``coach``
+    # membership row created before v24 strips the legacy token; in new
+    # systems the legacy token is never written.
     parts = {part.strip().lower() for part in (role or "").split(",") if part.strip()}
     memberships: list[str] = []
     if "admin" in parts:
@@ -1312,12 +1317,33 @@ def _migrate_v23(conn: sqlite3.Connection):
             conn.execute(ddl)
 
 
+def _migrate_v24(conn: sqlite3.Connection):
+    """Drop the legacy ``users.role='coach'`` token.
+
+    Coach access is membership-only now (``team_user_memberships``). Any
+    stale ``coach`` entry in the comma-separated ``users.role`` string is
+    rewritten: removed from composite values like ``coach,uploader`` and
+    replaced with ``viewer`` when it was the only token. Idempotent.
+    """
+    rows = conn.execute("SELECT id, role FROM users").fetchall()
+    for row in rows:
+        raw = row["role"] or ""
+        parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+        if "coach" not in parts:
+            continue
+        remaining = [p for p in parts if p != "coach"]
+        ordered = [p for p in ("admin", "uploader", "viewer") if p in remaining]
+        new_role = ",".join(ordered) if ordered else "viewer"
+        if new_role != raw:
+            conn.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, row["id"]))
+
+
 _MIGRATIONS = [
     _migrate_v0, _migrate_v1, _migrate_v2, _migrate_v3, _migrate_v4,
     _migrate_v5, _migrate_v6, _migrate_v7, _migrate_v8, _migrate_v9,
     _migrate_v10, _migrate_v11, _migrate_v12, _migrate_v13, _migrate_v14,
     _migrate_v15, _migrate_v16, _migrate_v17, _migrate_v18, _migrate_v19,
-    _migrate_v20, _migrate_v21, _migrate_v22, _migrate_v23,
+    _migrate_v20, _migrate_v21, _migrate_v22, _migrate_v23, _migrate_v24,
 ]
 
 
@@ -2056,6 +2082,66 @@ def list_user_memberships(user_id: str) -> list[dict]:
             (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+def list_user_memberships_with_team(user_id: str) -> list[dict]:
+    """Like ``list_user_memberships`` but joined with the team for display."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT m.id, m.team_id, m.user_id, m.role, m.created_at,
+                   t.name AS team_name, t.slug AS team_slug
+            FROM team_user_memberships m
+            LEFT JOIN teams t ON t.id = m.team_id
+            WHERE m.user_id = ?
+            ORDER BY t.name COLLATE NOCASE, m.role
+            """,
+            (user_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def list_player_links_for_user(user_id: str) -> list[dict]:
+    """Return every player-link row for ``user_id`` joined with player + team.
+
+    Used by the Admin > Users 360 drawer so a global admin can see every
+    player a person is connected to across teams in one place.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT l.id, l.player_id, l.user_id, l.relationship, l.created_at,
+                   l.team_id, p.display_name AS player_name,
+                   p.jersey_number,
+                   t.name AS team_name, t.slug AS team_slug
+            FROM player_user_links l
+            JOIN players p ON p.id = l.player_id
+            LEFT JOIN teams t ON t.id = COALESCE(l.team_id, p.team_id)
+            WHERE l.user_id = ?
+            ORDER BY t.name COLLATE NOCASE, p.display_name COLLATE NOCASE
+            """,
+            (user_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def count_enabled_global_admins(exclude_user_id: str | None = None) -> int:
+    """Count enabled users with the legacy ``admin`` role.
+
+    Used by the Admin > Users delete/disable last-admin guard. ``admin`` is
+    the surviving global-admin token after _migrate_v24 stripped ``coach``.
+    """
+    sql = (
+        "SELECT COUNT(*) AS n FROM users "
+        "WHERE enabled = 1 AND (',' || REPLACE(role, ' ', '') || ',') LIKE '%,admin,%'"
+    )
+    params: list = []
+    if exclude_user_id:
+        sql += " AND id != ?"
+        params.append(exclude_user_id)
+    with connect() as conn:
+        row = conn.execute(sql, params).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def _default_scope(conn: sqlite3.Connection) -> tuple[str, str]:

@@ -145,13 +145,17 @@ export const coachingRosterMixin = {
         container.innerHTML = filtered.map((p) => {
             const links = p.links || [];
             const linkChips = links.length
-                ? links.map((l) => `
-                    <button type="button" class="roster-link-chip" title="Unlink @${this.esc(l.username)} (${this.esc(l.relationship)})" onclick="app.handleCoachUnlink(${l.id})">
-                        <span class="roster-link-rel">${this.esc(l.relationship)}</span>
-                        <span class="roster-link-user">@${this.esc(l.username)}</span>
-                        <span class="roster-link-x" aria-hidden="true">×</span>
-                    </button>
-                `).join('')
+                ? links.map((l) => {
+                    const meta = this.relationshipMeta(l.relationship);
+                    const title = `Unlink @${this.esc(l.username)} — ${this.esc(meta.label)}`;
+                    return `
+                        <button type="button" class="roster-link-chip" title="${title}" data-tone="${this.esc(meta.tone)}" onclick="app.handleCoachUnlink(${l.id})">
+                            ${this.relationshipPillHtml(l.relationship, { extraClass: 'is-chip-inline' })}
+                            <span class="roster-link-user">@${this.esc(l.username)}</span>
+                            <span class="roster-link-x" aria-hidden="true">×</span>
+                        </button>
+                    `;
+                }).join('')
                 : '<span class="roster-no-links">No links</span>';
             const subtitle = (p.notes && p.notes.trim()) ? this.esc(p.notes.trim()) : '';
             const jerseyBadge = p.jersey_number

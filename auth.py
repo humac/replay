@@ -53,7 +53,7 @@ def role_set(role: str | None) -> set[str]:
     """
     roles = {part.strip().lower() for part in (role or "").split(",") if part.strip()}
     if "admin" in roles:
-        roles.update({"coach", "uploader", "viewer"})
+        roles.update({"uploader", "viewer"})
     return roles or {"viewer"}
 
 
@@ -65,21 +65,16 @@ def is_privileged_coach(user: dict) -> bool:
     """Return True when the user should see the privileged (unscrubbed)
     coach view of feedback resources.
 
-    Covers two paths so a membership-only coach (legacy ``users.role`` ==
-    ``viewer`` but a coach/team_admin row in ``team_user_memberships``)
-    gets the same un-scrubbed visibility as a legacy admin/coach user.
+    Privilege requires either:
+    1. Legacy ``users.role`` is ``admin`` (global admin override), or
+    2. The user has a ``coach`` / ``team_admin`` / ``assistant_coach``
+       row in ``team_user_memberships``.
 
-    1. Legacy ``users.role`` is ``admin`` or ``coach`` — the original
-       privacy check from before the membership system landed.
-    2. The user has at least one ``coach`` or ``team_admin`` membership
-       row, regardless of legacy ``users.role``.
-
-    Either is sufficient. Use this anywhere code currently calls
-    ``has_role(user, 'admin', 'coach')`` to decide whether to scrub
-    ``coach_private_note`` / surface playlist source ids / show coach-
-    only sections.
+    The pre-membership ``users.role == 'coach'`` bypass was removed
+    after the membership system became the source of truth — see
+    ``_migrate_v24`` which rewrites any leftover ``coach`` role string.
     """
-    if has_role(user, "admin", "coach"):
+    if has_role(user, "admin"):
         return True
     # Late-imported to avoid a circular import at module load (db imports
     # log; this module is imported by db indirectly). Cheap check — one

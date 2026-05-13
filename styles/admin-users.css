@@ -1,0 +1,344 @@
+/* Admin > Users refactor — list, CRUD modals, 360 drawer,
+ * plus the shared semantic relationship pill. Loaded after
+ * styles.css so tone overrides cascade cleanly into the
+ * existing badge/pill system. */
+
+/* ------------------------------------------------------------ */
+/* List head (panel-head pattern used elsewhere in admin)       */
+/* ------------------------------------------------------------ */
+
+.admin-users-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
+}
+
+.admin-users-head h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary, #f5f7ff);
+}
+
+.admin-users-empty {
+    color: var(--text-muted, rgba(255, 255, 255, 0.55));
+    padding: 12px 4px;
+}
+
+/* ------------------------------------------------------------ */
+/* List rows — clickable summary + inline actions               */
+/* ------------------------------------------------------------ */
+
+.user-row.user-row-clickable {
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+    padding: 8px;
+    border-radius: 10px;
+    transition: background-color 120ms ease;
+}
+
+.user-row.user-row-clickable + .user-row.user-row-clickable {
+    margin-top: 6px;
+}
+
+.user-row.user-row-clickable:hover {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+}
+
+.user-row.user-row-clickable .user-row-summary {
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    gap: 12px;
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    font: inherit;
+}
+
+.user-row.user-row-clickable .user-row-summary:focus-visible {
+    outline: 2px solid var(--accent-color, #4d9cff);
+    outline-offset: 2px;
+}
+
+.user-row.user-row-clickable .user-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.user-row.user-row-clickable .mini-action-btn.is-danger {
+    color: var(--danger-color, #ff6671);
+    border-color: rgba(255, 102, 113, 0.4);
+}
+
+.user-row.user-row-clickable .mini-action-btn.is-danger:hover {
+    background: rgba(255, 102, 113, 0.12);
+}
+
+/* ------------------------------------------------------------ */
+/* 360 drawer (modal size: 'wide')                              */
+/* ------------------------------------------------------------ */
+
+.admin-user-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.admin-user-section {
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.07));
+    border-radius: 12px;
+    background: var(--surface-color, rgba(255, 255, 255, 0.02));
+    padding: 14px 16px;
+}
+
+.admin-user-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 10px;
+}
+
+.admin-user-section-head h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary, #f5f7ff);
+}
+
+.admin-user-profile {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 6px 12px;
+    margin: 0;
+}
+
+.admin-user-profile dt {
+    color: var(--text-muted, rgba(255, 255, 255, 0.55));
+    font-size: 0.85rem;
+}
+
+.admin-user-profile dd {
+    margin: 0;
+    color: var(--text-primary, #f5f7ff);
+    font-size: 0.9rem;
+}
+
+.admin-user-membership-list,
+.admin-user-link-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.admin-user-membership-row,
+.admin-user-link-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--surface-elevated, rgba(255, 255, 255, 0.03));
+}
+
+.admin-user-membership-team {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.admin-user-link-player {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.admin-user-link-jersey {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 6px;
+    background: var(--accent-soft, rgba(77, 156, 255, 0.12));
+    color: var(--accent-color, #4d9cff);
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
+.admin-user-link-team {
+    font-size: 0.85rem;
+}
+
+/* ------------------------------------------------------------ */
+/* Create / Edit user form                                       */
+/* ------------------------------------------------------------ */
+
+.admin-user-form .admin-user-role-fieldset {
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.07));
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.admin-user-form .admin-user-role-fieldset legend {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0 6px;
+    color: var(--text-primary, #f5f7ff);
+}
+
+.admin-user-role-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 0.9rem;
+}
+
+.admin-user-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ------------------------------------------------------------ */
+/* Semantic relationship pill — shared across Coach > Roster,    */
+/* Player Development, and the Admin > Users 360 drawer.         */
+/* ------------------------------------------------------------ */
+
+.relationship-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    line-height: 1.4;
+    border: 1px solid transparent;
+    background: var(--surface-elevated, rgba(255, 255, 255, 0.05));
+    color: var(--text-primary, #f5f7ff);
+    white-space: nowrap;
+}
+
+.relationship-pill-icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+}
+
+.relationship-pill-icon path {
+    fill: currentColor;
+}
+
+.relationship-pill-label {
+    line-height: 1;
+}
+
+/* Tones — closed enum mirroring the backend relationships. */
+
+.relationship-pill[data-tone="self"] {
+    color: #6ec6ff;
+    background: rgba(110, 198, 255, 0.12);
+    border-color: rgba(110, 198, 255, 0.32);
+}
+
+.relationship-pill[data-tone="parent"] {
+    color: #6bd49a;
+    background: rgba(107, 212, 154, 0.12);
+    border-color: rgba(107, 212, 154, 0.32);
+}
+
+.relationship-pill[data-tone="guardian"] {
+    color: #f5b964;
+    background: rgba(245, 185, 100, 0.14);
+    border-color: rgba(245, 185, 100, 0.36);
+}
+
+.relationship-pill[data-tone="family"] {
+    color: #c8b6ff;
+    background: rgba(200, 182, 255, 0.13);
+    border-color: rgba(200, 182, 255, 0.34);
+}
+
+/* Inline chip variant — used inside roster link buttons where
+ * the pill sits next to a username and the parent button owns
+ * the focus ring. Trim padding so two pieces fit cleanly. */
+.relationship-pill.is-chip-inline {
+    padding: 1px 6px;
+    background: transparent;
+    border: 0;
+}
+
+/* Light-theme tuning */
+[data-theme="light"] .admin-users-head h3,
+[data-theme="light"] .admin-user-section-head h3,
+[data-theme="light"] .admin-user-profile dd {
+    color: var(--text-primary, #11233b);
+}
+
+[data-theme="light"] .admin-user-section {
+    background: var(--surface-color, #ffffff);
+    border-color: var(--border-color, rgba(17, 35, 59, 0.08));
+}
+
+[data-theme="light"] .admin-user-membership-row,
+[data-theme="light"] .admin-user-link-row {
+    background: var(--surface-elevated, rgba(17, 35, 59, 0.04));
+}
+
+[data-theme="light"] .relationship-pill[data-tone="self"] {
+    color: #1473d6;
+    background: rgba(20, 115, 214, 0.1);
+    border-color: rgba(20, 115, 214, 0.3);
+}
+
+[data-theme="light"] .relationship-pill[data-tone="parent"] {
+    color: #1f7a4f;
+    background: rgba(31, 122, 79, 0.1);
+    border-color: rgba(31, 122, 79, 0.28);
+}
+
+[data-theme="light"] .relationship-pill[data-tone="guardian"] {
+    color: #8c5a14;
+    background: rgba(140, 90, 20, 0.12);
+    border-color: rgba(140, 90, 20, 0.3);
+}
+
+[data-theme="light"] .relationship-pill[data-tone="family"] {
+    color: #5b449e;
+    background: rgba(91, 68, 158, 0.1);
+    border-color: rgba(91, 68, 158, 0.28);
+}
+
+/* Mobile collapse — stack rows so action buttons drop to a row */
+@media (max-width: 720px) {
+    .user-row.user-row-clickable .user-row-summary {
+        grid-template-columns: 1fr;
+        grid-row-gap: 4px;
+    }
+    .admin-user-profile {
+        grid-template-columns: 1fr;
+    }
+}

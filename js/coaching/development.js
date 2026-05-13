@@ -181,8 +181,8 @@ export const coachingDevelopmentMixin = {
             ? `<div class="player-dev-linked">
                   <span class="player-dev-linked-label">Linked accounts (${profile.linked_accounts.length}):</span>
                   ${profile.linked_accounts.map((l) => `
-                      <span class="player-dev-linked-chip" title="${this.esc(l.relationship || '')}">
-                          <span class="player-dev-linked-rel">${this.esc(l.relationship || 'link')}</span>
+                      <span class="player-dev-linked-chip">
+                          ${this.relationshipPillHtml(l.relationship, { titleSuffix: `@${l.username || ''}` })}
                           <span class="player-dev-linked-user">@${this.esc(l.username || '')}</span>
                       </span>`).join('')}
               </div>`
