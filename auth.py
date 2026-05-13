@@ -72,7 +72,7 @@ def is_privileged_coach(user: dict) -> bool:
 
     The pre-membership ``users.role == 'coach'`` bypass was removed
     after the membership system became the source of truth — see
-    ``_migrate_v19`` which rewrites any leftover ``coach`` role string.
+    ``_migrate_v24`` which rewrites any leftover ``coach`` role string.
     """
     if has_role(user, "admin"):
         return True

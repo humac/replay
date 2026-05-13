@@ -100,6 +100,12 @@ async def update_user(user_id: str, request: Request, body: UpdateUserRequest):
             if remaining == 0:
                 raise HTTPException(409, "last_admin")
     _db.update_user(user_id, **updates)
+    # Match the auth.py invariant: any password change (admin-driven here, or
+    # change_password / reset_password_with_token in routers/auth.py) revokes
+    # the target's existing sessions so a stolen/expired credential can't keep
+    # using the app after rotation.
+    if "password_hash" in updates:
+        _db.revoke_user_sessions(user_id)
     updated = _db.get_user_by_id(user_id)
     logger.info("admin.action", extra={"action": "update_user", "actor": actor["username"], "target_id": user_id, "fields": list(updates)})
     log_activity(
