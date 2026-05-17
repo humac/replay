@@ -82,14 +82,14 @@ services:
     restart: unless-stopped
 
   # MediaMTX — RTMP ingest (camera push) → LL-HLS output (browser playback).
-  # Only RTMP (1935) is exposed publicly; HLS and the control API stay on the
+  # Only RTMP (1936) is exposed publicly; HLS and the control API stay on the
   # internal compose network and are reverse-proxied by `replay` so viewers and
   # admins only need to reach a single origin.
   mediamtx:
     image: bluenviron/mediamtx:latest
     container_name: replay-mediamtx
     ports:
-      - "1935:1935"   # RTMP — point your camera here
+      - "1936:1936"   # RTMP — point your camera here
     expose:
       - "8888"        # LL-HLS (internal only)
       - "9997"        # control API (internal only)

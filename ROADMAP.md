@@ -549,7 +549,7 @@ Created `docs/DEPLOYMENT.md` (Docker/bare-metal setup, env vars reference, rever
 **Goal:** let users watch the current match in real time without waiting for upload + transcode.
 
 **5.1 RTMP ingest via MediaMTX sidecar** ✅
-Added `mediamtx` service to `docker-compose.yml`. Accepts RTMP push at port 1935, exposes LL-HLS internally on port 8888, exposes a control API on 9997 (internal only). Configured via `mediamtx.yml` with external HTTP auth — every publish hits `/api/live/auth` so the stream key can be rotated without restarting the sidecar.
+Added `mediamtx` service to `docker-compose.yml`. Accepts RTMP push at port 1936, exposes LL-HLS internally on port 8888, exposes a control API on 9997 (internal only). Configured via `mediamtx.yml` with external HTTP auth — every publish hits `/api/live/auth` so the stream key can be rotated without restarting the sidecar.
 
 **5.2 Live stream key management** ✅
 Stream key is generated lazily on first read (24 chars of url-safe entropy) and persisted in the `settings` table under the new private key `live_stream_key`. The key is never included in the public `/api/settings` payload (private-key denylist in `settings.public_payload`). Admin endpoints: `GET /api/admin/live/config` (view), `POST /api/admin/live/rotate-key` (rotate).

@@ -98,7 +98,7 @@ cp .env.example .env.local
 
 Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the container.
 
-Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1935` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8091` origin via a reverse proxy.
+Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1936` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8091` origin via a reverse proxy.
 
 The Intel compose stack also includes an optional Phase 6.2 Postgres smoke-test lane. SQLite remains the app runtime until the later Alembic/runtime migration PRs, but you can start the Postgres service, run the focused lane, and exercise the Phase 6.4 one-shot import helper with:
 
@@ -160,7 +160,7 @@ Replay can ingest a live RTMP feed (e.g. from an XbotGo Falcon or any camera/enc
 
 The live pipeline is provided by a `mediamtx` sidecar in `docker-compose.yml`:
 
-- camera pushes RTMP to `rtmp://<your-host>:1935/live/<stream-key>`
+- camera pushes RTMP to `rtmp://<your-host>:1936/live/<stream-key>`
 - MediaMTX repackages to LL-HLS and exposes it on its internal port `8888`
 - the `replay` app reverse-proxies the playlist + segments at `/api/live/hls/*`, so viewers only ever talk to the same `8091` origin
 - MediaMTX calls back to `/api/live/auth` on every publish to validate the stream key — rotating the key invalidates any active publisher immediately
@@ -170,7 +170,7 @@ The live pipeline is provided by a `mediamtx` sidecar in `docker-compose.yml`:
 Log in as admin and open **Settings → Live Streaming**:
 
 1. tick **Enable the Watch Live tab** (default on)
-2. enter the public-facing RTMP URL you want camera operators to use, e.g. `rtmp://replay.example.com:1935/live`
+2. enter the public-facing RTMP URL you want camera operators to use, e.g. `rtmp://replay.example.com:1936/live`
 3. copy the auto-generated **Stream Key** (click *Reveal* to view it)
 4. paste the URL + key into your camera/encoder
 5. point a viewer at `/live` — the player shows an "Offline" placeholder until the camera goes live, then auto-attaches to the LL-HLS feed
