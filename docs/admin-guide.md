@@ -68,7 +68,7 @@ Replay reads its critical configuration from `.env.local` at the project root. C
 ```bash
 ADMIN_USER=admin
 ADMIN_PASS=change-me-to-something-strong
-REPLAY_PORT=8090
+REPLAY_PORT=8091
 REPLAY_DATA_DIR=/data
 ```
 
@@ -104,7 +104,7 @@ For larger deployments, you can split hot HLS data and cold raw uploads onto sep
 
 ### First sign-in
 
-1. Open `http://localhost:8090` in a browser.
+1. Open `http://localhost:8091` in a browser.
 2. Click **LOGIN** in the top-right.
 
    ![Login modal](./screenshots/admin-login.png)

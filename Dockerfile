@@ -3,7 +3,7 @@ FROM nvidia/cuda:12.2.2-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    REPLAY_PORT=8090 \
+    REPLAY_PORT=8091 \
     REPLAY_DATA_DIR=/data \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
@@ -34,6 +34,6 @@ RUN useradd --create-home --uid 10001 appuser \
 
 USER appuser
 
-EXPOSE 8090
+EXPOSE 8091
 
 CMD ["python3", "server.py"]

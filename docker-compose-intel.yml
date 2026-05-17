@@ -1,6 +1,6 @@
 services:
   # Service name MUST stay `replay` — the MediaMTX sidecar calls
-  # http://replay:8090/api/live/auth for RTMP publish-key validation, and
+  # http://replay:8091/api/live/auth for RTMP publish-key validation, and
   # the inlined mediamtx_config below hardcodes that hostname.
   replay:
     image: ghcr.io/humac/replay:latest
@@ -8,10 +8,10 @@ services:
     #build: .
     container_name: replay
     # No public `ports:` — Caddy is the single entry point. Other compose
-    # services reach this app via the service name `replay:8090` on the
+    # services reach this app via the service name `replay:8091` on the
     # internal network. `expose:` documents the port without publishing it.
     expose:
-      - "8090"
+      - "8091"
     env_file:
       - .env.local
     # The image's default UID 10001 can't write to a host bind-mounted /data
@@ -21,7 +21,7 @@ services:
     # ever migrate to a named volume or chown the host dir to 10001.
     user: "0:0"
     environment:
-      REPLAY_PORT: 8090
+      REPLAY_PORT: 8091
       REPLAY_DATA_DIR: /data
       # Storage tiering: HLS variants + the SQLite DB live on /data (SSD pool;
       # hot path, many small random reads). Raw uploads + finished MP4s live
@@ -75,7 +75,7 @@ services:
     tmpfs:
       - /tmp/ffmpeg:size=20g,exec
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/auth/check', timeout=5)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/api/auth/check', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -123,9 +123,9 @@ services:
   # proxies everything else to the replay app on the internal network.
   # See ./Caddyfile.
   #
-  # Host-published port is 8090 (the same port the replay app used to bind
-  # directly) so existing clients, Cloudflare Tunnel rules, and bookmarks
-  # keep working unchanged. Caddy listens on :80 inside the container.
+  # Host-published port is 8091, matching the replay app's default while
+  # leaving 8090 free for other local services. Caddy listens on :80 inside
+  # the container.
   #
   # /data is mounted read-only so a misconfiguration in Caddy can't write
   # into the replay app's data tree. Caddy's own persistence (ACME state,
@@ -141,7 +141,7 @@ services:
       XDG_DATA_HOME: /srv/caddy-data
       XDG_CONFIG_HOME: /srv/caddy-config
     ports:
-      - "8090:80"
+      - "8091:80"
     # Caddyfile is shipped via `configs:` (see below) instead of a host
     # bind-mount, so Komodo and similar deployers that only ship the compose
     # file (without the repo on disk) work out of the box.
@@ -250,7 +250,7 @@ configs:
       # and bakes it into the rendered config. The replay app's
       # /api/live/auth handler reads the password from the Authorization
       # header and 401s if it doesn't match LIVE_AUTH_SECRET.
-      authHTTPAddress: http://_:${LIVE_AUTH_SECRET}@replay:8090/api/live/auth
+      authHTTPAddress: http://_:${LIVE_AUTH_SECRET}@replay:8091/api/live/auth
       authHTTPExclude:
         - action: read
         - action: playback
@@ -288,7 +288,7 @@ configs:
         handle @vod_hls_team_segment_ts {
           # Team-aware HLS carries tenant scope and must pass through FastAPI so
           # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8090
+          reverse_proxy replay:8091
         }
 
         @vod_hls_segment_ts {
@@ -311,7 +311,7 @@ configs:
         handle @vod_hls_team_segment_mp4 {
           # Team-aware HLS carries tenant scope and must pass through FastAPI so
           # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8090
+          reverse_proxy replay:8091
         }
 
         @vod_hls_segment_mp4 {
@@ -334,7 +334,7 @@ configs:
         handle @vod_hls_team_playlist {
           # Team-aware HLS carries tenant scope and must pass through FastAPI so
           # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8090
+          reverse_proxy replay:8091
         }
 
         @vod_hls_playlist {
@@ -384,14 +384,14 @@ configs:
         }
 
         handle {
-          reverse_proxy replay:8090 {
+          reverse_proxy replay:8091 {
             flush_interval -1
             transport http {
               read_buffer 64KB
               write_buffer 64KB
             }
             # Preserve original Host so the app sees the public
-            # hostname instead of "replay:8090". X-Forwarded-For /
+            # hostname instead of "replay:8091". X-Forwarded-For /
             # X-Forwarded-Proto are set by reverse_proxy automatically;
             # X-Real-IP is not used by streams.client_ip().
             header_up Host {host}

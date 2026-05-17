@@ -150,8 +150,8 @@ DevTools, or Homebrew without touching the repo.
 | Need | Command / location | When |
 |---|---|---|
 | Accessibility audit | Chrome DevTools → Lighthouse tab → "Accessibility" | Sprint 8, anytime you suspect a regression |
-| A11y CLI (scriptable, exit-code gated) | `npx @axe-core/cli http://localhost:8090/coach?tab=review` | Sprint 8 if you want a CI-style gate |
-| Performance / SEO / a11y combined | `npx lighthouse http://localhost:8090/coach?tab=review --view` | Rare; Lighthouse tab in DevTools is usually enough |
+| A11y CLI (scriptable, exit-code gated) | `npx @axe-core/cli http://localhost:8091/coach?tab=review` | Sprint 8 if you want a CI-style gate |
+| Performance / SEO / a11y combined | `npx lighthouse http://localhost:8091/coach?tab=review --view` | Rare; Lighthouse tab in DevTools is usually enough |
 | Pixel-diff before/after composites | `brew install imagemagick && magick before.png after.png +append side-by-side.png` | Only when a reviewer asks for stitched composites |
 | Image scripting in Python (resize, crop) | `pip install --user Pillow` (or use a venv) | Rare; only for batch screenshot work |
 | End-to-end browser tests | `cd tests/e2e && npx playwright test` | Already installed (Sprint 9) |

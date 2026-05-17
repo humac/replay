@@ -7,7 +7,7 @@ cp .env.example .env.local   # edit ADMIN_PASS, NVIDIA_VISIBLE_DEVICES
 docker compose up --build -d
 ```
 
-The app is accessible at `http://localhost:8090`.
+The app is accessible at `http://localhost:8091`.
 
 ## Docker Compose (CPU-only)
 
@@ -39,7 +39,7 @@ seeds the setting, then the env var is ignored. Edit through the UI thereafter.
 |----------|---------|-------------|
 | `ADMIN_USER` | `admin` | Env-var superadmin username |
 | `ADMIN_PASS` | (none) | Env-var superadmin password |
-| `REPLAY_PORT` | `8090` | HTTP listen port |
+| `REPLAY_PORT` | `8091` | HTTP listen port |
 | `REPLAY_DATA_DIR` | `/tank/replay` | Root data directory (DB + videos) |
 | `REPLAY_ORIGINALS_DIR` | `<REPLAY_DATA_DIR>/videos` | Cold-storage path for raw uploads + finished MP4s. Set to a separate volume to keep the SSD pool free for HLS. See "Storage tiering" below. |
 | `ALLOWED_ORIGINS` | (empty) | Comma-separated hostnames for login origin check |
@@ -199,9 +199,9 @@ Saved in-app settings override these env vars. When email is disabled or incompl
 ## Reverse Proxy (Caddy — bundled)
 
 A `Caddyfile` and `caddy` compose service ship with the project. Caddy is
-the **single public entry point** — the host publishes `8090:80` (port
-`8090` on the host, port `80` inside the Caddy container), and the replay
-app sits on the internal compose network only (`expose: "8090"`, no
+the **single public entry point** — the host publishes `8091:80` (port
+`8091` on the host, port `80` inside the Caddy container), and the replay
+app sits on the internal compose network only (`expose: "8091"`, no
 `ports:` mapping).
 
 Caddy:
@@ -211,18 +211,17 @@ Caddy:
   hot path so 10 GbE LAN delivery is achievable.
 - Reverse-proxies everything else (live HLS proxy at `/api/live/hls/*`, MP4
   ranges, all `/api/*` admin endpoints, the SPA shell) to the replay app at
-  `replay:8090` on the internal network.
+  `replay:8091` on the internal network.
 - Mirrors the cache policy the replay app uses for HLS: playlists
   `public, max-age=60, must-revalidate`, segments
   `public, max-age=31536000, immutable`.
 
 The bind-mount is read-only inside the Caddy container.
 
-The host port `8090` was chosen so existing Cloudflare Tunnel rules,
-bookmarks, and the `mediamtx → replay:8090` internal call keep working
-unchanged. To reach a different host port, edit the `caddy.ports` mapping
-in your compose file (e.g. `"443:80"` once you front Caddy with a TLS
-terminator).
+The default host port is `8091` so Replay can run alongside another local
+service on `8090`. To reach a different host port, edit the `caddy.ports`
+mapping in your compose file (e.g. `"443:80"` once you front Caddy with a
+TLS terminator).
 
 For TLS / WAN, run Caddy behind Cloudflare Tunnel (existing setup) or
 front it with a TLS terminator. Don't enable Caddy's automatic HTTPS in
@@ -488,7 +487,7 @@ single-volume deploy "just works."
 Use the admin panel **Export Database** button or call:
 
 ```bash
-curl -X POST http://localhost:8090/api/admin/export-database \
+curl -X POST http://localhost:8091/api/admin/export-database \
   -H "Authorization: Bearer <token>" \
   -o replay-backup.db
 ```

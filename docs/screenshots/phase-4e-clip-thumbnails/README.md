@@ -1,6 +1,6 @@
 # Phase 4e — Clip-specific thumbnail screenshots
 
-Captured against `http://localhost:8090` with the Phase 4e backend live
+Captured against `http://localhost:8091` with the Phase 4e backend live
 and the seeded demo data (`docs/_seed/seed.py`, password
 `Replay!Demo123`). The capture script is [`_capture.py`](./_capture.py)
 — re-run any time after the demo seed:

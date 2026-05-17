@@ -176,7 +176,7 @@ def test_caddy_hls_regexes_match_legacy_and_team_aware_shapes_without_cross_fall
     for config_path in (Path("Caddyfile"), Path("docker-compose-intel.yml")):
         text = config_path.read_text()
         assert "try_files /videos/teams" not in text
-        assert text.count("reverse_proxy replay:8090") >= 4
+        assert text.count("reverse_proxy replay:8091") >= 4
         for suffix, suffix_assets in assets.items():
             patterns = [
                 re.compile(pattern)

@@ -9,7 +9,7 @@
 // and the structured fields below.
 //
 // Logs in as the seeded `family1` (linked to roster #7 — Alex Park).
-// Run from the repo root with the dev server up at :8090:
+// Run from the repo root with the dev server up at :8091:
 //   cd tests/e2e && npm run capture-phase-6e
 //
 // Same serial-mode wrapper as the 6d-1 / 6d-2 capture specs.
@@ -26,7 +26,7 @@ mkdirSync(OUT, { recursive: true });
 
 const VIEWER = 'family1';
 const PASS = 'Replay!Demo123';
-const BASE = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
+const BASE = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8091';
 
 async function gotoFeedback(page, tab = 'notes') {
     await login(page, VIEWER, PASS);

@@ -10,14 +10,13 @@
 #     The replay container's data volume is mounted read-only here.
 #   - Everything else (including /api/live/hls/* which proxies MediaMTX, the
 #     SPA shell, /api/admin/*, MP4 downloads, settings PUTs) → reverse-proxied
-#     to the replay app on the internal compose network at replay:8090.
+#     to the replay app on the internal compose network at replay:8091.
 #
 # Ports:
 #   - Caddy listens on :80 inside its container.
-#   - The compose file publishes that as 8090 on the host (8090:80) so the
-#     stack remains reachable at the same `:8090` address it always was —
-#     existing Cloudflare Tunnel rules, bookmarks, and the
-#     MEDIAMTX → replay:8090 internal call all keep working.
+#   - The compose file publishes that as 8091 on the host (8091:80), matching
+#     the replay app's default port while leaving 8090 free for other local
+#     services.
 #   - The replay app no longer publishes its own port; it sits on the
 #     internal compose network only. Caddy is the single public entry point.
 #
@@ -58,7 +57,7 @@
 	handle @vod_hls_team_segment_ts {
 		# Team-aware HLS carries tenant scope and must pass through FastAPI so
 		# the app can validate match_id -> team_id before filesystem access.
-		reverse_proxy replay:8090
+		reverse_proxy replay:8091
 	}
 
 	@vod_hls_segment_ts {
@@ -81,7 +80,7 @@
 	handle @vod_hls_team_segment_mp4 {
 		# Team-aware HLS carries tenant scope and must pass through FastAPI so
 		# the app can validate match_id -> team_id before filesystem access.
-		reverse_proxy replay:8090
+		reverse_proxy replay:8091
 	}
 
 	@vod_hls_segment_mp4 {
@@ -104,7 +103,7 @@
 	handle @vod_hls_team_playlist {
 		# Team-aware HLS carries tenant scope and must pass through FastAPI so
 		# the app can validate match_id -> team_id before filesystem access.
-		reverse_proxy replay:8090
+		reverse_proxy replay:8091
 	}
 
 	@vod_hls_playlist {
@@ -201,7 +200,7 @@
 
 	# ---- Everything else → replay app ----
 	handle {
-		reverse_proxy replay:8090 {
+		reverse_proxy replay:8091 {
 			# Stream video bodies without buffering the whole upload into RAM.
 			flush_interval -1
 			transport http {
@@ -209,7 +208,7 @@
 				write_buffer 64KB
 			}
 			# Preserve the original Host header so the app sees
-			# f2014steel.jvhlabs.com (not the upstream `replay:8090`).
+			# f2014steel.jvhlabs.com (not the upstream `replay:8091`).
 			# X-Forwarded-For / X-Forwarded-Proto are set automatically by
 			# Caddy's reverse_proxy and don't need to be repeated here;
 			# X-Real-IP is unused by streams.client_ip() (which prefers

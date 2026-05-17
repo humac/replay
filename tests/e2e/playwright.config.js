@@ -4,7 +4,7 @@
 // Run from this directory:
 //   npx playwright test
 //
-// The replay app must be running at PLAYWRIGHT_BASE_URL (default http://localhost:8090)
+// The replay app must be running at PLAYWRIGHT_BASE_URL (default http://localhost:8091)
 // before tests start. We do NOT auto-start a dev server here so the same config works
 // against a local docker-compose stack or a deployed staging environment.
 
@@ -17,7 +17,7 @@ export default defineConfig({
     fullyParallel: true,
     reporter: [['list']],
     use: {
-        baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8090',
+        baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8091',
         trace: 'on-first-retry',
         screenshot: 'only-on-failure',
     },

@@ -46,7 +46,7 @@ types.
    with at least one visible video note, one tactical-board
    observation, and one clip.
 
-2. Start the dev server on port 8090 (or use the Claude Code preview
+2. Start the dev server on port 8091 (or use the Claude Code preview
    server):
 
     ```bash

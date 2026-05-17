@@ -1,6 +1,6 @@
 """Phase 4e — clip thumbnail screenshot capture.
 
-Runs against http://localhost:8090 which must already have Phase 4e
+Runs against http://localhost:8091 which must already have Phase 4e
 running (server restarted after the merge). Logs in as the seeded
 `coach1` and `family1` demo accounts (`docs/_seed/seed.py`,
 `Replay!Demo123`), navigates to Coach > Clips and My Feedback > Clips,
@@ -28,7 +28,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 HERE = Path(__file__).resolve().parent
-BASE = os.environ.get("REPLAY_BASE", "http://localhost:8090")
+BASE = os.environ.get("REPLAY_BASE", "http://localhost:8091")
 COACH = {"username": "coach1", "password": "Replay!Demo123"}
 VIEWER = {"username": "family1", "password": "Replay!Demo123"}
 

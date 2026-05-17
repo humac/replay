@@ -1,6 +1,6 @@
 # Phase 6b — Coach observation composer screenshots
 
-Captured against the live dev server at `http://localhost:8090` using Playwright.
+Captured against the live dev server at `http://localhost:8091` using Playwright.
 The page is seeded with a synthetic `_coachBundle` (3 sample players + a small mix
 of video and observation notes) so the screenshots showcase the new UI states
 without depending on user-specific seed data. No real backend writes — these are

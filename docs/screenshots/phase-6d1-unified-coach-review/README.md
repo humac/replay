@@ -1,6 +1,6 @@
 # Phase 6d-1 — Unified Coach Review screenshots
 
-These captures show the Phase 6d-1 unified Coach Review surface end-to-end. Each PNG was captured by `tests/e2e/phase-6d1-capture.spec.js` running against the local dev server (`http://localhost:8090`) with the seeded `coach1` (and `family1` for the viewer regression) accounts created by `docs/_seed/seed.py`.
+These captures show the Phase 6d-1 unified Coach Review surface end-to-end. Each PNG was captured by `tests/e2e/phase-6d1-capture.spec.js` running against the local dev server (`http://localhost:8091`) with the seeded `coach1` (and `family1` for the viewer regression) accounts created by `docs/_seed/seed.py`.
 
 To re-capture after future edits:
 
@@ -14,7 +14,7 @@ python3 server.py
 #    so it stays inside `auth.py`'s 5/IP/window login rate limit
 #    regardless of how it's invoked. The npm script also passes
 #    `--workers=2` defensively.
-cd tests/e2e && PLAYWRIGHT_BASE_URL=http://localhost:8090 \
+cd tests/e2e && PLAYWRIGHT_BASE_URL=http://localhost:8091 \
     npm run capture-phase-6d1
 ```
 

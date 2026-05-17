@@ -76,7 +76,7 @@ source .env.local
 python server.py
 ```
 
-Open [http://localhost:8090](http://localhost:8090) and log in with `admin` / your `ADMIN_PASS`.
+Open [http://localhost:8091](http://localhost:8091) and log in with `admin` / your `ADMIN_PASS`.
 
 > **Note:** Live streaming (RTMP → LL-HLS) requires the `mediamtx` sidecar from Docker Compose and is not available in the bare-metal setup. Transcoding falls back to `libx264` automatically when `REPLAY_HWACCEL=cpu`.
 
@@ -88,7 +88,7 @@ Build and run with Docker Compose:
 docker compose up --build
 ```
 
-Then open [http://localhost:8090](http://localhost:8090).
+Then open [http://localhost:8091](http://localhost:8091).
 
 Copy the example environment file before first run if you want to override defaults:
 
@@ -98,7 +98,7 @@ cp .env.example .env.local
 
 Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the container.
 
-Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1935` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8090` origin via a reverse proxy.
+Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1935` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8091` origin via a reverse proxy.
 
 The Intel compose stack also includes an optional Phase 6.2 Postgres smoke-test lane. SQLite remains the app runtime until the later Alembic/runtime migration PRs, but you can start the Postgres service, run the focused lane, and exercise the Phase 6.4 one-shot import helper with:
 
@@ -119,7 +119,7 @@ Build/run with plain Docker (without the live stream):
 
 ```bash
 docker build -t replay .
-docker run --rm -p 8090:8090 -v replay_data:/data replay
+docker run --rm -p 8091:8091 -v replay_data:/data replay
 ```
 
 ### Configuration
@@ -127,7 +127,7 @@ docker run --rm -p 8090:8090 -v replay_data:/data replay
 | Environment Variable | Default | Description |
 | -------------------- | ------- | ----------- |
 | `REPLAY_DATA_DIR` | `/tank/replay` | Directory for match metadata and uploaded videos |
-| `REPLAY_PORT` | `8090` | Server port |
+| `REPLAY_PORT` | `8091` | Server port |
 | `MAX_UPLOAD_SIZE_BYTES` | `12884901888` | Max allowed upload size |
 | `UPLOAD_CHUNK_SIZE_BYTES` | `16777216` | Chunk size for resumable uploads |
 | `TRANSCODE_CONCURRENCY` | `2` | Max concurrent ffmpeg jobs |
@@ -162,7 +162,7 @@ The live pipeline is provided by a `mediamtx` sidecar in `docker-compose.yml`:
 
 - camera pushes RTMP to `rtmp://<your-host>:1935/live/<stream-key>`
 - MediaMTX repackages to LL-HLS and exposes it on its internal port `8888`
-- the `replay` app reverse-proxies the playlist + segments at `/api/live/hls/*`, so viewers only ever talk to the same `8090` origin
+- the `replay` app reverse-proxies the playlist + segments at `/api/live/hls/*`, so viewers only ever talk to the same `8091` origin
 - MediaMTX calls back to `/api/live/auth` on every publish to validate the stream key — rotating the key invalidates any active publisher immediately
 
 ### Camera setup

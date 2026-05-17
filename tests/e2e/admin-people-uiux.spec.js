@@ -8,7 +8,7 @@ function uniqueSlug(prefix) {
 }
 
 test('membership-only team admin can manage active-team people but not global admin sections', async ({ page }) => {
-    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
+    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8091';
     const suffix = uniqueSlug('people-uiux');
     const adminToken = await login(page, 'admin', ADMIN_PASS);
     const adminHeaders = { Authorization: `Bearer ${adminToken}` };

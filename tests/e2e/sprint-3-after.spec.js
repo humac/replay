@@ -7,7 +7,7 @@
 //
 // Run from this folder once the app is up at PLAYWRIGHT_BASE_URL with the
 // canonical seed (docs/_seed/seed.py from main):
-//   PLAYWRIGHT_BASE_URL=http://127.0.0.1:8090 npx playwright test sprint-3-after.spec.js
+//   PLAYWRIGHT_BASE_URL=http://127.0.0.1:8091 npx playwright test sprint-3-after.spec.js
 
 import { test, expect, devices } from '@playwright/test';
 import { mkdirSync } from 'fs';

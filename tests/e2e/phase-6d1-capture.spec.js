@@ -4,7 +4,7 @@
 // in docs/_seed/seed.py). Uses page.screenshot() so the captured PNGs
 // match what the user sees in the live preview, not a synthetic mock.
 //
-// Run from the repo root with the dev server already up at :8090:
+// Run from the repo root with the dev server already up at :8091:
 //   cd tests/e2e && npx playwright test phase-6d1-capture.spec.js
 import { test, expect } from '@playwright/test';
 import { login } from './_login.js';
@@ -20,7 +20,7 @@ mkdirSync(OUT, { recursive: true });
 const COACH = 'coach1';
 const FAMILY = 'family1';
 const PASS = 'Replay!Demo123';
-const BASE = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
+const BASE = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8091';
 
 async function shotShell(page, name) {
     // Capture only the Coach Review shell area (not the full viewport

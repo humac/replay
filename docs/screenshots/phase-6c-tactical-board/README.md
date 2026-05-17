@@ -1,7 +1,7 @@
 # Phase 6c — Tactical Board screenshots
 
 These screenshots were captured against the local dev server at
-`http://localhost:8090/` using Playwright (Python). Each screenshot
+`http://localhost:8091/` using Playwright (Python). Each screenshot
 mounts the real `app.tacticalBoardSvg` / `app.mountTacticalBoardSection`
 mixin into a synthetic host element on the live site so the captured
 DOM is the production renderer in production CSS — no fakes.

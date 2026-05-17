@@ -26,7 +26,7 @@ note's timestamp.
 ## How these were captured
 
 - The Phase 3b worktree was hot-reloaded into the `replay-dev` Claude Preview
-  on port 8090 (`/tmp/replay-sprint1-data`) by detaching `HEAD` to the
+  on port 8091 (`/tmp/replay-sprint1-data`) by detaching `HEAD` to the
   `claude/coaching-thumbnails-phase-3b` commit; uvicorn's `--reload` flag
   picked up the swap automatically.
 - A 2-minute test-pattern MP4 was generated via `ffmpeg lavfi` and uploaded

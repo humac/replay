@@ -4,7 +4,7 @@ Screenshots of the new game format / formation selectors, zone resize
 handles, telestrator-aligned tool icons, the updated keyboard shortcut
 popover, and a mobile layout check.
 
-All shots come from the **live dev server** at `http://localhost:8090`
+All shots come from the **live dev server** at `http://localhost:8091`
 seeded with `docs/_seed/seed.py` (coach1 / family1, password
 `Replay!Demo123`).
 

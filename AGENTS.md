@@ -68,12 +68,12 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`)
 - `styles.css`: full UI styling. Phase 5.3 keeps global/theme/base/admin/coach styles here but moves the self-contained Coach Engagement dashboard block to `styles/coaching-engagement.css`, which `index.html` loads immediately after the main stylesheet. When splitting more CSS, preserve link order and add new directories/files to `_STATIC_EXPORT_PATHS` in `server.py` for exported-static deployments.
 - `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live, streams, media, db, models, server). `.coveragerc` excludes the test files from coverage; CI gates `--cov-fail-under=60` (current baseline ~64 %).
-- `tests/e2e/`: Playwright browser smoke checks (opt-in). Scoped with its own `package.json` and `node_modules` so the repo root stays no-build. Run from inside the folder: `cd tests/e2e && npx playwright test`. Requires the app reachable at `PLAYWRIGHT_BASE_URL` (default `http://localhost:8090`). Per-sprint Coach Review specs live as `sprint-{1..8}-after.spec.js` (Sprint 7 covers the keyboard-shortcut layer; Sprint 8 covers a11y + responsive coverage at 5 widths plus iPad-Mini tap targets). Spec files import shared helpers from `tests/e2e/_login.js` — `login()` (with retry-on-429 backoff so the auth.py 5-per-IP login rate limit doesn't flake when several specs run back-to-back), `gotoAndSettle()`, and `pickMatchWithMostNotes()`. New specs should reuse these instead of inlining their own.
+- `tests/e2e/`: Playwright browser smoke checks (opt-in). Scoped with its own `package.json` and `node_modules` so the repo root stays no-build. Run from inside the folder: `cd tests/e2e && npx playwright test`. Requires the app reachable at `PLAYWRIGHT_BASE_URL` (default `http://localhost:8091`). Per-sprint Coach Review specs live as `sprint-{1..8}-after.spec.js` (Sprint 7 covers the keyboard-shortcut layer; Sprint 8 covers a11y + responsive coverage at 5 widths plus iPad-Mini tap targets). Spec files import shared helpers from `tests/e2e/_login.js` — `login()` (with retry-on-429 backoff so the auth.py 5-per-IP login rate limit doesn't flake when several specs run back-to-back), `gotoAndSettle()`, and `pickMatchWithMostNotes()`. New specs should reuse these instead of inlining their own.
 - `.agent-skills/`: portable per-repo skill pack (Coach Review redesign guardrails, search recipes, QA gates). Load `.agent-skills/README.md` first.
 - `pytest.ini`: pytest-asyncio mode/scope plus narrow filters for third-party Python 3.14 deprecations
 - `docker-compose.yml`: local container runtime — defines `replay` and the `mediamtx` sidecar
 - `mediamtx.yml`: MediaMTX config (RTMP ingest, LL-HLS output, external auth webhook)
-- `Caddyfile`: reverse proxy that serves VOD HLS `.ts/.m4s/.mp4` segments + variant playlists directly from `/data` via `sendfile()` and proxies all other routes to the replay app on `:8090`. Drops Python out of the segment-serving hot path so 10 GbE LAN delivery is achievable.
+- `Caddyfile`: reverse proxy that serves VOD HLS `.ts/.m4s/.mp4` segments + variant playlists directly from `/data` via `sendfile()` and proxies all other routes to the replay app on `:8091`. Drops Python out of the segment-serving hot path so 10 GbE LAN delivery is achievable.
 - `.env.example`: deployment configuration template
 
 ## Common Commands
@@ -87,7 +87,7 @@ pytest tests/ -v --cov --cov-report=term-missing
 docker compose up --build
 ```
 
-Open the app at `http://localhost:8090` by default.
+Open the app at `http://localhost:8091` by default.
 
 ## Environment
 
@@ -115,7 +115,7 @@ Most relevant variables:
 - `REPLAY_STRICT_TENANCY` — when truthy (`1`/`true`/`yes`/`on`), tenant-aware DB helpers raise if a call omits `team_id` unless the call site explicitly passes `allow_unscoped=True` for a documented global/legacy read. Tests default this to `1` in `tests/conftest.py`; production keeps legacy fallback unless enabled.
 - `REPLAY_DB_BACKEND` / `DATABASE_URL` — Phase 6.2 Postgres lane configuration. SQLite remains the live app runtime; use these only for explicit Postgres smoke tests until the Alembic/runtime migration PRs land.
 - `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_PORT` — optional local Postgres service settings for `docker-compose-intel.yml --profile postgres`.
-- `LIVE_AUTH_SECRET` — shared secret MediaMTX sends to `/api/live/auth`. MediaMTX 1.18 dropped `authHTTPHeaders`, so the secret travels as the password half of HTTP Basic Auth in `authHTTPAddress` itself: `http://_:***@replay:8090/api/live/auth`. The replay handler accepts the secret from either the `Authorization: Basic …` header (current MediaMTX) or the legacy `X-Internal-Secret:` header. If unset, the endpoint returns 503 by default; set `LIVE_AUTH_ALLOW_INSECURE=1` only for local/dev firewalled scenarios.
+- `LIVE_AUTH_SECRET` — shared secret MediaMTX sends to `/api/live/auth`. MediaMTX 1.18 dropped `authHTTPHeaders`, so the secret travels as the password half of HTTP Basic Auth in `authHTTPAddress` itself: `http://_:***@replay:8091/api/live/auth`. The replay handler accepts the secret from either the `Authorization: Basic …` header (current MediaMTX) or the legacy `X-Internal-Secret:` header. If unset, the endpoint returns 503 by default; set `LIVE_AUTH_ALLOW_INSECURE=1` only for local/dev firewalled scenarios.
 - `LIVE_STALE_SEGMENT_AGE_SECONDS` — stream flips to offline when no new HLS segment has been cut for this many seconds (default 90)
 
 

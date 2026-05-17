@@ -8,7 +8,7 @@
 const _tokenCache = {};
 
 export async function login(page, user, pass, opts = {}) {
-    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
+    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8091';
     if (!_tokenCache[user]) {
         // Retry on 429 (login rate limit). The server's window is short
         // (~60 s); we wait 5 s, 10 s, 20 s, 40 s, 60 s before giving up.
@@ -47,7 +47,7 @@ export async function gotoAndSettle(page, url) {
 }
 
 export async function pickMatchWithMostNotes(page, token) {
-    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
+    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8091';
     const resp = await page.request.get(`${baseURL}/api/coach/notes`, {
         headers: { Authorization: 'Bearer ' + token },
     });

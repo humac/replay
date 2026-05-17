@@ -8,7 +8,7 @@
 
 ## Stack
 
-- Backend: Python 3.11 + FastAPI on `:8090`, plain SQLite via `db.py` (no ORM)
+- Backend: Python 3.11 + FastAPI on `:8091`, plain SQLite via `db.py` (no ORM)
 - Frontend: vanilla HTML/CSS/JS, no build step. SPA shell at `index.html`, ES-module mixins under `js/` assembled by `script.js`
 - Media: ffmpeg/ffprobe via `media.py` (HLS variants + thumbnails)
 - Live: MediaMTX sidecar (RTMP → LL-HLS) — only available when running the docker-compose stack

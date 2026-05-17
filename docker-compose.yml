@@ -5,13 +5,13 @@ services:
     build: .
     container_name: replay
     # No public `ports:` — Caddy is the single entry point. Other compose
-    # services reach this app via `replay:8090` on the internal network.
+    # services reach this app via `replay:8091` on the internal network.
     expose:
-      - "8090"
+      - "8091"
     env_file:
       - .env.local
     environment:
-      REPLAY_PORT: 8090
+      REPLAY_PORT: 8091
       REPLAY_DATA_DIR: /data
       TMPDIR: /tmp/ffmpeg
       MAX_UPLOAD_SIZE_BYTES: 12884901888
@@ -35,7 +35,7 @@ services:
     tmpfs:
       - /tmp/ffmpeg:size=20g,exec
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/auth/check', timeout=5)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/api/auth/check', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -57,9 +57,9 @@ services:
   # proxies everything else to the replay app on the internal network.
   # See ./Caddyfile.
   #
-  # Host-published port is 8090 (the same port the replay app used to bind
-  # directly) so existing clients, Cloudflare Tunnel rules, and bookmarks
-  # keep working unchanged. Caddy listens on :80 inside the container.
+  # Host-published port is 8091, matching the replay app's default while
+  # leaving 8090 free for other local services. Caddy listens on :80 inside
+  # the container.
   #
   # /data is read-only — Caddy's persistence lives outside it (see
   # XDG_DATA_HOME / XDG_CONFIG_HOME below). Mounting a writable volume
@@ -71,7 +71,7 @@ services:
       XDG_DATA_HOME: /srv/caddy-data
       XDG_CONFIG_HOME: /srv/caddy-config
     ports:
-      - "8090:80"
+      - "8091:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - replay_data:/data:ro

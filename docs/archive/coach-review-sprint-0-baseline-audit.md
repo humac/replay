@@ -17,7 +17,7 @@ redesign needs to close. **No source files were edited.**
 
 | Setting | Value |
 |---|---|
-| App | `uvicorn server:app --host 127.0.0.1 --port 8090` |
+| App | `uvicorn server:app --host 127.0.0.1 --port 8091` |
 | Python venv | `/tmp/replay-venv` (uv, Python 3.14.4, requirements.txt) |
 | Data dir | `/tmp/replay-sprint0-data` (isolated; not the user's real archive) |
 | Seed scripts | `docs/_seed/seed.py` then `/tmp/seed_coaching.py` |
@@ -67,7 +67,7 @@ Capture script: [`tests/e2e/sprint-0-baseline.spec.js`](../tests/e2e/sprint-0-ba
 Re-run with:
 ```bash
 cd tests/e2e
-PLAYWRIGHT_BASE_URL=http://127.0.0.1:8090 npx playwright test sprint-0-baseline.spec.js
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:8091 npx playwright test sprint-0-baseline.spec.js
 ```
 
 ---

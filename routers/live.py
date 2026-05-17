@@ -133,7 +133,7 @@ async def live_auth_webhook(body: LiveAuthRequest, request: Request):
         # the shared secret either as the X-Internal-Secret header (for
         # callers that can set headers) or as the password half of HTTP
         # Basic Auth in the URL (which is what MediaMTX uses now —
-        # authHTTPAddress: http://_:<secret>@replay:8090/api/live/auth).
+        # authHTTPAddress: http://_:<secret>@replay:8091/api/live/auth).
         provided = request.headers.get("x-internal-secret") or ""
         if not provided:
             auth_header = request.headers.get("authorization") or ""

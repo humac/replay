@@ -1,11 +1,11 @@
 // Sprint 0 baseline screenshot capture for the Coach Review redesign.
-// Reads BASE_URL (default http://127.0.0.1:8090), logs in as coach1 via the
+// Reads BASE_URL (default http://127.0.0.1:8091), logs in as coach1 via the
 // existing seed user, drives the Review tab through several states, and saves
 // PNGs to docs/screenshots/sprint-0-baseline/.
 //
 // Run from this folder once the app is up at PLAYWRIGHT_BASE_URL with the
 // canonical seed (docs/_seed/seed.py from main):
-//   PLAYWRIGHT_BASE_URL=http://127.0.0.1:8090 npx playwright test sprint-0-baseline.spec.js
+//   PLAYWRIGHT_BASE_URL=http://127.0.0.1:8091 npx playwright test sprint-0-baseline.spec.js
 //
 // IMPORTANT: this captures the BEFORE state. To regenerate the baseline you
 // must run it against a checkout that does NOT include the Sprint 1
@@ -33,7 +33,7 @@ async function login(page, user, pass) {
     // sessionStorage on EVERY future page load via addInitScript. This
     // guarantees `app.canCoach()` is true during init() on the first
     // navigation, so /coach?tab=* doesn't bounce to the season fallback.
-    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
+    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8091';
     if (!_tokenCache[user]) {
         const resp = await page.request.post(`${baseURL}/api/login`, {
             data: { username: user, password: pass },
@@ -56,7 +56,7 @@ async function gotoAndSettle(page, url) {
 }
 
 async function pickMatchWithMostNotes(page, token) {
-    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8090';
+    const baseURL = page.context()._options?.baseURL || process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8091';
     const resp = await page.request.get(`${baseURL}/api/coach/notes`, {
         headers: { Authorization: 'Bearer ' + token },
     });

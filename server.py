@@ -1,6 +1,6 @@
 """Replay — Standalone match viewer with manual video upload.
 
-Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 8090)
+Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 8091)
 """
 
 from __future__ import annotations
@@ -2199,6 +2199,6 @@ if __name__ == "__main__":
     import uvicorn
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-    port = int(os.environ.get("REPLAY_PORT", "8090"))
+    port = int(os.environ.get("REPLAY_PORT", "8091"))
     logger.info("Replay server starting on port %d (data: %s)", port, DATA_DIR)
     uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=600)
