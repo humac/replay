@@ -2,76 +2,70 @@
 
 ## Purpose
 
-Codify the CSS patterns and accessibility expectations for the Coach Review redesign so
-desktop-compact controls don't harm tablet/mobile users and keyboard/AT users stay first-class.
+Codify the CSS patterns and accessibility expectations for Replay so desktop-compact controls
+don't harm tablet/mobile users and keyboard/AT users stay first-class.
 
 ## When to use it
 
-- Any sprint that edits `styles.css` (especially Sprints 1, 3, 5, 6, 8).
+- Any change that edits `styles.css`.
 - Any time you introduce a new interactive control (button, chip, slider, input).
 - Reviewing a PR that changes layout density.
 
 ## Key repo files
 
-- `styles.css` — single 6.4k-line stylesheet. The `Coach > Review shell` block starts around
-  line 6160 (search `/* Coach > Review shell` to locate it). Co-locate new rules.
+- `styles.css` — single large stylesheet with dark + light themes via CSS custom properties.
+  Co-locate new rules with the section they belong to.
 - `index.html` — interactive elements that need ARIA / focus styles live here and inside
-  `<template>` blocks (`coach-note-form-template`, `coach-playlist-form-template`,
-  `feedback-player-template`, `match-form-template`).
-- `js/coaching.js` — toolbar template strings that emit `aria-label`, `aria-pressed`,
-  `title`. ARIA must be set both in `innerHTML` and on the option chips
-  (`.coach-check-option`).
+  `<template>` blocks (`match-form-template`, the focused playback modal template).
+- `js/admin-views.js` / `js/views.js` — renderer template strings that emit `aria-label`,
+  `aria-pressed`, `title`. ARIA must be set both in `innerHTML` and on any custom chips.
 
 ## Patterns
 
 ### Layout
 
-CSS Grid for the cockpit shell. Use `minmax(0, 1fr)` on the flexible column to prevent
-content from forcing horizontal scroll. The fixed inspector sits at 320–360 px:
+CSS Grid for multi-column shells. Use `minmax(0, 1fr)` on the flexible column to prevent
+content from forcing horizontal scroll:
 
 ```css
-.coach-review-grid {
+.example-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 340px;
     gap: 0.85rem;
     align-items: start;
 }
 
-.coach-review-video {
-    min-width: 0;            /* Prevent video from blowing out the grid */
-}
-
-.coach-review-side {
-    max-height: calc(100vh - 180px);
-    overflow: auto;
+.example-grid .media {
+    min-width: 0;            /* Prevent media from blowing out the grid */
 }
 
 @media (max-width: 1023px) {
-    .coach-review-grid {
+    .example-grid {
         grid-template-columns: minmax(0, 1fr);  /* single column */
     }
 }
 ```
 
-Flexbox for the top bar and timeline rail. Keep wrap on, never scrollbar on the toolbar:
+Flexbox for toolbars/rails. Keep wrap on, never a scrollbar on a wrapping toolbar; only an
+intentional horizontal rail should scroll, and it must be themed:
 
 ```css
-.coach-review-picker {
+.toolbar-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
 }
 
-.coach-timeline-rail {
+.scroll-rail {
     display: flex;
     gap: 0.5rem;
     overflow-x: auto;        /* horizontal scroll allowed only here */
     scrollbar-width: thin;
     scrollbar-color: var(--scroll-thumb, rgba(255, 255, 255, 0.18)) transparent;
 }
-.coach-timeline-rail::-webkit-scrollbar { height: 6px; }
-.coach-timeline-rail::-webkit-scrollbar-thumb {
+.scroll-rail::-webkit-scrollbar { height: 6px; }
+.scroll-rail::-webkit-scrollbar-thumb {
     background: var(--scroll-thumb, rgba(255, 255, 255, 0.18));
     border-radius: 3px;
 }
@@ -79,21 +73,21 @@ Flexbox for the top bar and timeline rail. Keep wrap on, never scrollbar on the 
 
 ### Pointer-aware sizing
 
-Compact 34 px buttons on mouse, 44 px tap targets on touch:
+Compact buttons on mouse, ≥44 px tap targets on touch:
 
 ```css
 @media (pointer: fine) and (min-width: 900px) {
-    .coach-tool-btn {
+    .icon-btn {
         width: 34px;
         height: 34px;
         padding: 0;
         border-radius: 8px;
     }
-    .coach-tool-btn .label { display: none; }
+    .icon-btn .label { display: none; }
 }
 
 @media (pointer: coarse), (max-width: 899px) {
-    .coach-tool-btn {
+    .icon-btn {
         min-width: 44px;
         min-height: 44px;
     }
@@ -113,9 +107,9 @@ text — use `var(--text-muted)`, `var(--font-heading)`, etc. New tokens go near
 
 - Every icon-only button: **both** `aria-label="..."` and `title="..."` (label for AT, title
   for hover tooltip).
-- Toggle buttons (drawing tools, focus-mode toggle): `aria-pressed="true|false"`.
-- Tab-like navigation: `role="tab"` + `aria-selected="true|false"`. The current `.coach-subnav`
-  already does this; preserve it.
+- Toggle buttons: `aria-pressed="true|false"`.
+- Tab-like navigation: `role="tab"` + `aria-selected="true|false"`. Existing tab strips
+  (e.g. the admin sub-nav) already do this; preserve it.
 - Form controls: every `<input>`, `<select>`, `<textarea>` needs an associated `<label>` or
   `aria-label`. Placeholder text alone is not a label.
 - Decorative icons: `aria-hidden="true"`.
@@ -129,22 +123,20 @@ text — use `var(--text-muted)`, `var(--font-heading)`, etc. New tokens go near
 
 ### Native chrome
 
-User memory rule (also in `CLAUDE.md`): **never expose native browser chrome inside styled
+Repo rule (also in `CLAUDE.md`): **never expose native browser chrome inside styled
 components.** Practically this means:
 
-- No raw `<select multiple>` boxes in coach forms — use `.coach-check-list` chip selectors.
+- No raw `<select multiple>` boxes — use a custom chip selector.
 - Style `<input type="range">` thumb and track or hide in favor of a custom slider.
 - No unstyled scrollbars on horizontal rails — theme via `scrollbar-width`,
   `scrollbar-color`, and `::-webkit-scrollbar*`.
-- No native checkbox/radio appearance for tool toggles — use the existing `.coach-check-option`
-  pattern.
-- File inputs use the existing inline-label pattern in `script.js` (`'f-home-logo'` etc.).
+- No native checkbox/radio appearance for toggles — use a custom styled control.
+- File inputs use the existing inline-label pattern in the match form (`'f-home-logo'` etc.).
 
 ### Touch + keyboard parity
 
-- Every action reachable by mouse must be reachable by keyboard. Drawing tools toggleable via
-  Tab + Enter, not only via click.
-- Sprint 7 keyboard shortcuts must not interfere with form inputs (`input, textarea, select,
+- Every action reachable by mouse must be reachable by keyboard.
+- Global keyboard shortcuts must not interfere with form inputs (`input, textarea, select,
   [contenteditable]`). Guard at handler entry.
 
 ## Test widths
@@ -153,8 +145,8 @@ Test every layout-affecting change at **all five**: 390, 768, 1024, 1440, 1920 p
 
 - 390 px — iPhone-class, single column, touch.
 - 768 px — small tablet portrait.
-- 1024 px — small laptop / iPad landscape; the breakpoint where the side panel becomes a
-  fixed column.
+- 1024 px — small laptop / iPad landscape; a common breakpoint where multi-column shells
+  switch to side-by-side.
 - 1440 px — typical desktop.
 - 1920 px — wide monitor.
 
@@ -164,14 +156,11 @@ automation.
 ## Commands / checks to run
 
 ```bash
-# Find Coach Review CSS entry
-rg -n "Coach > Review shell" styles.css
-
 # Audit hardcoded colors (should all be tokens)
 rg -n "#[0-9a-fA-F]{3,6}\b" styles.css | rg -v "var\(" | head -40
 
-# Audit aria attributes on the toolbar / forms
-rg -n "aria-label|aria-pressed|aria-selected|role=" js/coaching.js index.html
+# Audit aria attributes on renderers / forms
+rg -n "aria-label|aria-pressed|aria-selected|role=" js/ index.html
 
 # Audit any `outline: none` without a focus replacement nearby
 rg -n "outline:\s*none|outline:\s*0" styles.css
@@ -181,17 +170,17 @@ Tools available without install:
 
 - Chrome DevTools "Issues" tab — flags missing labels and contrast problems.
 - Chrome DevTools Lighthouse → Accessibility audit (no install needed).
-- macOS VoiceOver (Cmd+F5) — verify reading order through the cockpit.
+- macOS VoiceOver (Cmd+F5) — verify reading order.
 
-Optional installs (not needed for Sprints 1–7):
+Optional install:
 
-- `axe-core` browser extension or `@axe-core/cli` (`npx @axe-core/cli`) for Sprint 8.
+- `axe-core` browser extension or `@axe-core/cli` (`npx @axe-core/cli`) for a scripted gate.
 
 ## Common failure modes
 
-- **Horizontal overflow at 1024 px.** Caused by the right pane lacking `min-width: 0`, by a
-  too-wide inspector default, or by an unwrapping toolbar row. Fix with `flex-wrap: wrap` on
-  the toolbar and `min-width: 0` on the video column.
+- **Horizontal overflow at 1024 px.** Caused by a flex/grid child lacking `min-width: 0`, by a
+  too-wide fixed column, or by an unwrapping toolbar row. Fix with `flex-wrap: wrap` on the
+  toolbar and `min-width: 0` on the media column.
 - **Pointer-coarse devices stuck with 28 px controls.** Forgetting the `@media (pointer:
   coarse)` override leaves desktop sizing on tablets. Always pair the two media queries.
 - **Focus rings hidden by `outline: none`.** Pair with `:focus-visible { box-shadow: 0 0 0
@@ -199,8 +188,8 @@ Optional installs (not needed for Sprints 1–7):
 - **Native scrollbar on the toolbar.** If the toolbar overflows horizontally, wrap rather
   than scroll.
 - **Hardcoded hex colors.** Themes will look wrong on the opposite mode. Use tokens.
-- **Drawer/modal blocks the canvas.** When focus mode shows a drawer, ensure it has
-  `position: fixed` and a backdrop, and Escape closes it before exiting focus mode itself.
+- **Overlay blocks underlying content.** When a modal/overlay is shown, ensure it has
+  `position: fixed` and a backdrop, and Escape closes it.
 
 ## Done criteria
 
@@ -212,4 +201,4 @@ Optional installs (not needed for Sprints 1–7):
 - No native browser chrome inside styled components.
 - All icon buttons have `aria-label` and `title`; toggles have `aria-pressed`; tabs have
   `aria-selected`.
-- Lighthouse Accessibility score ≥95 on the Coach Review tab.
+- Lighthouse Accessibility score ≥95 on the changed view.

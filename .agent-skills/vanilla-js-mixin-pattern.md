@@ -16,21 +16,21 @@ methods, and event handlers without breaking the no-build promise.
 - `script.js` — top-level state object, `init()`, history routing, event binding, mixin
   spread.
 - `js/utils.js`, `js/api.js`, `js/player.js`, `js/uploads.js`, `js/views.js`,
-  `js/admin-views.js`, `js/admin.js`, `js/ui.js`, `js/live.js`, `js/coaching.js` — every
-  mixin exports `export const xMixin = { ... }`.
+  `js/admin-views.js`, `js/admin.js`, `js/ui.js`, `js/live.js` — every mixin exports
+  `export const xMixin = { ... }`.
 
 ## Pattern at a glance
 
 ```js
-// js/coaching.js
-export const coachingMixin = {
-    _coachVideoId: 'coach-review-video',     // private state field
-    _coachDrawing: null,
-    setCoachTab(name) { /* ... uses `this.someOtherMixinMethod()` ... */ },
+// js/player.js
+export const playerMixin = {
+    _activeVideoId: 'game-video',            // private state field
+    _hlsPlayer: null,
+    loadPlaybackSource(video, hls, mp4, token) { /* ... uses `this.someOtherMixinMethod()` ... */ },
 };
 
 // script.js
-import { coachingMixin } from './js/coaching.js';
+import { playerMixin } from './js/player.js';
 
 const app = {
     matches: [],                              // top-level state
@@ -40,7 +40,6 @@ const app = {
     ...utilsMixin,
     ...apiMixin,
     ...playerMixin,
-    ...coachingMixin,
 };
 
 window.app = app;
@@ -70,17 +69,16 @@ A few non-negotiable rules baked into this pattern:
 - JSX, Babel, or any source transform
 - A root-level `package.json` adding `"build"` / `"dev"` scripts
 
-**No framework rewrites.** Do not migrate `js/coaching.js` or any other mixin to a component
-framework, even gradually. The repo deliberately ships static assets the browser interprets
-directly.
+**No framework rewrites.** Do not migrate any mixin to a component framework, even gradually.
+The repo deliberately ships static assets the browser interprets directly.
 
 **Adding state**:
 
 - Top-level state goes in the object literal in `script.js` (e.g. `activeMatchId`, `matches`).
 - Mixin-private state lives on the mixin object literal as a `_camelCase` field
-  (e.g. `_coachVideoId`, `_coachDrawing`). Use `this._foo` to access.
-- Don't sprinkle `let coachDrawing` at module scope inside `js/coaching.js` — there's no way
-  to reach it from other mixins or inline handlers.
+  (e.g. `_activeVideoId`, `_hlsPlayer`). Use `this._foo` to access.
+- Don't sprinkle `let foo` at module scope inside a mixin file — there's no way to reach it
+  from other mixins or inline handlers.
 
 **Adding a new mixin file**:
 
@@ -105,12 +103,12 @@ definition in the same diff. Don't leave a half-renamed method.
 ```bash
 # Syntax check after editing any JS file
 node --check script.js
-node --check js/coaching.js
+node --check js/admin.js
 node --check js/player.js
 node --check js/api.js
 
 # Find every place a public method is called
-rg -n "app\.setCoachTab\b" index.html js/
+rg -n "app\.editMatch\b" index.html js/
 rg -n "app\.\w+\(" index.html | sort -u | head -50
 
 # Find collisions between mixin keys
@@ -125,8 +123,8 @@ rg -n "^\s+(\w+)\(" js/ | awk -F: '{print $3}' | sort | uniq -c | sort -rn | hea
 - **Arrow callbacks losing `this`.** Inside `addEventListener('click', () => this.foo())` the
   arrow keeps `this`. Inside a `function() { this.foo() }`, it does not. Pick one and stick
   with it.
-- **State in two mixins.** Defining `_coachDrawing` in both `coachingMixin` and a new mixin
-  causes whichever spreads later to clobber. Audit `_coach*` fields with `rg`.
+- **State in two mixins.** Defining the same `_field` in two mixins causes whichever spreads
+  later to clobber. Audit private fields with `rg`.
 - **Forgetting to add the import in `script.js`.** A new mixin file that nothing imports
   silently does nothing.
 - **Adding a `package.json`.** Resist tooling that wants one. If a tool absolutely needs it,

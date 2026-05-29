@@ -18,8 +18,8 @@ the repo root. Edits go straight to source files and are reloaded by refreshing 
 Top-level entry points and shells:
 
 - `index.html` — single page shell containing all views (`#season-view`, `#admin-view`,
-  `#coach-view`, `#feedback-view`, `#live-view`, `#game-view`). Uses inline
-  `onclick="app.fooBar()"` handlers extensively — these depend on the global `window.app`.
+  `#live-view`, `#game-view`). Uses inline `onclick="app.fooBar()"` handlers extensively —
+  these depend on the global `window.app`.
 - `script.js` — ES module entry. Defines top-level state, lifecycle (`init`, history, nav
   binding), then **spreads every mixin** into a single object and assigns it to `window.app`.
 - `styles.css` — single 6.4k-line stylesheet. Theme variables come from custom properties
@@ -28,7 +28,7 @@ Top-level entry points and shells:
 Frontend mixins (each exports `export const xMixin = { ... }`):
 
 - `js/utils.js` — helpers (formatters, DOM utilities).
-- `js/api.js` — auth, role helpers (`isAdmin`, `canCoach`, `canEdit`, `hasRole`), token storage.
+- `js/api.js` — auth, role helpers (`isAdmin`, `canEdit`, `hasRole`), token storage.
 - `js/player.js` — HLS.js lifecycle, `getStreamUrls`, `loadPlaybackSource`, native HLS / MP4
   fallback, public match player keyboard shortcuts.
 - `js/uploads.js` — chunked uploads, retry/resume, settings asset uploads.
@@ -39,43 +39,35 @@ Frontend mixins (each exports `export const xMixin = { ... }`):
   polling.
 - `js/ui.js` — modal helper (`app.formModal`), other shared UI primitives.
 - `js/live.js` — live page playback, viewer counts, ON-AIR pill.
-- `js/coaching.js` — `/coach` workspace and `/feedback` view; **the only place** Coach Review
-  authoring lives.
 
 Backend (read-only for UI work):
 
-- `server.py` — FastAPI app, route registration. Use `lifespan` async context manager.
+- `server.py` — FastAPI app, route registration, lifespan. Routers live under `routers/`,
+  shared policy under `services/`.
 - `auth.py` — role helpers (`require_role`, `has_role`).
-- `db.py` — SQLite migrations and queries.
-- `models.py` — Pydantic request/response models, including `CreateCoachingNoteRequest` and
-  drawing payload validators.
+- `db.py` — SQLite schema (single squashed `_migrate_v1`) and queries.
+- `models.py` — Pydantic request/response models.
 - `media.py`, `live.py`, `streams.py`, `settings.py`, `uploads.py`, `log.py` — domain modules.
 
 Reference docs (load before non-trivial changes):
 
 - `AGENTS.md` — repo source of truth: stack, conventions, key files, editing guidance.
 - `CLAUDE.md` — Claude-specific guidance, validation commands.
-- `docs/archive/coach-review-ui-ux-implementation-plan.md` — Coach Review redesign plan.
-- `docs/coaching-analysis-feature-roadmap.md` — coaching-platform feature roadmap.
-- `docs/design/design-report.md` — UX restructure rationale.
-- `specs/coaching-platform-design.md` — coaching scope, data model, privacy.
+- `docs/admin-guide.md`, `docs/user-guide.md`, `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`.
 
 ## Important functions / selectors
 
 DOM ids that JS depends on (do not rename without grep):
 
-- Coach: `#coach-view`, `#coach-tab-roster`, `#coach-tab-notes`, `#coach-tab-playlists`,
-  `#coach-tab-review`, `#coach-review-match`, `#coach-review-slot`, `#coach-review-video`,
-  `#coach-drawing-canvas`, `#coach-review-toolbar`, `#coach-review-form`,
-  `#coach-review-notes`, `#coach-review-empty`.
-- Feedback: `#feedback-view`, `#feedback-linked-strip`, feedback player template
-  `<template id="feedback-player-template">`.
-- Public match: `#game-view`, `#game-video`, `#coach-this-match-link`.
-- Admin: `#admin-view`, `.admin-panel-head`, status strip ids.
+- Public match: `#game-view`, `#game-video`.
+- Public season: `#season-view`, the match grid, score-reveal chips.
+- Live: `#live-view`, `#live-video`.
+- Admin: `#admin-view`, `.admin-panel-head`, status strip ids, the
+  `<template id="match-form-template">` clone used by Add/Edit Match.
 
 `window.app` global helpers worth knowing:
 
-- Roles: `app.isAdmin()`, `app.canCoach()`, `app.canEdit()`, `app.hasRole(role)`.
+- Roles: `app.isAdmin()`, `app.canEdit()`, `app.hasRole(role)`.
 - History: `app.pushHistoryState`, `app.restoreHistoryState`.
 - Modals: `app.formModal({ body, onSubmit })` mounts a template-cloned modal.
 - HLS: `app.getStreamUrls(matchId, slot)`, `app.loadPlaybackSource(video, hls, mp4, token)`.
@@ -95,29 +87,27 @@ DOM ids that JS depends on (do not rename without grep):
 Quick orientation searches:
 
 ```bash
-# Where is a Coach Review thing defined?
-rg -n "renderCoachReview|renderCoachTelestratorToolbar|coach-review-" js/ index.html styles.css
+# Where is an admin/match thing defined?
+rg -n "renderMatchLibraryTable|renderPerformanceTuning|renderTuningKnobsCard" js/ index.html styles.css
 
 # What inline handlers exist? (these are public surface; renames break them)
 rg -n "app\.\w+\(" index.html | head -40
 
-# What DOM ids does coach-review depend on?
-rg -n "id=\"coach-review-" index.html
-rg -n "getElementById\('coach-review-" js/coaching.js
+# What DOM ids does a view depend on?
+rg -n "id=\"game-|id=\"live-|id=\"admin-" index.html
 
 # What roles gate a UI element?
-rg -n "canCoach|hasRole|isAdmin|canEdit" js/
+rg -n "hasRole|isAdmin|canEdit" js/
 
 # Validate JS syntax after an edit
 node --check script.js
-node --check js/coaching.js
+node --check js/admin.js
 ```
 
 ## Common failure modes
 
-- **Renaming a coaching method silently breaks the UI.** `index.html` invokes
-  `app.handleCoachReviewMatchChange()` etc. via inline `onchange`. There is no compile-time
-  check.
+- **Renaming a public method silently breaks the UI.** `index.html` invokes `app.foo()` via
+  inline `onchange` / `onclick`. There is no compile-time check.
 - **Editing mixin spread order in `script.js`.** Earlier mixins win on key conflicts; reordering
   can swap which mixin's method wins.
 - **Assuming a framework.** There is no React, JSX, Vue, or store. State is plain object
@@ -129,8 +119,8 @@ node --check js/coaching.js
 
 You can answer these from memory + a single `rg` search:
 
-- For any DOM id under `#coach-tab-review`, which `js/*.js` file owns it?
+- For any DOM id under `#admin-view`, which `js/*.js` file owns it?
 - For any `app.fooBar()` invocation in `index.html`, which mixin defines `fooBar`?
-- Which file holds the role gate that hides `/coach` from non-coach users?
+- Which file holds the role gate that hides `/admin` actions from viewers?
 
 If yes, you're oriented enough to start work.

@@ -11,8 +11,8 @@
 // `system` was renamed to `performance` so the tuning knobs and the live
 // signal they control share one page. Old URLs redirect via
 // resolveAdminSection() below.
-const ADMIN_SECTIONS = ['overview', 'matches', 'live', 'performance', 'people', 'teams', 'users', 'settings'];
-const ADMIN_ONLY_SECTIONS = new Set(['overview', 'live', 'performance', 'teams', 'users', 'settings']);
+const ADMIN_SECTIONS = ['overview', 'matches', 'live', 'performance', 'users', 'settings'];
+const ADMIN_ONLY_SECTIONS = new Set(['overview', 'live', 'performance', 'users', 'settings']);
 const LEGACY_SECTION_REDIRECTS = {
     streams: 'live',
     system: 'performance',
@@ -23,19 +23,15 @@ const SECTION_META = {
     matches:     { label: 'Matches',     glyph: '02', kicker: 'Library' },
     live:        { label: 'Live',        glyph: '03', kicker: 'Broadcast' },
     performance: { label: 'Performance', glyph: '04', kicker: 'Encoder & host' },
-    people:      { label: 'People',      glyph: '05', kicker: 'Team access' },
-    teams:       { label: 'Teams',       glyph: '06', kicker: 'Tenants' },
-    users:       { label: 'Users',       glyph: '07', kicker: 'Accounts' },
-    settings:    { label: 'Settings',    glyph: '08', kicker: 'Branding' },
+    users:       { label: 'Users',       glyph: '05', kicker: 'Accounts' },
+    settings:    { label: 'Settings',    glyph: '06', kicker: 'Branding' },
 };
 
 // Visual grouping of the admin sidebar. Routes are unchanged; only the
-// rendered sidebar gains group headers so a global admin can mentally split
-// broadcast ops (the public VOD/live product) from tenant ops (the secured
-// coaching product) and platform-wide settings.
+// rendered sidebar gains group headers so an admin can mentally split
+// broadcast ops (the public VOD/live product) from platform-wide settings.
 const ADMIN_NAV_GROUPS = [
     { label: 'Broadcast',  sections: ['overview', 'matches', 'live', 'performance'] },
-    { label: 'Tenants',    sections: ['people', 'teams'] },
     { label: 'Platform',   sections: ['users', 'settings'] },
 ];
 
@@ -50,7 +46,6 @@ export const adminMixin = {
     canViewAdminSection(section) {
         if (section in LEGACY_SECTION_REDIRECTS) section = LEGACY_SECTION_REDIRECTS[section];
         if (section === 'matches') return this.canEdit();
-        if (section === 'people') return this.isAdmin() || this.canManageTeamMembers?.();
         if (ADMIN_ONLY_SECTIONS.has(section)) return this.isAdmin();
         return this.canAccessAdminConsole?.() || this.canEdit();
     },
@@ -66,7 +61,6 @@ export const adminMixin = {
 
     defaultAdminSection() {
         if (this.isAdmin()) return 'overview';
-        if (this.canManageTeamMembers?.()) return 'people';
         return 'matches';
     },
 
@@ -132,7 +126,7 @@ export const adminMixin = {
         const brandLabel = document.getElementById('admin-brand-name');
         if (brandLabel) brandLabel.textContent = (this.getAppSettings().app_name || 'Replay');
         const brandRole = document.getElementById('admin-brand-role');
-        if (brandRole) brandRole.textContent = isAdmin ? 'Admin Console' : (this.canManageTeamMembers?.() ? 'Team Admin Console' : 'Match Studio');
+        if (brandRole) brandRole.textContent = isAdmin ? 'Admin Console' : 'Match Studio';
     },
 
     setAdminSection(section) {
@@ -184,9 +178,6 @@ export const adminMixin = {
             case 'users':
                 if (typeof this.renderUsersList === 'function') this.renderUsersList();
                 break;
-            case 'people':
-                this.renderAdminPeople?.();
-                break;
             case 'settings':
                 if (typeof this.renderSettingsForm === 'function') this.renderSettingsForm();
                 break;
@@ -197,10 +188,6 @@ export const adminMixin = {
                 if (this.isAdmin?.() && typeof this.renderTuningKnobsCard === 'function') {
                     this.renderTuningKnobsCard();
                 }
-                break;
-            case 'teams':
-                // Phase C: global-admin team CRUD lives in js/admin-teams.js.
-                this.loadAdminTeams?.();
                 break;
         }
         if (section !== 'performance') this.stopPerformanceTuningPolling?.();
@@ -505,5 +492,4 @@ const ADMIN_SECTION_BLURBS = {
     users:       'Operator accounts: create, suspend, or delete admins, uploaders, and viewers.',
     settings:    'Branding, public copy, navigation labels, and visitor download permissions.',
     performance: 'Encoder + host telemetry with tuning knobs. Change a setting, watch its impact.',
-    teams:       'Tenants: create teams + seasons, manage memberships, and audit cross-team access.',
 };

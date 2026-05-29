@@ -6,3 +6,8 @@ __pycache__/
 .coverage.*
 htmlcov/
 .pytest_cache/
+
+# Stray SQLite DB files (e.g. a default REPLAY_DATA_DIR run at repo root)
+*.db
+*.db-wal
+*.db-shm

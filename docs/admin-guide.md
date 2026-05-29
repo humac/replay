@@ -1,6 +1,6 @@
 # Replay — Administrator Guide
 
-This guide walks an administrator through everything you need to run a Replay deployment: first-time setup, day-to-day match management, coaching tools, live streaming, performance tuning, users, and branding.
+This guide walks an administrator through everything you need to run a Replay deployment: first-time setup, day-to-day match management, live streaming, performance tuning, users, and branding.
 
 ## Contents
 
@@ -10,13 +10,12 @@ This guide walks an administrator through everything you need to run a Replay de
 4. [The admin dashboard](#the-admin-dashboard)
 5. [Managing matches](#managing-matches)
 6. [Uploading video](#uploading-video)
-7. [Coaching workspace](#coaching-workspace)
-8. [Live streaming](#live-streaming)
-9. [Performance tuning](#performance-tuning)
-10. [Users and roles](#users-and-roles)
-11. [Branding and labels](#branding-and-labels)
-12. [Backups and data export](#backups-and-data-export)
-13. [Reference](#reference)
+7. [Live streaming](#live-streaming)
+8. [Performance tuning](#performance-tuning)
+9. [Users and roles](#users-and-roles)
+10. [Branding and labels](#branding-and-labels)
+11. [Backups and data export](#backups-and-data-export)
+12. [Reference](#reference)
 
 ---
 
@@ -28,11 +27,9 @@ For a brand-new install, work through these in order:
 - [ ] Choose a data directory and set `REPLAY_DATA_DIR` to it.
 - [ ] Start the server (`python server.py` or `docker compose up`).
 - [ ] Sign in at `/admin/overview` with the env-var admin account.
-- [ ] If prompted, use `/welcome` to create your first team and season.
 - [ ] Visit `/admin/settings` and update app branding, navigation labels, and intro copy.
 - [ ] Upload a club logo and favicon under **Branding**.
-- [ ] Visit `/admin/people` to invite coaches, guardians, and players to the active team.
-- [ ] Visit `/admin/users` only for platform-wide account recovery or legacy uploader/admin users.
+- [ ] Visit `/admin/users` to create uploader/admin/viewer accounts.
 - [ ] (Optional) Visit `/admin/live` to enable streaming and rotate the stream key.
 - [ ] (Optional) Visit `/admin/performance` to confirm hardware acceleration is detected.
 
@@ -40,18 +37,16 @@ For a brand-new install, work through these in order:
 
 ## Roles and access
 
-Replay has five access levels/capabilities:
+Replay has four access levels/capabilities:
 
 | Role | Can do |
 |---|---|
 | **Anonymous** | Browse the season grid, watch matches, watch live |
-| **Viewer** | Same as anonymous plus signed-in features such as team-visible coaching feedback |
-| **Coach** | Create roster records, link player/family accounts, add coaching notes/drawings/playlists |
+| **Viewer** | Same as anonymous plus signed-in features |
 | **Uploader** | Add / edit / delete matches and upload video. Limited to `/admin/matches` |
 | **Admin** | Everything: users, live, settings, performance tuning |
-| **Team admin** | Membership-scoped role that can manage one team's people/invites in `/admin/people` and team governance in Coach > Settings |
 
-Database users can have combined capabilities such as `coach,uploader`. The env-var superadmin always behaves as an admin and inherits every capability.
+Database users can have combined capabilities such as `uploader,admin`. The env-var superadmin always behaves as an admin and inherits every capability.
 
 There is also one special account: the **environment-variable superadmin**. This is the user you set via `ADMIN_USER` and `ADMIN_PASS` in `.env.local`. It is always treated as an admin, exists outside the user database, and cannot be disabled or deleted from the UI. Use it as a recovery account — if you ever lose access through the UI, you can sign in with the env-var credentials and fix the database account.
 
@@ -112,16 +107,6 @@ For larger deployments, you can split hot HLS data and cold raw uploads onto sep
 3. Enter the `ADMIN_USER` / `ADMIN_PASS` you set in `.env.local`.
 4. Once signed in, an **ADMIN** link appears in the top nav. Click it to enter the admin dashboard.
 
-### Guided setup wizard
-
-If you sign in to a freshly-installed instance that has no teams yet, you can open `/welcome` to run the **three-step guided setup**:
-
-1. **Create your first team** — name, slug, default match format.
-2. **Add your first season** — name + optional date range.
-3. **Invite your coaches** — chain together as many email + role invites as you need; Brevo-backed deployments email the link, while dev mode also shows a copy-link button.
-
-The wizard is skippable at every step. Skipping always lands you on `/admin/teams` so you can finish setup manually. The wizard is also auto-suppressed after the first skip (via `localStorage`), so you don't get bounced back to it on every login.
-
 ---
 
 ## The admin dashboard
@@ -130,7 +115,7 @@ The wizard is skippable at every step. Skipping always lands you on `/admin/team
 
 ![Admin overview dashboard](./screenshots/admin-overview.png)
 
-The left sidebar is grouped into three sections so you can mentally separate the public broadcast product from the secured coaching product:
+The left sidebar is grouped into two sections so you can mentally separate the broadcast product from platform administration:
 
 | Group | Section | Purpose |
 |---|---|---|
@@ -138,38 +123,12 @@ The left sidebar is grouped into three sections so you can mentally separate the
 |  | Matches | Match library — add, edit, delete, recover failed transcodes |
 |  | Live | RTMP cockpit — stream key, viewers, encoder load |
 |  | Performance | Tuning knobs and disk diagnostics |
-| **Tenants** | People | Active-team members, pending invites, delivery status, resend/revoke controls |
-| **Tenants** | Teams | Global-admin team / season / membership management (`/admin/teams`) |
 | **Platform** | Users | User account management |
 |  | Settings | Branding, navigation labels, feature toggles |
 
 > **Note:** Old links to `/admin/streams` redirect to `/admin/live`, and `/admin/system` redirects to `/admin/performance`.
 
-### `/admin/people` — active-team people management
-
-The Tenants > People page is the day-to-day team-admin console. It follows the active team selected in the top-bar scope switcher and lets a team admin or global admin:
-
-- review current members by role;
-- invite coaches, assistant coaches, team admins, players, and guardians;
-- see invite delivery status and expiry;
-- resend an invite, which rotates the token hash;
-- revoke a pending invite before it is accepted.
-
-Uploader-only users can still enter `/admin`, but they only see **Matches**. Membership-only team admins can enter `/admin/people` without being global admins.
-
-### `/admin/teams` — global-admin team management
-
-The Tenants > Teams page is the **global-admin** cross-tenant surface. Day-to-day team people management for a single team lives in **Admin > People**. Coach > Settings is reserved for team settings, defaults, and AI governance. Only global admins see Teams.
-
-The page has a two-pane layout:
-
-- **Left**: list of teams with a search filter and a **+ New team** button.
-- **Right**: detail panel for the selected team with three sub-tabs:
-  - **Overview** — 4 KPI tiles (Seasons, Memberships, Default format, Created date).
-  - **Seasons** — list + add (name, optional start / end dates).
-  - **Memberships** — cross-tenant audit list. Grant memberships from the user picker (live filter against `/api/users`); revoke shows a confirm modal. The backend enforces last-admin protection, returning a 409 surfaced inline.
-
-A team admin who needs to debug "this user says they can't see team X" can also open **Admin > Users**, click the **View teams** toggle on the user's row, and see every team membership for that account across tenants.
+Uploader-only users can still enter `/admin`, but they only see **Matches**.
 
 ---
 
@@ -263,54 +222,6 @@ Replay handles large match recordings (often 5–15 GB) via **resumable chunked 
 - For "video plays in some browsers but not others," try **Regen HLS** — it's almost always an HLS issue, not a transcoding issue.
 
 > **Warning:** Don't restart the server during a long transcode unless you have to. Pending transcodes do resume on startup, but a force-killed ffmpeg can leave a partial output that needs **Force Re-transcode** to recover.
-
----
-
-## Coaching workspace
-
-`/coach` is the coach-facing review workspace. It is visible to users with the `coach` capability and to admins.
-
-### Roster and family links
-
-The roster is separate from login accounts:
-
-- A **player** record represents the athlete: display name, jersey number, active flag, and internal notes.
-- A **user** record remains the login account.
-- A **player-user link** connects one or more parent/guardian/family/player accounts to a player.
-
-This supports common family setups: two parents linked to the same player, one account linked to siblings, or an older player linked to their own account.
-
-> **Note:** A coach needs the `coach` capability on their account to see `/coach`. The realistic combination is `coach,uploader` so the same person can also upload match video. Grant this from the [Users tab](#users-and-roles).
-
-### Coaching notes
-
-Coaches can create timestamped notes against a match slot (`Full`, `1st Half`, `2nd Half`). Notes include title, body, category, tags, visibility, optional linked players, and optional drawing overlay metadata.
-
-Visibility options:
-
-| Visibility | Who can see it |
-|---|---|
-| **Private** | Coaches and admins only |
-| **Team-visible** | Signed-in viewers through **My Feedback** |
-| **Player/family** | Only accounts linked to the selected roster player(s) |
-| **Unlisted link** | Signed-in viewers with the link-style access pattern |
-
-Coaches author notes in the **Review** sub-tab of the `/coach` workspace, which pairs the match video with the telestrator canvas as the single authoring surface. From any match page, a coach also sees a **Coach this match in Review →** button in the header that deep-links straight there.
-
-Available drawing tools include freehand line, arrow, circle, zone, label/player number, spotlight, dim overlay, color, line width, select/move, delete, undo, and clear. There is also a **Formation** tool for tactical shape: drop 3–16 anchors on the pitch and Replay computes the convex hull around them automatically (collinear anchors are rejected so the hull always has area). Drawings are metadata only — they are not burned into the MP4/HLS files.
-
-### Review playlists and My Feedback
-
-Review playlists group coaching notes into a lesson such as "First-half pressing" or "Build-up decisions." Coaches can assign playlists to the team or to linked players/families, set pre-roll/post-roll seconds, and play the playlist as an auto-advancing review session.
-
-Players and families sign in and open **My Feedback**. They only see:
-
-- team-visible notes/playlists
-- player-specific notes/playlists for roster players linked to their account
-
-They can jump from a note directly to the match timestamp, play shared playlists in sequence, and mark notes/playlists as reviewed. A shared playlist grants access to its included moments inside that playlist session even when a private note is not shown as a standalone feedback card.
-
-See the [coach guide](./coach-guide.md) for the full authoring and family-viewing walkthrough with screenshots.
 
 ---
 
@@ -440,7 +351,7 @@ The page lists every account with role, status, and inline actions to **Disable*
 2. Fill in:
    - **Username** — 2–50 characters, letters/numbers/dots/hyphens only, case-insensitive uniqueness.
    - **Password** — at least 8 characters.
-   - **Role** — `viewer`, `coach`, `uploader`, `coach,uploader`, or `admin` (see [Roles and access](#roles-and-access)).
+   - **Role** — `viewer`, `uploader`, `uploader,admin`, or `admin` (see [Roles and access](#roles-and-access)).
    - **Display name** — optional. Shown in the header after sign-in.
 3. Click **ADD USER**.
 
@@ -453,7 +364,7 @@ The page lists every account with role, status, and inline actions to **Disable*
 
 ### Resetting a password
 
-Open the user's **⋯** menu and choose **Reset password** when you need an admin-forced reset. Users can also use **Forgot password?** from the login modal; when transactional email is configured, Replay sends a one-time reset link to the profile email. In dev-token mode the raw token is returned only to the initiating admin/user for local testing.
+User accounts are admin-managed. To change a user's password, delete and recreate the account, or edit the password hash directly in the database. There is no self-service password reset or email-based recovery in this build.
 
 ---
 
@@ -473,18 +384,6 @@ The Settings page controls every customer-facing piece of copy and imagery.
 | **Intro Copy** | Paragraph below the season title |
 | **App Logo** | Top-left logo (replaces the "REPLAY" wordmark if uploaded) |
 | **Favicon** | Browser tab icon |
-
-### Notifications
-
-Use **Admin > Settings > Notifications** to manage transactional email without editing environment variables:
-
-- choose **Brevo** or keep email disabled;
-- set the public Replay URL used in invite/reset/verification links;
-- set the sender email and display name;
-- save, replace, or clear the Brevo API key;
-- send a test email.
-
-The Brevo API key is write-only in the app. Admins can see whether a key is configured, but the saved secret is not returned to the browser.
 
 > **Note:** Logos and favicons accept PNG, JPG, SVG, and WebP. SVG uploads have script tags stripped before serving — uploaded logos are still **inline** in the page, so a malicious SVG would otherwise be a stored XSS vector.
 
@@ -571,8 +470,6 @@ A short summary — for full details see the source in `server.py`.
 | `GET /api/admin/performance` | Real-time metrics |
 | `GET/PUT /api/admin/settings` | Application settings |
 | `GET/POST/PATCH/DELETE /api/users` | User management |
-| `GET/POST/PATCH/DELETE /api/coach/*` | Coaching roster, notes, links, playlists |
-| `GET /api/my-feedback` | Signed-in player/family feedback |
 | `POST /api/admin/live/rotate-key` | New stream key |
 | `GET /api/admin/streams` | Active viewer sessions |
 
