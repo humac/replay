@@ -96,7 +96,7 @@ Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the
 
 Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1936` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8091` origin via a reverse proxy.
 
-Replay uses SQLite as its only database backend; the schema is a single squashed migration pinned at `PRAGMA user_version = 1`.
+Replay uses SQLite as its only database backend; the schema is a single squashed migration pinned at `PRAGMA user_version = 1`. There is no in-place upgrade from the pre-squash chain — an existing DB at a higher schema version makes startup fail closed; see [DEPLOYMENT.md → Upgrading from a pre-squash install](docs/DEPLOYMENT.md#upgrading-from-a-pre-squash-install-pr-193).
 
 Build/run with plain Docker (without the live stream):
 

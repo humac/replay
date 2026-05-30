@@ -90,6 +90,37 @@ squashed migration applied automatically on startup and pinned at
 `PRAGMA user_version = 1`; `db.connect()` opens the SQLite database under
 `REPLAY_DATA_DIR`. There is no Postgres lane and no multi-backend support.
 
+### Upgrading from a pre-squash install (PR #193)
+
+This release squashed the historical v0..v26 migration chain (which built up
+and tore down the coaching / multi-tenant subsystems) into a single
+`_migrate_v1`. Migrations run forward only — a database already at
+`schema_version > 1` is from the pre-squash chain and carries tables and
+columns the current code no longer touches. To prevent silent drift, the
+startup migration runner refuses to open such a database and raises:
+
+```
+RuntimeError: Database is at schema_version=NN but this build targets v1
+(the squashed greenfield schema). A fresh REPLAY_DATA_DIR is required — point
+REPLAY_DATA_DIR at an empty directory, or delete the existing replay.db,
+before starting the app. Old multi-tenant / coaching tables will not be
+migrated.
+```
+
+There is no in-place upgrade path — the removed subsystems carry no app-
+visible data. Operators upgrading should:
+
+1. **Back up** the existing data directory (`REPLAY_DATA_DIR`, default
+   `/tank/replay`) — at minimum `replay.db`, the `videos/` tree, and any
+   `originals/` cold pool.
+2. **Move or delete** the existing `replay.db` so startup creates a fresh
+   one. Re-upload any matches you want to keep through the admin console.
+   Alternatively, point `REPLAY_DATA_DIR` at an empty directory for a clean
+   install.
+
+Existing media files (`videos/<match_id>/...`, `originals/<match_id>/...`)
+are flat-layout already and remain usable once their matches are re-added.
+
 ## Reverse Proxy (Caddy — bundled)
 
 A `Caddyfile` and `caddy` compose service ship with the project. Caddy is

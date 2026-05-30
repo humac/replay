@@ -104,6 +104,21 @@ version that failed.
 - If the database is corrupt, restore from a backup
 - Migration state is tracked in the `schema_version` table
 
+### `RuntimeError: Database is at schema_version=NN but this build targets v1`
+
+Raised at startup when an existing database is at a higher `schema_version`
+than the squashed v1 schema (i.e. it was created by the pre-squash v0..v26
+chain that included the coaching and multi-tenant subsystems). Migrations
+run forward only; the runner fails closed rather than silently leave the
+removed tables in place.
+
+**Fix:** there is no in-place upgrade. Back up the existing `replay.db` and
+the media tree, then either delete `replay.db` so startup creates a fresh
+one, or point `REPLAY_DATA_DIR` at an empty directory. Re-add any matches
+you want to keep through the admin console. See
+[Upgrading from a pre-squash install](DEPLOYMENT.md#upgrading-from-a-pre-squash-install-pr-193)
+in `DEPLOYMENT.md` for details.
+
 ## GPU Transcoding
 
 ### GPU transcode fails, CPU fallback works
