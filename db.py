@@ -271,9 +271,26 @@ _MIGRATIONS = [
 
 
 def _run_migrations(conn: sqlite3.Connection):
-    """Apply any pending schema migrations."""
+    """Apply any pending schema migrations.
+
+    The schema is a single squashed migration (`_migrate_v1`) and target
+    `PRAGMA user_version = 1`. There is no incremental history: a fresh DB
+    is at version -1 (no `schema_version` table) and gets migrated to 1; a
+    DB already at 1 is a no-op. Any DB at a HIGHER version is from the
+    pre-squash chain (v2..v26) — those carry tables/columns that no longer
+    exist in the code, so we fail closed rather than silently downgrade
+    `user_version` and leave dead tables around.
+    """
     current = _get_schema_version(conn)
     target = len(_MIGRATIONS)  # versions are 1-based for the squashed schema
+    if current > target:
+        raise RuntimeError(
+            f"Database is at schema_version={current} but this build targets "
+            f"v{target} (the squashed greenfield schema). A fresh "
+            "REPLAY_DATA_DIR is required — point REPLAY_DATA_DIR at an empty "
+            "directory, or delete the existing replay.db, before starting the "
+            "app. Old multi-tenant / coaching tables will not be migrated."
+        )
     for offset, migrate_fn in enumerate(_MIGRATIONS):
         version = offset + 1
         if version > current:

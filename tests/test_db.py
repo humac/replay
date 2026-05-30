@@ -88,6 +88,22 @@ def test_re_running_migrations_is_idempotent(fresh_db, tmp_path):
     assert rows["c"] == 1
 
 
+def test_migrations_fail_closed_on_legacy_higher_version(fresh_db, tmp_path):
+    """A DB at a HIGHER schema_version than the squashed target must refuse
+    to run rather than silently downgrade user_version and leave dead tables
+    from the pre-squash v0..v26 chain in place. Regression for PR #193 review."""
+    import sqlite3
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        conn.execute("INSERT INTO schema_version VALUES (26)")
+        conn.execute("PRAGMA user_version = 26")
+        conn.commit()
+    fresh_db.close_thread_connection()
+    with pytest.raises(RuntimeError, match="schema_version=26"):
+        fresh_db.init(tmp_path, db_path, tmp_path / "assets")
+
+
 # ---------------------------------------------------------------------------
 # Slug helpers
 # ---------------------------------------------------------------------------

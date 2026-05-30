@@ -1,9 +1,9 @@
 """Idempotent seed script for documentation screenshots.
 
-Inserts ~12 placeholder matches and 5 demo users (uploader1, viewer1, coach1,
-family1, family2) directly into the SQLite database via the project's own
-``db`` and ``auth`` helpers, and attaches one committed mock video to a single
-match so the player/VOD surfaces are screenshot-ready.
+Inserts ~12 placeholder matches and 2 demo users (uploader1, viewer1)
+directly into the SQLite database via the project's own ``db`` and ``auth``
+helpers, and attaches one committed mock video to a single match so the
+player/VOD surfaces are screenshot-ready.
 
 No HTTP / no running server required.
 
@@ -14,7 +14,12 @@ running the script against the user's real ``~/replay-data`` archive.
 Usage:
 
     export REPLAY_DATA_DIR=/tmp/replay-docs-data
+    export ADMIN_PASS=admin
     python docs/_seed/seed.py
+
+``ADMIN_PASS`` is required because importing ``auth`` validates it at module
+import time (the env-admin break-glass path). Use any non-empty value for
+documentation captures.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ import media as _media
 import settings as _settings
 
 
-SEEDED_USERS = ("uploader1", "viewer1", "coach1", "family1", "family2")
+SEEDED_USERS = ("uploader1", "viewer1")
 DEMO_PASSWORD = "Replay!Demo123"
 
 LOGO_DIR = Path(__file__).parent / "logos"
@@ -232,11 +237,8 @@ def _seed_users() -> dict[str, str]:
 
     pwd_hash = _auth.hash_password(DEMO_PASSWORD)
     spec = [
-        ("uploader1", "uploader",       "Uploader Demo"),
-        ("viewer1",   "viewer",         "Viewer Demo"),
-        ("coach1",    "coach,uploader", "Coach Demo"),
-        ("family1",   "viewer",         "Alex Parent"),
-        ("family2",   "viewer",         "Jordan Family"),
+        ("uploader1", "uploader", "Uploader Demo"),
+        ("viewer1",   "viewer",   "Viewer Demo"),
     ]
     by_username: dict[str, str] = {}
     for username, role, display in spec:
@@ -366,11 +368,8 @@ def main() -> None:
     print(mock_video_status)
     print()
     print("  Demo accounts (password: %s):" % DEMO_PASSWORD)
-    print("    uploader1  — uploader        (admin → matches only)")
-    print("    viewer1    — viewer          (read-only)")
-    print("    coach1     — coach,uploader")
-    print("    family1    — viewer")
-    print("    family2    — viewer")
+    print("    uploader1  — uploader  (manages the match library)")
+    print("    viewer1    — viewer    (read-only)")
     print()
     print("  Next:  python server.py")
     print(f"         (uses REPLAY_DATA_DIR={data_dir})")
