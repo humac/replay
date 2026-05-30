@@ -167,7 +167,13 @@ def test_path_containment_rejects_traversal_for_team_and_match_ids(tmp_path: Pat
         _media.slot_raw_path(tmp_path, "/abs", "full", ".mp4", team_id="team-1")
 
 
-def test_caddy_hls_regexes_match_legacy_and_team_aware_shapes_without_cross_fallback() -> None:
+def test_caddy_hls_regexes_match_flat_shapes_only() -> None:
+    """The single-team Caddyfile only serves the flat HLS layout.
+
+    The team-aware ``/api/matches/{id}/hls/teams/{team_id}/{slot}/...``
+    matchers were removed alongside their FastAPI handlers in PR #193 —
+    those URLs should no longer appear anywhere in either copy of the config.
+    """
     assets = {
         "ts": ["seg.ts", "720p/segment_000.ts"],
         "mp4": ["seg.m4s", "720p/segment_000.m4s"],
@@ -175,19 +181,22 @@ def test_caddy_hls_regexes_match_legacy_and_team_aware_shapes_without_cross_fall
     }
     for config_path in (Path("Caddyfile"), Path("docker-compose-intel.yml")):
         text = config_path.read_text()
-        assert "try_files /videos/teams" not in text
-        assert text.count("reverse_proxy replay:8091") >= 4
+        # Team-aware rules and config must be gone.
+        assert "vod_hls_team" not in text
+        assert "hls/teams" not in text
         for suffix, suffix_assets in assets.items():
             patterns = [
                 re.compile(pattern)
-                for name, pattern in re.findall(r"path_regexp (vod_hls(?:_team)?_\w+) (\^.*\$)", text)
+                for name, pattern in re.findall(r"path_regexp (vod_hls_\w+) (\^.*\$)", text)
                 if name.endswith(suffix)
             ]
             for asset in suffix_assets:
+                # Flat layout still matches.
                 assert any(p.match(f"/api/matches/m1/hls/full/{asset}") for p in patterns)
-                assert any(p.match(f"/api/matches/m1/hls/teams/team-1/full/{asset}") for p in patterns)
-                assert not any(p.match(f"/api/matches/m1/hls/teams/../full/{asset}") for p in patterns)
-                assert not any(p.match(f"/api/matches/m1/hls/teams/team-1/full/../{asset}") for p in patterns)
+                # Team-aware URLs no longer match any flat rule.
+                assert not any(p.match(f"/api/matches/m1/hls/teams/team-1/full/{asset}") for p in patterns)
+                # Path-traversal still rejected by the flat rules.
+                assert not any(p.match(f"/api/matches/m1/hls/full/../{asset}") for p in patterns)
 
 
 def test_cleanup_orphaned_raw_files_scans_team_aware_layout(data_dir) -> None:

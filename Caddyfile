@@ -43,23 +43,12 @@
 	encode zstd gzip
 
 	# ---- VOD HLS routing ----
-	# Legacy /api/matches/{match_id}/hls/{slot}/... remains a Caddy sendfile
-	# hot path. Team-aware /api/matches/{match_id}/hls/teams/{team_id}/{slot}/...
-	# is matched here but proxied to FastAPI so the app can validate match_id ->
-	# team_id before touching the filesystem.
+	# /api/matches/{match_id}/hls/{slot}/... is a Caddy sendfile hot path
+	# served directly from the bind-mount.
 	#
 	# Split by shape and format so we can emit the right Content-Type per format.
 	# Caddy's built-in MIME table maps `.ts` to `text/vnd.trolltech.linguist`
 	# (Qt translation files) — wrong for MPEG-TS HLS segments.
-	@vod_hls_team_segment_ts {
-		path_regexp vod_hls_team_ts ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.ts)$
-	}
-	handle @vod_hls_team_segment_ts {
-		# Team-aware HLS carries tenant scope and must pass through FastAPI so
-		# the app can validate match_id -> team_id before filesystem access.
-		reverse_proxy replay:8091
-	}
-
 	@vod_hls_segment_ts {
 		path_regexp vod_hls_ts ^/api/matches/([A-Za-z0-9_-]+)/hls/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.ts)$
 	}
@@ -74,15 +63,6 @@
 		}
 	}
 
-	@vod_hls_team_segment_mp4 {
-		path_regexp vod_hls_team_mp4 ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.(m4s|mp4))$
-	}
-	handle @vod_hls_team_segment_mp4 {
-		# Team-aware HLS carries tenant scope and must pass through FastAPI so
-		# the app can validate match_id -> team_id before filesystem access.
-		reverse_proxy replay:8091
-	}
-
 	@vod_hls_segment_mp4 {
 		path_regexp vod_hls_mp4 ^/api/matches/([A-Za-z0-9_-]+)/hls/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.(m4s|mp4))$
 	}
@@ -95,15 +75,6 @@
 		file_server {
 			precompressed br gzip
 		}
-	}
-
-	@vod_hls_team_playlist {
-		path_regexp vod_hls_team_pl ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.m3u8)$
-	}
-	handle @vod_hls_team_playlist {
-		# Team-aware HLS carries tenant scope and must pass through FastAPI so
-		# the app can validate match_id -> team_id before filesystem access.
-		reverse_proxy replay:8091
 	}
 
 	@vod_hls_playlist {

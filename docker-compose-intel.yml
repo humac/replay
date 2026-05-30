@@ -252,15 +252,6 @@ configs:
       :80 {
         encode zstd gzip
 
-        @vod_hls_team_segment_ts {
-          path_regexp vod_hls_team_ts ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.ts)$
-        }
-        handle @vod_hls_team_segment_ts {
-          # Team-aware HLS carries tenant scope and must pass through FastAPI so
-          # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8091
-        }
-
         @vod_hls_segment_ts {
           path_regexp vod_hls_ts ^/api/matches/([A-Za-z0-9_-]+)/hls/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.ts)$
         }
@@ -275,15 +266,6 @@ configs:
           }
         }
 
-        @vod_hls_team_segment_mp4 {
-          path_regexp vod_hls_team_mp4 ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.(m4s|mp4))$
-        }
-        handle @vod_hls_team_segment_mp4 {
-          # Team-aware HLS carries tenant scope and must pass through FastAPI so
-          # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8091
-        }
-
         @vod_hls_segment_mp4 {
           path_regexp vod_hls_mp4 ^/api/matches/([A-Za-z0-9_-]+)/hls/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.(m4s|mp4))$
         }
@@ -296,15 +278,6 @@ configs:
           file_server {
             precompressed br gzip
           }
-        }
-
-        @vod_hls_team_playlist {
-          path_regexp vod_hls_team_pl ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.m3u8)$
-        }
-        handle @vod_hls_team_playlist {
-          # Team-aware HLS carries tenant scope and must pass through FastAPI so
-          # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8091
         }
 
         @vod_hls_playlist {
