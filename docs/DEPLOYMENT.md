@@ -118,8 +118,15 @@ visible data. Operators upgrading should:
    Alternatively, point `REPLAY_DATA_DIR` at an empty directory for a clean
    install.
 
-Existing media files (`videos/<match_id>/...`, `originals/<match_id>/...`)
-are flat-layout already and remain usable once their matches are re-added.
+Note that `POST /api/matches` mints a new server-side `match_id` on every
+admin-console create, so the existing `videos/<old-match_id>/` and
+`originals/<old-match_id>/` trees do **not** auto-attach to the new rows —
+they are orphaned. The simple path is to re-upload (admin → Matches → Add).
+If preserving the original media files matters, an operator can manually
+rename the on-disk directories from the old IDs to the new IDs after the
+create (the slot files inside — `<slot>.mp4`, `<slot>_raw.*`, `hls/<slot>/`,
+`thumb.jpg` — keep their structure), but that's a manual recovery, not a
+supported migration.
 
 ## Reverse Proxy (Caddy — bundled)
 
