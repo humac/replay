@@ -184,6 +184,11 @@ def test_caddy_hls_regexes_match_flat_shapes_only() -> None:
         # Team-aware rules and config must be gone.
         assert "vod_hls_team" not in text
         assert "hls/teams" not in text
+        # The catch-all proxy that routes every non-static request to FastAPI
+        # (login, matches API, uploads, admin, live, etc.) must still be wired
+        # up. Pinning it at >= 1 catches an accidental future deletion of the
+        # top-level reverse_proxy block without being brittle to refactors.
+        assert text.count("reverse_proxy replay:8091") >= 1
         for suffix, suffix_assets in assets.items():
             patterns = [
                 re.compile(pattern)
@@ -195,8 +200,13 @@ def test_caddy_hls_regexes_match_flat_shapes_only() -> None:
                 assert any(p.match(f"/api/matches/m1/hls/full/{asset}") for p in patterns)
                 # Team-aware URLs no longer match any flat rule.
                 assert not any(p.match(f"/api/matches/m1/hls/teams/team-1/full/{asset}") for p in patterns)
-                # Path-traversal still rejected by the flat rules.
+                # Path-traversal must be rejected across every escapable
+                # segment of the flat shape. The slot capture is bounded to
+                # `[A-Za-z0-9_-]+`, so `..` cannot appear there either —
+                # exercise both the slot and the trailing asset path.
                 assert not any(p.match(f"/api/matches/m1/hls/full/../{asset}") for p in patterns)
+                assert not any(p.match(f"/api/matches/m1/hls/../full/{asset}") for p in patterns)
+                assert not any(p.match(f"/api/matches/../hls/full/{asset}") for p in patterns)
 
 
 def test_cleanup_orphaned_raw_files_scans_team_aware_layout(data_dir) -> None:
