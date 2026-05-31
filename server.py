@@ -5,6 +5,8 @@ Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 80
 
 from __future__ import annotations
 
+__version__ = "1.0.0"
+
 import asyncio
 import base64
 import hashlib
@@ -344,7 +346,7 @@ async def lifespan(application: FastAPI):
             await asyncio.gather(*pending, return_exceptions=True)
 
 
-app = FastAPI(title="Replay", lifespan=lifespan)
+app = FastAPI(title="Replay", version=__version__, lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(admin_ops_router)

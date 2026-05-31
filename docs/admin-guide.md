@@ -1,6 +1,6 @@
 # Replay — Administrator Guide
 
-This guide walks an administrator through everything you need to run a Replay deployment: first-time setup, day-to-day match management, live streaming, performance tuning, users, and branding.
+This guide walks an administrator through everything you need to run a Replay deployment: first-time setup, day-to-day match management, live streaming, performance tuning, users, and branding. It covers **Replay v1.0.0**.
 
 ## Contents
 
@@ -364,7 +364,7 @@ The page lists every account with role, status, and inline actions to **Disable*
 
 ### Resetting a password
 
-User accounts are admin-managed. To change a user's password, delete and recreate the account, or edit the password hash directly in the database. There is no self-service password reset or email-based recovery in this build.
+User accounts are admin-managed. To change a user's password, edit the account from the Users page (this revokes the user's active sessions), or delete and recreate the account. Replay has no self-service password reset or email-based recovery — password changes always go through an admin.
 
 ---
 

@@ -1,6 +1,6 @@
 # Replay Agent Guide
 
-This repository is a small FastAPI + vanilla JS application for uploading, processing, and replaying soccer match videos, plus live streaming. Replay is a single-team VOD + live-streaming platform: a flat, global match library (no teams/seasons/multi-tenant scope), admin-managed user accounts, and an in-process transcode queue.
+This repository is a small FastAPI + vanilla JS application for uploading, processing, and replaying soccer match videos, plus live streaming. Replay is a single-team VOD + live-streaming platform: a flat, global match library (no teams/seasons/multi-tenant scope), admin-managed user accounts, and an in-process transcode queue. The app is at **v1.0.0** — see `CHANGELOG.md`.
 
 ## Stack
 
@@ -48,7 +48,7 @@ This repository is a small FastAPI + vanilla JS application for uploading, proce
 - `index.html`: single-page app shell (loads `script.js` as `type="module"`).
 - `styles.css`: full UI styling. When splitting CSS into a `styles/` directory, preserve link order and add new files to `_STATIC_EXPORT_PATHS` in `server.py` for exported-static deployments and version-tag them in `settings.render_index_html()`.
 - `tests/`: pytest test suite (auth, matches, uploads, settings, users, admin, live, streams, media, db, models, server, route inventory). Canonical invocation is `ADMIN_PASS=admin LIVE_AUTH_ALLOW_INSECURE=1 python3 -m pytest tests/ -q` (`tests/conftest.py` defaults `ADMIN_PASS` to `admin`). pytest-cov is not installed locally; do not pass `--cov`. `tests/fixtures/route-inventory.txt` is the canonical route list checked by `test_route_inventory.py`.
-- `tests/e2e/`: a single Playwright VOD smoke spec (`vod-smoke.spec.js`) covering the public surface, the admin console, the matches API, and removed-surface 404s. Scoped with its own `package.json` and `node_modules` so the repo root stays no-build. Run from inside the folder: `cd tests/e2e && PLAYWRIGHT_BASE_URL=... ADMIN_PASS=... npm test`. The shared login helper is `tests/e2e/_login.js`.
+- `tests/e2e/`: a single Playwright VOD smoke spec (`vod-smoke.spec.js`) covering the public surface, the admin console, the matches API, and the invariant that non-existent surfaces (coaching/team/account routes) return 404. Scoped with its own `package.json` and `node_modules` so the repo root stays no-build. Run from inside the folder: `cd tests/e2e && PLAYWRIGHT_BASE_URL=... ADMIN_PASS=... npm test`. The shared login helper is `tests/e2e/_login.js`.
 - `.agent-skills/`: portable per-repo skill pack (repo navigation, mixin pattern, CSS/accessibility, QA gates, PR checklist). Load `.agent-skills/README.md` first.
 - `pytest.ini`: pytest-asyncio mode/scope plus narrow filters for third-party Python 3.14 deprecations.
 - `docker-compose.yml`: local container runtime — defines `replay` and the `mediamtx` sidecar.

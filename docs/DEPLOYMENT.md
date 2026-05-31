@@ -85,48 +85,22 @@ new transcode for ladder/segment-duration changes).
 
 ## Database
 
-Replay uses SQLite as its only database backend. The schema is a single
-squashed migration applied automatically on startup and pinned at
-`PRAGMA user_version = 1`; `db.connect()` opens the SQLite database under
-`REPLAY_DATA_DIR`. There is no Postgres lane and no multi-backend support.
+Replay uses SQLite as its only database backend. The schema is created on
+first startup at `PRAGMA user_version = 1`; `db.connect()` opens the SQLite
+database under `REPLAY_DATA_DIR`. There is no Postgres lane and no
+multi-backend support.
 
-### Upgrading from a pre-squash install (PR #193)
+A fresh deployment needs nothing but an empty `REPLAY_DATA_DIR` (or an empty
+mounted data volume) — the schema is created automatically on first boot. To
+move a deployment to a new host, copy the whole data directory (`replay.db`
+plus the `videos/` tree and any `originals/` cold pool) and point
+`REPLAY_DATA_DIR` at it.
 
-This release squashed the historical v0..v26 migration chain (which built up
-and tore down the coaching / multi-tenant subsystems) into a single
-`_migrate_v1`. Migrations run forward only — a database already at
-`schema_version > 1` is from the pre-squash chain and carries tables and
-columns the current code no longer touches. To prevent silent drift, the
-startup migration runner refuses to open such a database and raises:
-
-```
-RuntimeError: Database is at schema_version=NN but this build targets v1
-(the squashed greenfield schema). A fresh REPLAY_DATA_DIR is required — point
-REPLAY_DATA_DIR at an empty directory, or delete the existing replay.db,
-before starting the app. Old multi-tenant / coaching tables will not be
-migrated.
-```
-
-There is no in-place upgrade path — the removed subsystems carry no app-
-visible data. Operators upgrading should:
-
-1. **Back up** the existing data directory (`REPLAY_DATA_DIR`, default
-   `/tank/replay`) — at minimum `replay.db`, the `videos/` tree, and any
-   `originals/` cold pool.
-2. **Move or delete** the existing `replay.db` so startup creates a fresh
-   one. Re-upload any matches you want to keep through the admin console.
-   Alternatively, point `REPLAY_DATA_DIR` at an empty directory for a clean
-   install.
-
-Note that `POST /api/matches` mints a new server-side `match_id` on every
-admin-console create, so the existing `videos/<old-match_id>/` and
-`originals/<old-match_id>/` trees do **not** auto-attach to the new rows —
-they are orphaned. The simple path is to re-upload (admin → Matches → Add).
-If preserving the original media files matters, an operator can manually
-rename the on-disk directories from the old IDs to the new IDs after the
-create (the slot files inside — `<slot>.mp4`, `<slot>_raw.*`, `hls/<slot>/`,
-`thumb.jpg` — keep their structure), but that's a manual recovery, not a
-supported migration.
+The migration runner is forward-only and fails closed: if it finds a database
+stamped at a schema version newer than this build expects (`user_version > 1`),
+startup aborts with a clear `RuntimeError` rather than opening a
+schema-incompatible file. The fix is to start from a fresh `REPLAY_DATA_DIR`.
+See [Troubleshooting → schema_version errors](TROUBLESHOOTING.md#runtimeerror-database-is-at-schema_versionnn).
 
 ## Reverse Proxy (Caddy — bundled)
 

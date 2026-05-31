@@ -53,8 +53,9 @@ don't override the loop scope. Run `pytest` from the repo root so `pytest.ini` i
 ## End-to-end (Playwright smoke)
 
 There is a single Playwright smoke spec: `tests/e2e/vod-smoke.spec.js`. It covers the public
-surface, the admin console, the matches API, and asserts that removed surfaces (e.g. `/coach`,
-`/feedback`, `/api/me*`) return 404. The shared login helper is `tests/e2e/_login.js`.
+surface, the admin console, the matches API, and asserts the invariant that surfaces outside
+the product (e.g. `/coach`, `/feedback`, `/api/me*`) return 404. The shared login helper is
+`tests/e2e/_login.js`.
 
 ```bash
 cd tests/e2e && PLAYWRIGHT_BASE_URL=http://localhost:8091 ADMIN_PASS=admin npm test

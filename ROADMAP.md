@@ -1,25 +1,22 @@
 # Replay — Roadmap
 
-## What this is now
+## v1.0.0 — what it is
 
 Replay is a single-team match video platform:
 
 - **VOD library** — chunked resumable upload → ffmpeg transcode → multi-variant HLS ladder, with a direct MP4 fallback for download and casting. Matches are a flat, global library grouped by a season **label** in the public view.
 - **Live streaming** — RTMP ingest via a MediaMTX sidecar, repackaged to LL-HLS and reverse-proxied so viewers play it same-origin at `/live` with sub-5s latency.
-- **Admin console** — `/admin/{overview,matches,live,performance,users,settings}` for match management, upload recovery, live stream config, performance tuning, admin-managed user accounts, and branding.
-- **Stack** — FastAPI + SQLite (single squashed migration, `PRAGMA user_version = 1`) + a no-build vanilla-JS SPA, fronted by Caddy with a MediaMTX sidecar for live ingest. Transcodes run through an in-process queue.
+- **Admin console** — `/admin/{overview,matches,live,performance,users,settings}` for match management, upload recovery, live stream config, performance tuning, admin-managed user accounts (roles `admin` / `uploader` / `viewer`), and branding.
+- **Stack** — FastAPI + SQLite (single migration, `PRAGMA user_version = 1`) + a no-build vanilla-JS SPA, fronted by Caddy with a MediaMTX sidecar for live ingest. Transcodes run through an in-process durable queue.
 
-## Removed
+## Scope boundaries
 
-An earlier iteration of this codebase carried a much larger surface that has since been removed. None of it is part of the product anymore:
+Replay is intentionally a single-team VOD + live product. The following are **out of scope** and not planned — listed so contributors don't accidentally reintroduce them:
 
-- the coaching / player-feedback subsystem (rosters, notes/clips/playlists, telestration, tactical boards, player development profiles, player goals, match coaching summaries, the engagement dashboard, AI drafting, and the `/coach` + `/feedback` surfaces)
-- multi-tenancy (teams, seasons, memberships, invites, active-scope selection) and `REPLAY_STRICT_TENANCY`
-- account self-service (`/me` profile routes, password reset, email verification) and the email/notification settings
-- the Postgres lane / multi-backend support (`REPLAY_DB_BACKEND`, `DATABASE_URL`)
-- the durable-jobs user-facing API (the queue remains internal-only for transcodes)
-
-User accounts are admin-managed only (roles `admin` / `uploader` / `viewer`), and the database schema has been squashed into a single clean v1 migration.
+- Coaching / player-feedback features (notes, clips, telestration, tactical boards, player development, AI drafting).
+- Multi-tenancy (teams, seasons-as-tenants, memberships, invites, per-tenant scoping). "Season" and "team" exist only as match-grouping labels and home/away names on a match record.
+- Account self-service (public signup, profile self-edit, password reset, email verification). User accounts are admin-managed.
+- Alternate database backends. SQLite is the only supported store.
 
 ## Forward-looking ideas (VOD / live)
 

@@ -1,6 +1,8 @@
 # Replay
 
-A standalone, single-team match viewer and video archive for soccer (or any sport). Upload match recordings, add team details and logos, and replay them in a clean, modern dark-themed web UI. VOD playback plus live RTMP/LL-HLS streaming.
+**v1.0.0** · A standalone, single-team match viewer and video archive for soccer (or any sport). Upload match recordings, add team details and logos, and replay them in a clean, modern dark-themed web UI. VOD playback plus live RTMP/LL-HLS streaming.
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Features
 
@@ -14,8 +16,8 @@ A standalone, single-team match viewer and video archive for soccer (or any spor
 - **Watch Live (RTMP ingest → LL-HLS)** — point a camera (e.g. XbotGo Falcon) at the site's RTMP URL with a configurable stream key; viewers watch the live feed at `/live` with sub-5s latency
 - **AirPlay 2** — explicit AirPlay picker button on supported Safari/WebKit devices for Apple TV and AirPlay 2 displays
 - **Chromecast** — Google Cast SDK integration with a dedicated cast button, metadata, and remote playback resume support
-- **Single-team match library** — matches are a flat, global library (no teams/seasons/multi-tenant scope)
-- **Admin-managed accounts** — user accounts are created and managed by admins; there is no public signup, self-service password reset, or email verification
+- **Single-team match library** — a flat, global match library grouped by a season label in the public view
+- **Admin-managed accounts** — admins create and manage user accounts with three roles (`admin` / `uploader` / `viewer`); sign-in is by username + password
 - **Durable sessions** — database-user logins persist hashed bearer sessions; logout revokes them
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
 - **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
@@ -96,7 +98,7 @@ Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the
 
 Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1936` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8091` origin via a reverse proxy.
 
-Replay uses SQLite as its only database backend; the schema is a single squashed migration pinned at `PRAGMA user_version = 1`. There is no in-place upgrade from the pre-squash chain — an existing DB at a higher schema version makes startup fail closed; see [DEPLOYMENT.md → Upgrading from a pre-squash install](docs/DEPLOYMENT.md#upgrading-from-a-pre-squash-install-pr-193).
+Replay uses SQLite as its only database backend. The schema is created on first startup at `PRAGMA user_version = 1`; a fresh `REPLAY_DATA_DIR` is all you need. See [DEPLOYMENT.md → Database](docs/DEPLOYMENT.md#database).
 
 Build/run with plain Docker (without the live stream):
 

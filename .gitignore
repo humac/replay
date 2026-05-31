@@ -11,3 +11,6 @@ htmlcov/
 *.db
 *.db-wal
 *.db-shm
+
+# Stray sed/editor backups
+*.bak

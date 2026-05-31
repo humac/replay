@@ -1,6 +1,6 @@
 # Replay — User Guide
 
-Welcome to **Replay**, your team's match video archive. This guide walks you through everything you can do as a viewer: browsing the season, watching recorded matches, watching live, and signing in.
+Welcome to **Replay** (v1.0.0), your team's match video archive. This guide walks you through everything you can do as a viewer: browsing the season, watching recorded matches, watching live, and signing in.
 
 ## Contents
 
