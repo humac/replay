@@ -1,6 +1,6 @@
 # Replay — User Guide
 
-Welcome to **Replay**, your team's match video archive. This guide walks you through everything you can do as a viewer: browsing the season, watching recorded matches, watching live, signing in, and reviewing coach-published feedback.
+Welcome to **Replay** (v1.0.0), your team's match video archive. This guide walks you through everything you can do as a viewer: browsing the season, watching recorded matches, watching live, and signing in.
 
 ## Contents
 
@@ -10,15 +10,14 @@ Welcome to **Replay**, your team's match video archive. This guide walks you thr
 4. [Watching a match](#watching-a-match)
 5. [Watching live](#watching-live)
 6. [Signing in](#signing-in)
-7. [Reviewing coach feedback](#reviewing-coach-feedback)
-8. [On a phone or tablet](#on-a-phone-or-tablet)
-9. [Troubleshooting](#troubleshooting)
+7. [On a phone or tablet](#on-a-phone-or-tablet)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## What Replay is
 
-Replay is a private video library for your team's matches. Coaches and team admins upload match footage; players, parents, and supporters can watch recordings any time. When the team is playing live, the same site streams the game so anyone with the link can watch from home.
+Replay is a private video library for your team's matches. Team admins and uploaders upload match footage; players, parents, and supporters can watch recordings any time. When the team is playing live, the same site streams the game so anyone with the link can watch from home.
 
 You don't need an account to watch — most pages are open to anyone with the link.
 
@@ -98,61 +97,13 @@ Most of Replay is open to anyone, but some teams enable login for additional fea
 
 ![Login modal](./screenshots/user-login-modal.png)
 
-Enter the username and password your coach or team admin gave you and click **LOGIN**.
+Enter the username and password your administrator gave you and click **LOGIN**.
 
-Once signed in, the LOGIN button is replaced by **LOGOUT** and your name appears in the header. A new **account icon** appears next to the theme toggle — click it to open **your profile** at `/me`.
+Once signed in, the LOGIN button is replaced by **LOGOUT** and your name appears in the header.
 
 ![Header after signing in](./screenshots/user-logged-in-header.png)
 
 > **Warning:** Replay locks out an IP after 5 failed login attempts in 60 seconds. If you mistype your password a few times, wait a minute before trying again.
-
-### Your account
-
-The `/me` page has four tabs:
-
-- **Profile** — your first / last name, email, phone, timezone, language, and preferred contact method. Email is used for password reset and for verification notifications.
-- **Password** — change your password. Doing so signs out all your other sessions.
-- **Email** — request a verification email and confirm your address. The token from the email auto-fills if you click the link from your inbox.
-- **Sessions** — for now, the simplest way to sign out everywhere is to change your password on the Password tab. A full session-list view is on the roadmap.
-
-### Forgot password?
-
-If you can't sign in, click **Forgot password?** at the bottom of the login modal. Enter your username and we'll send reset instructions to the email on file. The reset email contains a link to `/reset-password?token=…` — open it in any browser, paste a new password, and you'll be signed back in.
-
-### Accepting an invite
-
-If your coach or team admin invited you, you'll receive an email with a link to `/invite/{token}`. Open the link:
-
-- If you already have a Replay account, sign in and click **Accept invite**.
-- If this is your first time using Replay, fill in a username and password to create your account. Acceptance creates your account and links you to the team in one step.
-
-Family / guardian invites can link to multiple players if you have several children on the same team.
-
----
-
-## Reviewing coach feedback
-
-If your club uses Replay for coaching, a **My Feedback** link appears after you sign in. This page shows coach-published review playlists and timestamped notes that are visible to your account.
-
-Player-specific feedback only appears when a coach or admin has linked your user account to a roster player. One family account can be linked to multiple players, and multiple parent/guardian accounts can be linked to the same player.
-
-![My Feedback — linked players strip and the Playlists tab](./screenshots/feedback-overview.png)
-
-The page has two sub-tabs:
-
-### Playlists (default)
-
-A playlist is a sequence of clips a coach has put together as a lesson — for example, "First-half tactical lessons" or "Player #7 development." Click **Play** on a row and the focused player opens, walking you through each clip with the saved drawings on top of the paused video. The session has **Prev / Pause / Restart / Next** controls and a **Mark reviewed** button you can click when you're done.
-
-### Notes
-
-Individual coach notes shared standalone (not as part of a playlist). Each row shows the title, the match it belongs to, and the exact timestamp. Click **Watch** to open it in the same focused player.
-
-Private coach notes are not shown here. Coaches decide which notes are shared with the whole team, which are linked to specific players/families, and which stay private to staff.
-
-> For the full coach authoring workflow and the player/family experience in depth, see [the coaching workspace guide](./coach-guide.md).
-
----
 
 ## On a phone or tablet
 
@@ -173,7 +124,7 @@ Most browsers block autoplay for videos with sound. Tap the play button once and
 Replay automatically picks the best quality for your connection. If your network slows down, drop to a lower quality manually using the gear icon on the player. Refreshing the page often helps too.
 
 **I can't sign in even though I'm sure my password is right.**
-Wait one minute — repeated failures temporarily block your IP from logging in. If you still can't get in, ask your team admin to reset your password.
+Wait one minute — repeated failures temporarily block your IP from logging in. If you still can't get in, ask an administrator to reset your password.
 
 **The Watch Live page says "no live stream."**
 The camera isn't broadcasting yet. Refresh the page once the team starts the stream — the page does not auto-update when a stream starts.

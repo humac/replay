@@ -45,66 +45,6 @@ async def get_admin_settings(request: Request):
     return await _admin_settings_payload()
 
 
-@router.get("/api/admin/email/status")
-async def get_admin_email_status(request: Request):
-    from server import _auth
-    from services import email_delivery
-
-    _auth.require_role(request, "admin")
-    return email_delivery.config_status()
-
-
-@router.get("/api/admin/email/settings")
-async def get_admin_email_settings(request: Request):
-    from server import _auth, _settings
-
-    _auth.require_role(request, "admin")
-    return _settings.email_admin_payload()
-
-
-@router.patch("/api/admin/email/settings")
-async def update_admin_email_settings(request: Request):
-    from server import _auth, _settings
-
-    actor = _auth.require_role(request, "admin")
-    body = await request.json()
-    updates = {
-        "email_provider": body.get("email_provider"),
-        "email_public_base_url": body.get("email_public_base_url"),
-        "email_from": body.get("email_from"),
-        "email_from_name": body.get("email_from_name"),
-    }
-    api_key = body.get("email_brevo_api_key")
-    if isinstance(api_key, str) and api_key.strip():
-        updates["email_brevo_api_key"] = api_key.strip()
-    if body.get("clear_brevo_api_key") is True:
-        updates["email_brevo_api_key"] = ""
-    try:
-        return _settings.save_email_settings(updates, actor=actor.get("username"))
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-@router.post("/api/admin/email/test")
-async def send_admin_email_test(request: Request):
-    from server import _auth
-    from services import email_delivery
-
-    _auth.require_role(request, "admin")
-    body = await request.json()
-    to_email = (body.get("email") or "").strip()
-    if not to_email or "@" not in to_email:
-        raise HTTPException(422, "A test email address is required")
-    result = email_delivery.send_test_email(to_email=to_email)
-    return {
-        "ok": result.ok,
-        "status": result.status,
-        "provider": result.provider,
-        "message_id": result.message_id,
-        "detail": result.detail if not result.ok else "",
-    }
-
-
 @router.put("/api/admin/settings")
 async def update_admin_settings(request: Request):
     from server import (

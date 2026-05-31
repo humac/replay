@@ -5,6 +5,8 @@ Run:  python server.py          (or: uvicorn server:app --host 0.0.0.0 --port 80
 
 from __future__ import annotations
 
+__version__ = "1.0.0"
+
 import asyncio
 import base64
 import hashlib
@@ -33,55 +35,22 @@ import log as _log
 import media as _media
 import settings as _settings
 import streams as _streams
-import tenancy as _tenancy
 import uploads as _uploads
 from routers.admin import router as admin_router
 from routers.admin_ops import router as admin_ops_router
-from routers.admin_teams import router as admin_teams_router
 from routers.auth import router as auth_router
-from routers.coach_ai import router as coach_ai_router
-from routers.coach_clips import router as coach_clips_router
-from routers.coach_engagement import router as coach_engagement_router
-from routers.coach_goals import router as coach_goals_router
-from routers.coach_notes import router as coach_notes_router
-from routers.coach_playlists import router as coach_playlists_router
-from routers.coach_summaries import router as coach_summaries_router
-from routers.feedback import router as feedback_router
-from routers.jobs import router as jobs_router
 from routers.live import router as live_router
 from routers.matches import router as matches_router
 from routers.settings import router as settings_router
-from routers.team_members import router as team_members_router
-from routers.team_settings import router as team_settings_router
 from routers.uploads import router as uploads_router
 from services import activity as _activity
-from services import engagement as _engagement
 from services import jobs as _jobs
-from services import roster_import as _roster_import
-from services import teams as _teams
 from services import thumbnails as _thumbs
-from services.visibility import (
-    ACTIVE_GOAL_STATUSES as _ACTIVE_GOAL_STATUSES,
-    can_view_coach_clip as _can_view_coach_clip,
-    can_view_coach_note as _can_view_coach_note,
-    filter_clips_for_user as _filter_clips_for_user,
-    filter_goals_for_user as _filter_goals_for_user,
-    filter_match_summaries_for_user as _filter_match_summaries_for_user,
-    filter_notes_for_user as _filter_notes_for_user,
-    filter_playlists_for_user as _filter_playlists_for_user,
-    goal_with_visible_sources as _goal_with_visible_sources,
-    goals_with_visible_sources as _goals_with_visible_sources,
-    strip_private_fields as _strip_private_fields,
-)
 from models import (
-    CreateCoachingClipRequest, CreateCoachingNoteRequest, CreateCoachingPlaylistRequest,
-    CreateMatchRequest, CreateMatchSummaryRequest, CreatePlayerGoalReflectionRequest,
-    CreatePlayerGoalRequest, CreatePlayerRequest, CreatePlayerUserLinkRequest,
-    CreateUploadSessionRequest, EnqueueJobRequest, LiveAuthRequest,
-    MarkCoachingReviewRequest, RosterImportRequest, StartCaptureRequest, UnblockStreamRequest,
-    UpdateCoachingClipRequest, UpdateCoachingNoteRequest, UpdateCoachingPlaylistRequest,
-    UpdateMatchRequest, UpdateMatchSummaryRequest, UpdatePlayerGoalRequest,
-    UpdatePlayerRequest,
+    CreateMatchRequest,
+    CreateUploadSessionRequest, LiveAuthRequest,
+    StartCaptureRequest, UnblockStreamRequest,
+    UpdateMatchRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -98,6 +67,10 @@ def _now_ms() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + f".{ms:03d}Z"
 
 DATA_DIR = Path(os.environ.get("REPLAY_DATA_DIR", "/tank/replay"))
+
+# Single-team VOD: the durable jobs queue still carries a team_id column, so
+# all internally-enqueued jobs (transcodes) use this constant tenant id.
+DEFAULT_JOB_TEAM_ID = "default"
 
 # ---------------------------------------------------------------------------
 # Background task registry (M4)
@@ -163,13 +136,10 @@ async def _job_heartbeat_loop(job_id: int, worker_id: str, *, interval_seconds: 
 def _spawn_transcode(match_id: str, slot: str, src, dest) -> asyncio.Task:
     """Spawn a tracked transcode task, registering it for per-match cancellation."""
     key = f"{match_id}/{slot}"
-    team_id = _team_id_for_match(match_id)
-    if not team_id:
-        raise RuntimeError(f"Cannot enqueue transcode job without team scope for match {match_id}")
     job_id = _jobs.enqueue(
         "transcode",
         {"match_id": match_id, "slot": slot, "src": str(src), "dest": str(dest)},
-        team_id=team_id,
+        team_id=DEFAULT_JOB_TEAM_ID,
     )
     worker_id = f"in-process-transcode:{key}:{job_id}"
     task = _spawn_task(_run_transcode_job(job_id, worker_id, match_id, slot, src, dest))
@@ -186,9 +156,8 @@ async def _run_transcode_job(job_id: int, worker_id: str, match_id: str, slot: s
     if job is None:
         logger.warning("Transcode job %s was not pending when task started", job_id)
         return
-    match = _db.get_match_by_id(match_id)
-    if not match or str(match.get("team_id")) != str(job["team_id"]):
-        _jobs.fail(job_id, worker_id, "transcode resource no longer belongs to job team")
+    if not _db.get_match_by_id(match_id):
+        _jobs.fail(job_id, worker_id, "transcode resource no longer exists")
         return
     heartbeat_task = asyncio.create_task(_job_heartbeat_loop(job_id, worker_id))
     try:
@@ -377,156 +346,14 @@ async def lifespan(application: FastAPI):
             await asyncio.gather(*pending, return_exceptions=True)
 
 
-app = FastAPI(title="Replay", lifespan=lifespan)
+app = FastAPI(title="Replay", version=__version__, lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(admin_ops_router)
-app.include_router(admin_teams_router)
-app.include_router(team_members_router)
-app.include_router(team_settings_router)
-app.include_router(coach_ai_router)
-app.include_router(coach_clips_router)
-app.include_router(coach_engagement_router)
-app.include_router(coach_goals_router)
-app.include_router(coach_notes_router)
-app.include_router(coach_playlists_router)
-app.include_router(coach_summaries_router)
-app.include_router(feedback_router)
-app.include_router(jobs_router)
 app.include_router(live_router)
 app.include_router(matches_router)
 app.include_router(settings_router)
 app.include_router(uploads_router)
-
-
-# Per-kind allowlist of payload fields safe to echo back through /api/jobs.
-# Kinds not in this map are treated as "unsafe to surface" — the serializer
-# drops their payload + idempotency_key + result + error_text. This is the
-# defense-in-depth layer behind the route-level filter in list_jobs that
-# already drops ai_draft rows from the user-visible feed: even if a row
-# somehow reaches the serializer, raw prompts / provider output / private
-# source text cannot leak.
-_JOB_PAYLOAD_ALLOWLIST: dict[str, tuple[str, ...]] = {
-    "transcode": ("match_id", "slot"),
-    "thumbnail": ("match_id", "slot"),
-}
-
-
-def _serialize_job_for_api(job: dict) -> dict:
-    kind = job.get("kind")
-    raw_payload = job.get("payload") or {}
-    allowed_fields = _JOB_PAYLOAD_ALLOWLIST.get(kind)
-    if allowed_fields is None:
-        # Unknown / privacy-sensitive kind (e.g. ai_draft): surface only
-        # structural metadata. Raw payload, idempotency_key, result, and
-        # error_text could carry coach-supplied prompts or provider output.
-        payload = {}
-        idempotency_key = None
-        result = None
-        error_text = None
-    else:
-        payload = {key: raw_payload.get(key) for key in allowed_fields if raw_payload.get(key) is not None}
-        idempotency_key = job.get("idempotency_key")
-        result = job.get("result")
-        error_text = job.get("error_text")
-    return {
-        "id": job["id"],
-        "kind": kind,
-        "team_id": job["team_id"],
-        "status": job["status"],
-        "attempts": job["attempts"],
-        "max_attempts": job["max_attempts"],
-        "payload": payload,
-        "payload_version": job.get("payload_version", 1),
-        "idempotency_key": idempotency_key,
-        "scheduled_at": job.get("scheduled_at"),
-        "started_at": job.get("started_at"),
-        "finished_at": job.get("finished_at"),
-        "created_at": job.get("created_at"),
-        "updated_at": job.get("updated_at"),
-        "result": result,
-        "error_text": error_text,
-    }
-
-
-JOB_KIND_CAPABILITIES = {
-    "thumbnail": "match:write",
-    "transcode": "match:write",
-}
-
-# Job kinds that must never appear in user-facing /api/jobs responses,
-# even when they belong to the caller's team. ai_draft jobs can be
-# created by internal/service paths (services.jobs.enqueue) and may
-# carry coach-supplied prompts or provider output in their payload /
-# idempotency_key / result columns; surfacing them through the user
-# route would re-expose the very data PR-S blocked at enqueue.
-JOB_KINDS_HIDDEN_FROM_USER_API = frozenset({"ai_draft"})
-
-
-def _job_write_capability(kind: str) -> str:
-    if kind == "ai_draft":
-        raise HTTPException(
-            status_code=422,
-            detail="ai_draft jobs cannot be enqueued via /api/jobs; use POST /api/coach/ai/draft",
-        )
-    try:
-        return JOB_KIND_CAPABILITIES[kind]
-    except KeyError as exc:
-        raise HTTPException(422, "Unsupported job kind") from exc
-
-
-def _normalize_job_payload(kind: str, payload: dict, team_id: str) -> dict:
-    if kind == "ai_draft":
-        # Defense in depth: even if a future change re-adds ai_draft to the
-        # capability map, never persist a user-supplied ai_draft payload through
-        # this route — raw prompts / private source text would land in
-        # background_jobs.payload_json. POST /api/coach/ai/draft is the only
-        # AI draft API.
-        raise HTTPException(
-            status_code=422,
-            detail="ai_draft jobs cannot be enqueued via /api/jobs; use POST /api/coach/ai/draft",
-        )
-    payload_json = json.dumps(payload, separators=(",", ":"))
-    if len(payload_json.encode("utf-8")) > 10_000:
-        raise HTTPException(422, "Job payload is too large")
-    if payload.get("team_id") is not None and str(payload.get("team_id")) != team_id:
-        raise HTTPException(403, "Job payload team does not match resolved team")
-    allowed_keys = {"match_id", "slot", "team_id"} if kind == "transcode" else {"match_id", "slot", "team_id"}
-    extra_keys = set(payload) - allowed_keys
-    if extra_keys:
-        raise HTTPException(422, "Unsupported job payload fields")
-    match_id = str(payload.get("match_id") or "").strip()
-    if not match_id:
-        raise HTTPException(422, "match_id is required")
-    match = _db.get_match_by_id(match_id)
-    if not match or str(match.get("team_id")) != team_id:
-        raise HTTPException(404, "Match not found")
-    normalized = {"match_id": match_id}
-    if payload.get("slot") is not None:
-        normalized["slot"] = str(payload.get("slot")).strip()
-    return normalized
-
-
-def _normalize_scheduled_at(value: str | None) -> str | None:
-    if value is None:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise HTTPException(422, "scheduled_at must be an ISO-8601 timestamp") from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
-
-
-def _require_job_access(request: Request, user: dict, *, team_id: str, kind: str):
-    return _tenancy.resolve_scope(
-        request,
-        user,
-        team_id=team_id,
-        require_role=_job_write_capability(kind),
-        allow_global_admin_override=False,
-    )
 
 
 # Shared secret MediaMTX sends in X-Internal-Secret when calling /api/live/auth.
@@ -683,20 +510,11 @@ async def _admin_settings_payload() -> dict:
 
 
 _log_activity = _activity.log_activity
-_coach_note_activity_label = _activity.coach_note_activity_label
 _streams.set_activity_logger(_activity.stream_activity_logger)
 
 
 def _thumb_path_within_videos_dir(thumb: Path) -> bool:
     return _thumbs.thumb_path_within_videos_dir(thumb, VIDEOS_DIR)
-
-
-def _coach_note_thumbnail_candidates(note: dict | None, note_id: int) -> list[Path]:
-    return _thumbs.coach_note_thumbnail_candidates(note, note_id, VIDEOS_DIR)
-
-
-def _coach_clip_thumbnail_candidates(clip: dict | None, clip_id: int) -> list[Path]:
-    return _thumbs.coach_clip_thumbnail_candidates(clip, clip_id, VIDEOS_DIR)
 
 
 async def _render_index_html() -> str:
@@ -867,10 +685,10 @@ async def _append_bytes_file(dest: Path, data: bytes):
 # ---------------------------------------------------------------------------
 
 def _team_id_for_match(match_or_id) -> str | None:
-    if isinstance(match_or_id, dict):
-        return match_or_id.get("team_id")
-    match = _db.get_match_by_id(str(match_or_id))
-    return match.get("team_id") if match else None
+    # Single-team VOD: matches are no longer team-scoped, so all media lives
+    # in the flat legacy layout (`<root>/<match_id>/...`). Returning None makes
+    # every media path helper resolve to that layout.
+    return None
 
 
 def _slot_hls_dir(match_id: str, slot: str) -> Path:
@@ -1108,66 +926,13 @@ async def admin_deep_link(section: str | None = None):
     return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
 
 
-@app.get("/coach")
-async def coach_deep_link():
-    """Serve the SPA shell for the coaching workspace."""
-    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
-
-
-@app.get("/feedback")
-async def feedback_deep_link():
-    """Serve the SPA shell for signed-in player/family feedback."""
-    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
-
-
-# ---------------------------------------------------------------------------
-# Account + onboarding shell routes (Phase 0 IA foundation).
-#
-# These return the SPA shell unchanged; the client SPA recognizes the path in
-# initializeHistory() and renders the appropriate view. Population of the
-# Profile, Welcome, and Invite views lands in Phases A, D, and B respectively.
-# The verify-email and reset-password landings are populated in Phase A.3.
-# Keeping all five routes server-registered up front means a bookmarked or
-# emailed link returns the SPA HTML rather than a 404, even while the client
-# code that handles the route is still under construction.
-# ---------------------------------------------------------------------------
-
-@app.get("/me")
-async def me_deep_link():
-    """SPA shell for the signed-in user's self-service profile (Phase A.1)."""
-    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
-
-
-@app.get("/welcome")
-async def welcome_deep_link():
-    """SPA shell for the first-time-setup wizard (Phase D.1)."""
-    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
-
-
-@app.get("/invite/{token}")
-async def invite_deep_link(token: str):
-    """SPA shell for the invite-acceptance landing (Phase B.3)."""
-    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
-
-
-@app.get("/verify-email")
-async def verify_email_deep_link():
-    """SPA shell for email-verification confirm landing (Phase A.3)."""
-    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
-
-
-@app.get("/reset-password")
-async def reset_password_deep_link():
-    """SPA shell for password-reset confirm landing (Phase A.3)."""
-    return HTMLResponse(await _render_index_html(), headers=_SPA_NO_CACHE)
-
-
 # Dev-only: when REPLAY_DEV=1, rewrite ES-module `import './js/foo.js'`
 # statements at serve time so each import URL carries `?v=<mtime_ns>`. This
 # closes the soft-refresh staleness gap — without it, a Cmd+R after editing
-# js/coaching.js would re-fetch script.js (already versioned) but reuse the
-# disk-cached coaching.js because the `import './js/coaching.js'` URL never
-# changes. With this on, every save flips the URL the import resolves to.
+# a js/*.js module would re-fetch script.js (already versioned) but reuse
+# the disk-cached module because
+# the `import './js/foo.js'` URL never changes. With this on, every save
+# flips the URL the import resolves to.
 # Strictly opt-in via env var so prod is byte-for-byte unchanged.
 _REPLAY_DEV = os.environ.get("REPLAY_DEV", "").strip().lower() in ("1", "true", "yes")
 
@@ -1259,581 +1024,6 @@ def _match_label(match_id: str) -> str | None:
     home = match.get("home_team", "?")
     away = match.get("away_team", "?")
     return f"{home} vs {away}"
-
-
-# ---------------------------------------------------------------------------
-# Coaching workspace
-# ---------------------------------------------------------------------------
-
-def _require_coach(request: Request) -> dict:
-    """Authenticate a coach-route caller.
-
-    Phase PR-AUTH: legacy ``users.role`` is no longer a precondition for
-    reaching ``/api/coach/*``. Membership-based gating happens in
-    ``_resolve_coach_scope`` via ``_tenancy.resolve_scope``, which
-    requires a team-scoped ``coach``/``team_admin`` membership row (or
-    explicit global-admin override). A signed-in user without a relevant
-    membership still gets 403, but a viewer-role user WITH a coach
-    membership now passes — fixing the regression where invite-only
-    coaches could not access their own Coach workspace.
-    """
-    return _auth.require_auth(request)
-
-
-def _resolve_coach_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
-    user = _require_coach(request)
-    scope = _tenancy.resolve_scope(
-        request,
-        user,
-        require_role=("team_admin", "coach"),
-        allow_global_admin_override=True,
-    )
-    return user, scope
-
-
-def _resolve_roster_manage_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
-    """Coach-route scope helper for roster MUTATIONS (player CRUD, player-user
-    links). Requires the ``roster:manage`` capability, which ``coach``,
-    ``team_admin``, and ``global_admin`` have but ``assistant_coach`` does
-    NOT — assistant coaches have read-only roster access per
-    ``ROLE_CAPABILITIES``.
-
-    The plain ``_resolve_coach_scope`` requires ``("team_admin", "coach")``,
-    which ``assistant_coach`` satisfies via the ``coach_object:write``
-    inheritance shortcut in ``tenancy._role_satisfies``. That works fine for
-    coach OBJECTS (notes, clips, playlists, etc.) which assistant coaches
-    can author, but it leaks roster mutation access through. Routes that
-    create/update/delete players or player-user links must use this helper
-    so the ``roster:manage`` gate is enforced.
-    """
-    user = _require_coach(request)
-    scope = _tenancy.resolve_scope(
-        request,
-        user,
-        require_role="roster:manage",
-        allow_global_admin_override=True,
-    )
-    return user, scope
-
-
-def _resolve_feedback_scope(request: Request) -> tuple[dict, _tenancy.Scope]:
-    user = _auth.require_auth(request)
-    scope = _tenancy.resolve_scope(request, user, allow_global_admin_override=True)
-    return user, scope
-
-
-def _scope_team_id(scope: _tenancy.Scope) -> str:
-    return str(scope.team["id"])
-
-
-def _require_scoped_item(item: dict | None, team_id: str, detail: str):
-    if not item or not _same_team(item, team_id):
-        raise HTTPException(404, detail)
-    return item
-
-
-def _require_match_in_team(match_id: str | None, team_id: str) -> dict:
-    if not match_id:
-        raise HTTPException(404, "Match not found")
-    match = _db.get_match_by_id(match_id)
-    return _require_scoped_item(match, team_id, "Match not found")
-
-
-def _require_player_in_team(player_id: str, team_id: str) -> dict:
-    return _require_scoped_item(_db.get_player(player_id, team_id=team_id), team_id, "Player not found")
-
-
-def _require_note_in_team(note_id: int, team_id: str) -> dict:
-    return _require_scoped_item(_db.get_coaching_note(note_id), team_id, "Note not found")
-
-
-def _require_clip_in_team(clip_id: int, team_id: str) -> dict:
-    return _require_scoped_item(_db.get_coaching_clip(clip_id), team_id, "Clip not found")
-
-
-def _require_playlist_in_team(playlist_id: int, team_id: str) -> dict:
-    return _require_scoped_item(_db.get_coaching_playlist(playlist_id), team_id, "Playlist not found")
-
-
-def _require_summary_in_team(summary_id: int, team_id: str) -> dict:
-    return _require_scoped_item(_db.get_coaching_match_summary(summary_id), team_id, "Match summary not found")
-
-
-def _require_players_in_team(player_ids: list[str], team_id: str) -> None:
-    for player_id in player_ids:
-        _require_player_in_team(player_id, team_id)
-
-
-def _require_notes_in_team(note_ids: list[int], team_id: str) -> None:
-    for note_id in note_ids:
-        _require_note_in_team(note_id, team_id)
-
-
-def _require_clips_in_team(clip_ids: list[int], team_id: str) -> None:
-    for clip_id in clip_ids:
-        _require_clip_in_team(clip_id, team_id)
-
-
-def _require_playlists_in_team(playlist_ids: list[int], team_id: str) -> None:
-    for playlist_id in playlist_ids:
-        _require_playlist_in_team(playlist_id, team_id)
-
-
-def _same_team(item: dict | None, team_id: str | None) -> bool:
-    return item is not None and (team_id is None or str(item.get("team_id")) == str(team_id))
-
-
-
-
-def _validate_goal_source_links(data: dict, player_id: str, team_id: str | None = None):
-    if team_id is not None:
-        _require_player_in_team(player_id, team_id)
-    elif not _db.get_player(player_id, allow_unscoped=True):
-        raise HTTPException(404, "Player not found")
-    note_id = data.get("source_note_id")
-    if note_id is not None:
-        note = _db.get_coaching_note(note_id)
-        if not note or (team_id and not _same_team(note, team_id)):
-            raise HTTPException(404, "Source note not found")
-        if player_id not in (note.get("player_ids") or []):
-            raise HTTPException(400, "Source note is not linked to this player")
-    clip_id = data.get("source_clip_id")
-    if clip_id is not None:
-        clip = _db.get_coaching_clip(clip_id)
-        if not clip or (team_id and not _same_team(clip, team_id)):
-            raise HTTPException(404, "Source clip not found")
-        if player_id not in (clip.get("player_ids") or []):
-            raise HTTPException(400, "Source clip is not linked to this player")
-    playlist_id = data.get("source_playlist_id")
-    if data.get("source_playlist_item_note_id") is not None and playlist_id is None:
-        raise HTTPException(400, "source_playlist_id is required for a playlist item source")
-    if playlist_id is not None:
-        playlist = _db.get_coaching_playlist(playlist_id)
-        if not playlist or (team_id and not _same_team(playlist, team_id)):
-            raise HTTPException(404, "Source playlist not found")
-        item_note_id = data.get("source_playlist_item_note_id")
-        if player_id not in (playlist.get("player_ids") or []) and item_note_id is None:
-            raise HTTPException(400, "Source playlist is not linked to this player")
-        if item_note_id is not None:
-            if item_note_id not in (playlist.get("note_ids") or []):
-                raise HTTPException(400, "Playlist item is not in source playlist")
-            note = _db.get_coaching_note(item_note_id)
-            if not note or (team_id and not _same_team(note, team_id)) or player_id not in (note.get("player_ids") or []):
-                raise HTTPException(400, "Playlist item is not linked to this player")
-    target_match_id = data.get("target_match_id")
-    if target_match_id:
-        if team_id is not None:
-            _require_match_in_team(target_match_id, team_id)
-        elif not _db.get_match_by_id(target_match_id):
-            raise HTTPException(404, "Target match not found")
-
-def _playlists_with_items(playlists: list[dict], notes: list[dict] | None = None) -> list[dict]:
-    notes_by_id = {note["id"]: note for note in (notes if notes is not None else _db.list_coaching_notes())}
-    hydrated = []
-    for playlist in playlists:
-        item_notes = [
-            notes_by_id[note_id]
-            for note_id in playlist.get("note_ids", [])
-            if note_id in notes_by_id
-        ]
-        hydrated.append({**playlist, "note_ids": [note["id"] for note in item_notes], "items": item_notes})
-    return hydrated
-
-
-
-def _validate_match_summary_has_text(payload: dict) -> None:
-    if not any((payload.get(name) or "").strip() for name in ("team_positives", "team_improvements", "training_focus", "body")):
-        raise HTTPException(422, "match summary requires at least one text field")
-
-
-def _validate_match_summary_sources(match_id: str, payload: dict, team_id: str | None = None) -> None:
-    for note_id in payload.get("note_ids") or []:
-        note = _db.get_coaching_note(note_id)
-        if not note or (team_id and not _same_team(note, team_id)):
-            raise HTTPException(404, f"Note not found: {note_id}")
-        if note.get("match_id") != match_id:
-            raise HTTPException(422, f"Note {note_id} is not linked to match {match_id}")
-    for clip_id in payload.get("clip_ids") or []:
-        clip = _db.get_coaching_clip(clip_id)
-        if not clip or (team_id and not _same_team(clip, team_id)):
-            raise HTTPException(404, f"Clip not found: {clip_id}")
-        if clip.get("match_id") != match_id:
-            raise HTTPException(422, f"Clip {clip_id} is not linked to match {match_id}")
-    for playlist_id in payload.get("playlist_ids") or []:
-        playlist = _db.get_coaching_playlist(playlist_id)
-        if not playlist or (team_id and not _same_team(playlist, team_id)):
-            raise HTTPException(404, f"Playlist not found: {playlist_id}")
-        for note_id in playlist.get("note_ids") or []:
-            note = _db.get_coaching_note(note_id)
-            if note and (note.get("match_id") != match_id or (team_id and not _same_team(note, team_id))):
-                raise HTTPException(422, f"Playlist {playlist_id} contains a note from a different match")
-
-
-def _sanitize_match_summary_sources(summary: dict, team_id: str | None) -> dict:
-    out = dict(summary)
-    out["note_ids"] = [
-        note_id for note_id in (summary.get("note_ids") or [])
-        if _same_team(_db.get_coaching_note(note_id), team_id)
-    ]
-    out["clip_ids"] = [
-        clip_id for clip_id in (summary.get("clip_ids") or [])
-        if _same_team(_db.get_coaching_clip(clip_id), team_id)
-    ]
-    out["playlist_ids"] = [
-        playlist_id for playlist_id in (summary.get("playlist_ids") or [])
-        if _same_team(_db.get_coaching_playlist(playlist_id), team_id)
-    ]
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Coach match summary routes have moved to ``routers/coach_summaries.py``
-# (PR-BE 8/N).
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Coaching clips routes have moved to ``routers/coach_clips.py``
-# (PR-BE 5/N).
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Coach player goals routes have moved to ``routers/coach_goals.py``
-# (PR-BE 7/N).
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Viewer /api/my-feedback routes have moved to ``routers/feedback.py``
-# (PR-BE 10/N). The bundle endpoint, goals + goal-reflection,
-# per-player development viewer endpoint, and mark-reviewed POST all
-# live there. The shared helpers (visibility filters, scrub) stay here
-# and are imported late from the router.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Phase 5a — Player development profile aggregation
-#
-# Two endpoints share one builder so the aggregation rules (theme counts,
-# recent items, review status, focus-area derivation) stay single-sourced
-# and the privacy ladder cannot drift between coach and viewer surfaces:
-#
-#   GET /api/coach/players/{player_id}/development          (coach/admin)
-#   GET /api/my-feedback/players/{player_id}/development    (linked viewer)
-#
-# Privacy invariants:
-#   - The coach surface uses the raw note list (so `coach_private_note`
-#     stays visible to coach/admin, matching `_filter_notes_for_user`'s
-#     short-circuit for privileged users).
-#   - The viewer surface filters notes/clips/playlists through the same
-#     helpers `/api/my-feedback` uses, so anything excluded there is also
-#     excluded here (private notes, unrelated player-specific notes, and
-#     `coach_private_note` text via `_strip_private_fields`).
-#   - The viewer endpoint additionally requires the player to be linked
-#     to the signed-in user's account; otherwise it returns 404 — same
-#     code as "unknown player" so an unrelated viewer cannot probe
-#     whether a given roster id exists.
-#   - Reviews are scoped to the signed-in user on the viewer surface;
-#     the coach surface returns the player's full assigned-review set
-#     (filtered to items linked to that player).
-#
-# No new tables. No schema changes. No payload changes to the existing
-# /api/my-feedback or /api/coach/* endpoints. Phase 5b will add the UI.
-# Phase 6 will introduce explicit player_goals; until then the
-# "current_focus_areas" list is derived from recent corrections /
-# individual_goal notes and clearly labelled as derived in the response
-# shape (`source: "derived_from_recent_notes"`).
-# ---------------------------------------------------------------------------
-
-
-_RECENT_LIMIT = 5
-_TOP_LIMIT = 5
-_NOTE_TYPES = ("positive", "correction", "question", "team_concept", "individual_goal")
-
-
-def _notes_for_player(notes: list[dict], player_id: str) -> list[dict]:
-    return [n for n in notes if player_id in (n.get("player_ids") or [])]
-
-
-def _clips_for_player(clips: list[dict], player_id: str) -> list[dict]:
-    return [c for c in clips if player_id in (c.get("player_ids") or [])]
-
-
-def _playlists_for_player(playlists: list[dict], player_id: str, player_note_ids: set[int]) -> list[dict]:
-    """A playlist is "for" the player when either it is explicitly
-    associated with that player (via `coaching_playlist_players`, exposed
-    as `player_ids`) OR when at least one of its ordered items is a note
-    the player is tagged on. Playlists already inherit visibility from
-    the caller-side filter."""
-    out: list[dict] = []
-    for playlist in playlists:
-        if player_id in (playlist.get("player_ids") or []):
-            out.append(playlist)
-            continue
-        if any(note_id in player_note_ids for note_id in (playlist.get("note_ids") or [])):
-            out.append(playlist)
-    return out
-
-
-def _top_counter(values: list[str], limit: int = _TOP_LIMIT) -> list[dict]:
-    """Return the most common values as a list of {value, count} dicts.
-    Stable for ties (insertion order)."""
-    counts: dict[str, int] = {}
-    for v in values:
-        if not v:
-            continue
-        counts[v] = counts.get(v, 0) + 1
-    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    return [{"value": k, "count": c} for k, c in ordered[:limit]]
-
-
-def _theme_counts(notes: list[dict]) -> dict:
-    """Phase 1 / Phase 5a aggregation. `note_type` is a closed enum
-    (see `_VALID_NOTE_TYPES` in models.py) so we report counts for each
-    bucket explicitly rather than just whatever shows up — that way a
-    coach can see "0 positives" instead of the field silently missing."""
-    by_type: dict[str, int] = {t: 0 for t in _NOTE_TYPES}
-    for note in notes:
-        t = note.get("note_type") or "correction"
-        by_type[t] = by_type.get(t, 0) + 1
-    pos = by_type.get("positive", 0)
-    cor = by_type.get("correction", 0)
-    ratio: float | None
-    if cor > 0:
-        ratio = round(pos / cor, 2)
-    elif pos > 0:
-        ratio = None  # all positive, no correction baseline — leave undefined
-    else:
-        ratio = None
-    return {
-        "by_note_type": by_type,
-        "positive_count": pos,
-        "correction_count": cor,
-        "question_count": by_type.get("question", 0),
-        "team_concept_count": by_type.get("team_concept", 0),
-        "individual_goal_count": by_type.get("individual_goal", 0),
-        "positive_to_correction_ratio": ratio,
-        "top_categories": _top_counter([n.get("category") or "" for n in notes]),
-        "top_tags": _top_counter([t for n in notes for t in (n.get("tags") or [])]),
-    }
-
-
-def _sort_recent(items: list[dict], key: str = "updated_at") -> list[dict]:
-    """Sort newest-first by ISO timestamp string. Falls back to
-    `created_at` then to id-stable ordering so ties stay deterministic."""
-    return sorted(
-        items,
-        key=lambda item: (item.get(key) or item.get("created_at") or "", item.get("id") or 0),
-        reverse=True,
-    )
-
-
-def _summarize_review_status(
-    *,
-    notes: list[dict],
-    playlists: list[dict],
-    reviews: list[dict],
-) -> dict:
-    """Aggregate review/reflection state across the items already
-    filtered for the caller's role. Clip review tracking is not
-    implemented yet (`coaching_reviews` only carries note_id /
-    playlist_id) so we report that explicitly so the UI doesn't display
-    a misleading 0/N for clips."""
-    note_ids = {n["id"] for n in notes}
-    playlist_ids = {p["id"] for p in playlists}
-    note_reviews = [r for r in reviews if r.get("note_id") in note_ids]
-    playlist_reviews = [r for r in reviews if r.get("playlist_id") in playlist_ids]
-    # `_db.list_coaching_reviews` returns rows ORDER BY reviewed_at DESC,
-    # so each sub-list above is individually DESC-sorted — but their
-    # concatenation is NOT globally sorted (the first playlist review
-    # could pre-date the last note review). Build one globally sorted
-    # list and source BOTH `latest_reviewed_at` and `latest_reflection`
-    # from it so they can never disagree. (PR #103 review fix.)
-    all_reviews_sorted = _sort_recent(note_reviews + playlist_reviews, key="reviewed_at")
-    latest_reviewed_at = all_reviews_sorted[0]["reviewed_at"] if all_reviews_sorted else None
-    reflections_sorted = [r for r in all_reviews_sorted if (r.get("reflection") or "").strip()]
-    latest_reflection_row = reflections_sorted[0] if reflections_sorted else None
-    return {
-        "notes": {
-            "assigned_count": len(note_ids),
-            "reviewed_count": len({r["note_id"] for r in note_reviews if r.get("note_id")}),
-        },
-        "playlists": {
-            "assigned_count": len(playlist_ids),
-            "reviewed_count": len({r["playlist_id"] for r in playlist_reviews if r.get("playlist_id")}),
-        },
-        "clips": {
-            "assigned_count": 0,  # filled in by caller
-            "review_supported": False,
-        },
-        "latest_reviewed_at": latest_reviewed_at,
-        "reflection_count": len(reflections_sorted),
-        "latest_reflection": (
-            {
-                "note_id": latest_reflection_row.get("note_id"),
-                "playlist_id": latest_reflection_row.get("playlist_id"),
-                "reflection": latest_reflection_row["reflection"],
-                "reviewed_at": latest_reflection_row["reviewed_at"],
-            }
-            if latest_reflection_row
-            else None
-        ),
-    }
-
-
-def _derive_focus_areas(notes: list[dict]) -> list[dict]:
-    """Phase 6 will add real `player_goals`. Until then we surface
-    "what to do next" cues from recent correction / individual_goal
-    notes and label them as derived so any future client UI doesn't
-    treat them as formal goals."""
-    candidates = [
-        n for n in notes
-        if n.get("note_type") in {"correction", "individual_goal"}
-        and (n.get("what_to_do_next") or "").strip()
-    ]
-    recent = _sort_recent(candidates)[:_RECENT_LIMIT]
-    return [
-        {
-            "note_id": n["id"],
-            "note_type": n.get("note_type"),
-            "category": n.get("category"),
-            "what_to_do_next": n.get("what_to_do_next") or "",
-            "match_id": n.get("match_id"),
-            "slot": n.get("slot"),
-            "updated_at": n.get("updated_at"),
-            "source": "derived_from_recent_notes",
-        }
-        for n in recent
-    ]
-
-
-def _build_player_development_profile(
-    *,
-    player: dict,
-    user: dict,
-    viewer_scoped: bool,
-    team_id: str | None = None,
-) -> dict:
-    """Single source of truth for both endpoints. When `viewer_scoped`
-    is True, all source lists are filtered through the same helpers
-    that gate `/api/my-feedback`; otherwise the raw lists are used so a
-    coach/admin sees the full data set including private notes."""
-    all_notes = [n for n in _db.list_coaching_notes() if _same_team(n, team_id)]
-    all_clips = [c for c in _db.list_coaching_clips() if _same_team(c, team_id)]
-    all_playlists = [p for p in _db.list_coaching_playlists() if _same_team(p, team_id)]
-    all_goals = [g for g in _db.list_player_goals() if _same_team(g, team_id)]
-    if viewer_scoped:
-        # Defense-in-depth: `_filter_notes_for_user` short-circuits for
-        # admin/coach callers and returns the raw list (with
-        # `coach_private_note` un-stripped). A coach/admin who happens
-        # to be linked to this player via `player_user_links` can hit
-        # this viewer endpoint, so we must NOT rely on that helper to
-        # scrub for us. Always run every note flowing into a
-        # `viewer_scoped=True` profile through `_strip_private_fields`
-        # so `coach_private_note` is `""` regardless of caller role.
-        # (PR #103 review fix — keeps the `viewer_scoped: true` payload
-        # contract honest even for coach callers.)
-        notes_source = [
-            _strip_private_fields(n) for n in _filter_notes_for_user(all_notes, user, team_id=team_id)
-        ]
-        clips_source = _filter_clips_for_user(all_clips, user, team_id=team_id)
-        playlists_source = _filter_playlists_for_user(all_playlists, user, team_id=team_id)
-        goals_source = _goals_with_visible_sources(_filter_goals_for_user(all_goals, user, team_id=team_id), user, team_id=team_id)
-    else:
-        notes_source = all_notes
-        clips_source = all_clips
-        playlists_source = all_playlists
-        goals_source = _goals_with_visible_sources(all_goals, user, team_id=team_id)
-
-    pid = player["id"]
-    notes = _notes_for_player(notes_source, pid)
-    clips = _clips_for_player(clips_source, pid)
-    note_ids = {n["id"] for n in notes}
-    playlists = _playlists_for_player(playlists_source, pid, note_ids)
-    goals = [g for g in goals_source if g.get("player_id") == pid]
-    active_goals = [g for g in goals if g.get("status") in _ACTIVE_GOAL_STATUSES]
-
-    # Reviews on the viewer surface are scoped to the signed-in user so
-    # other linked-account reviews never leak. On the coach surface we
-    # report the full assigned-review set across all users so the coach
-    # can see who has engaged with what.
-    if viewer_scoped:
-        reviews = [
-            r for r in (_db.list_coaching_reviews(user.get("user_id")) if user.get("user_id") else [])
-            if (r.get("note_id") is None or r.get("note_id") in note_ids)
-            and (r.get("playlist_id") is None or r.get("playlist_id") in {p["id"] for p in playlists})
-        ]
-    else:
-        reviews = _db.list_coaching_reviews()
-
-    review_summary = _summarize_review_status(notes=notes, playlists=playlists, reviews=reviews)
-    review_summary["clips"]["assigned_count"] = len(clips)
-
-    notes_recent = _sort_recent(notes)
-    clips_recent = _sort_recent(clips)
-    playlists_recent = _sort_recent(playlists)
-
-    recent_positives = [n for n in notes_recent if n.get("note_type") == "positive"][:_RECENT_LIMIT]
-    recent_corrections = [n for n in notes_recent if n.get("note_type") == "correction"][:_RECENT_LIMIT]
-
-    profile = {
-        "player": {
-            "id": player["id"],
-            "display_name": player.get("display_name") or "",
-            "jersey_number": player.get("jersey_number") or "",
-            "active": bool(player.get("active", True)),
-            "notes_field": player.get("notes") or "",
-            "links_count": len(player.get("links") or []),
-        },
-        "counts": {
-            "notes": len(notes),
-            "clips": len(clips),
-            "playlists": len(playlists),
-            "goals": len(active_goals),
-        },
-        "themes": _theme_counts(notes),
-        "review_status": review_summary,
-        "recent_notes": notes_recent[:_RECENT_LIMIT],
-        "recent_positives": recent_positives,
-        "recent_corrections": recent_corrections,
-        "recent_clips": clips_recent[:_RECENT_LIMIT],
-        "active_goals": active_goals,
-        "recent_playlists": [
-            {
-                "id": p["id"], "title": p.get("title") or "",
-                "visibility": p.get("visibility"), "item_count": len(p.get("note_ids") or []),
-                "updated_at": p.get("updated_at"),
-            }
-            for p in playlists_recent[:_RECENT_LIMIT]
-        ],
-        "current_focus_areas": _derive_focus_areas(notes),
-        "viewer_scoped": viewer_scoped,
-    }
-
-    if not viewer_scoped:
-        # Coach surface: lightweight linked-account summary so the coach
-        # can see how the player connects to family/player accounts
-        # without re-fetching the roster. Values come from the same
-        # `links` list `/api/coach/players` already returns to coach/admin.
-        profile["linked_accounts"] = [
-            {
-                "user_id": link.get("user_id"),
-                "username": link.get("username"),
-                "display_name": link.get("display_name") or "",
-                "relationship": link.get("relationship"),
-            }
-            for link in (player.get("links") or [])
-        ]
-
-    return profile
-
-
-# ---------------------------------------------------------------------------
-# Coach engagement + per-player development routes have moved to
-# ``routers/coach_engagement.py`` (PR-BE 9/N).
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

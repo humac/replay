@@ -37,7 +37,7 @@ async def test_legacy_in_memory_helper_token_without_db_user_still_authorizes(cl
     token = _auth.create_token("synthetic-user-id", "coach", "synthetic-user")
     headers = {"Authorization": f"Bearer {token}"}
 
-    resp = await client.get("/api/admin/teams", headers=headers)
+    resp = await client.get("/api/users", headers=headers)
     assert resp.status_code == 403
     with _db.connect() as conn:
         rows = conn.execute("SELECT * FROM user_sessions WHERE token_hash = ?", (_sha256(token),)).fetchall()
@@ -98,134 +98,23 @@ async def test_disabled_user_session_cannot_continue(client):
     assert resp.json()["authenticated"] is False
 
 
-async def test_password_change_revokes_existing_sessions_and_requires_new_password(client):
-    user = _create_user("password-change-user")
-    _token_a, headers_a = await _login(client, user["username"], "password123")
-    _token_b, headers_b = await _login(client, user["username"], "password123")
-
-    resp = await client.post(
-        "/api/me/password",
-        headers=headers_a,
-        json={"current_password": "password123", "new_password": "NewPassword!234"},
-    )
-    assert resp.status_code == 200
-
-    assert (await client.get("/api/auth/check", headers=headers_a)).json()["authenticated"] is False
-    assert (await client.get("/api/auth/check", headers=headers_b)).json()["authenticated"] is False
-    assert (await client.post("/api/login", json={"username": user["username"], "password": "password123"})).status_code == 401
-    assert (await client.post("/api/login", json={"username": user["username"], "password": "NewPassword!234"})).status_code == 200
-
-
-async def test_email_verification_stores_token_hash_and_marks_profile(client, monkeypatch):
-    import db as _db
-
-    user = _create_user("email-verify-user")
-    _db.upsert_user_profile(user["id"], {"email": "verify-me@example.com"})
+async def test_account_self_service_routes_removed(client):
+    """Account self-service (password change, email verification, password
+    reset) was removed. Confirm the routes are gone — durable sessions and
+    admin-managed accounts remain."""
+    user = _create_user("removed-surface-user")
     _token, headers = await _login(client, user["username"])
 
-    monkeypatch.setenv("REPLAY_DEV_TOKEN_DELIVERY", "1")
-    resp = await client.post("/api/me/email-verification/request", headers=headers)
-    assert resp.status_code == 200
-    verification_token = resp.json()["verification_token"]
-    assert verification_token
-
-    with _db.connect() as conn:
-        rows = [dict(row) for row in conn.execute("SELECT * FROM email_verification_tokens WHERE user_id = ?", (user["id"],)).fetchall()]
-    assert len(rows) == 1
-    assert rows[0]["token_hash"] == _sha256(verification_token)
-    assert verification_token not in str(rows[0])
-
-    resp = await client.post("/api/me/email-verification/confirm", json={"token": verification_token})
-    assert resp.status_code == 200
-    assert _db.get_user_profile(user["id"])["email_verified_at"] is not None
-
-    reused = await client.post("/api/me/email-verification/confirm", json={"token": verification_token})
-    assert reused.status_code == 400
-
-
-async def test_email_verification_request_is_generic_without_dev_delivery(client, monkeypatch):
-    """In production (REPLAY_DEV_TOKEN_DELIVERY unset), the request endpoint
-    MUST NOT return the raw verification token. Stored tokens stay hash-only;
-    the raw token reaches the user via the email channel, not the API response.
-    """
-    import db as _db
-
-    user = _create_user("email-verify-prod-user")
-    _db.upsert_user_profile(user["id"], {"email": "prod-verify@example.com"})
-    _token, headers = await _login(client, user["username"])
-
-    monkeypatch.delenv("REPLAY_DEV_TOKEN_DELIVERY", raising=False)
-    resp = await client.post("/api/me/email-verification/request", headers=headers)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body == {"ok": True}
-    assert "verification_token" not in body
-    # And the response body text must not leak the token either.
-    with _db.connect() as conn:
-        rows = [dict(row) for row in conn.execute("SELECT * FROM email_verification_tokens WHERE user_id = ?", (user["id"],)).fetchall()]
-    assert len(rows) == 1
-    # Hash-only storage invariant (already covered elsewhere — kept here as a
-    # defense-in-depth assertion for the gate change).
-    assert rows[0]["token_hash"]
-
-
-async def test_email_change_clears_verified_timestamp(client):
-    import auth as _auth
-    import db as _db
-
-    user = _create_user("email-change-verify-user")
-    _db.upsert_user_profile(user["id"], {"email": "old@example.com"})
-    token = _auth.create_email_verification_token_for_user(user["id"])
-    assert token
-    assert _auth.verify_email_with_token(token)
-    assert _db.get_user_profile(user["id"])["email_verified_at"] is not None
-    _login_token, headers = await _login(client, user["username"])
-
-    resp = await client.patch("/api/me/profile", headers=headers, json={"email": "new@example.com"})
-    assert resp.status_code == 200
-    assert resp.json()["profile"]["email_verified_at"] is None
-    profile = _db.get_user_profile(user["id"])
-    assert profile["email"] == "new@example.com"
-    assert profile["email_verified_at"] is None
-
-
-async def test_password_reset_request_is_generic_without_dev_delivery(client):
-    existing = _create_user("password-reset-generic-user")
-
-    known = await client.post("/api/auth/password-reset/request", json={"username": existing["username"]})
-    unknown = await client.post("/api/auth/password-reset/request", json={"username": "missing-password-reset-user"})
-
-    assert known.status_code == 200
-    assert unknown.status_code == 200
-    assert known.json() == {"ok": True}
-    assert unknown.json() == {"ok": True}
-
-
-async def test_password_reset_stores_token_hash_and_rejects_reuse(client, monkeypatch):
-    import db as _db
-
-    user = _create_user("password-reset-user")
-    monkeypatch.setenv("REPLAY_DEV_TOKEN_DELIVERY", "1")
-    resp = await client.post("/api/auth/password-reset/request", json={"username": user["username"]})
-    assert resp.status_code == 200
-    reset_token = resp.json()["reset_token"]
-    assert reset_token
-
-    with _db.connect() as conn:
-        rows = [dict(row) for row in conn.execute("SELECT * FROM password_reset_tokens WHERE user_id = ?", (user["id"],)).fetchall()]
-    assert len(rows) == 1
-    assert rows[0]["token_hash"] == _sha256(reset_token)
-    assert reset_token not in str(rows[0])
-
-    resp = await client.post(
-        "/api/auth/password-reset/confirm",
-        json={"token": reset_token, "new_password": "ResetPassword!234"},
-    )
-    assert resp.status_code == 200
-    assert (await client.post("/api/login", json={"username": user["username"], "password": "ResetPassword!234"})).status_code == 200
-
-    reused = await client.post(
-        "/api/auth/password-reset/confirm",
-        json={"token": reset_token, "new_password": "AnotherPassword!234"},
-    )
-    assert reused.status_code == 400
+    assert (
+        await client.post(
+            "/api/me/password",
+            headers=headers,
+            json={"current_password": "password123", "new_password": "NewPassword!234"},
+        )
+    ).status_code in (404, 405)
+    assert (
+        await client.post("/api/me/email-verification/request", headers=headers)
+    ).status_code in (404, 405)
+    assert (
+        await client.post("/api/auth/password-reset/request", json={"username": user["username"]})
+    ).status_code in (404, 405)

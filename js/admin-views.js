@@ -36,106 +36,12 @@ export const adminViewsMixin = {
         // Performance Tuning card (admin only — needs the tuning_knobs schema
         // which is only returned by the admin settings endpoint).
         if (this.isAdmin()) this.renderTuningKnobsCard();
-        if (this.isAdmin()) this.renderNotificationSettingsCard();
 
         // Show user management for admins
         const userCard = document.getElementById('user-management-card');
         if (userCard) {
             userCard.style.display = this.isAdmin() ? 'block' : 'none';
             if (this.isAdmin()) this.renderUsersList();
-        }
-    },
-
-    async renderNotificationSettingsCard() {
-        const summary = document.getElementById('settings-email-summary');
-        if (!summary) return;
-        try {
-            const resp = await this.authFetch('/api/admin/email/settings', { headers: this.getAuthHeaders() });
-            if (!resp.ok) throw new Error('Could not load notification settings');
-            const payload = await resp.json();
-            this._emailSettingsPayload = payload;
-            const settings = payload.settings || {};
-            const provider = document.getElementById('settings-email-provider');
-            const baseUrl = document.getElementById('settings-email-public-base-url');
-            const from = document.getElementById('settings-email-from');
-            const fromName = document.getElementById('settings-email-from-name');
-            const keyInput = document.getElementById('settings-email-brevo-api-key');
-            const clearKey = document.getElementById('settings-email-clear-key');
-            const keyState = document.getElementById('settings-email-key-state');
-            if (provider) provider.value = settings.email_provider || 'disabled';
-            if (baseUrl) baseUrl.value = settings.email_public_base_url || '';
-            if (from) from.value = settings.email_from || '';
-            if (fromName) fromName.value = settings.email_from_name || 'Replay';
-            if (keyInput) keyInput.value = '';
-            if (clearKey) clearKey.checked = false;
-            const status = payload.status || {};
-            const stateText = status.has_brevo_api_key
-                ? `Brevo API key configured${status.brevo_api_key_source === 'env' ? ' from environment' : ''}.`
-                : 'No Brevo API key configured.';
-            if (keyState) keyState.textContent = stateText;
-            summary.textContent = payload.configured
-                ? 'Brevo is ready for invites, password resets, verification, and test emails.'
-                : 'Email delivery is not fully configured. Save Brevo settings here or leave notifications disabled.';
-        } catch (err) {
-            summary.textContent = err.message || 'Could not load notification settings.';
-        }
-    },
-
-    collectNotificationSettings() {
-        const provider = document.getElementById('settings-email-provider');
-        if (!provider) return null;
-        const body = {
-            email_provider: provider.value || 'disabled',
-            email_public_base_url: document.getElementById('settings-email-public-base-url')?.value.trim() || '',
-            email_from: document.getElementById('settings-email-from')?.value.trim() || '',
-            email_from_name: document.getElementById('settings-email-from-name')?.value.trim() || '',
-            clear_brevo_api_key: document.getElementById('settings-email-clear-key')?.checked === true,
-        };
-        const key = document.getElementById('settings-email-brevo-api-key')?.value.trim() || '';
-        if (key) body.email_brevo_api_key = key;
-        return body;
-    },
-
-    async saveNotificationSettings({ silent = false } = {}) {
-        const body = this.collectNotificationSettings();
-        if (!body) return null;
-        const resp = await this.authFetch('/api/admin/email/settings', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
-            body: JSON.stringify(body),
-        });
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(payload.detail || 'Could not save notification settings.');
-        this._emailSettingsPayload = payload;
-        await this.renderNotificationSettingsCard();
-        if (!silent) this.showSuccess('Notification settings saved.');
-        return payload;
-    },
-
-    async sendNotificationTestEmail() {
-        const result = document.getElementById('settings-email-test-result');
-        const email = document.getElementById('settings-email-test-address')?.value.trim() || '';
-        if (!email) {
-            this.showError('Enter a test email address.');
-            return;
-        }
-        try {
-            await this.saveNotificationSettings({ silent: true });
-            if (result) result.textContent = 'Sending test email…';
-            const resp = await this.authFetch('/api/admin/email/test', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
-                body: JSON.stringify({ email }),
-            });
-            const payload = await resp.json().catch(() => ({}));
-            if (!resp.ok || !payload.ok) {
-                throw new Error(payload.detail || payload.status || 'Could not send test email.');
-            }
-            if (result) result.textContent = `Sent via ${payload.provider}.`;
-            this.showSuccess('Test email sent.');
-        } catch (err) {
-            if (result) result.textContent = err.message || 'Could not send test email.';
-            this.showError(err.message || 'Could not send test email.');
         }
     },
 
@@ -410,7 +316,7 @@ export const adminViewsMixin = {
             <div class="admin-panel-head admin-users-head">
                 <h3>Platform users</h3>
                 <div class="admin-panel-head-actions">
-                    <button type="button" class="btn-head" onclick="app.openAdminUserCreate()">+ New user</button>
+                    <button type="button" class="btn-head" onclick="app.openUserCreateModal()">+ New user</button>
                 </div>
             </div>
         `;
@@ -418,30 +324,25 @@ export const adminViewsMixin = {
             container.innerHTML = headBar + '<p class="text-muted admin-users-empty">No additional user accounts. Only the env-var admin is active.</p>';
             return;
         }
-        // People pivot: clicking the row body opens the per-user 360 drawer
-        // (profile + every team membership across all teams + every linked
-        // player). Inline actions on the row keep the quick toggles for
-        // common cases.
+        this._usersCache = users;
         const rows = users.map(u => {
             const rolesStr = String(u.role || 'viewer');
             const isGlobalAdmin = rolesStr.split(',').map((p) => p.trim()).includes('admin');
             const rolePill = `<span class="badge">${this.esc(rolesStr.replace(',', ' + '))}</span>`;
             const adminPill = isGlobalAdmin ? '<span class="badge ready">Global admin</span>' : '';
             return `
-                <div class="user-row user-row-clickable" data-user-id="${u.id}">
-                    <button type="button" class="user-row-summary" onclick="app.openAdminUserDetail('${this.esc(u.id)}')" title="View this user's profile, memberships, and linked players">
-                        <div class="user-info">
-                            <span class="user-name">${this.esc(u.display_name || u.username)}</span>
-                            <span class="user-username">@${this.esc(u.username)}</span>
-                        </div>
-                        ${rolePill}
-                        ${adminPill}
-                        <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
-                    </button>
+                <div class="user-row" data-user-id="${this.esc(u.id)}">
+                    <div class="user-info">
+                        <span class="user-name">${this.esc(u.display_name || u.username)}</span>
+                        <span class="user-username">@${this.esc(u.username)}</span>
+                    </div>
+                    ${rolePill}
+                    ${adminPill}
+                    <span class="badge ${u.enabled ? 'ready' : 'error'}">${u.enabled ? 'Active' : 'Disabled'}</span>
                     <div class="user-actions">
-                        <button class="mini-action-btn" onclick="app.openAdminUserEdit('${this.esc(u.id)}')">Edit</button>
+                        <button class="mini-action-btn" onclick="app.openUserEditModal('${this.esc(u.id)}')">Edit</button>
                         <button class="mini-action-btn" onclick="app.toggleUserEnabled('${this.esc(u.id)}', ${!u.enabled})">${u.enabled ? 'Disable' : 'Enable'}</button>
-                        <button class="mini-action-btn is-danger" onclick="app.handleAdminUserDelete('${this.esc(u.id)}', '${this.esc(u.username)}')">Delete</button>
+                        <button class="mini-action-btn is-danger" onclick="app.handleDeleteUser('${this.esc(u.id)}', '${this.esc(u.username)}')">Delete</button>
                     </div>
                 </div>
             `;
@@ -449,65 +350,102 @@ export const adminViewsMixin = {
         container.innerHTML = headBar + rows;
     },
 
-    // Phase F.2: open / close the membership expander on an Admin > Users row.
-    // Lazy-loads from /api/admin/teams (already cached) + /api/admin/teams/{id}/memberships
-    // (one request per team). Cached on first open via _userMembershipsCache.
-    async toggleUserMembershipsExpander(userId) {
-        const panel = document.querySelector(`[data-user-memberships="${userId}"]`);
-        const toggle = document.querySelector(`[data-user-memberships-toggle="${userId}"]`);
-        if (!panel) return;
-        if (!panel.hidden) {
-            panel.hidden = true;
-            if (toggle) toggle.textContent = 'View teams';
-            return;
-        }
-        panel.hidden = false;
-        if (toggle) toggle.textContent = 'Hide teams';
-        panel.innerHTML = '<div class="session-empty">Loading memberships…</div>';
-        try {
-            const memberships = await this.loadUserMemberships(userId);
-            panel.innerHTML = this.renderUserMembershipsList(memberships);
-        } catch (err) {
-            panel.innerHTML = `<div class="session-empty">${this.esc(err.message || 'Could not load memberships.')}</div>`;
-        }
+    // Inline create/edit modals for Admin > Users. The legacy 360-drawer
+    // mixin was removed with the coaching subsystem; these reuse the
+    // createUser/updateUser API helpers + the shared formModal primitive.
+    _findCachedUser(userId) {
+        const id = String(userId);
+        return (Array.isArray(this._usersCache) ? this._usersCache : [])
+            .find(u => String(u.id) === id) || null;
     },
 
-    async loadUserMemberships(userId) {
-        // Reuse the admin-teams team list cache if present; otherwise fetch.
-        let teams = this._adminTeams;
-        if (!teams) {
-            const resp = await this.authFetch('/api/admin/teams', { headers: this.getAuthHeaders() });
-            if (!resp.ok) throw new Error('Could not load teams.');
-            teams = await resp.json();
-            this._adminTeams = teams;
-        }
-        const results = await Promise.all(teams.map(async (t) => {
-            try {
-                const resp = await this.authFetch(`/api/admin/teams/${encodeURIComponent(t.id)}/memberships`, { headers: this.getAuthHeaders() });
-                if (!resp.ok) return null;
-                const memberships = await resp.json();
-                const mine = memberships.find((m) => String(m.user_id) === String(userId));
-                if (!mine) return null;
-                return { team: t, role: mine.role };
-            } catch { return null; }
-        }));
-        return results.filter(Boolean);
+    _userFormBody(user) {
+        const esc = (v) => this.esc(v == null ? '' : String(v));
+        const isEdit = !!user;
+        const roleValue = user ? String(user.role || 'viewer') : 'viewer';
+        const enabledChecked = !user || user.enabled !== false ? 'checked' : '';
+        return `
+            <div class="form-group">
+                <label for="user-form-username">Username</label>
+                <input type="text" id="user-form-username" value="${esc(user?.username)}" ${isEdit ? 'disabled' : ''} autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="user-form-display">Display name</label>
+                <input type="text" id="user-form-display" value="${esc(user?.display_name)}" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="user-form-role">Role</label>
+                <input type="text" id="user-form-role" value="${esc(roleValue)}" autocomplete="off">
+                <p class="form-help">Comma-separated. Allowed: admin, uploader, viewer.</p>
+            </div>
+            <div class="form-group">
+                <label for="user-form-password">Password${isEdit ? ' (leave blank to keep)' : ''}</label>
+                <input type="password" id="user-form-password" value="" autocomplete="new-password">
+            </div>
+            <label class="account-radio" style="margin-top:8px;">
+                <input type="checkbox" id="user-form-enabled" ${enabledChecked}><span>Active</span>
+            </label>
+        `;
     },
 
-    renderUserMembershipsList(memberships) {
-        if (!memberships.length) {
-            return '<div class="session-empty">No team memberships. This user can sign in but has no team-scoped access.</div>';
-        }
-        const rows = memberships.map(({ team, role }) => `
-            <li class="user-membership-row">
-                <span class="user-membership-team">
-                    <strong>${this.esc(team.name)}</strong>
-                    <span class="admin-card-sub">/${this.esc(team.slug)}</span>
-                </span>
-                <span class="team-pill" data-role="${this.esc(role)}">${this.esc(role.replace(/_/g, ' '))}</span>
-            </li>
-        `).join('');
-        return `<ul class="user-memberships-list" role="list">${rows}</ul>`;
+    openUserCreateModal() {
+        const body = document.createElement('div');
+        body.innerHTML = this._userFormBody(null);
+        this.formModal({
+            title: 'New User',
+            kicker: 'Users',
+            body,
+            confirmLabel: 'Create User',
+            onSubmit: async (close) => {
+                const username = body.querySelector('#user-form-username')?.value.trim() || '';
+                const password = body.querySelector('#user-form-password')?.value || '';
+                const role = body.querySelector('#user-form-role')?.value.trim() || 'viewer';
+                const display_name = body.querySelector('#user-form-display')?.value.trim() || '';
+                const enabled = !!body.querySelector('#user-form-enabled')?.checked;
+                if (!username) { this.showError('Username is required.'); return; }
+                if (password.length < 8) { this.showError('Password must be at least 8 characters.'); return; }
+                try {
+                    await this.createUser({ username, password, role, display_name, enabled });
+                    this.showSuccess(`User "${username}" created.`);
+                    close();
+                    await this.renderUsersList();
+                } catch (err) {
+                    this.showError(err.message);
+                }
+            },
+        });
+    },
+
+    openUserEditModal(userId) {
+        const user = this._findCachedUser(userId);
+        if (!user) return;
+        const body = document.createElement('div');
+        body.innerHTML = this._userFormBody(user);
+        this.formModal({
+            title: `Edit ${this.esc(user.display_name || user.username || 'User')}`,
+            kicker: 'Users',
+            body,
+            confirmLabel: 'Save Changes',
+            onSubmit: async (close) => {
+                const role = body.querySelector('#user-form-role')?.value.trim() || 'viewer';
+                const display_name = body.querySelector('#user-form-display')?.value.trim() || '';
+                const password = body.querySelector('#user-form-password')?.value || '';
+                const enabled = !!body.querySelector('#user-form-enabled')?.checked;
+                const payload = { role, display_name, enabled };
+                if (password) {
+                    if (password.length < 8) { this.showError('Password must be at least 8 characters.'); return; }
+                    payload.password = password;
+                }
+                try {
+                    await this.updateUser(user.id, payload);
+                    this.showSuccess('User updated.');
+                    close();
+                    await this.renderUsersList();
+                } catch (err) {
+                    this.showError(err.message);
+                }
+            },
+        });
     },
 
     async handleAddUser() {

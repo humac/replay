@@ -35,22 +35,12 @@ async def list_users(request: Request):
 
 @router.get("/api/users/{user_id}")
 async def get_user_detail(user_id: str, request: Request):
-    """Return one user plus cross-tenant memberships and linked players.
-
-    Powers the Admin > Users 360 drawer so a global admin can see a
-    person's complete picture in one view.
-    """
+    """Return one user's profile for the Admin > Users detail view."""
     _auth.require_role(request, "admin")
     user = _db.get_user_by_id(user_id)
     if not user:
         raise HTTPException(404, "User not found")
-    memberships = _db.list_user_memberships_with_team(user_id)
-    linked_players = _db.list_player_links_for_user(user_id)
-    return {
-        "user": _scrub_user(user),
-        "memberships": memberships,
-        "linked_players": linked_players,
-    }
+    return {"user": _scrub_user(user)}
 
 
 @router.post("/api/users")

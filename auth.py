@@ -14,19 +14,14 @@ import db as _db
 # In-memory token store: {token_string: {created, user_id, role, username}}
 _active_tokens: dict[str, dict] = {}
 TOKEN_TTL = 86400  # 24 hours
-PASSWORD_RESET_TTL = 3600  # 1 hour
-EMAIL_VERIFICATION_TTL = 86400  # 24 hours
 _MAX_ACTIVE_TOKENS = max(1, int(os.environ.get("MAX_ACTIVE_TOKENS", "1000")))
 _last_token_sweep: float = 0.0
 _TOKEN_SWEEP_INTERVAL = 60.0  # seconds
 
 # Login rate limiting: {ip: [timestamps]}
 _login_attempts: dict[str, list[float]] = {}
-_password_reset_attempts: dict[str, list[float]] = {}
 _LOGIN_RATE_LIMIT = 5
 _LOGIN_RATE_WINDOW = 60.0  # seconds
-_PASSWORD_RESET_RATE_LIMIT = 5
-_PASSWORD_RESET_RATE_WINDOW = 300.0  # seconds
 
 # Origin validation (comma-separated hostnames, optional)
 _ALLOWED_ORIGINS_RAW = os.environ.get("ALLOWED_ORIGINS", "")
@@ -59,28 +54,6 @@ def role_set(role: str | None) -> set[str]:
 
 def has_role(user: dict, *roles: str) -> bool:
     return bool(role_set(user.get("role")).intersection(roles))
-
-
-def is_privileged_coach(user: dict) -> bool:
-    """Return True when the user should see the privileged (unscrubbed)
-    coach view of feedback resources.
-
-    Privilege requires either:
-    1. Legacy ``users.role`` is ``admin`` (global admin override), or
-    2. The user has a ``coach`` / ``team_admin`` / ``assistant_coach``
-       row in ``team_user_memberships``.
-
-    The pre-membership ``users.role == 'coach'`` bypass was removed
-    after the membership system became the source of truth — see
-    ``_migrate_v24`` which rewrites any leftover ``coach`` role string.
-    """
-    if has_role(user, "admin"):
-        return True
-    # Late-imported to avoid a circular import at module load (db imports
-    # log; this module is imported by db indirectly). Cheap check — one
-    # indexed SELECT against team_user_memberships.
-    import db as _db
-    return _db.user_has_coach_membership(user.get("user_id"))
 
 
 # ---------------------------------------------------------------------------
@@ -131,10 +104,6 @@ def sweep_expired_tokens():
                  if not any(now - ts < _LOGIN_RATE_WINDOW for ts in timestamps)]
     for ip in stale_ips:
         del _login_attempts[ip]
-    stale_reset_keys = [key for key, timestamps in _password_reset_attempts.items()
-                        if not any(now - ts < _PASSWORD_RESET_RATE_WINDOW for ts in timestamps)]
-    for key in stale_reset_keys:
-        del _password_reset_attempts[key]
 
 
 def require_auth(request: Request) -> dict:
@@ -191,27 +160,10 @@ def require_role(request: Request, *roles: str) -> dict:
 
 
 def require_global_admin(request: Request) -> dict:
-    """Require the legacy global/system admin role for recovery and cross-team operations."""
+    """Require the admin role for recovery and privileged operations."""
     return require_role(request, "admin")
 
 
-def require_team_role(request: Request, team_id: str, *roles: str, allow_global_admin_override: bool = False):
-    """Require the current user to have a scoped team membership role/capability."""
-    import tenancy as _tenancy
-
-    user = require_auth(request)
-    return _tenancy.require_team_role(
-        request,
-        user,
-        team_id,
-        *roles,
-        allow_global_admin_override=allow_global_admin_override,
-    )
-
-
-# Compatibility alias for callers that follow the internal helper naming used
-# in the platform plan.
-_require_team_role = require_team_role
 _require_global_admin = require_global_admin
 
 
@@ -228,21 +180,6 @@ def check_login_rate_limit(request: Request):
         raise HTTPException(429, "Too many login attempts. Try again later.")
     attempts.append(now)
     _login_attempts[ip] = attempts
-
-
-def check_password_reset_rate_limit(request: Request, username: str):
-    """Limit reset-token generation by IP and normalized username."""
-    import streams as _streams
-
-    ip = _streams.client_ip(request)
-    key = f"{ip}:{username.strip().lower()}"
-    now = time.time()
-    attempts = _password_reset_attempts.get(key, [])
-    attempts = [t for t in attempts if now - t < _PASSWORD_RESET_RATE_WINDOW]
-    if len(attempts) >= _PASSWORD_RESET_RATE_LIMIT:
-        raise HTTPException(429, "Too many password reset attempts. Try again later.")
-    attempts.append(now)
-    _password_reset_attempts[key] = attempts
 
 
 def validate_login_origin(request: Request):
@@ -307,54 +244,6 @@ def active_token_count() -> int:
 # ---------------------------------------------------------------------------
 # Multi-user authentication
 # ---------------------------------------------------------------------------
-
-def change_password(user_id: str, current_password: str, new_password: str) -> bool:
-    user = _db.get_user_by_id(user_id)
-    if not user or not user.get("enabled") or not verify_password(current_password, user["password_hash"]):
-        return False
-    _db.update_user(user_id, password_hash=hash_password(new_password))
-    _db.revoke_user_sessions(user_id)
-    for token, info in list(_active_tokens.items()):
-        if info.get("user_id") == user_id:
-            _active_tokens.pop(token, None)
-    return True
-
-
-def create_password_reset_token_for_username(username: str) -> str | None:
-    user = _db.get_user_by_username(username)
-    if not user or not user.get("enabled"):
-        return None
-    token = secrets.token_urlsafe(32)
-    _db.create_password_reset_token(user["id"], token_hash(token), ttl=PASSWORD_RESET_TTL)
-    return token
-
-
-def reset_password_with_token(token: str, new_password: str) -> bool:
-    reset = _db.consume_password_reset_token(token_hash(token))
-    if reset is None:
-        return False
-    user_id = reset["user_id"]
-    _db.update_user(user_id, password_hash=hash_password(new_password))
-    _db.revoke_user_sessions(user_id)
-    for active_token, info in list(_active_tokens.items()):
-        if info.get("user_id") == user_id:
-            _active_tokens.pop(active_token, None)
-    return True
-
-
-def create_email_verification_token_for_user(user_id: str) -> str | None:
-    profile = _db.get_user_profile(user_id)
-    email = profile.get("email")
-    if not email:
-        return None
-    token = secrets.token_urlsafe(32)
-    _db.create_email_verification_token(user_id, token_hash(token), email, ttl=EMAIL_VERIFICATION_TTL)
-    return token
-
-
-def verify_email_with_token(token: str) -> bool:
-    return _db.consume_email_verification_token(token_hash(token)) is not None
-
 
 def authenticate_user(username: str, password: str) -> dict | None:
     """Authenticate against env-var admin first, then DB users.

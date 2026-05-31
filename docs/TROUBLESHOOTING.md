@@ -104,6 +104,19 @@ version that failed.
 - If the database is corrupt, restore from a backup
 - Migration state is tracked in the `schema_version` table
 
+### `RuntimeError: Database is at schema_version=NN`
+
+Raised at startup when the database is stamped at a `schema_version` newer
+than this build expects (`user_version > 1`). The migration runner is
+forward-only and fails closed rather than open a schema-incompatible file —
+this happens when you point a current build at a data directory written by a
+newer or differently-shaped build of the app.
+
+**Fix:** back up the existing `replay.db` and the media tree, then start from
+a fresh `REPLAY_DATA_DIR` (or delete `replay.db` so startup recreates it) and
+re-add matches through the admin console. See
+[Deployment → Database](DEPLOYMENT.md#database) for details.
+
 ## GPU Transcoding
 
 ### GPU transcode fails, CPU fallback works

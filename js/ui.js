@@ -84,7 +84,7 @@ function openAppModal({
     initialValue = '',
     body = null,                // HTMLElement to mount inside the card (kind === 'form')
     kicker = null,              // override kicker label
-    size = null,                // 'form' | 'wide' | 'wide-board' — adds .is-{size} class to card. 'wide' = 720 px (Player Dev, focused Feedback player). 'wide-board' = 1080 px (tactical-board observation composer, Phase 6c).
+    size = null,                // 'form' | 'wide' — adds .is-{size} class to card. 'wide' = 720 px.
     onSubmit = null,            // async (closeFn) => void; called when user confirms a form modal
     onMount = null,             // (card) => void; called once the modal DOM is in the document
 } = {}) {

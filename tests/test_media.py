@@ -167,7 +167,13 @@ def test_path_containment_rejects_traversal_for_team_and_match_ids(tmp_path: Pat
         _media.slot_raw_path(tmp_path, "/abs", "full", ".mp4", team_id="team-1")
 
 
-def test_caddy_hls_regexes_match_legacy_and_team_aware_shapes_without_cross_fallback() -> None:
+def test_caddy_hls_regexes_match_flat_shapes_only() -> None:
+    """The single-team Caddyfile only serves the flat HLS layout.
+
+    The team-aware ``/api/matches/{id}/hls/teams/{team_id}/{slot}/...``
+    matchers were removed alongside their FastAPI handlers in PR #193 —
+    those URLs should no longer appear anywhere in either copy of the config.
+    """
     assets = {
         "ts": ["seg.ts", "720p/segment_000.ts"],
         "mp4": ["seg.m4s", "720p/segment_000.m4s"],
@@ -175,166 +181,32 @@ def test_caddy_hls_regexes_match_legacy_and_team_aware_shapes_without_cross_fall
     }
     for config_path in (Path("Caddyfile"), Path("docker-compose-intel.yml")):
         text = config_path.read_text()
-        assert "try_files /videos/teams" not in text
-        assert text.count("reverse_proxy replay:8091") >= 4
+        # Team-aware rules and config must be gone.
+        assert "vod_hls_team" not in text
+        assert "hls/teams" not in text
+        # The catch-all proxy that routes every non-static request to FastAPI
+        # (login, matches API, uploads, admin, live, etc.) must still be wired
+        # up. Pinning it at >= 1 catches an accidental future deletion of the
+        # top-level reverse_proxy block without being brittle to refactors.
+        assert text.count("reverse_proxy replay:8091") >= 1
         for suffix, suffix_assets in assets.items():
             patterns = [
                 re.compile(pattern)
-                for name, pattern in re.findall(r"path_regexp (vod_hls(?:_team)?_\w+) (\^.*\$)", text)
+                for name, pattern in re.findall(r"path_regexp (vod_hls_\w+) (\^.*\$)", text)
                 if name.endswith(suffix)
             ]
             for asset in suffix_assets:
+                # Flat layout still matches.
                 assert any(p.match(f"/api/matches/m1/hls/full/{asset}") for p in patterns)
-                assert any(p.match(f"/api/matches/m1/hls/teams/team-1/full/{asset}") for p in patterns)
-                assert not any(p.match(f"/api/matches/m1/hls/teams/../full/{asset}") for p in patterns)
-                assert not any(p.match(f"/api/matches/m1/hls/teams/team-1/full/../{asset}") for p in patterns)
-
-
-@pytest.mark.asyncio
-async def test_hls_routes_support_legacy_and_team_aware_urls_and_reject_wrong_team(client, auth_headers, data_dir) -> None:
-    import db as _db
-
-    resp = await client.post(
-        "/api/matches",
-        json={"home_team": "A", "away_team": "B"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    match_id = resp.json()["id"]
-    match = _db.get_match_by_id(match_id)
-    assert match and match.get("team_id")
-    team_id = str(match["team_id"])
-    match.setdefault("video_status", {})["full"] = "ready"
-    _db.save_matches_unlocked([match])
-
-    legacy_dir = data_dir / "videos" / match_id / "hls" / "full"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "master.m3u8").write_text("#EXTM3U\n")
-    (legacy_dir / "720p").mkdir()
-    (legacy_dir / "720p" / "index.m3u8").write_text("#EXTM3U\n")
-    (legacy_dir / "720p" / "seg.ts").write_bytes(b"legacy")
-
-    legacy_master = await client.get(f"/api/matches/{match_id}/hls/full/master.m3u8")
-    assert legacy_master.status_code == 200
-    legacy_variant = await client.get(f"/api/matches/{match_id}/hls/full/720p/index.m3u8")
-    assert legacy_variant.status_code == 200
-    legacy_segment = await client.get(f"/api/matches/{match_id}/hls/full/720p/seg.ts")
-    assert legacy_segment.status_code == 200
-    assert legacy_segment.content == b"legacy"
-
-    team_dir = data_dir / "videos" / "teams" / team_id / "matches" / match_id / "hls" / "full"
-    team_dir.mkdir(parents=True)
-    (team_dir / "master.m3u8").write_text("#EXTM3U\n")
-    (team_dir / "720p").mkdir()
-    (team_dir / "720p" / "index.m3u8").write_text("#EXTM3U\n")
-    (team_dir / "720p" / "seg.ts").write_bytes(b"team")
-
-    team_master = await client.get(f"/api/matches/{match_id}/hls/teams/{team_id}/full/master.m3u8")
-    assert team_master.status_code == 200
-    assert team_master.headers["access-control-allow-origin"] == "*"
-    team_variant = await client.get(f"/api/matches/{match_id}/hls/teams/{team_id}/full/720p/index.m3u8")
-    assert team_variant.status_code == 200
-    assert team_variant.headers["access-control-allow-origin"] == "*"
-    team_segment = await client.get(f"/api/matches/{match_id}/hls/teams/{team_id}/full/720p/seg.ts")
-    assert team_segment.status_code == 200
-    assert team_segment.headers["access-control-allow-origin"] == "*"
-    assert team_segment.content == b"team"
-
-    wrong_team_master = await client.get(f"/api/matches/{match_id}/hls/teams/not-{team_id}/full/master.m3u8")
-    assert wrong_team_master.status_code == 404
-    traversal = await client.get(f"/api/matches/{match_id}/hls/teams/{team_id}/full/../seg.ts")
-    assert traversal.status_code in {400, 404}
-
-
-@pytest.mark.asyncio
-async def test_direct_upload_stages_raw_and_final_destination_under_team_path(client, auth_headers, data_dir, monkeypatch) -> None:
-    import db as _db
-    import server
-
-    spawned: list[tuple[Path, Path]] = []
-    monkeypatch.setattr(server, "_spawn_transcode", lambda _mid, _slot, src, dest: spawned.append((src, dest)))
-
-    resp = await client.post(
-        "/api/matches",
-        json={"home_team": "A", "away_team": "B"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    match_id = resp.json()["id"]
-    team_id = _db.get_match_by_id(match_id)["team_id"]
-
-    upload = await client.post(
-        f"/api/matches/{match_id}/upload-video?slot=full",
-        headers=auth_headers,
-        files={"file": ("video.mp4", b"fake-mp4", "video/mp4")},
-    )
-    assert upload.status_code == 200
-    assert spawned
-    raw_path, final_path = spawned[0]
-    team_match_dir = data_dir / "videos" / "teams" / team_id / "matches" / match_id
-    assert raw_path == team_match_dir / "full_raw.mp4"
-    assert final_path == team_match_dir / "full.mp4"
-    assert raw_path.read_bytes() == b"fake-mp4"
-
-
-@pytest.mark.asyncio
-async def test_chunked_upload_session_uses_team_path_for_raw_and_final_destination(client, auth_headers, data_dir, monkeypatch) -> None:
-    import db as _db
-    import server
-
-    spawned: list[tuple[Path, Path]] = []
-    monkeypatch.setattr(server, "_spawn_transcode", lambda _mid, _slot, src, dest: spawned.append((src, dest)))
-
-    resp = await client.post(
-        "/api/matches",
-        json={"home_team": "A", "away_team": "B"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    match_id = resp.json()["id"]
-    team_id = _db.get_match_by_id(match_id)["team_id"]
-    body = b"chunked-mp4"
-
-    session = await client.post(
-        f"/api/matches/{match_id}/upload-video/session?slot=full",
-        json={"filename": "video.mp4", "size_bytes": len(body)},
-        headers=auth_headers,
-    )
-    assert session.status_code == 200
-    session_id = session.json()["session_id"]
-    put = await client.put(
-        f"/api/uploads/sessions/{session_id}/chunk?index=0",
-        content=body,
-        headers=auth_headers,
-    )
-    assert put.status_code == 200
-    complete = await client.post(f"/api/uploads/sessions/{session_id}/complete", headers=auth_headers)
-    assert complete.status_code == 200
-    assert spawned
-    raw_path, final_path = spawned[0]
-    team_match_dir = data_dir / "videos" / "teams" / team_id / "matches" / match_id
-    assert raw_path == team_match_dir / "full_raw.mp4"
-    assert final_path == team_match_dir / "full.mp4"
-    assert raw_path.read_bytes() == body
-
-
-def test_thumbnail_cleanup_candidates_include_team_and_legacy_paths(data_dir, monkeypatch) -> None:
-    import server
-
-    monkeypatch.setattr(server, "VIDEOS_DIR", data_dir / "videos")
-    note = {"match_id": "m1", "team_id": "team-1", "note_context": "video"}
-    clip = {"match_id": "m1", "team_id": "team-1"}
-
-    note_paths = server._coach_note_thumbnail_candidates(note, 42)
-    assert note_paths == [
-        data_dir / "videos" / "teams" / "team-1" / "matches" / "m1" / "coach_thumbs" / "42.jpg",
-        data_dir / "videos" / "m1" / "coach_thumbs" / "42.jpg",
-    ]
-    clip_paths = server._coach_clip_thumbnail_candidates(clip, 7)
-    assert clip_paths == [
-        data_dir / "videos" / "teams" / "team-1" / "matches" / "m1" / "clip_thumbs" / "7.jpg",
-        data_dir / "videos" / "m1" / "clip_thumbs" / "7.jpg",
-    ]
+                # Team-aware URLs no longer match any flat rule.
+                assert not any(p.match(f"/api/matches/m1/hls/teams/team-1/full/{asset}") for p in patterns)
+                # Path-traversal must be rejected across every escapable
+                # segment of the flat shape. The slot capture is bounded to
+                # `[A-Za-z0-9_-]+`, so `..` cannot appear there either —
+                # exercise both the slot and the trailing asset path.
+                assert not any(p.match(f"/api/matches/m1/hls/full/../{asset}") for p in patterns)
+                assert not any(p.match(f"/api/matches/m1/hls/../full/{asset}") for p in patterns)
+                assert not any(p.match(f"/api/matches/../hls/full/{asset}") for p in patterns)
 
 
 def test_cleanup_orphaned_raw_files_scans_team_aware_layout(data_dir) -> None:
@@ -396,15 +268,12 @@ def test_relocation_execute_updates_upload_session_raw_paths(tmp_path: Path) -> 
     raw.write_bytes(b"raw")
     _db.close_thread_connection()
     _db.init(data_dir, db_file, Path(__file__).resolve().parents[1])
-    team_id = _db.get_default_team()["id"]
-    season_id = _db.get_default_season(team_id)["id"]
+    team_id = "team-1"
     with _db.connect() as conn:
         _db.upsert_match(
             conn,
             {
                 "id": "m1",
-                "team_id": team_id,
-                "season_id": season_id,
                 "home_team": "Home",
                 "away_team": "Away",
                 "date": "2026-01-02",
@@ -423,7 +292,9 @@ def test_relocation_execute_updates_upload_session_raw_paths(tmp_path: Path) -> 
         )
         conn.commit()
 
-    moves = relocate_to_team_paths.plan_moves(_db.load_matches_unlocked(), videos_dir=videos, originals_dir=originals)
+    moves = relocate_to_team_paths.plan_moves(
+        [{"id": "m1", "team_id": team_id}], videos_dir=videos, originals_dir=originals
+    )
     changed = relocate_to_team_paths.apply_moves(moves, execute=True)
 
     dest = originals / "teams" / team_id / "matches" / "m1" / "full_raw.mp4"

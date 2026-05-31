@@ -1,6 +1,8 @@
 # Replay
 
-A standalone match viewer and video archive for soccer (or any sport). Upload match recordings, add team details and logos, and replay them in a clean, modern dark-themed web UI.
+**v1.0.0** · A standalone, single-team match viewer and video archive for soccer (or any sport). Upload match recordings, add team details and logos, and replay them in a clean, modern dark-themed web UI. VOD playback plus live RTMP/LL-HLS streaming.
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Features
 
@@ -14,13 +16,9 @@ A standalone match viewer and video archive for soccer (or any sport). Upload ma
 - **Watch Live (RTMP ingest → LL-HLS)** — point a camera (e.g. XbotGo Falcon) at the site's RTMP URL with a configurable stream key; viewers watch the live feed at `/live` with sub-5s latency
 - **AirPlay 2** — explicit AirPlay picker button on supported Safari/WebKit devices for Apple TV and AirPlay 2 displays
 - **Chromecast** — Google Cast SDK integration with a dedicated cast button, metadata, and remote playback resume support
-- **Coaching workspace** — coaches can create roster players, link family/player accounts, save timestamped notes with telestrator overlays, build playable review playlists, and publish feedback to linked viewers
-- **Active team/season scope** — multi-team coaches/admins can switch the active workspace from the navigation bar; scoped coach/admin/feedback data reloads without showing stale previous-team content
-- **AI drafting MVP** — team-scoped settings gate coach-only draft generation, bounded provider calls use privacy-safe context/audit rows, and the Coach Review composer exposes review-only insert controls so output is never published until a coach saves it
-- **Account profile foundation** — `/api/me` includes a safe self-profile companion payload with nullable legacy email support, normalized email uniqueness, and a self-service profile patch endpoint that cannot mutate roles or memberships
-- **Durable session/password foundation** — database-user logins persist hashed bearer sessions, logout/password changes/reset consume or revoke sessions, and reset/verification tokens are stored hashed-only
-- **Team member management and invites** — team admins can manage active-team people from Admin > People, issue Brevo-delivered hashed-token staff/guardian invites, resend with token rotation, and accept invites as existing or new users
-- **Notification settings** — global admins can configure Brevo transactional email from Admin > Settings > Notifications, including a write-only API key and test email sender
+- **Single-team match library** — a flat, global match library grouped by a season label in the public view
+- **Admin-managed accounts** — admins create and manage user accounts with three roles (`admin` / `uploader` / `viewer`); sign-in is by username + password
+- **Durable sessions** — database-user logins persist hashed bearer sessions; logout revokes them
 - **System settings** — admin-only branding and label controls for app name, season copy, logo, favicon, filters, and download availability
 - **Home/Away filters** — configurable main-team matching powers `All`, `Home`, and `Away` filtering on the main page
 - **Public downloads** — optional direct MP4 download buttons for ready games with normal browser resume support for large files
@@ -100,20 +98,7 @@ Data persists in a named Docker volume (`replay_data`) mounted at `/data` in the
 
 Compose also runs a `mediamtx` sidecar that handles the live stream. It exposes RTMP on `1936` (camera-facing) and keeps its HLS/control ports on the internal compose network — viewers always reach the live feed through the same `8091` origin via a reverse proxy.
 
-The Intel compose stack also includes an optional Phase 6.2 Postgres smoke-test lane. SQLite remains the app runtime until the later Alembic/runtime migration PRs, but you can start the Postgres service, run the focused lane, and exercise the Phase 6.4 one-shot import helper with:
-
-```bash
-docker compose -f docker-compose-intel.yml --profile postgres up -d postgres
-REPLAY_DB_BACKEND=postgres \
-REPLAY_RUN_LIVE_POSTGRES_TESTS=1 \
-DATABASE_URL=postgresql://replay:***@localhost:5432/replay \
-pytest tests/test_postgres_lane.py -q -m postgres
-
-python -m scripts.migrate_sqlite_to_postgres \
-  --sqlite /path/to/replay.db \
-  --database-url postgresql://replay:***@localhost:5432/replay \
-  --output-json
-```
+Replay uses SQLite as its only database backend. The schema is created on first startup at `PRAGMA user_version = 1`; a fresh `REPLAY_DATA_DIR` is all you need. See [DEPLOYMENT.md → Database](docs/DEPLOYMENT.md#database).
 
 Build/run with plain Docker (without the live stream):
 
@@ -138,7 +123,6 @@ docker run --rm -p 8091:8091 -v replay_data:/data replay
 | `STALE_UPLOAD_SESSION_SECONDS` | `21600` | Idle upload session age before cleanup |
 | `MEDIAMTX_HLS_URL` | `http://mediamtx:8888` | Internal HLS endpoint of the MediaMTX sidecar |
 | `MEDIAMTX_API_URL` | `http://mediamtx:9997` | Internal control API of the MediaMTX sidecar |
-| `REPLAY_STRICT_TENANCY` | unset | Optional developer/test guardrail. Truthy values (`1`, `true`, `yes`, `on`) make tenant-aware DB helpers fail when `team_id` is omitted unless the call explicitly opts into a documented global/legacy read. Tests enable this by default. |
 
 ## System Settings
 
@@ -211,33 +195,20 @@ $REPLAY_DATA_DIR/
 
 ## Backend Layout
 
-The FastAPI app is intentionally split so `server.py` stays focused on app wiring, lifespan/startup work, shared path helpers, static/SPA serving, and compatibility wrappers. Most request domains now live in focused routers with shared policy in services; this is the completed route split map for current main:
+The FastAPI app is intentionally split so `server.py` stays focused on app wiring, lifespan/startup work, shared path helpers, static/SPA serving, and compatibility wrappers. Most request domains live in focused routers with shared policy in services:
 
-- Core/account routers:
-  - `routers/auth.py` — login/logout/auth-check, `/api/me` scope/profile/password/email flows, password reset, and email verification
-  - `routers/admin.py` — admin-only `/api/users*` account-management endpoints
+- Core routers:
+  - `routers/auth.py` — login/logout/auth-check and durable bearer sessions
+  - `routers/admin.py` — admin-only `/api/users*` user-management endpoints
   - `routers/settings.py` — admin settings and branding
-- Tenant/admin routers:
-  - `routers/admin_teams.py` — global-admin `/api/admin/teams*` team, season, and membership override surface
-  - `routers/team_members.py` — membership-scoped `/api/team/memberships*` and `/api/team/invites*`, used by **Admin > People** (`/admin/people`), `/welcome`, and `/invite/{token}`
-  - `routers/team_settings.py` — active-scope `GET/PATCH /api/coach/team/settings` for Coach > Settings settings/defaults/AI governance; Coach > Settings links/copy point people management to Admin > People
 - Media/operations routers:
-  - `routers/matches.py`, `routers/uploads.py`, `routers/live.py`, `routers/jobs.py`, `routers/admin_ops.py` — match library CRUD/playback/recovery, resumable uploads, live streaming, team-scoped jobs, and diagnostics/export
-- Coaching/viewer routers:
-  - `routers/coach_notes.py`, `routers/coach_clips.py`, `routers/coach_playlists.py`, `routers/coach_goals.py`, `routers/coach_summaries.py`, `routers/coach_engagement.py`, `routers/coach_ai.py`, `routers/feedback.py` — coach workspace, AI drafting, engagement, and My Feedback domains
+  - `routers/matches.py`, `routers/uploads.py`, `routers/live.py`, `routers/admin_ops.py` — match library CRUD/playback/recovery, resumable uploads, live streaming, and diagnostics/export
 
 Shared service map:
 
-- `services/teams.py` — global-admin team/season/membership business logic shared by API and `python -m tools.admin`
-- `services/team_members.py` — active-team membership/invite business logic, hashed invite tokens, resend/revoke, and last-admin protection delegation for Admin > People
-- `services/team_settings.py` — AI governance/default visibility registry, scoped validation, and draft-target visibility guards
-- `services/visibility.py` — coaching visibility checks and viewer scrubbing helpers
-- `services/engagement.py` — coach engagement dashboard aggregation
-- `services/thumbnails.py` — coaching note/clip thumbnail path checks and generation helpers
+- `services/thumbnails.py` — match thumbnail path checks and generation helpers
 - `services/activity.py` — persisted admin/activity feed wrappers
-- `services/jobs.py` — durable background-job enqueue/list/cancel/worker lifecycle
-- `services/ai_drafting.py`, `services/ai_context.py`, `services/ai_providers.py` — AI audit, privacy-safe context, and provider boundary
-- `services/roster_import.py`, `services/email_delivery.py` — CSV roster preview/commit and transactional email delivery
+- `services/jobs.py` — durable in-process background-job enqueue/list/cancel/worker lifecycle (transcodes create job rows but still execute through the existing in-process transcode path)
 
 Keep new backend behavior in the appropriate router/service module instead of adding more policy logic to `server.py`.
 
@@ -246,7 +217,7 @@ Keep new backend behavior in the appropriate router/service module instead of ad
 | Endpoint | Method | Purpose |
 | -------- | ------ | ------- |
 | `/` | GET | Serve the web app |
-| `/api/matches` | GET | List all matches; authenticated `team_id` / `season_id` query params return the authorized active-scope subset |
+| `/api/matches` | GET | List all matches (flat global library) |
 | `/api/matches` | POST | Create a new match (JSON body) |
 | `/api/matches/{id}` | PUT | Update match metadata |
 | `/api/matches/{id}` | DELETE | Delete match and all associated files |
@@ -268,27 +239,8 @@ Keep new backend behavior in the appropriate router/service module instead of ad
 | `/api/live/hls/{path}` | GET | Same-origin reverse proxy for the LL-HLS playlist + segments |
 | `/api/live/auth` | POST | Webhook MediaMTX calls to authorise an RTMP publish |
 | `/api/logout` | POST | Revoke the current bearer token/session |
-| `/api/auth/password-reset/request` | POST | Request a password reset token for an existing database user; response is generic, with one-time raw token included only when `REPLAY_DEV_TOKEN_DELIVERY=1` |
-| `/api/auth/password-reset/confirm` | POST | Consume a password reset token, change the password, and revoke existing sessions |
-| `/api/me` | GET | Signed-in user scope summary with safe profile payload, eligible teams/seasons, and active scope |
-| `/api/me/profile` | PATCH | Signed-in user: update nullable profile contact fields; roles and memberships are not editable here |
-| `/api/me/password` | POST | Signed-in database user: change password after current-password verification and revoke sessions |
-| `/api/me/email-verification/request` | POST | Signed-in database user: create a one-time email verification token for the current profile email; only hashes are stored |
-| `/api/me/email-verification/confirm` | POST | Consume an email verification token and mark the matching profile email verified |
-| `/api/team/memberships` | GET/POST | Team admin: list or grant memberships inside the active team boundary |
-| `/api/team/memberships/{membership_id}` | DELETE | Team admin: revoke a team membership; last `team_admin` is protected |
-| `/api/team/invites` | GET/POST | Team admin: list/create staff, guardian, player, or viewer invites; raw token is returned only when `REPLAY_DEV_TOKEN_DELIVERY=1` |
-| `/api/team/invites/{invite_id}/resend` | POST | Team admin: resend a pending invite, rotating the stored token hash and preserving metadata |
-| `/api/team/invites/{invite_id}/revoke` | POST | Team admin: revoke a pending invite |
-| `/api/team/invites/accept` | POST | Existing or new user: consume an invite token and create the scoped membership/player links |
-| `/api/me/scope` | PUT | Persist the signed-in user's active team/season selection |
 | `/api/admin/live/config` | GET | Admin: view stream key, RTMP path, and live config |
 | `/api/admin/live/rotate-key` | POST | Admin: rotate the stream key (invalidates current publisher) |
-| `/api/coach/players` | GET/POST | Coach/admin: roster records |
-| `/api/coach/player-links` | POST | Coach/admin: link roster players to user accounts |
-| `/api/coach/notes` | GET/POST | Coach/admin: timestamped coaching notes + drawing metadata |
-| `/api/coach/playlists` | GET/POST | Coach/admin: review playlists with ordered playback items |
-| `/api/my-feedback` | GET | Signed-in player/family feedback scoped by roster links |
 
 ## Tech Stack
 

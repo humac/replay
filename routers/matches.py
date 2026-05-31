@@ -19,7 +19,6 @@ import auth as _auth
 import db as _db
 import media as _media
 import streams as _streams
-import tenancy as _tenancy
 from models import CreateMatchRequest, UpdateMatchRequest
 
 router = APIRouter()
@@ -302,44 +301,15 @@ async def list_matches(
     q: str | None = None,
     page: int | None = None,
     limit: int | None = None,
-    team_id: str | None = None,
-    season_id: str | None = None,
 ):
     from server import MATCHES_LOCK, _enrich_match
-    scoped = bool(team_id or season_id)
-    scope = None
-    if scoped:
-        user = _auth.require_auth(request)
-        scope = _tenancy.resolve_scope(
-            request,
-            user,
-            team_id=team_id,
-            season_id=season_id,
-            require_role="match:read",
-            allow_global_admin_override=True,
-        )
-        team_id = scope.team["id"]
-        season_id = scope.season["id"] if scope.season else season_id
-
     if q is not None or page is not None or limit is not None:
         clamped_limit = max(1, min(limit or 50, 200))
-        matches, total = _db.search_matches(
-            q=q,
-            page=page or 1,
-            limit=clamped_limit,
-            team_id=team_id if scoped else None,
-            season_id=season_id if scoped else None,
-        )
+        matches, total = _db.search_matches(q=q, page=page or 1, limit=clamped_limit)
         return {"matches": [_enrich_match(m) for m in matches], "total": total, "page": page or 1, "limit": clamped_limit}
     # No query params: return the 500 most-recent matches to bound payload size.
-    # Scoped calls filter in SQL before applying that cap so a busy unrelated
-    # team cannot hide older matches from the selected team/season.
     async with MATCHES_LOCK:
-        matches = _db.load_matches_unlocked(
-            limit=500,
-            team_id=team_id if scoped else None,
-            season_id=season_id if scoped else None,
-        )
+        matches = _db.load_matches_unlocked(limit=500)
     return [_enrich_match(m) for m in matches]
 
 
@@ -466,13 +436,6 @@ async def delete_match(match_id: str, request: Request):
     # (raw uploads + finished MP4). When tiered they're separate volumes;
     # when collapsed they're the same path and the second rmtree is a no-op.
     cleanup_dirs = {VIDEOS_DIR / match_id, ORIGINALS_DIR / match_id}
-    team_id = match.get("team_id") if match else None
-    if team_id:
-        try:
-            cleanup_dirs.add(_media.slot_hls_dir(VIDEOS_DIR, match_id, "full", team_id=team_id).parents[1])
-            cleanup_dirs.add(_media.match_originals_dir(ORIGINALS_DIR, match_id, team_id=team_id))
-        except ValueError:
-            pass
     for d in cleanup_dirs:
         if d.exists():
             shutil.rmtree(str(d))
@@ -607,11 +570,6 @@ async def download_video(match_id: str, slot: str, request: Request):
 # HLS streaming
 # ---------------------------------------------------------------------------
 
-@router.get("/api/matches/{match_id}/hls/teams/{team_id}/{slot}/master.m3u8")
-async def stream_hls_master_team(match_id: str, team_id: str, slot: str, request: Request):
-    return await _stream_hls_master_common(match_id, slot, request, team_id=team_id)
-
-
 def _hls_response_headers(cache_control: str) -> dict[str, str]:
     return {
         "Cache-Control": cache_control,
@@ -624,7 +582,7 @@ async def stream_hls_master(match_id: str, slot: str, request: Request):
     return await _stream_hls_master_common(match_id, slot, request)
 
 
-async def _stream_hls_master_common(match_id: str, slot: str, request: Request, *, team_id: str | None = None):
+async def _stream_hls_master_common(match_id: str, slot: str, request: Request):
     from server import VIDEOS_DIR, _get_video_status
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
@@ -632,8 +590,6 @@ async def _stream_hls_master_common(match_id: str, slot: str, request: Request, 
     match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
-    if team_id is not None and str(match.get("team_id") or "") != team_id:
-        raise HTTPException(404, "HLS playlist not found")
 
     status = _get_video_status(match, slot)
     if status == "transcoding":
@@ -641,7 +597,7 @@ async def _stream_hls_master_common(match_id: str, slot: str, request: Request, 
     if status == "error":
         raise HTTPException(500, "Video processing failed")
 
-    master_path = _media.existing_slot_hls_master_path(VIDEOS_DIR, match_id, slot, team_id=match.get("team_id"))
+    master_path = _media.existing_slot_hls_master_path(VIDEOS_DIR, match_id, slot)
     if not master_path.is_file():
         raise HTTPException(404, "HLS playlist not found")
 
@@ -661,17 +617,12 @@ async def _stream_hls_master_common(match_id: str, slot: str, request: Request, 
     )
 
 
-@router.get("/api/matches/{match_id}/hls/teams/{team_id}/{slot}/{asset_path:path}")
-async def stream_hls_asset_team(match_id: str, team_id: str, slot: str, asset_path: str, request: Request):
-    return await _stream_hls_asset_common(match_id, slot, asset_path, request, team_id=team_id)
-
-
 @router.get("/api/matches/{match_id}/hls/{slot}/{asset_path:path}")
 async def stream_hls_asset(match_id: str, slot: str, asset_path: str, request: Request):
     return await _stream_hls_asset_common(match_id, slot, asset_path, request)
 
 
-async def _stream_hls_asset_common(match_id: str, slot: str, asset_path: str, request: Request, *, team_id: str | None = None):
+async def _stream_hls_asset_common(match_id: str, slot: str, asset_path: str, request: Request):
     from server import VIDEOS_DIR
     if slot not in ("full", "first_half", "second_half"):
         raise HTTPException(400, "Invalid slot")
@@ -681,10 +632,8 @@ async def _stream_hls_asset_common(match_id: str, slot: str, asset_path: str, re
     match = _db.get_match_by_id(match_id)
     if not match:
         raise HTTPException(404, "Match not found")
-    if team_id is not None and str(match.get("team_id") or "") != team_id:
-        raise HTTPException(404, "HLS asset not found")
 
-    base_dir = _media.existing_slot_hls_dir(VIDEOS_DIR, match_id, slot, team_id=match.get("team_id")).resolve()
+    base_dir = _media.existing_slot_hls_dir(VIDEOS_DIR, match_id, slot).resolve()
     target_path = (base_dir / asset_path).resolve()
     if base_dir not in target_path.parents:
         raise HTTPException(400, "Invalid asset path")

@@ -8,20 +8,12 @@ import settings as _settings
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_coach_engagement_css_is_split_without_build_step():
+def test_split_css_is_loaded_after_main_stylesheet_without_build_step():
     html = (ROOT / "index.html").read_text()
-    main_css = (ROOT / "styles.css").read_text()
-    engagement_css = (ROOT / "styles" / "coaching-engagement.css").read_text()
 
     assert '<link rel="stylesheet" href="/static/styles.css' in html
-    assert '<link rel="stylesheet" href="/static/styles/coaching-engagement.css' in html
-    assert html.index('/static/styles.css') < html.index('/static/styles/coaching-engagement.css')
-
-    assert 'Phase 5.3: Coach Engagement dashboard styles moved' in main_css
-    assert '.coach-engagement-shell {' not in main_css
-    assert '.coach-engagement-shell {' in engagement_css
-    assert '[data-theme="light"] .coach-engagement-shell' in engagement_css
-    assert '@media (max-width: 640px)' in engagement_css
+    assert '<link rel="stylesheet" href="/static/styles/admin-users.css' in html
+    assert html.index('/static/styles.css') < html.index('/static/styles/admin-users.css')
 
 
 def test_static_export_allowlist_includes_split_styles_directory():
@@ -32,8 +24,7 @@ def test_static_export_allowlist_includes_split_styles_directory():
     assert '"styles"' in export_block
 
 
-def test_rendered_index_versions_split_engagement_stylesheet():
+def test_rendered_index_versions_split_stylesheet():
     rendered = _settings.render_index_html(_settings.public_payload(_settings.DEFAULT_APP_SETTINGS.copy()))
 
-    assert '/static/styles/coaching-engagement.css?v=' in rendered
-    assert '/static/styles/coaching-engagement.css?v=20260510a' not in rendered
+    assert '/static/styles/admin-users.css?v=' in rendered

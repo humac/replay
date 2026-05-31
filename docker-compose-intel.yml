@@ -42,11 +42,6 @@ services:
       # NVIDIA GPU — comment the next two lines out when switching to Intel iGPU
       #NVIDIA_VISIBLE_DEVICES: GPU-26ddab77-c658-9829-0ace-90674c97dc87
       #NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
-      # Database backend selection. SQLite remains the runtime default in
-      # Phase 6.2; the Postgres vars below power the optional compose/test lane
-      # until the Alembic/runtime migration PRs land.
-      REPLAY_DB_BACKEND: ${REPLAY_DB_BACKEND:-sqlite}
-      DATABASE_URL: ${DATABASE_URL:-}
       # Live streaming — internal addresses for the mediamtx sidecar
       MEDIAMTX_HLS_URL: http://mediamtx:8888
       MEDIAMTX_API_URL: http://mediamtx:9997
@@ -91,31 +86,6 @@ services:
     #        - driver: nvidia
     #          device_ids: ["GPU-26ddab77-c658-9829-0ace-90674c97dc87"]
     #          capabilities: [gpu, video]
-
-  # Optional Phase 6.2 Postgres lane. This service is profile-gated so the
-  # default Intel deployment continues to run the SQLite-backed app exactly as
-  # before. Use `docker compose -f docker-compose-intel.yml --profile postgres
-  # up -d postgres` for local Postgres smoke tests.
-  postgres:
-    image: postgres:16-alpine
-    container_name: replay-postgres
-    profiles: ["postgres"]
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-replay}
-      POSTGRES_USER: ${POSTGRES_USER:-replay}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-replay-local-dev}
-    expose:
-      - "5432"
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - replay_postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
 
   # Caddy — single public entry point for the stack. Caddy serves VOD HLS
   # .ts/.m4s segments directly from the bind-mounted /data volume using
@@ -282,15 +252,6 @@ configs:
       :80 {
         encode zstd gzip
 
-        @vod_hls_team_segment_ts {
-          path_regexp vod_hls_team_ts ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.ts)$
-        }
-        handle @vod_hls_team_segment_ts {
-          # Team-aware HLS carries tenant scope and must pass through FastAPI so
-          # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8091
-        }
-
         @vod_hls_segment_ts {
           path_regexp vod_hls_ts ^/api/matches/([A-Za-z0-9_-]+)/hls/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.ts)$
         }
@@ -305,15 +266,6 @@ configs:
           }
         }
 
-        @vod_hls_team_segment_mp4 {
-          path_regexp vod_hls_team_mp4 ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.(m4s|mp4))$
-        }
-        handle @vod_hls_team_segment_mp4 {
-          # Team-aware HLS carries tenant scope and must pass through FastAPI so
-          # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8091
-        }
-
         @vod_hls_segment_mp4 {
           path_regexp vod_hls_mp4 ^/api/matches/([A-Za-z0-9_-]+)/hls/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.(m4s|mp4))$
         }
@@ -326,15 +278,6 @@ configs:
           file_server {
             precompressed br gzip
           }
-        }
-
-        @vod_hls_team_playlist {
-          path_regexp vod_hls_team_pl ^/api/matches/([A-Za-z0-9_-]+)/hls/teams/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.m3u8)$
-        }
-        handle @vod_hls_team_playlist {
-          # Team-aware HLS carries tenant scope and must pass through FastAPI so
-          # the app can validate match_id -> team_id before filesystem access.
-          reverse_proxy replay:8091
         }
 
         @vod_hls_playlist {
@@ -415,9 +358,6 @@ volumes:
   # (script.js / styles.css / js/* / logo.png copied from /app); caddy mounts
   # it read-only and serves /static/* via sendfile(). Tiny (~10–50 KB total).
   replay_static:
-  # Optional Phase 6.2 Postgres lane storage; only used when the `postgres`
-  # profile is enabled.
-  replay_postgres:
 
 # replay_data is intentionally not declared here — the replay service uses a
 # host bind-mount at /mnt/apps_ssd/apps/replay rather than a named volume.

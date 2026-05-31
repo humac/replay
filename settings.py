@@ -66,34 +66,11 @@ DEFAULT_APP_SETTINGS = {
     "live_hls_variant": "mpegts",
     "live_record_enabled": "0",
     "live_transcode_enabled": "0",
-    # Transactional notifications. Secrets are stored in PRIVATE_SETTING_KEYS
-    # and managed through dedicated admin endpoints so they are never returned
-    # in public or bootstrap settings payloads.
-    "email_provider": "disabled",
-    "email_public_base_url": "",
-    "email_from": "",
-    "email_from_name": "Replay",
 }
 
 # Keys that are private — never returned in the public settings payload, and
 # only writable through dedicated admin endpoints (not the generic settings PUT).
-PRIVATE_SETTING_KEYS = {"live_stream_key", "email_brevo_api_key"}
-
-EMAIL_SETTING_KEYS = {
-    "email_provider",
-    "email_public_base_url",
-    "email_from",
-    "email_from_name",
-    "email_brevo_api_key",
-}
-
-EMAIL_SETTING_ENV = {
-    "email_provider": "REPLAY_EMAIL_PROVIDER",
-    "email_public_base_url": "REPLAY_PUBLIC_BASE_URL",
-    "email_from": "REPLAY_EMAIL_FROM",
-    "email_from_name": "REPLAY_EMAIL_FROM_NAME",
-    "email_brevo_api_key": "REPLAY_BREVO_API_KEY",
-}
+PRIVATE_SETTING_KEYS = {"live_stream_key"}
 
 # Tuning knobs — admin-only in the public payload, but editable through the
 # regular settings PUT. Each entry: type, range, optional env-var fallback for
@@ -188,12 +165,12 @@ TUNING_KNOBS: dict[str, dict] = {
 
 EDITABLE_APP_SETTING_KEYS = {
     key for key in DEFAULT_APP_SETTINGS.keys()
-    if key not in {"app_logo_filename", "favicon_filename"} and key not in EMAIL_SETTING_KEYS
+    if key not in {"app_logo_filename", "favicon_filename"}
 }
 
 # Keys excluded from the public (unauthenticated) `/api/settings` payload.
 # Tuning knobs leak nothing sensitive but are noise for non-admin clients.
-PUBLIC_HIDDEN_KEYS = set(TUNING_KNOBS.keys()) | PRIVATE_SETTING_KEYS | EMAIL_SETTING_KEYS
+PUBLIC_HIDDEN_KEYS = set(TUNING_KNOBS.keys()) | PRIVATE_SETTING_KEYS
 
 APP_ASSET_CONFIG = {
     "logo": {
@@ -372,8 +349,6 @@ def normalize_value(key: str, value) -> str:
         return DEFAULT_APP_SETTINGS.get(key, "")
     if key in {"downloads_enabled", "live_enabled"}:
         return _coerce_bool(value)
-    if key == "email_provider":
-        return _coerce_enum(value, choices=["disabled", "brevo"])
     spec = TUNING_KNOBS.get(key)
     if spec is not None:
         kind = spec["kind"]
@@ -388,94 +363,6 @@ def normalize_value(key: str, value) -> str:
         if kind == "json":
             return _coerce_json(value)
     return str(value).strip()
-
-
-def _raw_setting_rows(keys: set[str]) -> dict[str, str]:
-    if not keys:
-        return {}
-    try:
-        with _db.connect() as conn:
-            rows = conn.execute(
-                "SELECT key, value FROM settings WHERE key IN (%s)" % ",".join("?" * len(keys)),
-                list(keys),
-            ).fetchall()
-    except Exception:
-        return {}
-    return {row["key"]: row["value"] for row in rows}
-
-
-def email_effective_config() -> dict[str, str]:
-    """Return transactional email config with DB rows overriding env vars.
-
-    DEFAULT_APP_SETTINGS intentionally does not override env fallbacks here:
-    if an admin has not saved notification settings yet, existing deployments
-    that use REPLAY_* env vars continue to work.
-    """
-    stored = _raw_setting_rows(EMAIL_SETTING_KEYS)
-    config: dict[str, str] = {}
-    for key in EMAIL_SETTING_KEYS:
-        stored_value = stored.get(key)
-        if stored_value not in {None, ""}:
-            config[key] = str(stored_value).strip()
-            continue
-        env_value = os.environ.get(EMAIL_SETTING_ENV.get(key, ""), "")
-        if env_value:
-            config[key] = env_value.strip()
-            continue
-        config[key] = DEFAULT_APP_SETTINGS.get(key, "")
-    config["email_provider"] = normalize_value("email_provider", config.get("email_provider") or "disabled")
-    if not config.get("email_from_name"):
-        config["email_from_name"] = "Replay"
-    return config
-
-
-def email_admin_payload() -> dict:
-    config = email_effective_config()
-    stored = _raw_setting_rows(EMAIL_SETTING_KEYS)
-    provider = config.get("email_provider") or "disabled"
-    return {
-        "provider": provider,
-        "configured": provider == "brevo"
-        and bool(config.get("email_public_base_url"))
-        and bool(config.get("email_from"))
-        and bool(config.get("email_brevo_api_key")),
-        "settings": {
-            "email_provider": provider,
-            "email_public_base_url": config.get("email_public_base_url", ""),
-            "email_from": config.get("email_from", ""),
-            "email_from_name": config.get("email_from_name", "Replay"),
-        },
-        "status": {
-            "has_public_base_url": bool(config.get("email_public_base_url")),
-            "has_from": bool(config.get("email_from")),
-            "has_brevo_api_key": bool(config.get("email_brevo_api_key")),
-            "brevo_api_key_source": "settings" if stored.get("email_brevo_api_key") else ("env" if os.environ.get("REPLAY_BREVO_API_KEY") else ""),
-            "provider_source": "settings" if stored.get("email_provider") else ("env" if os.environ.get("REPLAY_EMAIL_PROVIDER") else "default"),
-        },
-    }
-
-
-def save_email_settings(updates: dict, *, actor: str | None = None) -> dict:
-    allowed = {
-        "email_provider",
-        "email_public_base_url",
-        "email_from",
-        "email_from_name",
-        "email_brevo_api_key",
-    }
-    clean: dict[str, str] = {}
-    for key, value in (updates or {}).items():
-        if key not in allowed:
-            continue
-        if value is None:
-            continue
-        if key == "email_provider":
-            clean[key] = normalize_value(key, value)
-        else:
-            clean[key] = str(value or "").strip()
-    if clean:
-        save_unlocked(clean, actor=actor)
-    return email_admin_payload()
 
 
 # ---------------------------------------------------------------------------
@@ -612,8 +499,6 @@ def render_index_html(settings_payload: dict) -> str:
     app_name = html_lib.escape(settings_payload["settings"]["app_name"] or DEFAULT_APP_SETTINGS["app_name"])
     favicon_url = html_lib.escape(settings_payload["assets"]["favicon_url"], quote=True)
     html = re.sub(r'/static/styles\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles.css"), html)
-    html = re.sub(r'/static/styles/coaching-engagement\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles/coaching-engagement.css"), html)
-    html = re.sub(r'/static/styles/team-members\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles/team-members.css"), html)
     html = re.sub(r'/static/styles/admin-users\.css(?:\?v=[^"\']*)?', _versioned_static_path("styles/admin-users.css"), html)
     html = re.sub(r'/static/script\.js(?:\?v=[^"\']*)?', _versioned_static_path("script.js"), html)
     html = re.sub(r'/static/logo\.png(?:\?v=[^"\']*)?', app_asset_url("logo", settings_payload["settings"]), html)

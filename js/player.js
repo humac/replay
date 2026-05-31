@@ -297,13 +297,8 @@ export const playerMixin = {
 
     // ===== PLAYBACK =====
     getStreamUrls(matchId, slot) {
-        const match = (this.matches || []).find((m) => m.id === matchId);
-        const teamId = match?.team_id;
-        const hlsPath = teamId
-            ? `/api/matches/${matchId}/hls/teams/${teamId}/${slot}/master.m3u8`
-            : `/api/matches/${matchId}/hls/${slot}/master.m3u8`;
         return {
-            hlsUrl: hlsPath,
+            hlsUrl: `/api/matches/${matchId}/hls/${slot}/master.m3u8`,
             mp4Url: `/api/matches/${matchId}/video/${slot}`,
         };
     },
@@ -420,9 +415,6 @@ export const playerMixin = {
                 '', url,
             );
         }
-        // The "Coach this match in Review →" deep-link encodes the active
-        // slot in its href; refresh it whenever the coach switches halves.
-        this.updateCoachThisMatchLink?.(match);
         const playRequestToken = ++this._playRequestToken;
         const videoEl = document.getElementById('game-video');
         const placeholder = document.getElementById('video-placeholder');

@@ -42,6 +42,7 @@ EXPECTED_TABLES = {
     "settings_audit",
     "activity_events",
     "schema_version",
+    "background_jobs",
 }
 
 
@@ -57,8 +58,10 @@ def test_migrations_create_all_expected_tables(fresh_db):
 def test_schema_version_pinned_to_latest(fresh_db):
     with fresh_db.connect() as conn:
         version = conn.execute("SELECT version FROM schema_version").fetchone()["version"]
-    # _MIGRATIONS is 0-indexed; latest version == len-1.
-    assert version == len(fresh_db._MIGRATIONS) - 1
+    # The schema was squashed into a single 1-based migration; versions are
+    # 1-based so the latest stored version equals the migration count.
+    assert version == len(fresh_db._MIGRATIONS)
+    assert version == 1
 
 
 def test_matches_table_has_slug_and_updated_at_columns(fresh_db):
@@ -83,6 +86,22 @@ def test_re_running_migrations_is_idempotent(fresh_db, tmp_path):
     with fresh_db.connect() as conn:
         rows = conn.execute("SELECT COUNT(*) AS c FROM schema_version").fetchone()
     assert rows["c"] == 1
+
+
+def test_migrations_fail_closed_on_legacy_higher_version(fresh_db, tmp_path):
+    """A DB at a HIGHER schema_version than the squashed target must refuse
+    to run rather than silently downgrade user_version and leave dead tables
+    from the pre-squash v0..v26 chain in place. Regression for PR #193 review."""
+    import sqlite3
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        conn.execute("INSERT INTO schema_version VALUES (26)")
+        conn.execute("PRAGMA user_version = 26")
+        conn.commit()
+    fresh_db.close_thread_connection()
+    with pytest.raises(RuntimeError, match="schema_version=26"):
+        fresh_db.init(tmp_path, db_path, tmp_path / "assets")
 
 
 # ---------------------------------------------------------------------------
@@ -177,20 +196,6 @@ def test_search_matches_pagination(fresh_db):
     assert len(page1) == 2
     assert len(page2) == 2
     assert {m["id"] for m in page1}.isdisjoint({m["id"] for m in page2})
-
-
-def test_search_matches_applies_scope_before_pagination(fresh_db):
-    with fresh_db.connect() as conn:
-        for i in range(3):
-            fresh_db.upsert_match(conn, _make_match(f"other-{i}", team_id="team-other", date=f"2026-05-0{i + 1}"))
-        fresh_db.upsert_match(conn, _make_match("team-a-1", team_id="team-a", season_id="season-a", date="2026-04-30"))
-        fresh_db.upsert_match(conn, _make_match("team-a-2", team_id="team-a", season_id="season-b", date="2026-04-29"))
-        conn.commit()
-
-    matches, total = fresh_db.search_matches(page=1, limit=1, team_id="team-a", season_id="season-a")
-
-    assert total == 1
-    assert [m["id"] for m in matches] == ["team-a-1"]
 
 
 def test_save_matches_unlocked_deletes_removed_records(fresh_db):
