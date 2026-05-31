@@ -104,18 +104,20 @@ version that failed.
 - If the database is corrupt, restore from a backup
 - Migration state is tracked in the `schema_version` table
 
-### `RuntimeError: Database is at schema_version=NN`
+### Upgrading from an older (pre-v1) database
 
-Raised at startup when the database is stamped at a `schema_version` newer
-than this build expects (`user_version > 1`). The migration runner is
-forward-only and fails closed rather than open a schema-incompatible file —
-this happens when you point a current build at a data directory written by a
-newer or differently-shaped build of the app.
+When the app finds a database from an older build (its `user_version` is
+higher than 1), it migrates it to the v1 schema **in place on startup** — you
+should see `Folded legacy database down to schema v1` in the logs. All
+matches, users, sessions, settings, and uploads are preserved; the old
+team/season columns and coaching/account tables are dropped. No manual step is
+needed, but back up `replay.db` before upgrading as a precaution. See
+[Deployment → Upgrading an older database](DEPLOYMENT.md#upgrading-an-older-database).
 
-**Fix:** back up the existing `replay.db` and the media tree, then start from
-a fresh `REPLAY_DATA_DIR` (or delete `replay.db` so startup recreates it) and
-re-add matches through the admin console. See
-[Deployment → Database](DEPLOYMENT.md#database) for details.
+If the fold-down itself errors (e.g. a corrupt source database), the server
+logs the failure and does not start. Restore `replay.db` from your backup and
+investigate, or — if the data is disposable — start from a fresh
+`REPLAY_DATA_DIR`.
 
 ## GPU Transcoding
 

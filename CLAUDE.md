@@ -108,6 +108,13 @@ all removed. Don't reintroduce them without an explicit request.
   runner applies it on a fresh DB. Tables: `users`, `user_sessions`, `matches`,
   `video_errors`, `activity_events`, `background_jobs`, `settings`,
   `settings_audit`, `upload_sessions`, `schema_version`.
+- A DB from the pre-v1 multi-team schema (`user_version > 1`) is **folded down
+  in place** on startup by `_fold_legacy_to_v1()` in `db.py`: it drops the
+  coaching / team / account tables and the `team_id`/`season_id` columns on
+  `matches`/`users`, preserving all kept rows, then restamps to v1. The fold is
+  idempotent. If you add a column/table to the v1 schema, update
+  `_LEGACY_TABLES_TO_DROP` / `_LEGACY_COLUMNS_TO_DROP` only if a legacy DB could
+  carry an incompatible version of it.
 - When setting a video slot to `"error"`, always pass an `error_info` dict with
   `error_code` / `reason` / `details` to `_set_video_status()` so it is
   persisted to `video_errors`.

@@ -96,11 +96,23 @@ move a deployment to a new host, copy the whole data directory (`replay.db`
 plus the `videos/` tree and any `originals/` cold pool) and point
 `REPLAY_DATA_DIR` at it.
 
-The migration runner is forward-only and fails closed: if it finds a database
-stamped at a schema version newer than this build expects (`user_version > 1`),
-startup aborts with a clear `RuntimeError` rather than opening a
-schema-incompatible file. The fix is to start from a fresh `REPLAY_DATA_DIR`.
-See [Troubleshooting → schema_version errors](TROUBLESHOOTING.md#runtimeerror-database-is-at-schema_versionnn).
+### Upgrading an older database
+
+If a database created by an older build is found (its `user_version` is higher
+than 1, from the pre-v1 multi-team schema), the app **migrates it in place on
+startup** — no manual step required. The fold-down:
+
+- keeps every match, user, durable session, settings row, upload session,
+  activity event, and video-error row;
+- drops the columns and tables the v1 product no longer uses (the `team_id` /
+  `season_id` columns on `matches`/`users`, and the coaching / team / account
+  tables);
+- restamps the schema to `user_version = 1`.
+
+It is logged at startup (`Folded legacy database down to schema v1`) and is
+idempotent. As always, back up `replay.db` before any upgrade. Uploaded media
+on disk is in the flat `<root>/<match_id>/…` layout and keeps working
+unchanged after the fold-down.
 
 ## Reverse Proxy (Caddy — bundled)
 
