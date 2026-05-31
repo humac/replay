@@ -88,20 +88,112 @@ def test_re_running_migrations_is_idempotent(fresh_db, tmp_path):
     assert rows["c"] == 1
 
 
-def test_migrations_fail_closed_on_legacy_higher_version(fresh_db, tmp_path):
-    """A DB at a HIGHER schema_version than the squashed target must refuse
-    to run rather than silently downgrade user_version and leave dead tables
-    from the pre-squash v0..v26 chain in place. Regression for PR #193 review."""
+def _seed_legacy_v24_db(db_path):
+    """Build a minimal but realistic pre-squash (v24) database with both kept
+    data and legacy multi-tenant/coaching data, stamped at schema_version 24."""
     import sqlite3
+    conn = sqlite3.connect(db_path)
+    # Kept tables, with the legacy team/season columns the v1 schema drops.
+    conn.execute(
+        """CREATE TABLE matches (
+            id TEXT PRIMARY KEY, home_team TEXT NOT NULL, away_team TEXT NOT NULL,
+            date TEXT, time TEXT, location TEXT, score_home INTEGER, score_away INTEGER,
+            format TEXT, videos_json TEXT NOT NULL, video_status_json TEXT NOT NULL,
+            home_logo TEXT, away_logo TEXT, created_at TEXT, slug TEXT,
+            updated_at TEXT NOT NULL DEFAULT '', team_id TEXT NOT NULL, season_id TEXT NOT NULL)"""
+    )
+    conn.execute("CREATE INDEX idx_matches_slug ON matches(slug)")
+    conn.execute("CREATE INDEX idx_matches_team ON matches(team_id)")
+    conn.execute(
+        """CREATE TABLE users (
+            id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'viewer', display_name TEXT DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            last_team_id TEXT, last_season_id TEXT)"""
+    )
+    conn.execute(
+        """CREATE TABLE user_sessions (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+            user_agent TEXT, ip_address TEXT, created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL, revoked_at TEXT)"""
+    )
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)")
+    # Legacy tables the fold-down must drop (data included so we prove rows go too).
+    conn.execute("CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT, slug TEXT, created_at TEXT)")
+    conn.execute("CREATE TABLE coaching_notes (id INTEGER PRIMARY KEY, match_id TEXT, team_id TEXT)")
+    conn.execute("CREATE TABLE user_profiles (user_id TEXT PRIMARY KEY, email TEXT)")
+    # Seed kept data.
+    conn.execute(
+        "INSERT INTO matches (id,home_team,away_team,date,videos_json,video_status_json,created_at,slug,updated_at,team_id,season_id)"
+        " VALUES ('m1','Steel','Rovers','2026-05-01','{\"full\":\"full.mp4\"}','{\"full\":\"ready\"}','t','steel-vs-rovers','t','team-a','season-x')"
+    )
+    conn.execute(
+        "INSERT INTO users (id,username,password_hash,role,display_name,enabled,created_at,updated_at,last_team_id,last_season_id)"
+        " VALUES ('u1','coach1','HASH','coach,uploader','Coach',1,'t','t','team-a','season-x')"
+    )
+    conn.execute("INSERT INTO user_sessions (id,user_id,token_hash,created_at,expires_at) VALUES ('s1','u1','TH','t','t')")
+    conn.execute("INSERT INTO settings (key,value,updated_at) VALUES ('app_name','Steel FC','t')")
+    conn.execute("INSERT INTO teams (id,name,slug,created_at) VALUES ('team-a','Steel','steel','t')")
+    conn.execute("INSERT INTO coaching_notes (id,match_id,team_id) VALUES (1,'m1','team-a')")
+    conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+    conn.execute("INSERT INTO schema_version VALUES (24)")
+    conn.execute("PRAGMA user_version = 24")
+    conn.commit()
+    conn.close()
+
+
+def test_legacy_v24_db_folds_down_to_v1_preserving_data(fresh_db, tmp_path):
+    """A pre-squash (v2..v26) database is folded down to v1 in place: kept data
+    (matches, users, sessions, settings) survives, the team/season columns and
+    the coaching / multi-tenant / account tables are dropped, and the version is
+    restamped to 1. Regression for the v24->v1 production migration."""
     db_path = tmp_path / "legacy.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
-        conn.execute("INSERT INTO schema_version VALUES (26)")
-        conn.execute("PRAGMA user_version = 26")
-        conn.commit()
+    _seed_legacy_v24_db(db_path)
+
     fresh_db.close_thread_connection()
-    with pytest.raises(RuntimeError, match="schema_version=26"):
-        fresh_db.init(tmp_path, db_path, tmp_path / "assets")
+    fresh_db.init(tmp_path, db_path, tmp_path / "assets")
+    conn = fresh_db.connect()
+
+    # Restamped to v1.
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+    # Kept data preserved.
+    assert conn.execute("SELECT slug FROM matches WHERE id='m1'").fetchone()["slug"] == "steel-vs-rovers"
+    assert conn.execute("SELECT videos_json FROM matches WHERE id='m1'").fetchone()[0] == '{"full":"full.mp4"}'
+    assert conn.execute("SELECT role FROM users WHERE username='coach1'").fetchone()["role"] == "coach,uploader"
+    assert conn.execute("SELECT password_hash FROM users WHERE username='coach1'").fetchone()[0] == "HASH"
+    assert conn.execute("SELECT COUNT(*) FROM user_sessions").fetchone()[0] == 1
+    assert conn.execute("SELECT value FROM settings WHERE key='app_name'").fetchone()[0] == "Steel FC"
+
+    # Team/season columns dropped from kept tables.
+    match_cols = {r[1] for r in conn.execute("PRAGMA table_info(matches)")}
+    assert "team_id" not in match_cols and "season_id" not in match_cols
+    user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+    assert "last_team_id" not in user_cols and "last_season_id" not in user_cols
+
+    # Legacy tables dropped (rows and all).
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "teams" not in tables
+    assert "coaching_notes" not in tables
+    assert "user_profiles" not in tables
+
+    # The canonical v1 index was recreated after the column rebuild.
+    indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "idx_matches_slug" in indexes
+
+
+def test_legacy_fold_down_is_idempotent(fresh_db, tmp_path):
+    """Re-running init on an already-folded DB is a clean no-op."""
+    db_path = tmp_path / "legacy.db"
+    _seed_legacy_v24_db(db_path)
+    fresh_db.close_thread_connection()
+    fresh_db.init(tmp_path, db_path, tmp_path / "assets")
+    fresh_db.close_thread_connection()
+    # Second init: now at v1, must not error or lose data.
+    fresh_db.init(tmp_path, db_path, tmp_path / "assets")
+    conn = fresh_db.connect()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 1
 
 
 # ---------------------------------------------------------------------------

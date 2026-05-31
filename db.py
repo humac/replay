@@ -269,28 +269,143 @@ _MIGRATIONS = [
     _migrate_v1,
 ]
 
+# Tables the pre-squash (v2..v26) multi-tenant / coaching / account-self-service
+# schema created that the v1 product does not use. Folding a legacy DB down to
+# v1 drops these. Child/referencing tables are listed before their parents so a
+# plain ``DROP TABLE`` works even if foreign-key enforcement were on.
+_LEGACY_TABLES_TO_DROP = (
+    # coaching match summaries (children first)
+    "coaching_match_summary_playlists",
+    "coaching_match_summary_clips",
+    "coaching_match_summary_notes",
+    "coaching_match_summaries",
+    # coaching clips / playlists / notes
+    "coaching_clip_players",
+    "coaching_clips",
+    "coaching_playlist_items",
+    "coaching_playlist_players",
+    "coaching_playlists",
+    "coaching_note_players",
+    "coaching_note_tags",
+    "coaching_notes",
+    "coaching_reviews",
+    # player goals + roster
+    "player_goal_reflections",
+    "player_goal_status_history",
+    "player_goals",
+    "player_user_links",
+    "players",
+    # AI drafting
+    "ai_drafting_runs",
+    # account self-service
+    "user_profiles",
+    "password_reset_tokens",
+    "email_verification_tokens",
+    # multi-tenancy (memberships/invites reference teams/seasons; drop first)
+    "team_invites",
+    "team_user_memberships",
+    "team_settings",
+    "seasons",
+    "teams",
+)
+
+# Columns the v1 schema dropped from kept tables. Folding down rebuilds the
+# table without them when they are still present.
+_LEGACY_COLUMNS_TO_DROP = {
+    "matches": ("team_id", "season_id"),
+    "users": ("last_team_id", "last_season_id"),
+}
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    return [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+
+
+def _drop_table_indexes(conn: sqlite3.Connection, table: str) -> None:
+    """Drop every explicitly-named index on ``table`` (skip auto-indexes)."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+        (table,),
+    ).fetchall()
+    for (name,) in rows:
+        conn.execute(f'DROP INDEX IF EXISTS "{name}"')
+
+
+def _drop_columns_via_rebuild(conn: sqlite3.Connection, table: str, drop: tuple[str, ...]) -> None:
+    """Drop ``drop`` columns from ``table`` by rebuilding it from the v1 schema.
+
+    ``ALTER TABLE ... DROP COLUMN`` needs SQLite 3.35+; this rebuild path works
+    on any version and preserves every surviving column and its data.
+
+    SQLite renames a table's indexes *with* the table, so we drop the legacy
+    table's named indexes first — otherwise re-creating the canonical v1 index
+    (e.g. ``idx_matches_slug``) would collide. ``_migrate_v1`` then recreates
+    the clean table + its indexes via ``IF NOT EXISTS``.
+    """
+    keep = [c for c in _table_columns(conn, table) if c not in drop]
+    keep_csv = ", ".join(f'"{c}"' for c in keep)
+    tmp = f"{table}__v1tmp"
+    _drop_table_indexes(conn, table)
+    conn.execute(f'ALTER TABLE "{table}" RENAME TO "{tmp}"')
+    _migrate_v1(conn)  # recreates "<table>" (and its indexes) cleanly; others are no-ops
+    conn.execute(f'INSERT INTO "{table}" ({keep_csv}) SELECT {keep_csv} FROM "{tmp}"')
+    conn.execute(f'DROP TABLE "{tmp}"')
+
+
+def _fold_legacy_to_v1(conn: sqlite3.Connection) -> None:
+    """Convert a pre-squash (v2..v26) database in place to the v1 schema.
+
+    Preserves every row in the kept tables (matches, users, sessions,
+    settings, uploads, errors, activity, jobs). Drops the coaching /
+    multi-tenant / account-self-service tables and the team/season columns
+    that the v1 product no longer uses. Idempotent and safe to re-run.
+    """
+    # Drop the legacy tables first (some carry stale indexes / FKs we don't
+    # want lingering during the column rebuilds below).
+    dropped = 0
+    for table in _LEGACY_TABLES_TO_DROP:
+        conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+        dropped += 1
+    # Ensure all v1 tables exist (no-op for ones already present).
+    _migrate_v1(conn)
+    # Drop the team/season columns the v1 schema removed from kept tables.
+    for table, cols in _LEGACY_COLUMNS_TO_DROP.items():
+        present = set(_table_columns(conn, table))
+        if present & set(cols):
+            _drop_columns_via_rebuild(conn, table, cols)
+            logger.info("Folded legacy columns out of %s: %s", table, ", ".join(c for c in cols if c in present))
+    if dropped:
+        logger.info("Dropped legacy coaching / multi-tenant / account tables folding down to v1")
+
 
 def _run_migrations(conn: sqlite3.Connection):
     """Apply any pending schema migrations.
 
-    The schema is a single squashed migration (`_migrate_v1`) and target
-    `PRAGMA user_version = 1`. There is no incremental history: a fresh DB
-    is at version -1 (no `schema_version` table) and gets migrated to 1; a
-    DB already at 1 is a no-op. Any DB at a HIGHER version is from the
-    pre-squash chain (v2..v26) — those carry tables/columns that no longer
-    exist in the code, so we fail closed rather than silently downgrade
-    `user_version` and leave dead tables around.
+    The v1 product targets a single squashed schema (`_migrate_v1`) at
+    `PRAGMA user_version = 1`:
+
+    - A fresh DB (version -1, no `schema_version` table) gets `_migrate_v1`.
+    - A DB already at version 1 is a no-op.
+    - A DB at a HIGHER version (2..26) is from the pre-squash multi-tenant /
+      coaching chain. Rather than fail or wipe, fold it down in place via
+      `_fold_legacy_to_v1`: keep all match/user/session/settings/upload data,
+      drop the coaching/team/account tables and the team/season columns, then
+      restamp the version to 1.
     """
     current = _get_schema_version(conn)
     target = len(_MIGRATIONS)  # versions are 1-based for the squashed schema
     if current > target:
-        raise RuntimeError(
-            f"Database is at schema_version={current} but this build targets "
-            f"v{target} (the squashed greenfield schema). A fresh "
-            "REPLAY_DATA_DIR is required — point REPLAY_DATA_DIR at an empty "
-            "directory, or delete the existing replay.db, before starting the "
-            "app. Old multi-tenant / coaching tables will not be migrated."
+        logger.warning(
+            "Database is at schema_version=%d (pre-squash chain); folding it "
+            "down to the v1 schema (dropping coaching / multi-tenant / account "
+            "tables, preserving matches, users, sessions, settings, uploads).",
+            current,
         )
+        _fold_legacy_to_v1(conn)
+        _set_schema_version(conn, target)
+        conn.commit()
+        logger.info("Folded legacy database down to schema v%d", target)
+        return
     for offset, migrate_fn in enumerate(_MIGRATIONS):
         version = offset + 1
         if version > current:

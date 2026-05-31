@@ -34,7 +34,9 @@ admin console, and admin-managed user accounts.
 - Caddy as the single public entry point; MediaMTX sidecar for live ingest.
 - In-process durable transcode queue.
 - SQLite schema created on first startup at `PRAGMA user_version = 1`. SQLite is
-  the only supported backend.
+  the only supported backend. A database from an older multi-team build is
+  migrated to the v1 schema in place on startup (matches/users/sessions/settings
+  preserved; coaching/team/account tables dropped).
 
 ### Not in scope
 
